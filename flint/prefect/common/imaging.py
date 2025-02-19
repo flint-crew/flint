@@ -720,6 +720,11 @@ def task_convolve_image(
 
 
 @task
+def task_create_linmos_options(**kwargs) -> LinmosOptions:
+    return LinmosOptions(**kwargs)
+
+
+@task
 def task_linmos_images(
     image_list: list[Path],
     container: Path,
