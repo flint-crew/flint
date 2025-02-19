@@ -189,7 +189,7 @@ def process_science_fields_pol(
     for stokes, beam_cubes in stokes_beam_cubes.items():
         with tags(f"stokes-{stokes}"):
             linmos_result = task_linmos_images.submit(
-                images=beam_cubes,
+                image_list=beam_cubes,
                 container=pol_field_options.yandasoft_container,
                 holofile=pol_field_options.holofile,
                 cutoff=pol_field_options.pb_cutoff,

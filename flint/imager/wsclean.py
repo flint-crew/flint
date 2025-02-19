@@ -96,8 +96,6 @@ class WSCleanOptions(BaseOptions):
     """Image size, only a single dimension is required. Note that this means images will be squares. """
     local_rms: bool = True
     """Whether a local rms map is computed"""
-    force_mask_rounds: int | None = 10
-    """Round of force masked derivation"""
     auto_mask: float | None = 3.5
     """How deep the construct clean mask is during each cycle"""
     auto_threshold: float | None = 0.5
@@ -178,6 +176,8 @@ class WSCleanOptions(BaseOptions):
     """If True turn off the reordering of the MS at the beginning of wsclean"""
     flint_no_log_wsclean_output: bool = False
     """If True do not log the wsclean output"""
+    no_mf_weighting: bool = False
+    """Opposite of -ms-weighting; can be used to turn off MF weighting in -join-channels mode"""
 
 
 class WSCleanResult(BaseOptions):
