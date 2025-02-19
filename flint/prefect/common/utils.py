@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 from pathlib import Path
-from typing import Any, Iterable, ParamSpec, TypeVar
+from typing import Any, Callable, Iterable, ParamSpec, TypeVar
 from uuid import UUID
 
 from prefect import task
@@ -28,8 +28,14 @@ from flint.summary import (
 T = TypeVar("T")
 P = ParamSpec("P")
 R = TypeVar("R")
+C = TypeVar("C", bound=Callable)
 
 SUPPORTED_IMAGE_TYPES = ("png",)
+
+
+@task
+def task_create_object(object: C, **kwargs) -> C:
+    return object(**kwargs)
 
 
 @task
