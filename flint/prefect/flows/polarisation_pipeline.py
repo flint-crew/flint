@@ -189,7 +189,6 @@ def process_science_fields_pol(
 
     linmos_options = task_create_object(
         object=LinmosOptions,
-        container=pol_field_options.yandasoft_container,
         holofile=pol_field_options.holofile,
         cutoff=pol_field_options.pb_cutoff,
         stokesi_images=stokes_beam_cubes.get("i"),
