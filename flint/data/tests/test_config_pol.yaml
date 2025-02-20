@@ -5,7 +5,6 @@ defaults:
     local_rms_window: 65
     size: 10128
     local_rms: true
-    force_mask_rounds: 10
     auto_mask: 3.5
     auto_threshold: 0.5
     threshold: null
