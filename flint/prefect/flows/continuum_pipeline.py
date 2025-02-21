@@ -251,7 +251,7 @@ def process_science_fields(
         mss=preprocess_science_mss,
         cal_sbid_path=bandpass_path,
         holography_path=field_options.holofile,
-    )  # type: ignore
+    ).result()  # type: ignore
     logger.info(f"{field_summary=}")
 
     if field_options.wsclean_container is None:
