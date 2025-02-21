@@ -53,7 +53,7 @@ class Catalogue(NamedTuple):
     """The ID of the catalogue on Vizier that is used to download the catalogue"""
 
 
-KNOWN_REFERENCE_CATALOGUES = dict(
+KNOWN_REFERENCE_CATALOGUES: dict[str, Catalogue] = dict(
     NVSS=Catalogue(
         survey="NVSS",
         file_name="NVSS.fits",
@@ -340,12 +340,15 @@ def list_known_reference_catalogues() -> None:
         logger.info(f"{Catalogue}")
 
 
-def verify_reference_catalogues(reference_directory: Path) -> bool:
+def verify_reference_catalogues(
+    reference_directory: Path, load_catalogue: bool = True
+) -> bool:
     """Attempt to load the set of reference catalogues to ensure they are correctly
     formed
 
     Args:
         reference_directory (Path): The directory containing the reference catalogues
+        load_catalogue (bool, optional): Load the catalogue as part of verification. If False only check to see if the file exists. Defaults to True.
 
     Returns:
         bool: Indicates whether all catalogue files exist and are correctly formed
@@ -356,16 +359,20 @@ def verify_reference_catalogues(reference_directory: Path) -> bool:
     survey_valid = {}
     for survey, cata in KNOWN_REFERENCE_CATALOGUES.items():
         try:
-            _ = get_reference_catalogue(
-                reference_directory=reference_directory, survey=survey, verify=True
-            )
+            if load_catalogue:
+                _ = get_reference_catalogue(
+                    reference_directory=reference_directory, survey=survey
+                )
+            else:
+                cata_path = reference_directory / cata.file_name
+                assert cata_path.exists()
             valid = True
-        except (ValueError, AssertionError):
+        except (ValueError, AssertionError, FileNotFoundError):
             valid = False
         logger.info(f"{survey=} is {'valid' if valid else 'not valid'}")
         survey_valid[survey] = valid
 
-    return all(survey_valid.items())
+    return all(survey_valid.values())
 
 
 def get_parser() -> ArgumentParser:

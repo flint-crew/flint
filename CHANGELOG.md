@@ -18,6 +18,11 @@
 - Removed the `wrapper_get_options_from_strategy`
 - Avoid reforming the MS when self-calibrating with CASA
   - using an appropriate `spw=` str and `append=True` in `gaincal`.
+- Added `flint_containers` which aims to:
+  - Track known containers that are required throughout flint
+  - Download (with `singularity-python`) containers that are tracked
+  - The beginnings of a `get_known_container` type interface so that containers
+    may not need to be referenced via cli all the time
 
 # 0.2.13
 

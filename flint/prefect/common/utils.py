@@ -72,7 +72,9 @@ def task_get_channel_images_from_paths(paths: list[Path]) -> list[Path]:
     return [path for path in paths if "MFS" not in path.name]
 
 
-def upload_image_as_artifact(image_path: Path, description: str | None = None) -> UUID:
+def upload_image_as_artifact(
+    image_path: Path, description: str | None = None
+) -> UUID | None:
     """Create and submit a markdown artifact tracked by prefect for an
     input image. Currently supporting png formatted images.
 
@@ -85,8 +87,10 @@ def upload_image_as_artifact(image_path: Path, description: str | None = None) -
         description (Optional[str], optional): A description passed to the markdown artifact. Defaults to None.
 
     Returns:
-        UUID: Generated UUID of the registered artifact
+        UUID | None: Generated UUID of the registered artifact. If the upload fails ``None`` is returned.
     """
+    from prefect.exceptions import PrefectHTTPStatusError
+
     image_type = image_path.suffix.replace(".", "")
     assert image_path.exists(), f"{image_path} does not exist"
     assert image_type in SUPPORTED_IMAGE_TYPES, (
@@ -100,10 +104,17 @@ def upload_image_as_artifact(image_path: Path, description: str | None = None) -
     logger.info("Creating markdown tag")
     markdown = f"![{image_path.stem}](data:image/{image_type};base64,{image_base64})"
 
-    logger.info("Registering artifact")
-    image_uuid = create_markdown_artifact(markdown=markdown, description=description)
+    try:
+        image_uuid: UUID | None = None
+        logger.info("Registering artifact")
+        image_uuid = create_markdown_artifact(
+            markdown=markdown, description=description
+        )
+    except PrefectHTTPStatusError as e:
+        logger.warn("Failed to register artefact. ")
+        logger.warning(f"{e=}")
 
-    return image_uuid  # type: ignore
+    return image_uuid
 
 
 task_update_field_summary = task(update_field_summary)

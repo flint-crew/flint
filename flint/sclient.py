@@ -14,6 +14,33 @@ from flint.logging import logger
 from flint.utils import get_job_info, log_job_environment
 
 
+def pull_container(container_directory: Path, uri: str, file_name: str) -> Path:
+    """Download a singularity container from an appropriate ``uri``.
+
+    Args:
+        container_directory (Path): Where to store the output container
+        uri (str): The reference to the container to pull, e.g. docker://profile/container:tag
+        file_name (str): The output name of the container
+
+    Returns:
+        Path: Location of the new container
+    """
+    logger.info(f"Attempting to pull {uri=} into {container_directory=}")
+
+    container_path, output = sclient.pull(
+        image=uri, pull_folder=str(container_directory), name=file_name, stream=True
+    )
+    for line in output:
+        # Remove the trailing new line character
+        logger.info(line.rstrip())
+
+    container_path = Path(container_path)
+
+    assert container_path.exists(), f"{container_path=} does not exist, but should"
+
+    return container_path
+
+
 def run_singularity_command(
     image: Path,
     command: str,

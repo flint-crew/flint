@@ -9,7 +9,7 @@ A pirate themed ASKAP pipeline.
 
 Yarrrr-Harrrr fiddly-dee!
 
-<img src="_static/logo.jpeg" alt="Capn' Flint - Credit: DALLE 3" style="width:400px;"/>
+<img src="logo.jpeg" alt="Capn' Flint - Credit: DALLE 3" style="width:400px;"/>
 
 ## Documentation
 

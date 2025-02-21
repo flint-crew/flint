@@ -79,6 +79,7 @@ task_split_by_field: Task[P, R] = task(split_by_field)
 task_select_solution_for_ms: Task[P, R] = task(select_aosolution_for_ms)
 task_create_apply_solutions_cmd: Task[P, R] = task(create_apply_solutions_cmd)
 task_rename_column_in_ms: Task[P, R] = task(rename_column_in_ms)
+task_convolve_images = task(convolve_images)
 
 # Tasks below are extracting componented from earlier stages, or are
 # otherwise doing something important

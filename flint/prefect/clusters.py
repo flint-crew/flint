@@ -6,7 +6,6 @@ operations.
 
 from __future__ import annotations
 
-from glob import glob
 from pathlib import Path
 from typing import Any
 
@@ -14,25 +13,6 @@ import yaml
 from prefect_dask import DaskTaskRunner
 
 from flint.utils import get_packaged_resource_path
-
-
-def list_packaged_clusters() -> list[str]:
-    """Return a list of cluster names that are available in the packaged set of
-    dask_jobqueue specification YAML files.
-
-    Returns:
-        list[str]: A list of preinstalled dask_jobqueue cluster specification files
-    """
-    # TODO: This should be removed
-
-    yaml_files_dir = get_packaged_resource_path(
-        package="aces.cluster_configs", filename=""
-    )
-    yaml_files = glob(f"{yaml_files_dir}/*yaml")
-
-    clusters = [Path(f).stem for f in yaml_files]
-
-    return clusters
 
 
 def get_cluster_spec(cluster: str | Path) -> dict[Any, Any]:
@@ -54,19 +34,18 @@ def get_cluster_spec(cluster: str | Path) -> dict[Any, Any]:
         dict[Any, Any]: Dictionary of know options/parameters for dask_jobqueue.SLURMCluster
     """
 
-    KNOWN_CLUSTERS = ("galaxy",)
     yaml_file = None
 
     if Path(cluster).exists():
         yaml_file = cluster
     else:
         yaml_file = get_packaged_resource_path(
-            package="flint.cluster_configs", filename=f"{cluster}.yaml"
+            package="flint.data.cluster_configs", filename=f"{cluster}.yaml"
         )
 
     if yaml_file is None or not Path(yaml_file).exists():
         raise ValueError(
-            f"{cluster=} is not known, or its YAML file could not be loaded. Known clusters are {KNOWN_CLUSTERS}"
+            f"{cluster=} is not known, or its YAML file could not be loaded."
         )
 
     with open(yaml_file) as in_file:

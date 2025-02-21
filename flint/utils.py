@@ -364,6 +364,7 @@ def get_packaged_resource_path(package: str, filename: str) -> Path:
         from importlib import resources as importlib_resources
 
     p = importlib_resources.files(package)
+    logger.info(f"{p=}")
     full_path = Path(p) / filename  # type: ignore
 
     logger.debug(f"Resolved {full_path=}")

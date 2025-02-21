@@ -12,7 +12,6 @@ from flint.configuration import (
     get_options_from_strategy,
     load_and_copy_strategy,
 )
-from flint.convol import task_convolve_images
 from flint.exceptions import MSError
 from flint.imager.wsclean import (
     ImageSet,
@@ -37,6 +36,7 @@ from flint.options import (
 )
 from flint.prefect.clusters import get_dask_runner
 from flint.prefect.common.imaging import (
+    task_convolve_images,
     task_get_common_beam_from_image_set,
     task_linmos_images,
     task_wsclean_imager,

@@ -15,8 +15,31 @@ from flint.catalogue import (
     download_vizier_catalogue,
     get_reference_catalogue,
     guess_column_in_table,
+    verify_reference_catalogues,
 )
 from flint.utils import get_packaged_resource_path
+
+
+def test_verify_catalogue_check(tmpdir):
+    """Makes sure that the verify catalogue function works nicely.
+    Only a basic check if it exists is performed, don't try to
+    download"""
+
+    catalogue_directory = Path(tmpdir) / "catalogue1"
+    catalogue_directory.mkdir(parents=True)
+
+    assert not verify_reference_catalogues(
+        reference_directory=catalogue_directory, load_catalogue=False
+    )
+
+    for k, v in KNOWN_REFERENCE_CATALOGUES.items():
+        file_name = v.file_name
+        temp = catalogue_directory / file_name
+        temp.touch()
+
+    assert verify_reference_catalogues(
+        reference_directory=catalogue_directory, load_catalogue=False
+    )
 
 
 def _get_aegean_catalogue():

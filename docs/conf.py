@@ -8,6 +8,8 @@
 from __future__ import annotations
 
 import importlib.metadata
+import shutil
+from pathlib import Path
 
 project = "flint"
 copyright = "2025, Tim Galvin"
@@ -70,3 +72,9 @@ exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 html_theme = "furo"
 # html_theme = "sphinx_rtd_theme"
 html_static_path = ["_static"]
+
+# copy logo to _static
+static_path = Path("_static")
+logo_path = Path("../logo.jpeg")
+
+shutil.copyfile(logo_path, static_path / logo_path.name)
