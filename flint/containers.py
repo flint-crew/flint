@@ -60,7 +60,12 @@ potato_container = FlintContainer(
     uri="docker://alecthomson/flint-containers:potato",
     description="Peel out that terrible annoying source",
 )
-
+casa_container = FlintContainer(
+    name="casa",
+    file_name="flint-containers_casa.sif",
+    uri="docker://alecthomson/flint-containers:casa",
+    description="A monolithic install of the CASA application",
+)
 LIST_OF_KNOWN_CONTAINERS = (
     calibrate_container,
     wsclean_container,
@@ -68,10 +73,27 @@ LIST_OF_KNOWN_CONTAINERS = (
     aoflagger_contaer,
     aegean_contaer,
     potato_container,
+    casa_container,
 )
 KNOWN_CONTAINER_LOOKUP: dict[str, FlintContainer] = {
     v.name: v for v in LIST_OF_KNOWN_CONTAINERS
 }
+
+
+def _sanity_check_containers(
+    container_list: list[FlintContainer] | tuple[FlintContainer, ...],
+) -> None:
+    """Do some quick validation checks on the set of loaded containers. Make sure there are no
+    duplicated names or file names"""
+    assert len(container_list) == len(
+        set([container.name for container in container_list])
+    ), "Duplicated name detected in reference containers"
+    assert len(container_list) == len(
+        set([container.file_name for container in container_list])
+    ), "Duplicated file name detected in reference containers"
+
+
+_sanity_check_containers(container_list=LIST_OF_KNOWN_CONTAINERS)
 
 
 def log_known_containers() -> None:

@@ -4,13 +4,29 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from flint.containers import (
     KNOWN_CONTAINER_LOOKUP,
     LIST_OF_KNOWN_CONTAINERS,
     FlintContainer,
+    _sanity_check_containers,
     log_known_containers,
     verify_known_containers,
 )
+
+
+def test_sanity_check_containers():
+    """Make sure that the reference containers are valid with a simple set of checks.
+    Make sure not doubling up on the reference name of file name"""
+    _sanity_check_containers(container_list=LIST_OF_KNOWN_CONTAINERS)
+    from copy import deepcopy
+
+    dummy = list(deepcopy(LIST_OF_KNOWN_CONTAINERS))
+    dummy.append(dummy[0])
+
+    with pytest.raises(AssertionError):
+        _sanity_check_containers(container_list=dummy)
 
 
 def test_verify_known_containers(tmpdir):
