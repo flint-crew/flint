@@ -316,6 +316,7 @@ def describe_ms(ms: MS | Path, verbose: bool = False) -> MSSummary:
 
     """
     ms = MS(path=ms) if isinstance(ms, Path) else ms
+    logger.info(f"Obtaining MSSummary for {ms.path}")
 
     with table(str(ms.path), readonly=True, ack=False) as tab:
         colnames = tab.colnames()
