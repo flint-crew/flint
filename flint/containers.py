@@ -56,7 +56,7 @@ aegean_contaer = FlintContainer(
 )
 potato_container = FlintContainer(
     name="potato",
-    file_name="flint-container_potato.sif",
+    file_name="flint-containers_potato.sif",
     uri="docker://alecthomson/flint-containers:potato",
     description="Peel out that terrible annoying source",
 )
