@@ -252,6 +252,7 @@ def test_trim_fits_while_blanking(tmp_path):
     assert trim_hdr["CRPIX1"] == -10
     assert trim_hdr["CRPIX2"] == 10
     assert trim_data.shape == (589, 479)
+    assert np.sum(trim_data == 0.0) == 0
 
 
 def test_trim_fits(tmp_path):
