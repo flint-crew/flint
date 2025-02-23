@@ -79,10 +79,11 @@ def test_get_image_weight_plane():
     assert _get_image_weight_plane(image_data=data) == 0.0
 
 
-def create_fits_image(out_path, image_size=(1000, 1000)):
+def create_fits_image(out_path, image_size=(1000, 1000), set_to_nan: bool = True):
     data = np.zeros(image_size)
     data[10:600, 20:500] = 1
-    data[data == 0] = np.nan
+    if set_to_nan:
+        data[data == 0] = np.nan
 
     header = fits.header.Header({"CRPIX1": 10, "CRPIX2": 20})
 
@@ -230,6 +231,27 @@ def test_linmos_holo_options(tmpdir):
                 Path("doesnotexist.fits"),
             ],
         )
+
+
+def test_trim_fits_while_blanking(tmp_path):
+    """Ensure that fits files can be trimmed appropriately based on row/columns with valid pixels.
+    This will require pixels with values of 0.0 to be naned"""
+    tmp_dir = tmp_path / "imagenan"
+    tmp_dir.mkdir()
+
+    out_fits = tmp_dir / "example.fits"
+
+    create_fits_image(out_fits, set_to_nan=False)
+    og_hdr = fits.getheader(out_fits)
+    assert og_hdr["CRPIX1"] == 10
+    assert og_hdr["CRPIX2"] == 20
+
+    trim_fits_image(out_fits)
+    trim_hdr = fits.getheader(out_fits)
+    trim_data = fits.getdata(out_fits)
+    assert trim_hdr["CRPIX1"] == -10
+    assert trim_hdr["CRPIX2"] == 10
+    assert trim_data.shape == (589, 479)
 
 
 def test_trim_fits(tmp_path):
