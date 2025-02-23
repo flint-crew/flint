@@ -131,6 +131,33 @@ def test_field_summary_beam_summary_make_psf(
     make_psf_table(field_summary=field_summary, output_path=Path(tmpdir))
 
 
+def test_field_summary_with_mssummary(ms_example):
+    cal_sbid_path = Path("/scratch3/gal16b/split/39433/SB39433.1934-638.beam0.ms")
+    mss = [ms_example for _ in range(36)]
+
+    from flint.ms import describe_ms
+
+    ms_summaries = [describe_ms(ms=ms_example) for _ in range(36)]
+
+    field_summary = create_field_summary(
+        mss=mss, ms_summaries=ms_summaries, cal_sbid_path=cal_sbid_path
+    )
+
+    assert isinstance(field_summary, FieldSummary)
+    assert field_summary.sbid == "39400"
+    assert field_summary.cal_sbid == "39433"
+
+    field_summary = create_field_summary(mss=mss)
+
+    assert isinstance(field_summary, FieldSummary)
+    assert field_summary.sbid == "39400"
+    assert field_summary.cal_sbid == "None"
+    assert isinstance(field_summary.location, EarthLocation)
+    assert field_summary.integration_time == 19.90655994415036
+    assert isinstance(field_summary.ms_times, Time)
+    assert len(field_summary.ms_times) == 2
+
+
 def test_field_summary(ms_example):
     cal_sbid_path = Path("/scratch3/gal16b/split/39433/SB39433.1934-638.beam0.ms")
     mss = [ms_example for _ in range(36)]

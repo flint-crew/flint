@@ -10,6 +10,9 @@ from prefect import Task, task
 from flint.calibrate.aocalibrate import AddModelOptions, add_model
 from flint.imager.wsclean import WSCleanResult
 from flint.logging import logger
+from flint.ms import describe_ms
+
+task_describe_ms = task(describe_ms)
 
 P = ParamSpec("P")
 R = TypeVar("R")

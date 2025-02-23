@@ -118,7 +118,9 @@ def _get_pol_axis_as_rad(ms: MS | Path) -> float:
 
 
 # TODO: Need to establise a MSLike type
-def add_ms_summaries(field_summary: FieldSummary, mss: list[MS]) -> FieldSummary:
+def add_ms_summaries(
+    field_summary: FieldSummary, mss: list[MS] | list[MSSummary]
+) -> FieldSummary:
     """Obtain a MSSummary instance to add to a FieldSummary
 
     Quantities derived from the field centre (hour angles, elevations) are
@@ -129,14 +131,19 @@ def add_ms_summaries(field_summary: FieldSummary, mss: list[MS]) -> FieldSummary
 
     Args:
         field_summary (FieldSummary): Existing field summary object to update
-        mss (List[MS]): Set of measurement sets to describe
+        mss (List[MS] | list[MSSummary]): Set of measurement sets to describe. If they are ``MSSumarry`` they are simply attached.
 
     Returns:
         Tuple[MSSummary]: Results from the inspected set of measurement sets
     """
     logger.info("Adding MS summaries")
+    logger.info(f"{mss}")
+    logger.info(f"{[isinstance(ms, MSSummary) for ms in mss]}")
 
-    ms_summaries = tuple(map(describe_ms, mss))
+    ms_summaries: list[MSSummary] = [
+        ms if isinstance(ms, MSSummary) else describe_ms(ms=ms) for ms in mss
+    ]
+
     centres_list = [ms_summary.phase_dir for ms_summary in ms_summaries]
     if len(centres_list) == 0:
         raise ValueError("No phase directions found in the MSs")
@@ -154,7 +161,7 @@ def add_ms_summaries(field_summary: FieldSummary, mss: list[MS]) -> FieldSummary
 
     # The INSTRUMENT_RECEPTOR_ANGLE comes from fixms and is
     # inserted to preserve the original orientation.
-    pol_axis = _get_pol_axis_as_rad(ms=mss[0])
+    pol_axis = _get_pol_axis_as_rad(ms=ms_summaries[0].path)
 
     field_summary = field_summary.with_options(
         ms_summaries=ms_summaries,
@@ -264,7 +271,8 @@ def update_field_summary(
 
 
 def create_field_summary(
-    mss: list[MS | Path],
+    mss: list[MS] | list[Path],
+    ms_summaries: list[MSSummary] | None = None,
     cal_sbid_path: Path | None = None,
     holography_path: Path | None = None,
     aegean_outputs: AegeanOutputs | None = None,
@@ -275,11 +283,11 @@ def create_field_summary(
     All other keyword arguments are passed directly through to `FieldSummary`
 
     Args:
-        ms (Union[MS, Path]): Measurement set information will be pulled from
+        mss (list[MS] | list[Path]): Measurement set information will be pulled from
+        ms_summaries (list[MSSummary] | None, optional): The pre-evaluated MSSummaries corresponding to for each MS. If None they are created internally. Defaults to None.
         cal_sbid_path (Optional[Path], optional): Path to an example of a bandpass measurement set. Defaults to None.
         holography_path (Optional[Path], optional): The holography fits cube used (or will be) to linmos. Defaults to None.
         aegean_outputs (Optional[AegeanOutputs], optional): Should RMS / source information be added to the instance. Defaults to None.
-        mss (Optional[Collection[MS]], optionals): Set of measurement sets to describe
 
     Returns:
         FieldSummary: A summary of a field
@@ -327,7 +335,8 @@ def create_field_summary(
     )
 
     field_summary = add_ms_summaries(
-        field_summary=field_summary, mss=[MS.cast(ms=ms) for ms in mss]
+        field_summary=field_summary,
+        mss=ms_summaries if ms_summaries else [describe_ms(ms=ms) for ms in mss],
     )
 
     if aegean_outputs:
@@ -358,23 +367,29 @@ class BeamSummary(NamedTuple):
 
 
 def create_beam_summary(
-    ms: MS | Path,
+    ms: MS | Path | MSSummary,
     image_set: ImageSet | WSCleanResult | None = None,
     components: AegeanOutputs | None = None,
 ) -> BeamSummary:
     """Create a summary of a beam
 
     Args:
-        ms (Union[MS, Path]): The measurement set being considered
+        ms (MS | Path | MSSummary): The measurement set being considered. If MSSummary it is simply attached.
         image_set (Optional[ImageSet], optional): Images produced from an imager. Defaults to None.
         components (Optional[AegeanOutputs], optional): Source finding output components. Defaults to None.
 
     Returns:
         BeamSummary: Summary object of a beam
     """
-    ms = MS.cast(ms=ms)
-    logger.info(f"Creating BeamSummary for {ms.path=}")
-    ms_summary = describe_ms(ms=ms)
+    ms_summary = ms
+    if isinstance(ms, (MS, Path)):
+        ms = MS.cast(ms=ms)
+        logger.info(f"Creating BeamSummary for {ms.path=}")
+        ms_summary = describe_ms(ms=ms)
+
+    assert isinstance(ms_summary, MSSummary), (
+        f"Sanity check for MSSummary type failed, instead {type(ms)=}"
+    )
 
     # TODO: Another example where a .cast type method could be useful
     # or where a standardised set of attributes with a HasImageSet type
@@ -383,8 +398,6 @@ def create_beam_summary(
             image_set if isinstance(image_set, ImageSet) else image_set.image_set
         )
 
-    beam_summary = BeamSummary(
+    return BeamSummary(
         ms_summary=ms_summary, image_set=image_set, components=components
     )
-
-    return beam_summary

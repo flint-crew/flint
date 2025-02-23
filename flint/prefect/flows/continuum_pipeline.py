@@ -55,7 +55,7 @@ from flint.prefect.common.imaging import (
     task_zip_ms,
     validation_items,
 )
-from flint.prefect.common.ms import task_add_model_source_list_to_ms
+from flint.prefect.common.ms import task_add_model_source_list_to_ms, task_describe_ms
 from flint.prefect.common.utils import (
     task_archive_sbid,
     task_create_beam_summary,
@@ -247,8 +247,11 @@ def process_science_fields(
         )
         return
 
+    ms_summaries = task_describe_ms.map(ms=preprocess_science_mss)
+
     field_summary = task_create_field_summary.submit(
         mss=preprocess_science_mss,
+        ms_summaries=ms_summaries,
         cal_sbid_path=bandpass_path,
         holography_path=field_options.holofile,
     ).result()  # type: ignore
