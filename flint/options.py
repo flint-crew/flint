@@ -13,11 +13,11 @@ from __future__ import (  # Used for mypy/pylance to like the return type of MS.
 
 from argparse import ArgumentParser, Namespace
 from pathlib import Path
+from types import NoneType, UnionType
 from typing import (
     Any,
     NamedTuple,
     TypeVar,
-    Union,
     get_args,
     get_origin,
 )
@@ -103,9 +103,22 @@ def _create_argparse_options(name: str, field: FieldInfo) -> tuple[str, dict[str
     if field.annotation is bool:
         options["action"] = "store_false" if field.default else "store_true"
     elif field_type in iterable_types or (
-        field_type is Union and any(get_origin(p) in iterable_types for p in field_args)
+        field_type is UnionType
+        and any(get_origin(p) in iterable_types for p in field_args)
     ):
-        options["nargs"] = "+"
+        nargs = "+"
+        if field_type in iterable_types and Ellipsis not in field_args:
+            nargs = len(field_args)
+        else:
+            for arg in field_args:
+                args = get_args(arg)
+                if (
+                    arg is not NoneType
+                    and type(args) in iterable_types
+                    and Ellipsis not in args
+                ):
+                    nargs = len(args)
+        options["nargs"] = nargs
 
     return field_name, options
 
@@ -311,7 +324,7 @@ class FieldOptions(BaseOptions):
     """Linmos the cleaning residuals together into a field image"""
     beam_cutoff: float = 150
     """Cutoff in arcseconds to use when calculating the common beam to convol to"""
-    fixed_beam_shape: list[float] | None = None
+    fixed_beam_shape: tuple[float, float, float] | None = None
     """Specify the final beamsize of linmos field images in (arcsec, arcsec, deg)"""
     pb_cutoff: float = 0.1
     """Primary beam attenuation cutoff to use during linmos"""
@@ -364,7 +377,7 @@ class PolFieldOptions(BaseOptions):
     """Path to the holography FITS cube that will be used when co-adding beams"""
     beam_cutoff: float = 150
     """Cutoff in arcseconds to use when calculating the common beam to convol to"""
-    fixed_beam_shape: list[float] | None = None
+    fixed_beam_shape: list[float, float, float] | None = None
     """Specify the final beamsize of linmos field images in (arcsec, arcsec, deg)"""
     pb_cutoff: float = 0.1
     """Primary beam attenuation cutoff to use during linmos"""
