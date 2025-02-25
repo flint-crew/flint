@@ -106,7 +106,7 @@ def _create_argparse_options(name: str, field: FieldInfo) -> tuple[str, dict[str
         field_type is UnionType
         and any(get_origin(p) in iterable_types for p in field_args)
     ):
-        nargs = "+"
+        nargs: str | int = "+"
         if field_type in iterable_types and Ellipsis not in field_args:
             nargs = len(field_args)
         else:
@@ -377,7 +377,7 @@ class PolFieldOptions(BaseOptions):
     """Path to the holography FITS cube that will be used when co-adding beams"""
     beam_cutoff: float = 150
     """Cutoff in arcseconds to use when calculating the common beam to convol to"""
-    fixed_beam_shape: list[float, float, float] | None = None
+    fixed_beam_shape: tuple[float, float, float] | None = None
     """Specify the final beamsize of linmos field images in (arcsec, arcsec, deg)"""
     pb_cutoff: float = 0.1
     """Primary beam attenuation cutoff to use during linmos"""
