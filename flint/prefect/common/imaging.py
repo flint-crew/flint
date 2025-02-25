@@ -33,6 +33,11 @@ from flint.imager.wsclean import (
     ImageSet,
     WSCleanOptions,
     WSCleanResult,
+    combine_images_to_cube,
+    image_set_from_result,
+    merge_image_sets,
+    merge_image_sets_from_results,
+    split_and_get_image_set,
     wsclean_imager,
 )
 from flint.logging import logger
@@ -59,7 +64,10 @@ from flint.prefect.common.utils import upload_image_as_artifact
 from flint.selfcal.casa import gaincal_applycal_ms
 from flint.source_finding.aegean import AegeanOutputs, run_bane_and_aegean
 from flint.summary import FieldSummary
-from flint.utils import flatten_items, zip_folder
+from flint.utils import (
+    flatten_items,
+    zip_folder,
+)
 from flint.validation import (
     ValidationTables,
     XMatchTables,
@@ -80,11 +88,22 @@ task_select_solution_for_ms: Task[P, R] = task(select_aosolution_for_ms)
 task_create_apply_solutions_cmd: Task[P, R] = task(create_apply_solutions_cmd)
 task_rename_column_in_ms: Task[P, R] = task(rename_column_in_ms)
 task_convolve_images = task(convolve_images)
+task_split_and_get_image_set = task(split_and_get_image_set)
+task_image_set_from_result = task(image_set_from_result)
+task_combine_images_to_cube = task(combine_images_to_cube)
+task_merge_image_sets = task(merge_image_sets)
+task_merge_image_sets_from_results = task(merge_image_sets_from_results)
+
 
 # Tasks below are extracting componented from earlier stages, or are
 # otherwise doing something important
 
 FlagMS = TypeVar("FlagMS", MS, ApplySolutions)
+
+
+@task
+def task_get_channel_images_from_paths(paths: list[Path]) -> list[Path]:
+    return [path for path in paths if "MFS" not in path.name]
 
 
 @task

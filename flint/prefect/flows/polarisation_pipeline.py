@@ -16,9 +16,6 @@ from flint.exceptions import MSError
 from flint.imager.wsclean import (
     ImageSet,
     WSCleanResult,
-    combine_images_to_cube,
-    task_merge_image_sets,
-    task_split_and_get_image_set,
 )
 from flint.logging import logger
 from flint.ms import find_mss
@@ -37,16 +34,19 @@ from flint.options import (
 )
 from flint.prefect.clusters import get_dask_runner
 from flint.prefect.common.imaging import (
+    task_combine_images_to_cube,
     task_convolve_images,
+    task_get_channel_images_from_paths,
     task_get_common_beam_from_image_set,
     task_linmos_images,
+    task_merge_image_sets,
     task_preprocess_askap_ms,
+    task_split_and_get_image_set,
     task_wsclean_imager,
 )
 from flint.prefect.common.utils import (
     task_create_field_summary,
     task_create_object,
-    task_get_channel_images_from_paths,
     task_getattr,
     task_rename_linear_to_stokes,
 )
@@ -203,7 +203,7 @@ def process_science_fields_pol(
                                 linear_name=prefix,
                                 stokes=stokes,
                             )
-                        cube_path = combine_images_to_cube.submit(
+                        cube_path = task_combine_images_to_cube.submit(
                             images=channel_image_list,
                             prefix=prefix,
                             mode="image",
