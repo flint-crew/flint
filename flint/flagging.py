@@ -11,7 +11,8 @@ from casacore.tables import table
 
 from flint.exceptions import MSError
 from flint.logging import logger
-from flint.ms import MS, check_column_in_ms, critical_ms_interaction, describe_ms
+from flint.ms import check_column_in_ms, critical_ms_interaction, describe_ms
+from flint.options import MS
 from flint.sclient import run_singularity_command
 from flint.utils import get_packaged_resource_path
 

@@ -34,13 +34,13 @@ from flint.exceptions import (
     NotSupportedError,
 )
 from flint.logging import logger
-from flint.ms import MS
 from flint.naming import (
     create_image_cube_name,
     create_imaging_name_prefix,
     split_images,
 )
 from flint.options import (
+    MS,
     BaseOptions,
     add_options_to_parser,
     create_options_from_parser,
@@ -698,7 +698,7 @@ def create_wsclean_name_argument(wsclean_options: WSCleanOptions, ms: MS) -> Pat
     pol = wsclean_options.pol
     channel_range = wsclean_options.channel_range
     name_prefix_str = create_imaging_name_prefix(
-        ms=ms, pol=pol, channel_range=channel_range
+        ms_path=ms.path, pol=pol, channel_range=channel_range
     )
 
     # Now resolve the directory part

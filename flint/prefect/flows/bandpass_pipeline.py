@@ -27,9 +27,10 @@ from flint.calibrate.aocalibrate import (
 )
 from flint.flagging import flag_ms_aoflagger
 from flint.logging import logger
-from flint.ms import MS, preprocess_askap_ms, split_by_field
+from flint.ms import preprocess_askap_ms, split_by_field
 from flint.naming import get_sbid_from_path
 from flint.options import (
+    MS,
     BandpassOptions,
     add_options_to_parser,
     create_options_from_parser,

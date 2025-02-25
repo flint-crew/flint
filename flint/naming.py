@@ -11,7 +11,6 @@ from typing import Any, Literal, NamedTuple, overload
 
 from flint.exceptions import NamingException
 from flint.logging import logger
-from flint.options import MS
 
 
 def _rename_linear_to_stokes(
@@ -191,7 +190,7 @@ def create_image_cube_name(
 
 
 def create_imaging_name_prefix(
-    ms: MS | Path,
+    ms_path: Path,
     pol: str | None = None,
     channel_range: tuple[int, int] | None = None,
 ) -> str:
@@ -206,8 +205,6 @@ def create_imaging_name_prefix(
     Returns:
         str: The constructed string name
     """
-
-    ms_path = MS.cast(ms=ms).path
 
     names = [ms_path.stem]
     if pol:

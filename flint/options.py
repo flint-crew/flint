@@ -30,6 +30,73 @@ from flint.exceptions import MSError
 from flint.logging import logger
 
 
+class MS(NamedTuple):
+    """Helper to keep track of measurement set information
+
+    This is the class that should be used when describing a measurement
+    set that will be operated on.
+    """
+
+    path: Path
+    """Path to the measurement set that is being represented"""
+    column: str | None = None
+    """Column that should be operated against"""
+    beam: int | None = None
+    """The beam ID of the MS within an ASKAP field"""
+    spw: int | None = None
+    """Intended to be used with ASKAP high-frequency resolution modes, where the MS is divided into SPWs"""
+    field: str | None = None
+    """The field name  of the data"""
+    model_column: str | None = None
+    """The column name of the most recently MODEL data"""
+
+    @property
+    def ms(self) -> MS:
+        return self
+
+    @classmethod
+    def cast(cls, ms: MS | Path) -> MS:
+        """Create/return a MS instance given either a Path or MS.
+
+        If the input is neither a MS instance or Path, the object will
+        be checked to see if it has a `.ms` attribute. If it does then
+        this will be used.
+
+        Args:
+            ms (Union[MS, Path]): The input type to consider
+
+        Raises:
+            MSError: Raised when the input ms can not be cast to an MS instance
+
+        Returns:
+            MS: A normalised MS
+        """
+        if isinstance(ms, MS):
+            # Nothing to do
+            pass
+        elif isinstance(ms, Path):
+            ms = MS(path=ms)
+        elif "ms" in dir(ms) and isinstance(ms.ms, MS):
+            ms = ms.ms
+        else:
+            raise MSError(f"Unable to convert {ms=} of {type(ms)} to MS object. ")
+
+        return ms
+
+    def with_options(self, **kwargs) -> MS:
+        """Create a new MS instance with keywords updated
+
+        Returns:
+            MS: New MS instance with updated attributes
+        """
+        # TODO: Update the signature to have the actual attributes to
+        # help keep mypy and other linters happy
+        as_dict = self._asdict()
+        as_dict.update(kwargs)
+
+        return MS(**as_dict)
+
+
 def options_to_dict(input_options: Any) -> dict:
     """Helper function to convert an `Options` type class to a dictionary.
 
@@ -102,6 +169,8 @@ def _create_argparse_options(name: str, field: FieldInfo) -> tuple[str, dict[str
 
     if field.annotation is bool:
         options["action"] = "store_false" if field.default else "store_true"
+
+    # if field_type is in (list, tuple, set) OR if (list, tuple, set) | Any
     elif field_type in iterable_types or (
         field_type is UnionType
         and any(get_origin(p) in iterable_types for p in field_args)
@@ -109,7 +178,8 @@ def _create_argparse_options(name: str, field: FieldInfo) -> tuple[str, dict[str
         nargs: str | int = "+"
         if field_type in iterable_types and Ellipsis not in field_args:
             nargs = len(field_args)
-        else:
+
+        elif Ellipsis not in field_args:
             for arg in field_args:
                 args = get_args(arg)
                 if (
@@ -118,6 +188,7 @@ def _create_argparse_options(name: str, field: FieldInfo) -> tuple[str, dict[str
                     and Ellipsis not in args
                 ):
                     nargs = len(args)
+
         options["nargs"] = nargs
 
     return field_name, options
@@ -150,7 +221,11 @@ def add_options_to_parser(
 
     for name, field in options_class.model_fields.items():
         field_name, options = _create_argparse_options(name=name, field=field)
-        group.add_argument(field_name, **options)  # type: ignore
+        try:
+            group.add_argument(field_name, **options)  # type: ignore
+        except Exception as e:
+            logger.error(f"{field_name=} {options=}")
+            raise e
 
     return parser
 
@@ -373,6 +448,8 @@ class PolFieldOptions(BaseOptions):
     """Path to the singularity wsclean container"""
     yandasoft_container: Path | None = None
     """Path to the singularity yandasoft container"""
+    casa_container: Path | None = None
+    """Path to the singularity CASA container"""
     holofile: Path | None = None
     """Path to the holography FITS cube that will be used when co-adding beams"""
     beam_cutoff: float = 150
@@ -451,70 +528,3 @@ class ArchiveOptions(BaseOptions):
     """Regular-expressions to use to collect files that should be tarballed"""
     copy_file_re_patterns: tuple[str, ...] = DEFAULT_COPY_RE_PATTERNS
     """Regular-expressions used to identify files to copy into a final location (not tarred)"""
-
-
-class MS(NamedTuple):
-    """Helper to keep track of measurement set information
-
-    This is the class that should be used when describing a measurement
-    set that will be operated on.
-    """
-
-    path: Path
-    """Path to the measurement set that is being represented"""
-    column: str | None = None
-    """Column that should be operated against"""
-    beam: int | None = None
-    """The beam ID of the MS within an ASKAP field"""
-    spw: int | None = None
-    """Intended to be used with ASKAP high-frequency resolution modes, where the MS is divided into SPWs"""
-    field: str | None = None
-    """The field name  of the data"""
-    model_column: str | None = None
-    """The column name of the most recently MODEL data"""
-
-    @property
-    def ms(self) -> MS:
-        return self
-
-    @classmethod
-    def cast(cls, ms: MS | Path) -> MS:
-        """Create/return a MS instance given either a Path or MS.
-
-        If the input is neither a MS instance or Path, the object will
-        be checked to see if it has a `.ms` attribute. If it does then
-        this will be used.
-
-        Args:
-            ms (Union[MS, Path]): The input type to consider
-
-        Raises:
-            MSError: Raised when the input ms can not be cast to an MS instance
-
-        Returns:
-            MS: A normalised MS
-        """
-        if isinstance(ms, MS):
-            # Nothing to do
-            pass
-        elif isinstance(ms, Path):
-            ms = MS(path=ms)
-        elif "ms" in dir(ms) and isinstance(ms.ms, MS):
-            ms = ms.ms
-        else:
-            raise MSError(f"Unable to convert {ms=} of {type(ms)} to MS object. ")
-
-        return ms
-
-    def with_options(self, **kwargs) -> MS:
-        """Create a new MS instance with keywords updated
-
-        Returns:
-            MS: New MS instance with updated attributes
-        """
-        # TODO: Update the signature to have the actual attributes to
-        # help keep mypy and other linters happy
-        as_dict = self._asdict()
-        as_dict.update(kwargs)
-
-        return MS(**as_dict)

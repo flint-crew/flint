@@ -30,9 +30,9 @@ from flint.bptools.smoother import (
 )
 from flint.exceptions import PhaseOutlierFitError
 from flint.logging import logger
-from flint.ms import MS, consistent_ms, get_beam_from_ms, remove_columns_from_ms
+from flint.ms import consistent_ms, get_beam_from_ms, remove_columns_from_ms
 from flint.naming import get_aocalibrate_output_path
-from flint.options import BaseOptions
+from flint.options import MS, BaseOptions
 from flint.sclient import run_singularity_command
 from flint.utils import create_directory
 

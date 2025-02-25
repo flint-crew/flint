@@ -94,7 +94,6 @@ task_combine_images_to_cube = task(combine_images_to_cube)
 task_merge_image_sets = task(merge_image_sets)
 task_merge_image_sets_from_results = task(merge_image_sets_from_results)
 
-
 # Tasks below are extracting componented from earlier stages, or are
 # otherwise doing something important
 

@@ -97,6 +97,10 @@ def process_science_fields_pol(
             "Some MeasurementSets are from Flint, some are from CASDA"
         )
         logger.info("Data are from CASDA, need to apply FixMS")
+        if pol_field_options.casa_container is None:
+            msg = "We need to apply FixMS to CASDA-provided data, but no CASA container provided"
+            raise MSError(msg)
+
         corrected_mss = []
         for ms in science_mss:
             task_preprocess_askap_ms.submit(
@@ -104,6 +108,8 @@ def process_science_fields_pol(
                 data_column=strategy["defaults"].get("data_column", "DATA"),
                 skip_rotation=False,
                 fix_stokes_factor=True,
+                apply_ms_transform=True,
+                casa_container=pol_field_options.casa_container,
             )
             corrected_mss.append(ms)
 

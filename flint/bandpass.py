@@ -11,8 +11,9 @@ from casacore.tables import table, taql
 from flint.calibrate.aocalibrate import AOSolutions, calibrate_apply_ms
 from flint.flagging import flag_ms_aoflagger
 from flint.logging import logger
-from flint.ms import MS, describe_ms, get_field_id_for_field, preprocess_askap_ms
+from flint.ms import describe_ms, get_field_id_for_field, preprocess_askap_ms
 from flint.naming import create_ms_name
+from flint.options import MS
 from flint.sky_model import KNOWN_1934_FILES, get_1934_model
 
 
