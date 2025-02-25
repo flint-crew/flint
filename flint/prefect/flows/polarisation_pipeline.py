@@ -103,7 +103,7 @@ def process_science_fields_pol(
 
         corrected_mss = []
         for ms in science_mss:
-            task_preprocess_askap_ms.submit(
+            corrected_ms = task_preprocess_askap_ms.submit(
                 ms=ms,
                 data_column=strategy["defaults"].get("data_column", "DATA"),
                 skip_rotation=False,
@@ -111,7 +111,7 @@ def process_science_fields_pol(
                 apply_ms_transform=True,
                 casa_container=pol_field_options.casa_container,
             )
-            corrected_mss.append(ms)
+            corrected_mss.append(corrected_ms)
 
         assert len(corrected_mss) == len(science_mss), (
             "Number of corrected MSs does not match number of input MSs"
