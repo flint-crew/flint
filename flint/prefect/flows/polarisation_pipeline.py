@@ -110,6 +110,7 @@ def process_science_fields_pol(
                 fix_stokes_factor=True,
                 apply_ms_transform=True,
                 casa_container=pol_field_options.casa_container,
+                rename=True,
             )
             corrected_mss.append(corrected_ms)
 

@@ -7,10 +7,12 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal, NamedTuple, overload
+from typing import Any, Literal, NamedTuple, TypeVar
 
 from flint.exceptions import NamingException
 from flint.logging import logger
+
+PathStr = TypeVar("PathStr", str, Path)
 
 
 def _rename_linear_to_stokes(
@@ -25,21 +27,10 @@ def _rename_linear_to_stokes(
     return stokes_name
 
 
-# TODO: Why overload and not TypeVar(Path,str)
-
-
-@overload
-def rename_linear_to_stokes(linear_name: Path, stokes: str) -> Path: ...
-
-
-@overload
-def rename_linear_to_stokes(linear_name: str, stokes: str) -> str: ...
-
-
 def rename_linear_to_stokes(
-    linear_name: Path | str,
+    linear_name: PathStr,
     stokes: str,
-) -> Path | str:
+) -> PathStr:
     if isinstance(linear_name, Path):
         return Path(_rename_linear_to_stokes(linear_name.as_posix(), stokes))
 

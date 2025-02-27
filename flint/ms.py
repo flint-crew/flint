@@ -688,6 +688,7 @@ def preprocess_askap_ms(
     fix_stokes_factor: bool = False,
     apply_ms_transform: bool = False,
     casa_container: Path | None = None,
+    rename: bool = False,
 ) -> MS:
     """The ASKAP MS stores its data in a way that is not immediately accessible
     to other astronomical software, like wsclean or casa. For each measurement set
@@ -711,6 +712,7 @@ def preprocess_askap_ms(
         fix_stokes_factor (bool, optional): Apply the stokes scaling factor (aruses in different definition of Stokes between Ynadasoft and other applications) when rotation visibilities. This should be set to False is the bandpass solutions have already absorded this scaling term. Defaults to False.
         apply_ms_transform (bool, optional): If True, the MS will be transformed using the `casa_container` provided. Defaults to False.
         casa_container (Path, optional): The path to the CASA container that will be used to transform the MS. Defaults to None.
+        rename (bool, optional): If True, the MS will be renamed to a Flint-processed name. Defaults to False.
 
     Returns:
         MS: An updated measurement set with the corrections applied.
@@ -778,6 +780,13 @@ def preprocess_askap_ms(
         corrected_data_column=data_column,
         fix_stokes_factor=fix_stokes_factor,
     )
+
+    if rename:
+        logger.info("Renaming the measurement set.")
+        new_ms_name_str = create_ms_name(ms_path=ms.path)
+        new_ms_path = ms.path.parent / Path(new_ms_name_str)
+        shutil.move(ms.path, new_ms_path)
+        ms = ms.with_options(path=new_ms_path)
 
     return ms.with_options(column=data_column)
 
