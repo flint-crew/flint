@@ -176,19 +176,21 @@ def _create_argparse_options(name: str, field: FieldInfo) -> tuple[str, dict[str
         and any(get_origin(p) in iterable_types for p in field_args)
     ):
         nargs: str | int = "+"
-        if field_type in iterable_types and Ellipsis not in field_args:
+
+        # If the field is a tuple, and the Ellipsis is not present
+        # We can assume that the nargs is the length of the tuple
+        if field_type is tuple and Ellipsis not in field_args:
             nargs = len(field_args)
 
-        elif Ellipsis not in field_args:
+        # Now we handle unions, but do the same check as above
+        elif field_type is UnionType and Ellipsis not in field_args:
             for arg in field_args:
                 args = get_args(arg)
-                if (
-                    arg is not NoneType
-                    and type(args) in iterable_types
-                    and Ellipsis not in args
-                ):
+                if arg is not NoneType and type(args) is tuple and Ellipsis not in args:
                     nargs = len(args)
 
+        if nargs == 0:
+            raise ValueError(f"Unable to determine nargs for {name=}, got {nargs=}")
         options["nargs"] = nargs
 
     return field_name, options
