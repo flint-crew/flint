@@ -53,3 +53,4 @@ tasks together (outlined above) into a single data-processing pipeline.
   copying, imaging, self-calibration and mosaicing.
 - `flint_flow_subtract_cube_pipeline`: Subtract a continuum model and image the
   residual data.
+- `flint_flow_polarisation_pipeline`: Perform Stokes I/Q/U imaging of an existing set of calibrated (and self-calibrated) measurement sets.
