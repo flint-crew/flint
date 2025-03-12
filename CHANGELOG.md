@@ -23,6 +23,8 @@
   - Download (with `singularity-python`) containers that are tracked
   - The beginnings of a `get_known_container` type interface so that containers
     may not need to be referenced via cli all the time
+- Improvements around `sky_model`
+- Improved docs
 
 # 0.2.13
 

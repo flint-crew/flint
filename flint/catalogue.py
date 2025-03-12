@@ -51,7 +51,7 @@ class Catalogue(NamedTuple):
         None  # Required for known reference catalogues, not for other specified catalogues
     )
     """The ID of the catalogue on Vizier that is used to download the catalogue"""
-
+    
 
 KNOWN_REFERENCE_CATALOGUES: dict[str, Catalogue] = dict(
     NVSS=Catalogue(
@@ -59,8 +59,8 @@ KNOWN_REFERENCE_CATALOGUES: dict[str, Catalogue] = dict(
         file_name="NVSS.fits",
         name_col="NVSS",
         freq=1.4e9,
-        ra_col="RAJ2000",
-        dec_col="DEJ2000",
+        ra_col="_RAJ2000",
+        dec_col="_DEJ2000",
         flux_col="S1.4",
         maj_col="MajAxis",
         min_col="MinAxis",
@@ -71,8 +71,8 @@ KNOWN_REFERENCE_CATALOGUES: dict[str, Catalogue] = dict(
         survey="SUMSS",
         file_name="SUMSS.fits",
         freq=8.43e8,
-        ra_col="RAJ2000",
-        dec_col="DEJ2000",
+        ra_col="_RAJ2000",
+        dec_col="_DEJ2000",
         name_col="Mosaic",
         flux_col="St",
         maj_col="dMajAxis",
@@ -84,8 +84,8 @@ KNOWN_REFERENCE_CATALOGUES: dict[str, Catalogue] = dict(
         survey="ICRF",
         file_name="ICRF.fits",
         freq=1e9,
-        ra_col="RAJ2000",
-        dec_col="DEJ2000",
+        ra_col="_RAJ2000",
+        dec_col="_DEJ2000",
         name_col="ICRF",
         flux_col="None",
         maj_col="None",
@@ -97,8 +97,8 @@ KNOWN_REFERENCE_CATALOGUES: dict[str, Catalogue] = dict(
         file_name="racs-low.fits",
         survey="RACS-LOW",
         freq=887.56e6,
-        ra_col="RAJ2000",
-        dec_col="DEJ2000",
+        ra_col="_RAJ2000",
+        dec_col="_DEJ2000",
         name_col="GID",
         flux_col="Ftot",
         maj_col="amaj",
@@ -212,6 +212,9 @@ def get_reference_catalogue(
 ) -> tuple[Table, Catalogue]:
     """Load in a known reference catalogue
 
+    If `verify` is `True` then the `Catalogue.flux_col`, if present, will have
+    its units converted to Jy.
+
     Args:
         reference_directory (Path): The path to the directory where reference catalogues were downloaded to
         survey (str): The name of the survey to load.
@@ -257,6 +260,7 @@ def get_reference_catalogue(
         assert all(valid_cols), f"Column is not valid, {valid_cols=}"
         if catalogue.flux_col.lower() != "none":
             assert isinstance(table[catalogue.flux_col].unit, u.Unit)
+            table[catalogue.flux_col] = table[catalogue.flux_col].to(u.Jy)
 
     return table, catalogue
 
@@ -282,7 +286,7 @@ def download_vizier_catalogue(
         logger.info(f"{dry_run=}, not downloading")
         return output_path
 
-    tablelist = Vizier(columns=["all"], row_limit=-1).get_catalogs(
+    tablelist = Vizier(columns=["_RAJ2000", "_DEJ2000", "all"], row_limit=-1).get_catalogs(
         vizier_id, verbose=True
     )
     logger.info(f"catalogue downloaded, contains {len(tablelist[0])} rows")
