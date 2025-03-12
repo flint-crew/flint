@@ -73,11 +73,6 @@ def task_zip_list_of_list(list_of_list: list[list[T]]) -> list[tuple[T, ...]]:
     return list(zip(*list_of_list))
 
 
-@task
-def task_get_channel_images_from_paths(paths: list[Path]) -> list[Path]:
-    return [path for path in paths if "MFS" not in path.name]
-
-
 def upload_image_as_artifact(
     image_path: Path, description: str | None = None
 ) -> UUID | None:

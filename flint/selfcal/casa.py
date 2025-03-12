@@ -12,13 +12,13 @@ from typing import Any
 
 from casacore.tables import table
 
+from flint.casa import applycal, cvel, gaincal, mstransform
 from flint.exceptions import GainCalError, MSError
 from flint.flagging import nan_zero_extreme_flag_ms
 from flint.logging import logger
-from flint.ms import MS, rename_ms_and_columns_for_selfcal
+from flint.ms import rename_ms_and_columns_for_selfcal
 from flint.naming import get_selfcal_ms_name
-from flint.options import BaseOptions
-from flint.sclient import singularity_wrapper
+from flint.options import MS, BaseOptions
 from flint.selfcal.utils import (
     create_and_check_caltable_path,
     get_channel_ranges_given_nspws_for_ms,
@@ -48,94 +48,6 @@ class GainCalOptions(BaseOptions):
     will be used to craft an appropriate ``select_spw=`` interval range. If larger
     than one, ``gaincal`` will be carried out against each interval and results will
     be appended to a common solutions file. """
-
-
-def args_to_casa_task_string(task: str, **kwargs) -> str:
-    """Given a set of arguments, convert them to a string that can
-    be used to run the corresponding CASA task that can be passed
-    via ``casa -c`` for execution
-
-    Args:
-        task (str): The name of the task that will be executed
-
-    Returns:
-        str: The formatted string that will be given to CASA for execution
-    """
-    command = []
-    for k, v in kwargs.items():
-        if isinstance(v, (list, tuple)):
-            v = ",".join(rf"'{_v!s}'" for _v in v)
-            arg = rf"{k}=({v})"
-        elif isinstance(v, (str, Path)):
-            arg = rf"{k}='{v!s}'"
-        else:
-            arg = rf"{k}={v}"
-        command.append(arg)
-
-    task_command = rf"casa -c {task}(" + ",".join(command) + r")"
-
-    return task_command
-
-
-# TODO There should be a general casa_command type function that accepts the task as a keyword
-# so that each casa task does not need an extra function
-
-
-@singularity_wrapper
-def mstransform(**kwargs) -> str:
-    """Construct and run CASA's ``mstransform`` task.
-
-    Args:
-        casa_container (Path): Container with the CASA tooling
-        ms (str): Path to the measurement set to transform
-        output_ms (str): Path of the output measurement set produced by the transform
-
-    Returns:
-        str: The ``mstransform`` string
-    """
-    mstransform_str = args_to_casa_task_string(task="mstransform", **kwargs)
-    logger.info(f"{mstransform_str=}")
-
-    return mstransform_str
-
-
-@singularity_wrapper
-def cvel(**kwargs) -> str:
-    """Generate the CASA cvel command
-
-    Returns:
-        str: The command to execute
-    """
-    cvel_str = args_to_casa_task_string(task="cvel", **kwargs)
-    logger.info(f"{cvel_str=}")
-
-    return cvel_str
-
-
-@singularity_wrapper
-def applycal(**kwargs) -> str:
-    """Generate the CASA applycal command
-
-    Returns:
-        str: The command to execute
-    """
-    applycal_str = args_to_casa_task_string(task="applycal", **kwargs)
-    logger.info(f"{applycal_str=}")
-
-    return applycal_str
-
-
-@singularity_wrapper
-def gaincal(**kwargs) -> str:
-    """Generate the CASA gaincal command
-
-    Returns:
-        str: The command to execute
-    """
-    gaincal_str = args_to_casa_task_string(task="gaincal", **kwargs)
-    logger.info(f"{gaincal_str=}")
-
-    return gaincal_str
 
 
 def copy_and_clean_ms_casagain(

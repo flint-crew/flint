@@ -9,7 +9,7 @@ A pirate themed ASKAP pipeline.
 
 Yarrrr-Harrrr fiddly-dee!
 
-<img src="logo.jpeg" alt="Capn' Flint - Credit: DALLE 3" style="width:400px;"/>
+<img src="_static/logo.jpeg" alt="Capn' Flint - Credit: DALLE 3" style="width:400px;"/>
 
 ## Documentation
 
@@ -26,5 +26,5 @@ something you would like to address.
 The full set of dev tooling can be installed via:
 
 ```bash
-pip install .[dev]
+pip install '.[dev]'
 ```

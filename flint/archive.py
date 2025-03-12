@@ -105,7 +105,7 @@ def verify_tarball(
         tarball (Path): The tarball to examine
 
     Returns:
-        bool: True if the ``tar``s exit code is 0, False otherwise
+        bool: True if the ``tar`` exit code is 0, False otherwise
     """
     tarball = Path(tarball)  # trust nothing
     assert tarball.exists() and tarball.is_file(), (

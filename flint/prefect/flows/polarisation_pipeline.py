@@ -16,13 +16,11 @@ from flint.exceptions import MSError
 from flint.imager.wsclean import (
     ImageSet,
     WSCleanResult,
-    combine_images_to_cube,
-    task_merge_image_sets,
-    task_split_and_get_image_set,
 )
 from flint.logging import logger
 from flint.ms import find_mss
 from flint.naming import (
+    CASDANameComponents,
     ProcessedNameComponents,
     add_timestamp_to_path,
     extract_components_from_name,
@@ -36,15 +34,19 @@ from flint.options import (
 )
 from flint.prefect.clusters import get_dask_runner
 from flint.prefect.common.imaging import (
+    task_combine_images_to_cube,
     task_convolve_images,
+    task_get_channel_images_from_paths,
     task_get_common_beam_from_image_set,
     task_linmos_images,
+    task_merge_image_sets,
+    task_preprocess_askap_ms,
+    task_split_and_get_image_set,
     task_wsclean_imager,
 )
 from flint.prefect.common.utils import (
     task_create_field_summary,
     task_create_object,
-    task_get_channel_images_from_paths,
     task_getattr,
     task_rename_linear_to_stokes,
 )
@@ -67,11 +69,55 @@ def process_science_fields_pol(
         return
 
     # Get some placeholder names
-    science_mss = find_mss(
-        mss_parent_path=flint_ms_directory,
-        expected_ms_count=pol_field_options.expected_ms,
-        data_column=strategy["defaults"].get("data_column", "DATA"),
+    science_mss = list(
+        find_mss(
+            mss_parent_path=flint_ms_directory,
+            expected_ms_count=pol_field_options.expected_ms,
+            data_column=strategy["defaults"].get("data_column", "DATA"),
+        )
     )
+    # Check if MSs have been processed by Flint or have been provided by CASDA
+    from_flint_list = [
+        isinstance(extract_components_from_name(ms.path), ProcessedNameComponents)
+        for ms in science_mss
+    ]
+    from_casda_list = [
+        isinstance(extract_components_from_name(ms.path), CASDANameComponents)
+        for ms in science_mss
+    ]
+
+    if not any(from_flint_list) and not any(from_casda_list):
+        raise MSError("No valid MeasurementSets found! Data must be calibrated first.")
+
+    if any(from_flint_list) and any(from_casda_list):
+        raise MSError("Cannot mix Flint-processed and CASDA-provided MeasurementSets!")
+
+    if any(from_casda_list):
+        assert all(from_casda_list), (
+            "Some MeasurementSets are from Flint, some are from CASDA"
+        )
+        logger.info("Data are from CASDA, need to apply FixMS")
+        if pol_field_options.casa_container is None:
+            msg = "We need to apply FixMS to CASDA-provided data, but no CASA container provided"
+            raise MSError(msg)
+
+        corrected_mss = []
+        for ms in science_mss:
+            corrected_ms = task_preprocess_askap_ms.submit(
+                ms=ms,
+                data_column=strategy["defaults"].get("data_column", "DATA"),
+                skip_rotation=False,
+                fix_stokes_factor=True,
+                apply_ms_transform=True,
+                casa_container=pol_field_options.casa_container,
+                rename=True,
+            )
+            corrected_mss.append(corrected_ms)
+
+        assert len(corrected_mss) == len(science_mss), (
+            "Number of corrected MSs does not match number of input MSs"
+        )
+        science_mss = corrected_mss
 
     field_summary = task_create_field_summary.submit(
         mss=science_mss,
@@ -84,13 +130,6 @@ def process_science_fields_pol(
         ),
         field_options=pol_field_options,
     )
-
-    # Check that the MSs have been processed by Flint
-    for ms in science_mss:
-        components = extract_components_from_name(ms.path)
-        if not isinstance(components, ProcessedNameComponents):
-            msg = f"{ms} has not be processed by Flint"
-            raise MSError(msg)
 
     logger.info(f"Found the following calibrated measurement sets: {science_mss}")
 
@@ -171,7 +210,7 @@ def process_science_fields_pol(
                                 linear_name=prefix,
                                 stokes=stokes,
                             )
-                        cube_path = combine_images_to_cube.submit(
+                        cube_path = task_combine_images_to_cube.submit(
                             images=channel_image_list,
                             prefix=prefix,
                             mode="image",

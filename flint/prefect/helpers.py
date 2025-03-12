@@ -18,15 +18,15 @@ def enable_loguru_support() -> None:
 
     Example Usage:
 
-    from prefect import flow
-    from loguru import logger
-    from prefect_utils import enable_loguru_support # import this function in your flow from your module
+    >>> from prefect import flow
+    >>> from loguru import logger
+    >>> from prefect_utils import enable_loguru_support # import this function in your flow from your module
+    >>> @flow()
+    >>> def myflow():
+    >>>     logger.info("This is hidden from the Prefect UI")
+    >>>     enable_loguru_support()
+    >>>     logger.info("This shows up in the Prefect UI")
 
-    @flow()
-    def myflow():
-        logger.info("This is hidden from the Prefect UI")
-        enable_loguru_support()
-        logger.info("This shows up in the Prefect UI")
     """
     # import here for distributed execution because loguru cannot be pickled.
     from loguru import logger  # pylint: disable=import-outside-toplevel

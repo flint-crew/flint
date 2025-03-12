@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from flint.ms import MS
+from flint.options import MS
 from flint.selfcal.utils import (
     consider_skip_selfcal_on_round,
     create_and_check_caltable_path,

@@ -8,7 +8,6 @@ from pathlib import Path, PosixPath
 import pytest
 
 from flint.exceptions import NamingException
-from flint.ms import MS
 from flint.naming import (
     CASDANameComponents,
     FITSMaskNames,
@@ -39,6 +38,7 @@ from flint.naming import (
     split_images,
     update_beam_resolution_field_in_path,
 )
+from flint.options import MS
 
 
 def test_create_path_from_process_named_components():
@@ -152,17 +152,19 @@ def test_create_imaging_name_prefix():
     products"""
     ms = MS.cast(ms=Path("/Jack/Sparrow/SB63789.EMU_1743-51.beam03.round4.ms"))
 
-    name = create_imaging_name_prefix(ms=ms)
+    name = create_imaging_name_prefix(ms_path=ms.path)
     assert name == "SB63789.EMU_1743-51.beam03.round4"
 
     for pol in ("I", "i"):
-        name = create_imaging_name_prefix(ms=ms, pol=pol)
+        name = create_imaging_name_prefix(ms_path=ms.path, pol=pol)
         assert name == "SB63789.EMU_1743-51.beam03.round4.i"
 
-        name = create_imaging_name_prefix(ms=ms, pol=pol, channel_range=(100, 108))
+        name = create_imaging_name_prefix(
+            ms_path=ms.path, pol=pol, channel_range=(100, 108)
+        )
         assert name == "SB63789.EMU_1743-51.beam03.round4.i.ch0100-0108"
 
-    name = create_imaging_name_prefix(ms=ms, channel_range=(100, 108))
+    name = create_imaging_name_prefix(ms_path=ms.path, channel_range=(100, 108))
     assert name == "SB63789.EMU_1743-51.beam03.round4.ch0100-0108"
 
 

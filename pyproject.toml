@@ -70,6 +70,7 @@ dev = [
     "sphinx-autodoc-typehints",
     "sphinx-copybutton",
     "sphinx-autoapi",
+    "sphinx-argparse",
     "furo"
 ]
 casa =[

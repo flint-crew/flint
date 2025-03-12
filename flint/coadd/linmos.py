@@ -89,7 +89,7 @@ def _create_bound_box_plane(
     pixels are not valid, then ``None`` is returned.
 
     Args:
-        image_data (np.ndarray): The 2D ina==mage to construct a bounding box around
+        image_data (np.ndarray): The 2D image to construct a bounding box around
         is_masked (bool, optional): Whether to treat the image as booleans or values. Defaults to False.
 
     Returns:
@@ -360,7 +360,7 @@ def generate_weights_list_and_files(
     They do not necessarily have to correspond to an accurate measure of the RMS.
 
     This function will create a corresponding text file for each input image. At
-    the moment it is only intended to work on MFS images. It __is not__ currently
+    the moment it is only intended to work on MFS images. It *is not* currently
     intended to be used on image cubes.
 
     The stride parameter will only include every N'th pixel when computing the

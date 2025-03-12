@@ -294,7 +294,9 @@ def create_field_summary(
     ms = MS.cast(ms=mss[0])
 
     ms_components = processed_ms_format(in_name=ms.path)
-    assert ms_components is not None
+    assert ms_components is not None, (
+        f"MS ({ms.path}) is not in a flint-processed format!"
+    )
     sbid = str(ms_components.sbid)
     field = ms_components.field
 

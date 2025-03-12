@@ -6,7 +6,6 @@ to create it
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List
 
 import pytest
 from pydantic.fields import FieldInfo
@@ -43,7 +42,7 @@ def test_fieldinfo_to_argparse_options():
     assert field_options["help"] == "An example description"
 
     field = FieldInfo(
-        default=[1, 2, 3, 4], annotation=List[int], description="An example description"
+        default=[1, 2, 3, 4], annotation=list[int], description="An example description"
     )
     field_name, field_options = _create_argparse_options(
         name="jack_sparrow", field=field
@@ -53,6 +52,39 @@ def test_fieldinfo_to_argparse_options():
     assert field_options["default"] == [1, 2, 3, 4]
     assert field_options["help"] == "An example description"
     assert field_options["nargs"] == "+"
+
+    field = FieldInfo(
+        default=("foo", "bar", 3),
+        annotation=tuple[str, str, int],
+    )
+    field_name, field_options = _create_argparse_options(
+        name="jack_sparrow", field=field
+    )
+    assert field_options["default"] == ("foo", "bar", 3)
+    assert field_options["nargs"] == 3
+
+    field = FieldInfo(
+        default=("foo", "bar"),
+        annotation=tuple[str, ...],
+    )
+    field_name, field_options = _create_argparse_options(
+        name="jack_sparrow", field=field
+    )
+    assert field_options["default"] == (
+        "foo",
+        "bar",
+    )
+    assert field_options["nargs"] == "+"
+
+    field = FieldInfo(
+        default=None,
+        annotation=tuple[str, str] | None,
+    )
+    field_name, field_options = _create_argparse_options(
+        name="jack_sparrow", field=field
+    )
+    assert field_options["default"] == None  # noqa E711
+    assert field_options["nargs"] == 2
 
 
 def test_options_to_dict():

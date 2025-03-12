@@ -399,7 +399,7 @@ def flag_mean_residual_amplitude(
     Args:
         complex_gains (np.ndarray): The set of complex gains to be considered
         use_robust (bool, optional): Whether to use robust statistics (median, MAD)  or mean/std to calculate the statistic against. Defaults to True.
-        polynomical_order (int, optional): The order of the polynomial (numpy.polyfit) to use to compute the baseline. Defaults to 5.
+        polynomial_order (int, optional): The order of the polynomial (numpy.polyfit) to use to compute the baseline. Defaults to 5.
         plot_path (Path): The location to save the output file to
         plot_title (Optional[str], optional): Title to add to the figure. Defaults to None.
 

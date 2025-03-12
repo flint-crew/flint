@@ -26,7 +26,6 @@ from typing import Any, Collection, NamedTuple
 import numpy as np
 from astropy.io import fits
 from fitscube.combine_fits import combine_fits
-from prefect import task
 
 from flint.exceptions import (
     AttemptRerunException,
@@ -35,13 +34,13 @@ from flint.exceptions import (
     NotSupportedError,
 )
 from flint.logging import logger
-from flint.ms import MS
 from flint.naming import (
     create_image_cube_name,
     create_imaging_name_prefix,
     split_images,
 )
 from flint.options import (
+    MS,
     BaseOptions,
     add_options_to_parser,
     create_options_from_parser,
@@ -207,7 +206,42 @@ def image_set_from_result(wsclean_result: WSCleanResult) -> ImageSet | None:
     return wsclean_result.image_set
 
 
-task_image_set_from_result = task(image_set_from_result)
+def combine_images_to_cube(
+    images: list[Path],
+    prefix: str,
+    mode: str,
+    remove_original_images: bool = False,
+) -> Path:
+    """Combine wsclean subband channel images into a cube. Each collection attribute
+    of the input `image_set` will be inspected. The MFS images will be ignored.
+
+    A output file name will be generated based on the  prefix and mode (e.g. `image`, `residual`, `psf`, `dirty`).
+
+    Args:
+        image_set (ImageSet): Collection of wsclean image productds
+        remove_original_images (bool, optional): If True, images that went into the cube are removed. Defaults to False.
+
+    Returns:
+        ImageSet: Updated iamgeset describing the new outputs
+    """
+    logger.info("Combining subband images into fits cubes")
+
+    output_cube_name = create_image_cube_name(image_prefix=Path(prefix), mode=mode)
+
+    logger.info(f"Combining {len(images)} images. {images=}")
+    freqs = combine_fits(file_list=images, out_cube=output_cube_name)
+    rotate_cube(output_cube_name)
+
+    # Write out the hdu to preserve the beam table constructed in fitscube
+    logger.info(f"Writing {output_cube_name=}")
+
+    output_freqs_name = output_cube_name.with_suffix(".freqs_Hz.txt")
+    np.savetxt(output_freqs_name, freqs.to("Hz").value)
+
+    if remove_original_images:
+        remove_files_folders(*images)
+
+    return output_cube_name
 
 
 def merge_image_sets(
@@ -250,9 +284,6 @@ def merge_image_sets(
     return ImageSet(**image_set_dict)
 
 
-task_merge_image_sets = task(merge_image_sets)
-
-
 def merge_image_sets_from_results(
     wsclean_results: list[WSCleanResult],
 ) -> ImageSet:
@@ -268,9 +299,6 @@ def merge_image_sets_from_results(
         result.image_set for result in wsclean_results if result.image_set is not None
     ]
     return merge_image_sets(image_sets)
-
-
-task_merge_image_sets_from_results = task(merge_image_sets_from_results)
 
 
 def split_image_set(
@@ -329,9 +357,6 @@ def split_and_get_image_set(
         raise NamingException(f"Failed to get {get=} from {split_dict=}")
 
     return split_list
-
-
-task_split_and_get_image_set = task(split_and_get_image_set)
 
 
 def get_wsclean_output_source_list_path(
@@ -673,7 +698,7 @@ def create_wsclean_name_argument(wsclean_options: WSCleanOptions, ms: MS) -> Pat
     pol = wsclean_options.pol
     channel_range = wsclean_options.channel_range
     name_prefix_str = create_imaging_name_prefix(
-        ms=ms, pol=pol, channel_range=channel_range
+        ms_path=ms.path, pol=pol, channel_range=channel_range
     )
 
     # Now resolve the directory part
@@ -857,7 +882,7 @@ def create_wsclean_cmd(
     )
 
 
-def _rotate_cube(output_cube_name) -> None:
+def rotate_cube(output_cube_name) -> None:
     logger.info(f"Rotating {output_cube_name=}")
     # This changes the output cube to a shape of (chan, pol, dec, ra)
     # which is what yandasoft linmos tasks like
@@ -928,7 +953,7 @@ def combine_image_set_to_cube(
         logger.info(f"Combining {len(subband_images)} images. {subband_images=}")
         freqs = combine_fits(file_list=subband_images, out_cube=output_cube_name)
 
-        _rotate_cube(output_cube_name)
+        rotate_cube(output_cube_name)
 
         # Write out the hdu to preserve the beam table constructed in fitscube
         logger.info(f"Writing {output_cube_name=}")
@@ -944,45 +969,6 @@ def combine_image_set_to_cube(
             remove_files_folders(*subband_images)
 
     return ImageSet(**image_set_dict)
-
-
-@task
-def combine_images_to_cube(
-    images: list[Path],
-    prefix: str,
-    mode: str,
-    remove_original_images: bool = False,
-) -> Path:
-    """Combine wsclean subband channel images into a cube. Each collection attribute
-    of the input `image_set` will be inspected. The MFS images will be ignored.
-
-    A output file name will be generated based on the  prefix and mode (e.g. `image`, `residual`, `psf`, `dirty`).
-
-    Args:
-        image_set (ImageSet): Collection of wsclean image productds
-        remove_original_images (bool, optional): If True, images that went into the cube are removed. Defaults to False.
-
-    Returns:
-        ImageSet: Updated iamgeset describing the new outputs
-    """
-    logger.info("Combining subband images into fits cubes")
-
-    output_cube_name = create_image_cube_name(image_prefix=Path(prefix), mode=mode)
-
-    logger.info(f"Combining {len(images)} images. {images=}")
-    freqs = combine_fits(file_list=images, out_cube=output_cube_name)
-    _rotate_cube(output_cube_name)
-
-    # Write out the hdu to preserve the beam table constructed in fitscube
-    logger.info(f"Writing {output_cube_name=}")
-
-    output_freqs_name = output_cube_name.with_suffix(".freqs_Hz.txt")
-    np.savetxt(output_freqs_name, freqs.to("Hz").value)
-
-    if remove_original_images:
-        remove_files_folders(*images)
-
-    return output_cube_name
 
 
 def rename_wsclean_prefix_in_image_set(input_image_set: ImageSet) -> ImageSet:

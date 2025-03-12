@@ -7,14 +7,14 @@
 ## Table of contents
 
 ```{toctree}
-:maxdepth: 2
+:maxdepth: 1
 installation.md
 quickstart.md
 about.md
 data.md
 config.md
-validation.md
-examples.md
+masking.md
+contributions.md
 ```
 
 ## Indices and tables

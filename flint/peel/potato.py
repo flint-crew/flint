@@ -29,8 +29,9 @@ from casacore.tables import table
 
 from flint.imager.wsclean import WSCleanOptions
 from flint.logging import logger
-from flint.ms import MS, get_freqs_from_ms, get_phase_dir_from_ms
+from flint.ms import get_freqs_from_ms, get_phase_dir_from_ms
 from flint.naming import get_potato_output_base_path
+from flint.options import MS
 from flint.sclient import run_singularity_command
 from flint.utils import (
     create_directory,

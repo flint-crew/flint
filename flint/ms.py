@@ -7,9 +7,7 @@ generally carried out against the named column described by the
 `column` attribute.
 """
 
-from __future__ import (  # Used for mypy/pylance to like the return type of MS.with_options
-    annotations,
-)
+from __future__ import annotations
 
 import shutil
 from argparse import ArgumentParser
@@ -27,6 +25,7 @@ from casacore.tables import table, taql
 from fixms.fix_ms_corrs import fix_ms_corrs
 from fixms.fix_ms_dir import fix_ms_dir
 
+from flint.casa import copy_with_mstranform
 from flint.logging import logger
 from flint.naming import create_ms_name
 from flint.options import MS
@@ -687,6 +686,9 @@ def preprocess_askap_ms(
     overwrite: bool = True,
     skip_rotation: bool = False,
     fix_stokes_factor: bool = False,
+    apply_ms_transform: bool = False,
+    casa_container: Path | None = None,
+    rename: bool = False,
 ) -> MS:
     """The ASKAP MS stores its data in a way that is not immediately accessible
     to other astronomical software, like wsclean or casa. For each measurement set
@@ -708,6 +710,9 @@ def preprocess_askap_ms(
         overwrite (bool, optional): If the `instrument_column` and `data_column` both exist and `overwrite=True` the `data_column` will be overwritten. Otherwise, a `ValueError` is raised. Defaults to True.
         skip_rotation (bool, optional): If true, the visibilities are not rotated Defaults to False.
         fix_stokes_factor (bool, optional): Apply the stokes scaling factor (aruses in different definition of Stokes between Ynadasoft and other applications) when rotation visibilities. This should be set to False is the bandpass solutions have already absorded this scaling term. Defaults to False.
+        apply_ms_transform (bool, optional): If True, the MS will be transformed using the `casa_container` provided. Defaults to False.
+        casa_container (Path, optional): The path to the CASA container that will be used to transform the MS. Defaults to None.
+        rename (bool, optional): If True, the MS will be renamed to a Flint-processed name. Defaults to False.
 
     Returns:
         MS: An updated measurement set with the corrections applied.
@@ -717,6 +722,17 @@ def preprocess_askap_ms(
     assert data_column != instrument_column, (
         f"Received matching column names: {data_column=} {instrument_column=}"
     )
+
+    if apply_ms_transform:
+        if casa_container is None:
+            raise ValueError(
+                "apply_ms_transform=True, but no casa_container provided. "
+            )
+        corrected_ms_path = copy_with_mstranform(
+            casa_container=casa_container,
+            ms_path=ms.path,
+        )
+        ms = MS.cast(corrected_ms_path)
 
     logger.info(f"Will be running ASKAP MS conversion operations against {ms.path!s}.")
     logger.info("Correcting directions. ")
@@ -764,6 +780,13 @@ def preprocess_askap_ms(
         corrected_data_column=data_column,
         fix_stokes_factor=fix_stokes_factor,
     )
+
+    if rename:
+        logger.info("Renaming the measurement set.")
+        new_ms_name_str = create_ms_name(ms_path=ms.path)
+        new_ms_path = ms.path.parent / Path(new_ms_name_str)
+        shutil.move(ms.path, new_ms_path)
+        ms = ms.with_options(path=new_ms_path)
 
     return ms.with_options(column=data_column)
 

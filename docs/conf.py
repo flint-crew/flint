@@ -35,6 +35,7 @@ extensions = [
     "sphinx.ext.napoleon",
     "sphinx_copybutton",
     "autoapi.extension",
+    "sphinxarg.ext",
 ]
 
 myst_enable_extensions = [
@@ -75,6 +76,6 @@ html_static_path = ["_static"]
 
 # copy logo to _static
 static_path = Path("_static")
-logo_path = Path("../logo.jpeg")
+logo_path = Path("../_static/logo.jpeg")
 
 shutil.copyfile(logo_path, static_path / logo_path.name)

@@ -8,7 +8,8 @@ from math import ceil
 from pathlib import Path
 
 from flint.logging import logger
-from flint.ms import MS, get_freqs_from_ms
+from flint.ms import get_freqs_from_ms
+from flint.options import MS
 from flint.utils import remove_files_folders
 
 
