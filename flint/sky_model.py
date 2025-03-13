@@ -9,14 +9,14 @@ from typing import NamedTuple
 import numpy as np
 import yaml
 from astropy import units as u
-from astropy.coordinates import Angle, SkyCoord
+from astropy.coordinates import SkyCoord
 from astropy.table import QTable, Table
 from astropy.table.row import Row
-from casacore.tables import table
 from scipy.optimize import curve_fit
 
 from flint.catalogue import KNOWN_REFERENCE_CATALOGUES, Catalogue
 from flint.logging import logger
+from flint.ms import get_freqs_from_ms, get_phase_dir_from_ms
 from flint.options import BaseOptions, add_options_to_parser, create_options_from_parser
 from flint.utils import get_packaged_resource_path
 
@@ -397,42 +397,6 @@ def evaluate_src_model(freqs: u.Quantity, src_row: Row, ref_nu: u.Quantity) -> u
     return fluxes * u.Jy
 
 
-def dir_from_ms(ms_path: Path) -> SkyCoord:
-    """Extract the pointing direction from a measurement set
-
-    Args:
-        ms_path (Path): Path to the measurement set to query
-
-    Returns:
-        SkyCoord: Pointing direction on the sky of the measurement set
-    """
-    tp = table(f"{ms_path!s}/FIELD", readonly=True, ack=False)
-    p_phase = tp.getcol("PHASE_DIR")
-    tp.close()
-
-    td = table(str(ms_path), readonly=True, ack=False)
-    field = td.getcol("FIELD_ID", 0, 1)[0]
-
-    return SkyCoord(
-        Angle(p_phase[field][0][0], unit=u.rad), Angle(p_phase[field][0][1], unit=u.rad)
-    )
-
-
-def freqs_from_ms(ms_path: Path) -> np.ndarray:
-    """Extract the set of observing frequencies within the measurement set.
-
-    Args:
-        ms_path (Path): Path to the measurement set to query
-
-    Returns:
-        np.ndarray: Collection of channel frequencies.
-    """
-    tf = table(f"{ms_path!s}/SPECTRAL_WINDOW", ack=False)
-    freqs = tf[0]["CHAN_FREQ"]
-    tf.close()
-    return np.sort(freqs)
-
-
 def get_known_catalogue(cata: str) -> Catalogue:
     """Get the parameters of a known catalogue
 
@@ -782,12 +746,12 @@ def create_sky_model(
 
     assert ms_path.exists(), f"Measurement set {ms_path} does not exist. "
 
-    direction = dir_from_ms(ms_path)
+    direction = get_phase_dir_from_ms(ms=ms_path)
     logger.info(
         f"Extracting local sky catalogue centred on {direction.ra.deg} {direction.dec.deg}."
     )
 
-    freqs = freqs_from_ms(ms_path) * u.Hz
+    freqs = get_freqs_from_ms(ms=ms_path) * u.Hz
     logger.info(
         f"Frequency range: {freqs[0] / 1000.0:.3f} MHz - {freqs[-1] / 1000.0:.3f} MHz (centre = {np.mean(freqs / 1000.0):.3f} MHz)"
     )
