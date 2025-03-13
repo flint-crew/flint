@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from flint.options import create_options_from_parser
@@ -54,12 +55,38 @@ def test_extracting_sky_model(ms_example_and_nvss):
     assert nvss_path.exists()
 
     sky_model_options = SkyModelOptions(
-        reference_catalogue_directory=nvss_path.parent, reference_name="NVSS"
+        reference_catalogue_directory=nvss_path.parent,
+        reference_name="NVSS",
     )
     sky_model = create_sky_model(ms_path=ms_path, sky_model_options=sky_model_options)
 
     assert isinstance(sky_model, SkyModel)
     assert sky_model.no_sources == 18
+    assert sky_model.calibrate_model is None
+    assert sky_model.hyperdrive_model is None
+    assert sky_model.ds9_region is None
+
+    sky_model_options = SkyModelOptions(
+        reference_catalogue_directory=nvss_path.parent,
+        reference_name="NVSS",
+        write_calibrate_model=True,
+        write_hyperdrive_model=True,
+        write_ds9_region=True,
+    )
+    sky_model = create_sky_model(ms_path=ms_path, sky_model_options=sky_model_options)
+
+    assert isinstance(sky_model, SkyModel)
+    assert sky_model.no_sources == 18
+    assert (
+        isinstance(sky_model.calibrate_model, Path)
+        and sky_model.calibrate_model.exists()
+    )
+    assert (
+        isinstance(sky_model.hyperdrive_model, Path)
+        and sky_model.hyperdrive_model.exists()
+    )
+    assert isinstance(sky_model.ds9_region, Path) and sky_model.ds9_region.exists()
+    assert np.isclose(sky_model.flux_jy, 1.3768, rtol=0.01)
 
 
 def test_extracting_sky_model_with_none(ms_example_and_nvss):
