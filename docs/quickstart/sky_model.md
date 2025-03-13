@@ -32,6 +32,63 @@ The ASKAP observatory performs regular holography measurements to characterise t
 
 Therefore it may be unwise to use such a sky-model as the basis of bandpass calibration. In time this type of prediction may be inforporated into `flint`, but presently it remains as a future to-do. Contributions are welcome. 
 
+## Output model types
+
+`flint` will write out the local sky model in a variety of formats. 
+
+### `calibrate` and `wsclean --save-source-list` style
+
+This is a self-descriptive formate format that supports point sources and two-dimensional Gaussians. 
+
+Positions are in the J2000 epoch. The nominal frequenci is encoded in Hz as part of the `ReferenceFrequency` column title. Fluxes are recorded in Jy. Major and minor axis sizes of Gaussian components are in units of arcsecond, with the PA in degrees. 
+
+The nominal intensity column `I` is measured at the reference frequency. A list polynominal co-efficients in logarithmic space may be provided in the `SpectralIndex` column. 
+
+This file format is what `wsclean` produces via its `--save-source-list` option. Below is an example of the header and first row of the sky-model. This style of sky-model may be used as an innput for `crystalball` and `addmodel`, as {ref}`described in the subtract cube imaging workflow <subtractcube>`.
+
+```bash
+Format = Name, Type, Ra, Dec, I, SpectralIndex, LogarithmicSI, ReferenceFrequency='743990740.7407408', MajorAxis, MinorAxis, Orientation
+174748-312315,GAUSSIAN,17:47:48.619992,-31.23.15.20016,0.19411106571231185,[-3.806350913533059,-4.135453173684361],true,743990740.7407408,68.5999984741211,68.5999984741211,59.79999923706055,
+```
+
+### `hyperdrive` style
+
+[`hyperdrive` is extremely efficent calibration utility developed for the MWA](https://github.com/MWATelescope/mwa_hyperdrive). Although ASKAP is obviously not MWA, under some conditions it is possibly to use `hyperdrive` to calibrate ASKAP measurement sets. There are some technical considerations that sometimes prohibit this, but whne it works it is extremly speedy. 
+
+There are a number of formats that `hyperdrive` supports when specifying a sky-model. In `flint` we choose to output sources in a `yaml` style format, when each component is described as a record in a fairly flat schema. [See their description page for more information.](https://mwatelescope.github.io/mwa_hyperdrive/defs/source_list_hyperdrive.html)
+
+Below is an example of how to describe a single source.
+
+```yaml
+174748-312315:
+- comp_type:
+    gaussian:
+      maj: 68.5999984741211
+      min: 18.5
+      pa: 59.79999923706055
+  dec: -31.3875556
+  flux_type:
+    curved_power_law:
+      fd:
+        freq: 743990740.7407408
+        i: 0.19411106571231185
+      q: -4.135453173684361
+      si: -3.806350913533059
+  ra: 266.9525833
+```
+
+### DS9 region file
+
+`flint` may also be configured to output a simple DS9 region file that can be used as an overlauf. Of course, no brightness information is recorded, and we refer the reader to `DS9` documentation for more information on the region style format. 
+
+The first source is listed as an example. 
+
+```bash
+# DS9 region file
+fk5
+ellipse(266.952583,-31.387556,68.599998,18.500000,149.800003) # color=red dash=1
+```
+
 ## Accessing via the CLI
 
 The primary entry point for the skymodel program in `flint` is the `flint_skymodel`:

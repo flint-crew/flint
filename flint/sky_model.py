@@ -645,7 +645,7 @@ def make_hyperdrive_model(out_path: Path, sources: list[tuple[Row, CurvedPL]]) -
                 "gaussian": {
                     "maj": float(row["maj"].to(u.arcsecond).value),
                     "min": float(row["min"].to(u.arcsecond).value),
-                    "pa": float(row["pa"].to(u.arcsecond).value),
+                    "pa": float(row["pa"].to(u.deg).value),
                 }
             }
         )
