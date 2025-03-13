@@ -27,6 +27,7 @@ class SkyModelOptions(BaseOptions):
     """Options that describe how to build a local sky-model, including
     where reference catalogues are stored, the preferred catalogue, the
     types of models to produce, and filtering criteria"""
+
     reference_catalogue_directory: Path = Path(".")
     """The reference catalogue directory that contains the known flint reference catalogues"""
     reference_name: str | None = None
@@ -45,6 +46,7 @@ class SkyModelOptions(BaseOptions):
     """Should the model for calibrate be created. The output will have .calibrate.txt suffix appended to the MS path."""
     write_ds9_region: bool = False
     """Should a DS9 region file be created. The output will have .ds9.reg suffix appended to the MS path."""
+
 
 class CurvedPL(NamedTuple):
     """Container for results of a Curved Power Law,
@@ -728,8 +730,10 @@ def make_calibrate_model(out_path: Path, sources: list[tuple[Row, CurvedPL]]) ->
 
     return out_path
 
+
 class SkyModelOutputPaths(NamedTuple):
     """Holds the expected names for different type of sky model outputs"""
+
     hyperdrive_path: Path
     """Path of the hyperdrive style sky catalogue"""
     calibrate_path: Path
@@ -753,25 +757,25 @@ def get_sky_model_output_paths(ms_path: Path) -> SkyModelOutputPaths:
     if ms_path.suffix != ".ms":
         message = f"Expecting a measurement set file extension in {ms_path=}"
         raise ValueError(message)
-    
+
     return SkyModelOutputPaths(
-        hyperdrive_path= ms_path.with_suffix(".hyperdrive.yaml"),
+        hyperdrive_path=ms_path.with_suffix(".hyperdrive.yaml"),
         calibrate_path=ms_path.with_suffix(".calibrate.txt"),
-        region_path=ms_path.with_suffix(".model.reg")
+        region_path=ms_path.with_suffix(".model.reg"),
     )
 
+
 def create_sky_model(
-    ms_path: Path,
-    sky_model_options: SkyModelOptions
+    ms_path: Path, sky_model_options: SkyModelOptions
 ) -> SkyModel | None:
     """Create a sky-model to calibrate RACS based measurement sets.
-    
+
     If no sources were selected then None is returned.
 
     Args:
         ms_path (Path): Measurement set to create sky-model for
         sky_model_options (SkyModelOptions): Options to use to construct the sky model
-        
+
     Returns:
         SkyModel | None -- Basic informattion concerning the sky-model derived and the output files. If no sources were selected then None is returned.
     """
@@ -792,7 +796,7 @@ def create_sky_model(
     pb = generate_gaussian_pb(freqs=freqs, aperture=12.0 * u.m, offset=0 * u.rad)
 
     radial_cutoff = (
-       sky_model_options.fwhm_scale_cutoff * pb.fwhms[0]
+        sky_model_options.fwhm_scale_cutoff * pb.fwhms[0]
     ).decompose()  # The lowest frequency FWHM is largest
     logger.info(f"Radial cutoff = {radial_cutoff.to(u.deg).value:.3f} degrees")
 
@@ -849,28 +853,34 @@ def create_sky_model(
     )
 
     if len(accepted_rows) == 0:
-        logger.warn("No sources were selected for the model.")
+        logger.warning("No sources were selected for the model.")
         return None
 
-    
     sky_model_output_paths = get_sky_model_output_paths(ms_path=ms_path)
-    
+
     # TODO: What to return? Total flux/no sources? Path to models created?
     return SkyModel(
         flux_jy=total_flux.to(u.Jy).value,
         no_sources=len(accepted_rows),
         hyperdrive_model=(
-            make_hyperdrive_model(out_path=sky_model_output_paths.hyperdrive_path, sources=accepted_rows)
+            make_hyperdrive_model(
+                out_path=sky_model_output_paths.hyperdrive_path, sources=accepted_rows
+            )
             if sky_model_options.write_hyperdrive_model
             else None
         ),
         calibrate_model=(
-            make_calibrate_model(out_path=sky_model_output_paths.calibrate_path, sources=accepted_rows)
+            make_calibrate_model(
+                out_path=sky_model_output_paths.calibrate_path, sources=accepted_rows
+            )
             if sky_model_options.write_calibrate_model
             else None
         ),
         ds9_region=(
-            make_ds9_region(out_path=sky_model_output_paths.region_path, sources=[r[0] for r in accepted_rows])
+            make_ds9_region(
+                out_path=sky_model_output_paths.region_path,
+                sources=[r[0] for r in accepted_rows],
+            )
             if sky_model_options.write_ds9_region
             else None
         ),
@@ -885,9 +895,9 @@ def get_parser():
     parser.add_argument(
         "ms", type=Path, help="Path to the measurement set to create the sky-model for"
     )
-    
+
     parser = add_options_to_parser(parser=parser, options_class=SkyModelOptions)
-    
+
     return parser
 
 
@@ -900,12 +910,11 @@ def cli() -> None:
 
     args = parser.parse_args()
 
-    sky_model_options = create_options_from_parser(parser_namespace=args, options_class=SkyModelOptions)
-    
-    create_sky_model(
-        ms_path=args.ms,
-        sky_model_options=sky_model_options
+    sky_model_options = create_options_from_parser(
+        parser_namespace=args, options_class=SkyModelOptions
     )
+
+    create_sky_model(ms_path=args.ms, sky_model_options=sky_model_options)
 
 
 if __name__ == "__main__":

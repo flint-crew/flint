@@ -112,7 +112,7 @@ def upload_image_as_artifact(
             markdown=markdown, description=description
         )
     except PrefectHTTPStatusError as e:
-        logger.warn("Failed to register artefact. ")
+        logger.warning("Failed to register artefact. ")
         logger.warning(f"{e=}")
 
     return image_uuid
