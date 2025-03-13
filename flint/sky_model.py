@@ -493,7 +493,7 @@ def load_catalogue(
         if dec_point < -75.0:
             cata = get_known_catalogue("SUMSS")
         elif dec_point < 26.0:
-            cata = get_known_catalogue("RACS")
+            cata = get_known_catalogue("RACSLOW")
         else:
             cata = get_known_catalogue("NVSS")
 
