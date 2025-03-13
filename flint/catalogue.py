@@ -51,7 +51,7 @@ class Catalogue(NamedTuple):
         None  # Required for known reference catalogues, not for other specified catalogues
     )
     """The ID of the catalogue on Vizier that is used to download the catalogue"""
-    
+
 
 KNOWN_REFERENCE_CATALOGUES: dict[str, Catalogue] = dict(
     NVSS=Catalogue(
@@ -286,9 +286,9 @@ def download_vizier_catalogue(
         logger.info(f"{dry_run=}, not downloading")
         return output_path
 
-    tablelist = Vizier(columns=["_RAJ2000", "_DEJ2000", "all"], row_limit=-1).get_catalogs(
-        vizier_id, verbose=True
-    )
+    tablelist = Vizier(
+        columns=["_RAJ2000", "_DEJ2000", "all"], row_limit=-1
+    ).get_catalogs(vizier_id, verbose=True)
     logger.info(f"catalogue downloaded, contains {len(tablelist[0])} rows")
     logger.info(f"Writing {vizier_id=} to {output_path=}")
 
