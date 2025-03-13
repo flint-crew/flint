@@ -16,33 +16,44 @@ into any of the calibration workflow procedures. It outputs a text file based on
 
 ## Basic Overview
 
-There are thre principle components that are required to create a local sky-model:
+There are three principle components that are required to create a local sky-model:
 
-1 - A basic catalogue at a known frequency. Where possible it should also describe the intrinsic spectral behavour of each source component, 
+1 - A basic catalogue at a known frequency. Where possible it should also describe the intrinsic spectral behaviour of each source component,
 2 - The desired frequency and direction of the sky where the model is being estimated, and
 3 - A ddescription of the primary beam of the instrument.
 
-`flint` integrated functionality to interact with a set of known referencce catalogues. These catalogues describe the sky as a set of two-dimensional Gaussian components at a partcular frequency. The apparent brightness of components in a nominated reference catalogue are estimated by extracting the frequency and pointing direction information encoded in a measurement set and estimating the primary beam direction. `flint`)currently supports `gaussian`, `sincsquared` and `airy` type responses. 
+`flint` integrated functionality to interact with a set of known referencce catalogues. These catalogues describe the sky as a set of two-dimensional Gaussian components at a particular frequency. The apparent brightness of components in a nominated reference catalogue are estimated by extracting the frequency and pointing direction information encoded in a measurement set and estimating the primary beam direction. `flint`)currently supports `gaussian`, `sincsquared` and `airy` type responses.
 
-Once the apparent brightness of a source is estimated across all nominated frequencies (extracted from an input measurement set) `flint` will fit a low-order polynomial model to the resulting spectra. The constrained modeel parametes are subsequently encoded in the output models. Model visibilities can then be produced and insertede as a `MODEL_DATA` column in the nominated measurement set for subsequent calibration. 
+Once the apparent brightness of a source is estimated across all nominated frequencies (extracted from an input measurement set) `flint` will fit a low-order polynomial model to the resulting spectra. The constrained modeel parameters are subsequently encoded in the output models. Model visibilities can then be produced and insertede as a `MODEL_DATA` column in the nominated measurement set for subsequent calibration.
+
+### Fitting the spectral shape
+
+`flint` will fit a third order polynomial in log space when constrain the apparent spectrum.
+
+The exact functional form is presented below:
+
+```{literalinclude}  ../../flint/sky_model.py
+:pyobject: curved_power_law
+```
+
 
 ### Holography is not currently suupported
 
-The ASKAP observatory performs regular holography measurements to characterise the primary beam response of each of the electonically formed beams. The output response pattern is known to now be entirely consistent with analytical descriptions of idealised beam responses. Presently `flint` does not use the holography to estimate the apparent brightness of sources. 
+The ASKAP observatory performs regular holography measurements to characterise the primary beam response of each of the electonically formed beams. The output response pattern is known to now be entirely consistent with analytical descriptions of idealised beam responses. Presently `flint` does not use the holography to estimate the apparent brightness of sources.
 
-Therefore it may be unwise to use such a sky-model as the basis of bandpass calibration. In time this type of prediction may be inforporated into `flint`, but presently it remains as a future to-do. Contributions are welcome. 
+Therefore it may be unwise to use such a sky-model as the basis of bandpass calibration. In time this type of prediction may be inforporated into `flint`, but presently it remains as a future to-do. Contributions are welcome.
 
 ## Output model types
 
-`flint` will write out the local sky model in a variety of formats. 
+`flint` will write out the local sky model in a variety of formats.
 
 ### `calibrate` and `wsclean --save-source-list` style
 
-This is a self-descriptive formate format that supports point sources and two-dimensional Gaussians. 
+This is a self-descriptive format format that supports point sources and two-dimensional Gaussians.
 
-Positions are in the J2000 epoch. The nominal frequenci is encoded in Hz as part of the `ReferenceFrequency` column title. Fluxes are recorded in Jy. Major and minor axis sizes of Gaussian components are in units of arcsecond, with the PA in degrees. 
+Positions are in the J2000 epoch. The nominal frequenci is encoded in Hz as part of the `ReferenceFrequency` column title. Fluxes are recorded in Jy. Major and minor axis sizes of Gaussian components are in units of arcsecond, with the PA in degrees.
 
-The nominal intensity column `I` is measured at the reference frequency. A list polynominal co-efficients in logarithmic space may be provided in the `SpectralIndex` column. 
+The nominal intensity column `I` is measured at the reference frequency. A list polynomial co-efficients in logarithmic space may be provided in the `SpectralIndex` column.
 
 This file format is what `wsclean` produces via its `--save-source-list` option. Below is an example of the header and first row of the sky-model. This style of sky-model may be used as an innput for `crystalball` and `addmodel`, as {ref}`described in the subtract cube imaging workflow <subtractcube>`.
 
@@ -53,7 +64,7 @@ Format = Name, Type, Ra, Dec, I, SpectralIndex, LogarithmicSI, ReferenceFrequenc
 
 ### `hyperdrive` style
 
-[`hyperdrive` is extremely efficent calibration utility developed for the MWA](https://github.com/MWATelescope/mwa_hyperdrive). Although ASKAP is obviously not MWA, under some conditions it is possibly to use `hyperdrive` to calibrate ASKAP measurement sets. There are some technical considerations that sometimes prohibit this, but whne it works it is extremly speedy. 
+[`hyperdrive` is extremely efficient calibration utility developed for the MWA](https://github.com/MWATelescope/mwa_hyperdrive). Although ASKAP is obviously not MWA, under some conditions it is possibly to use `hyperdrive` to calibrate ASKAP measurement sets. There are some technical considerations that sometimes prohibit this, but when it works it is extremely speedy.
 
 There are a number of formats that `hyperdrive` supports when specifying a sky-model. In `flint` we choose to output sources in a `yaml` style format, when each component is described as a record in a fairly flat schema. [See their description page for more information.](https://mwatelescope.github.io/mwa_hyperdrive/defs/source_list_hyperdrive.html)
 
@@ -79,9 +90,9 @@ Below is an example of how to describe a single source.
 
 ### DS9 region file
 
-`flint` may also be configured to output a simple DS9 region file that can be used as an overlauf. Of course, no brightness information is recorded, and we refer the reader to `DS9` documentation for more information on the region style format. 
+`flint` may also be configured to output a simple DS9 region file that can be used as an overlauf. Of course, no brightness information is recorded, and we refer the reader to `DS9` documentation for more information on the region style format.
 
-The first source is listed as an example. 
+The first source is listed as an example.
 
 ```bash
 # DS9 region file
