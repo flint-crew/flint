@@ -26,6 +26,13 @@ There are three principle components that are required to create a local sky-mod
 
 Once the apparent brightness of a source is estimated across all nominated frequencies (extracted from an input measurement set) `flint` will fit a low-order polynomial model to the resulting spectra. The constrained modeel parameters are subsequently encoded in the output models. Model visibilities can then be produced and insertede as a `MODEL_DATA` column in the nominated measurement set for subsequent calibration.
 
+```{admonition} Caution
+:class: caution
+
+Although there are three response patterns known (`Gaussian`, `SincSquared` and `Airy`) only the `Gaussian` response is used when creating the sky-model through
+`flint.sky_model.create_sky_model`.
+```
+
 ### Fitting the spectral shape
 
 `flint` will fit a third order polynomial in log space when constrain the apparent spectrum.
