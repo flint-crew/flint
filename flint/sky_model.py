@@ -9,17 +9,43 @@ from typing import NamedTuple
 import numpy as np
 import yaml
 from astropy import units as u
-from astropy.coordinates import Angle, SkyCoord
+from astropy.coordinates import SkyCoord
 from astropy.table import QTable, Table
 from astropy.table.row import Row
-from casacore.tables import table
 from scipy.optimize import curve_fit
 
 from flint.catalogue import KNOWN_REFERENCE_CATALOGUES, Catalogue
 from flint.logging import logger
+from flint.ms import get_freqs_from_ms, get_phase_dir_from_ms
+from flint.options import BaseOptions, add_options_to_parser, create_options_from_parser
 from flint.utils import get_packaged_resource_path
 
 KNOWN_PB_TYPES = ("gaussian", "sincsquared", "airy")
+
+
+class SkyModelOptions(BaseOptions):
+    """Options that describe how to build a local sky-model, including
+    where reference catalogues are stored, the preferred catalogue, the
+    types of models to produce, and filtering criteria"""
+
+    reference_catalogue_directory: Path = Path(".")
+    """The reference catalogue directory that contains the known flint reference catalogues"""
+    reference_name: str | None = None
+    f"""Name of the preferred reference survey to use (not the filename). See the list of registered known catalogues: {KNOWN_REFERENCE_CATALOGUES.keys()}. """
+    assumed_alpha: float = -0.83
+    """Assume this to be the typical spectral index if it is not recorded in the reference catalogue"""
+    assumed_q: float = 0.0
+    """Assume this to be the typical amount of spectral curvature should they not be in the reference catalogue"""
+    flux_cutoff: float = 0.02
+    """The intrinsic brightness a source needs to be for it to be included in the sky model"""
+    fwhm_scale_cutoff: float = 1
+    """A source needs to be within this many FWHM units from the direction of interest for it to be included"""
+    write_hyperdrive_model: bool = False
+    """Should the model for hyperdrive be created. The output will have .hypderdrive.yaml suffix appended to the MS path."""
+    write_calibrate_model: bool = False
+    """Should the model for calibrate be created. The output will have .calibrate.txt suffix appended to the MS path."""
+    write_ds9_region: bool = False
+    """Should a DS9 region file be created. The output will have .ds9.reg suffix appended to the MS path."""
 
 
 class CurvedPL(NamedTuple):
@@ -371,42 +397,6 @@ def evaluate_src_model(freqs: u.Quantity, src_row: Row, ref_nu: u.Quantity) -> u
     return fluxes * u.Jy
 
 
-def dir_from_ms(ms_path: Path) -> SkyCoord:
-    """Extract the pointing direction from a measurement set
-
-    Args:
-        ms_path (Path): Path to the measurement set to query
-
-    Returns:
-        SkyCoord: Pointing direction on the sky of the measurement set
-    """
-    tp = table(f"{ms_path!s}/FIELD", readonly=True, ack=False)
-    p_phase = tp.getcol("PHASE_DIR")
-    tp.close()
-
-    td = table(str(ms_path), readonly=True, ack=False)
-    field = td.getcol("FIELD_ID", 0, 1)[0]
-
-    return SkyCoord(
-        Angle(p_phase[field][0][0], unit=u.rad), Angle(p_phase[field][0][1], unit=u.rad)
-    )
-
-
-def freqs_from_ms(ms_path: Path) -> np.ndarray:
-    """Extract the set of observing frequencies within the measurement set.
-
-    Args:
-        ms_path (Path): Path to the measurement set to query
-
-    Returns:
-        np.ndarray: Collection of channel frequencies.
-    """
-    tf = table(f"{ms_path!s}/SPECTRAL_WINDOW", ack=False)
-    freqs = tf[0]["CHAN_FREQ"]
-    tf.close()
-    return np.sort(freqs)
-
-
 def get_known_catalogue(cata: str) -> Catalogue:
     """Get the parameters of a known catalogue
 
@@ -467,7 +457,7 @@ def load_catalogue(
         if dec_point < -75.0:
             cata = get_known_catalogue("SUMSS")
         elif dec_point < 26.0:
-            cata = get_known_catalogue("RACS")
+            cata = get_known_catalogue("RACSLOW")
         else:
             cata = get_known_catalogue("NVSS")
 
@@ -621,7 +611,7 @@ def make_hyperdrive_model(out_path: Path, sources: list[tuple[Row, CurvedPL]]) -
                 "gaussian": {
                     "maj": float(row["maj"].to(u.arcsecond).value),
                     "min": float(row["min"].to(u.arcsecond).value),
-                    "pa": float(row["pa"].to(u.arcsecond).value),
+                    "pa": float(row["pa"].to(u.deg).value),
                 }
             }
         )
@@ -705,44 +695,63 @@ def make_calibrate_model(out_path: Path, sources: list[tuple[Row, CurvedPL]]) ->
     return out_path
 
 
+class SkyModelOutputPaths(NamedTuple):
+    """Holds the expected names for different type of sky model outputs"""
+
+    hyperdrive_path: Path
+    """Path of the hyperdrive style sky catalogue"""
+    calibrate_path: Path
+    """Path of the calibrate style sky catalogue"""
+    region_path: Path
+    """Path of the ds9 region file"""
+
+
+def get_sky_model_output_paths(ms_path: Path) -> SkyModelOutputPaths:
+    """Create a set of expected sky model output file paths
+
+    Args:
+        ms_path (Path): The base name to construct the names against
+
+    Raises:
+        ValueError: If it appears `ms_path` does not point to a measurement set
+
+    Returns:
+        SkyModelOutputPaths: The set of paths to use when creating models
+    """
+    if ms_path.suffix != ".ms":
+        message = f"Expecting a measurement set file extension in {ms_path=}"
+        raise ValueError(message)
+
+    return SkyModelOutputPaths(
+        hyperdrive_path=ms_path.with_suffix(".hyperdrive.yaml"),
+        calibrate_path=ms_path.with_suffix(".calibrate.txt"),
+        region_path=ms_path.with_suffix(".model.reg"),
+    )
+
+
 def create_sky_model(
-    ms_path: Path,
-    cata_dir: Path = Path("."),
-    cata_name: str | None = None,
-    assumed_alpha: float = -0.83,
-    assumed_q: float = 0.0,
-    flux_cutoff: float = 0.02,
-    fwhm_scale_cutoff: float = 1,
-    hyperdrive_model: bool = True,
-    calibrate_model: bool = True,
-    ds9_region: bool = True,
-) -> SkyModel:
-    """Create a sky-model to calibrate RACS based measurement sets
+    ms_path: Path, sky_model_options: SkyModelOptions
+) -> SkyModel | None:
+    """Create a sky-model to calibrate RACS based measurement sets.
+
+    If no sources were selected then None is returned.
 
     Args:
         ms_path (Path): Measurement set to create sky-model for
-        cata_dir (Path, optional): Directory containing known catalogues. Defaults to Path(".").
-        cata_name (Optional[str], optional): Name of the catalogue. If None, select based on MS properties. Defaults to None.
-        assumed_alpha (float, optional): The assumed spectral index to use if there is no spectral index column known in model catalogue. Defaults to -0.83.
-        assumed_q (float, optional): The assumed curvature to use if there is no curvature column known in model catalogue. Defaults to 0.0.
-        flux_cutoff (float, optional): Sources whose *apparent* brightness (at the lowest channel of the MS) as excluded from sky-model. Defaults to 0.02.
-        fwhm_scale_cutoff (float, optional): Scaling factor to stretch the analytical FWHM by when searching for sources. Defaults to 1.
-        hyperdrive_model (bool, optional): Create a hyperdrive model using the suffix 'hyp.yaml'. Defaults to True.
-        calibrate_model (bool, optional): Create a calibrate model using the suffix 'calibrate.txt'. Defaults to True.
-        ds9_region (bool, optional): Create a DS9 region file highlight the sources in the model using the suffix 'model.reg'. Defaults to True.
+        sky_model_options (SkyModelOptions): Options to use to construct the sky model
 
     Returns:
-        SkyModel -- Basic informattion concerning the sky-model derived and the output files
+        SkyModel | None -- Basic informattion concerning the sky-model derived and the output files. If no sources were selected then None is returned.
     """
 
     assert ms_path.exists(), f"Measurement set {ms_path} does not exist. "
 
-    direction = dir_from_ms(ms_path)
+    direction = get_phase_dir_from_ms(ms=ms_path)
     logger.info(
         f"Extracting local sky catalogue centred on {direction.ra.deg} {direction.dec.deg}."
     )
 
-    freqs = freqs_from_ms(ms_path) * u.Hz
+    freqs = get_freqs_from_ms(ms=ms_path) * u.Hz
     logger.info(
         f"Frequency range: {freqs[0] / 1000.0:.3f} MHz - {freqs[-1] / 1000.0:.3f} MHz (centre = {np.mean(freqs / 1000.0):.3f} MHz)"
     )
@@ -751,22 +760,22 @@ def create_sky_model(
     pb = generate_gaussian_pb(freqs=freqs, aperture=12.0 * u.m, offset=0 * u.rad)
 
     radial_cutoff = (
-        fwhm_scale_cutoff * pb.fwhms[0]
+        sky_model_options.fwhm_scale_cutoff * pb.fwhms[0]
     ).decompose()  # The lowest frequency FWHM is largest
     logger.info(f"Radial cutoff = {radial_cutoff.to(u.deg).value:.3f} degrees")
 
     cata_info, cata_tab = load_catalogue(
-        catalogue_dir=cata_dir,
-        catalogue=cata_name,
+        catalogue_dir=sky_model_options.reference_catalogue_directory,
+        catalogue=sky_model_options.reference_name,
         ms_pointing=direction,
-        assumed_alpha=assumed_alpha,
-        assumed_q=assumed_q,
+        assumed_alpha=sky_model_options.assumed_alpha,
+        assumed_q=sky_model_options.assumed_q,
     )
     cata_tab = preprocess_catalogue(
         cata_info,
         cata_tab,
         ms_pointing=direction,
-        flux_cut=flux_cutoff,
+        flux_cut=sky_model_options.flux_cutoff,
         radial_cut=radial_cutoff,
     )
 
@@ -793,7 +802,7 @@ def create_sky_model(
             freqs=freqs, flux=src_model * gauss_taper.atten, ref_nu=freqs[0]
         )
 
-        if predict_model.norm < flux_cutoff:
+        if predict_model.norm < sky_model_options.flux_cutoff:
             continue
 
         accepted_rows.append((row, predict_model))
@@ -807,27 +816,36 @@ def create_sky_model(
         f"\nCreated model, total apparent flux = {total_flux:.4f}, no. sources {len(accepted_rows)}.\n"
     )
 
-    hyperdrive_path = ms_path.with_suffix(".hyp.yaml")
-    calibrate_path = ms_path.with_suffix(".calibrate.txt")
-    region_path = ms_path.with_suffix(".model.reg")
+    if len(accepted_rows) == 0:
+        logger.warning("No sources were selected for the model.")
+        return None
+
+    sky_model_output_paths = get_sky_model_output_paths(ms_path=ms_path)
 
     # TODO: What to return? Total flux/no sources? Path to models created?
     return SkyModel(
         flux_jy=total_flux.to(u.Jy).value,
         no_sources=len(accepted_rows),
         hyperdrive_model=(
-            make_hyperdrive_model(out_path=hyperdrive_path, sources=accepted_rows)
-            if hyperdrive_model
+            make_hyperdrive_model(
+                out_path=sky_model_output_paths.hyperdrive_path, sources=accepted_rows
+            )
+            if sky_model_options.write_hyperdrive_model
             else None
         ),
         calibrate_model=(
-            make_calibrate_model(out_path=calibrate_path, sources=accepted_rows)
-            if calibrate_model
+            make_calibrate_model(
+                out_path=sky_model_output_paths.calibrate_path, sources=accepted_rows
+            )
+            if sky_model_options.write_calibrate_model
             else None
         ),
         ds9_region=(
-            make_ds9_region(out_path=region_path, sources=[r[0] for r in accepted_rows])
-            if ds9_region
+            make_ds9_region(
+                out_path=sky_model_output_paths.region_path,
+                sources=[r[0] for r in accepted_rows],
+            )
+            if sky_model_options.write_ds9_region
             else None
         ),
     )
@@ -841,42 +859,8 @@ def get_parser():
     parser.add_argument(
         "ms", type=Path, help="Path to the measurement set to create the sky-model for"
     )
-    parser.add_argument(
-        "--assumed-alpha",
-        type=float,
-        default=-0.83,
-        help="Assumed spectral index when no appropriate column in sky-catalogue. ",
-    )
-    parser.add_argument(
-        "--assumed-q",
-        type=float,
-        default=0.0,
-        help="Assumed curvature when no appropriate column in sky-catalogue. ",
-    )
-    parser.add_argument(
-        "--fwhm-scale",
-        type=float,
-        default=2,
-        help="Sources within this many FWHMs are selected. ",
-    )
-    parser.add_argument(
-        "--flux-cutoff",
-        type=float,
-        default=0.02,
-        help="Apparent flux density (in Jy) cutoff for sources to be above to be included in the model. ",
-    )
-    parser.add_argument(
-        "--cata-dir",
-        type=Path,
-        default=Path("."),
-        help="Directory containing known catalogues. ",
-    )
-    parser.add_argument(
-        "--cata-name",
-        type=str,
-        choices=KNOWN_CATAS.keys(),
-        help=f"Name of catalogue to load. Options are: {KNOWN_CATAS.keys()}.",
-    )
+
+    parser = add_options_to_parser(parser=parser, options_class=SkyModelOptions)
 
     return parser
 
@@ -890,17 +874,11 @@ def cli() -> None:
 
     args = parser.parse_args()
 
-    logger.setLevel(logging.INFO)
-
-    create_sky_model(
-        ms_path=args.ms,
-        cata_dir=args.cata_dir,
-        cata_name=args.cata_name,
-        flux_cutoff=args.flux_cutoff,
-        fwhm_scale_cutoff=args.fwhm_scale,
-        assumed_alpha=args.assumed_alpha,
-        assumed_q=args.assumed_q,
+    sky_model_options = create_options_from_parser(
+        parser_namespace=args, options_class=SkyModelOptions
     )
+
+    create_sky_model(ms_path=args.ms, sky_model_options=sky_model_options)
 
 
 if __name__ == "__main__":
