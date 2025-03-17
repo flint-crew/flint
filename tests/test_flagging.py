@@ -119,7 +119,7 @@ def test_nan_zero_extreme_flag_ms_with_chunks_and_datanan(ms_example):
     with table(str(ms_example), readonly=False, ack=False) as tab:
         uvws = tab.getcol("UVW")
         uvws[:20, :] = 0
-
+        original_data = tab.getcol("DATA")
         tab.putcol("UVW", uvws)
 
     nan_zero_extreme_flag_ms(ms=ms_example, chunk_size=1, nan_data_on_flag=True)
@@ -132,5 +132,6 @@ def test_nan_zero_extreme_flag_ms_with_chunks_and_datanan(ms_example):
         uvw_mask = np.all(uvws == 0, axis=1)
 
         assert np.sum(np.isnan(data)) == np.sum(flags)
+        assert np.sum(np.isnan(data)) > np.sum(np.isnan(original_data))
         assert np.sum(uvw_mask) > 0
         assert np.all(flags[uvw_mask] == True)  # noQA: E712
