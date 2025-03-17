@@ -206,7 +206,7 @@ def nan_zero_extreme_flag_ms(
             # column wwe would otherwise check to see if this option is enabled
             # when putting the column. May as well keep it here.
             if nan_data_on_flag:
-                data[flags is True] = np.nan
+                data[flags] = np.nan
                 logger.info(f"Setting {np.sum(flags)} DATA items to NaN.")
                 tab.putcol(data_column, data, startrow=start_row, nrow=chunk_size)
 
