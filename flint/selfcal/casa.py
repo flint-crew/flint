@@ -250,7 +250,7 @@ def gaincal_applycal_ms(
         gain_cal_options (Optional[GainCalOptions], optional): Options provided to gaincal. Defaults to None.
         update_gain_cal_options (Optional[Dict[str, Any]], optional): Update the gain_cal_options with these. Defaults to None.
         archive_input_ms (bool, optional): If True, the input measurement set will be compressed into a single file. Defaults to False.
-        raise_error_on_fail (bool, optional): If gaincal does not converge raise en error. if False and gain cal fails return the input ms. Defaults to True.
+        raise_error_on_fail (bool, optional): If gaincal does not converge raise en error. If False and gain cal fails return the input ms. Defaults to True.
         skip_selfcal (bool, optional): Should this self-cal be skipped. If `True`, the a new MS is created but not calibrated the appropriate new name and returned.
         rename_ms (bool, optional): It `True` simply rename a MS and adjust columns appropriately (potentially deleting them) instead of copying the complete MS. If `True` `archive_input_ms` is ignored. Defaults to False.
         archive_cal_table (bool, optional): Archive the output calibration table in a tarball. Defaults to False.
@@ -327,7 +327,7 @@ def gaincal_applycal_ms(
     # not overwriting the entire column
     for idx, (spw_str, cal_table) in enumerate(spw_and_cal_tables):
         logger.info(
-            f"{idx + 1} of {len(spw_and_cal_tables)}, applying solutions for {spw_str}"
+            f"Apply solutions {idx + 1} of {len(spw_and_cal_tables)}, {spw_str}"
         )
         applycal(
             container=casa_container,

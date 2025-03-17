@@ -13,6 +13,7 @@ quickstart.md
 about.md
 data.md
 config.md
+flagging.md
 masking.md
 contributions.md
 ```

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import math
 from argparse import ArgumentParser
 from pathlib import Path
 from typing import Collection, NamedTuple
 
 import numpy as np
 from casacore.tables import table
+from numpy.typing import NDArray
 
 from flint.exceptions import MSError
 from flint.logging import logger
@@ -76,12 +78,71 @@ def flag_ms_zero_uvws(ms: MS, chunk_size: int = 10000) -> MS:
     return ms
 
 
+def _nan_zero_extreme_flag(
+    data: NDArray[np.complex128],
+    flags: NDArray[np.bool],
+    uvws: NDArray[np.float64],
+    flag_extreme_dxy: bool = True,
+    dxy_thresh: float = 4.0,
+) -> tuple[NDArray[np.complex128], NDArray[np.bool], NDArray[np.float64]]:
+    """Used to evaluate the flags that should be applied to the MS based on
+    data values (if there are 0's or nans), uvw values (which can be 0's) and
+    extreme stokes-v values.
+
+    This is the internal checker for the larger `nan_zero_extreme_flags_in_ms`
+    function.
+
+    Args:
+        data (NDArray[np.complex128]): Data that is being consider drawn from a `DATA` like column
+        flags (NDArray[np.bool]): The flags that correspond to the `DATA` column drawn from the `FLAG` column
+        uvws (NDArray[np.float64]): The (U,V,W) coordinates of the data
+        flag_extreme_dxy (bool, optional): Whether flagging on extreme stokes-v should be consider. Defaults to True.
+        dxy_thresh (float, optional): The threshold of the stokes-v flagging. Defaults to 4.0.
+
+    Returns:
+        tuple[NDArray[np.complex128], NDArray[np.bool], NDArray[np.float64]]: Copies of the input `data`, `flags` and `uvws`. The `flags` are updated based on the results of the flagging.
+    """
+
+    no_flags_before = np.sum(flags)
+
+    nan_mask = np.where(~np.isfinite(data))
+    zero_mask = np.where(data == 0 + 0j)
+    uvw_mask = np.any(uvws == 0, axis=1)
+    logger.info(
+        f"Will flag {np.sum(nan_mask)} NaNs, zero'd data {np.sum(zero_mask)}, zero'd UVW {np.sum(uvw_mask)}. "
+    )
+
+    flags[nan_mask] = True
+    flags[zero_mask] = True
+    flags[uvw_mask] = True
+
+    if flag_extreme_dxy:
+        logger.info(f"Flagging based on extreme Stokes-V, threshold {dxy_thresh=}")
+        dxy = np.abs(data[:, :, 1] - data[:, :, 2])
+        dxy_mask = np.where(dxy > dxy_thresh)
+        logger.info(f"Will flag {np.sum(dxy_mask)} extreme Stokes-V.")
+
+        # TODO: This can be compressed to a one-liner
+        flags[:, :, 0][dxy_mask] = True
+        flags[:, :, 1][dxy_mask] = True
+        flags[:, :, 2][dxy_mask] = True
+        flags[:, :, 3][dxy_mask] = True
+
+    no_flags_after = np.sum(flags)
+    logger.info(
+        f"Flags before: {no_flags_before}, Flags after: {no_flags_after}, Difference {no_flags_after - no_flags_before}"
+    )
+
+    return (data, flags, uvws)
+
+
 def nan_zero_extreme_flag_ms(
     ms: Path | MS,
     data_column: str | None = None,
     flag_extreme_dxy: bool = True,
     dxy_thresh: float = 4.0,
     nan_data_on_flag: bool = False,
+    chunk_size: int = 250000,
 ) -> MS:
     """Will flag a MS based on NaNs or zeros in the nominated data column of a measurement set.
     These NaNs might be introduced into a column via the application of a applysolutions task.
@@ -96,8 +157,9 @@ def nan_zero_extreme_flag_ms(
         ms (Union[Path,MS]): The measurement set that will be processed and have visibilities flagged.
         data_column (Optional[str], optional): The column to inspect. This will override the value in the nominated column of the MS. Defaults to None.
         flag_extreme_dxy (bool, optional): Whether Stokes-V will be inspected and flagged. Defaults to True.
-        dxy_thresh (float, optional): Threshold used in the Stokes-V case. Defaults to 4..
+        dxy_thresh (float, optional): Threshold used in the Stokes-V case. Defaults to 4.0.
         nan_data_on_flag (bool, optional): If True, data whose FLAG is set to True will become NaNs. Defaults to False.
+        chunk_size (int, optional): Number of rows to process at a time. Defaults to 250000.
 
     Returns:
         MS: The container of the processed MS
@@ -114,46 +176,41 @@ def nan_zero_extreme_flag_ms(
     logger.info(f"Flagging NaNs and zeros in {data_column}.")
 
     with table(str(ms.path), readonly=False, ack=False) as tab:
-        data = tab.getcol(data_column)
-        flags = tab.getcol("FLAG")
+        no_rows = len(tab)
+        no_chunks = math.ceil(no_rows / chunk_size)
+        logger.info(f"Number of rows: {no_rows} across {no_chunks}")
+        idx = 0
+        while idx * chunk_size < no_rows:
+            start_row = idx * chunk_size
+            logger.info(
+                f"Flagging {idx + 1} of {no_chunks} - {start_row=} with {chunk_size=}"
+            )
 
-        nan_mask = np.where(~np.isfinite(data))
-        zero_mask = np.where(data == 0 + 0j)
-        uvw_mask = np.any(tab.getcol("UVW") == 0, axis=1)
-        logger.info(
-            f"Will flag {np.sum(nan_mask)} NaNs, zero'd data {np.sum(zero_mask)}, zero'd UVW {np.sum(uvw_mask)}. "
-        )
+            data = tab.getcol(data_column, startrow=start_row, nrow=chunk_size)
+            flags = tab.getcol("FLAG", startrow=start_row, nrow=chunk_size)
+            uvws = tab.getcol("UVW", startrow=start_row, nrow=chunk_size)
 
-        no_flags_before = np.sum(flags)
-        # TODO: Consider batching this to allow larger MS being used
-        flags[nan_mask] = True
-        flags[zero_mask] = True
-        flags[uvw_mask] = True
+            data, flags, uvws = _nan_zero_extreme_flag(
+                data=data,
+                flags=flags,
+                uvws=uvws,
+                flag_extreme_dxy=flag_extreme_dxy,
+                dxy_thresh=dxy_thresh,
+            )
 
-        if flag_extreme_dxy:
-            logger.info(f"Flagging based on extreme Stokes-V, threshold {dxy_thresh=}")
-            dxy = np.abs(data[:, :, 1] - data[:, :, 2])
-            dxy_mask = np.where(dxy > dxy_thresh)
-            logger.info(f"Will flag {np.sum(dxy_mask)} extreme Stokes-V.")
+            logger.info("Adding updated flags column")
+            tab.putcol("FLAG", flags, startrow=start_row, nrow=chunk_size)
 
-            # TODO: This can be compressed to a one-liner
-            flags[:, :, 0][dxy_mask] = True
-            flags[:, :, 1][dxy_mask] = True
-            flags[:, :, 2][dxy_mask] = True
-            flags[:, :, 3][dxy_mask] = True
+            # Keep this outside the above function to avoid
+            # passing the table reference. To avoid thrashing the data
+            # column wwe would otherwise check to see if this option is enabled
+            # when putting the column. May as well keep it here.
+            if nan_data_on_flag:
+                data[flags] = np.nan
+                logger.info(f"Setting {np.sum(flags)} DATA items to NaN.")
+                tab.putcol(data_column, data, startrow=start_row, nrow=chunk_size)
 
-        no_flags_after = np.sum(flags)
-        logger.info(
-            f"Flags before: {no_flags_before}, Flags after: {no_flags_after}, Difference {no_flags_after - no_flags_before}"
-        )
-
-        logger.info("Adding updated flags column")
-        tab.putcol("FLAG", flags)
-
-        if nan_data_on_flag:
-            data[flags is True] = np.nan
-            logger.info(f"Setting {np.sum(flags)} DATA items to NaN.")
-            tab.putcol(data_column, data)
+            idx += 1
 
         tab.close()
 
