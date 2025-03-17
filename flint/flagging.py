@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from argparse import ArgumentParser
 from pathlib import Path
 from typing import Collection, NamedTuple
@@ -176,10 +177,14 @@ def nan_zero_extreme_flag_ms(
 
     with table(str(ms.path), readonly=False, ack=False) as tab:
         no_rows = len(tab)
-        logger.info(f"Number of rows: {no_rows}")
+        no_chunks = math.ceil(no_rows / chunk_size)
+        logger.info(f"Number of rows: {no_rows} across {no_chunks}")
         idx = 0
         while idx * chunk_size < no_rows:
             start_row = idx * chunk_size
+            logger.info(
+                f"Flagging {idx + 1} of {no_chunks} - {start_row=} with {chunk_size=}"
+            )
 
             data = tab.getcol(data_column, startrow=start_row, nrow=chunk_size)
             flags = tab.getcol("FLAG", startrow=start_row, nrow=chunk_size)

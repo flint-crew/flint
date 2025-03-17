@@ -27,6 +27,7 @@
   - Using `vizier` normalised position units
   - Convert flux columns to Jy
 - Improved docs
+- Added chunking to the NaN/UVW/zero flagging during selfcal
 
 # 0.2.13
 
