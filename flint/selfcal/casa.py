@@ -327,7 +327,7 @@ def gaincal_applycal_ms(
     # not overwriting the entire column
     for idx, (spw_str, cal_table) in enumerate(spw_and_cal_tables):
         logger.info(
-            f"{idx + 1} of {len(spw_and_cal_tables)}, applying solutions for {spw_str}"
+            f"Apply solutions {idx + 1} of {len(spw_and_cal_tables)}, {spw_str}"
         )
         applycal(
             container=casa_container,
