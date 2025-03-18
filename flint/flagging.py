@@ -209,7 +209,7 @@ def nan_zero_extreme_flag_ms(
                 data[flags] = np.nan
                 logger.info(f"Setting {np.sum(flags)} DATA items to NaN.")
                 tab.putcol(data_column, data, startrow=start_row, nrow=chunk_size)
-
+            tab.flush()
             idx += 1
 
         tab.close()
