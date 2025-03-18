@@ -11,19 +11,22 @@ from astropy.io import fits
 from flint.exceptions import AttemptRerunException
 from flint.logging import logger
 from flint.naming import create_aegean_names
+from flint.options import BaseOptions, add_options_to_parser, create_options_from_parser
 from flint.sclient import run_singularity_command
 
 
-class BANEOptions(NamedTuple):
+class BANEOptions(BaseOptions):
     """Container for basic BANE related options. Only a subclass of BANE options are supported."""
 
     grid_size: tuple[int, int] | None = (16, 16)
     """The step interval of each box, in pixels"""
     box_size: tuple[int, int] | None = (196, 196)
     """The size of the box in pixels"""
+    cores: int = 12
+    """Number of cores to use. The number of stripes will be less than this number."""
 
 
-class AegeanOptions(NamedTuple):
+class AegeanOptions(BaseOptions):
     """Container for basic aegean options. Only a subclass of aegean options are supported.
 
     Of note is the lack of a tables option (corresponding to --tables). This is dependent on knowing the base output name
@@ -54,10 +57,12 @@ class AegeanOutputs(NamedTuple):
     """The input image that was used to source find against"""
 
 
-def _get_bane_command(image: Path, cores: int, bane_options: BANEOptions) -> str:
+def _get_bane_command(image: Path, bane_options: BANEOptions) -> str:
     """Create the BANE command to run"""
     # The stripes is purposely set lower than the cores due to an outstanding bane bug that can cause a deadlock.
-    bane_command_str = f"BANE {image!s} --cores {cores} --stripes {cores - 1} "
+    cores = max(1, bane_options.cores)
+    stripes = max(1, cores - 1)
+    bane_command_str = f"BANE {image!s} --cores {cores} --stripes {stripes} "
     if bane_options.grid_size:
         bane_command_str += (
             f"--grid {bane_options.grid_size[0]} {bane_options.grid_size[1]} "
@@ -114,7 +119,6 @@ def _get_aegean_command(
 def run_bane_and_aegean(
     image: Path,
     aegean_container: Path,
-    cores: int = 8,
     bane_options: BANEOptions | None = None,
     aegean_options: AegeanOptions | None = None,
 ) -> AegeanOutputs:
@@ -125,7 +129,6 @@ def run_bane_and_aegean(
     Args:
         image (Path): The input image that BANE will calculate a background and RMS map for
         aegean_container (Path): Path to a singularity container that was the AegeanTools packages installed.
-        cores (int, optional): The number of cores to allow BANE to use. Internally BANE will create a number of sub-processes. Defaults to 8.
         bane_options (Optional[BANEOptions], optional): The options that are provided to BANE. If None defaults of BANEOptions are used. Defaults to None.
         aegean_options (Optional[AegeanOptions], optional): The options that are provided to Aegean. if None defaults of AegeanOptions are used. Defaults to None.
 
@@ -142,9 +145,7 @@ def run_bane_and_aegean(
     aegean_names = create_aegean_names(base_output=base_output)
     logger.debug(f"{aegean_names=}")
 
-    bane_command_str = _get_bane_command(
-        image=image, cores=cores, bane_options=bane_options
-    )
+    bane_command_str = _get_bane_command(image=image, bane_options=bane_options)
 
     bind_dir = [image.absolute().parent]
     run_singularity_command(
@@ -199,9 +200,8 @@ def get_parser() -> ArgumentParser:
     bane_parser.add_argument(
         "container", type=Path, help="Path to container with AegeanTools"
     )
-    bane_parser.add_argument(
-        "--cores", type=int, default=8, help="Number of cores to instruct aegean to use"
-    )
+    bane_parser = add_options_to_parser(parser=bane_parser, options_class=BANEOptions)
+    bane_parser = add_options_to_parser(parser=bane_parser, options_class=AegeanOptions)
 
     return parser
 
@@ -212,8 +212,17 @@ def cli() -> None:
     args = parser.parse_args()
 
     if args.mode == "find":
+        bane_options = create_options_from_parser(
+            parser_namespace=args, options_class=BANEOptions
+        )
+        aegean_options = create_options_from_parser(
+            parser_namespace=args, options_class=AegeanOptions
+        )
         run_bane_and_aegean(
-            image=args.image, aegean_container=args.container, cores=args.cores
+            image=args.image,
+            aegean_container=args.container,
+            bane_options=bane_options,
+            aegean_options=aegean_options,
         )
 
 

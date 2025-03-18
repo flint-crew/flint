@@ -16,7 +16,13 @@ from flint.source_finding.aegean import (
     _bane_output_callback,
     _get_aegean_command,
     _get_bane_command,
+    get_parser,
 )
+
+
+def test_get_parser():
+    """Make sure that there are no conflicting options when creating the parser object"""
+    _ = get_parser()
 
 
 def test_bane_deadlock_callback():
@@ -42,12 +48,12 @@ def test_bane_options():
     assert isinstance(bane_opts, BANEOptions)
 
     bane_str = _get_bane_command(
-        image=Path("this/is/a/test.fits"), cores=8, bane_options=bane_opts
+        image=Path("this/is/a/test.fits"), bane_options=bane_opts
     )
 
     assert isinstance(bane_str, str)
 
-    expected = "BANE this/is/a/test.fits --cores 8 --stripes 7 --grid 20 10 --box 2 1"
+    expected = f"BANE this/is/a/test.fits --cores {bane_opts.cores} --stripes {bane_opts.cores - 1} --grid 20 10 --box 2 1"
     assert expected == bane_str
 
 
@@ -57,19 +63,19 @@ def test_bane_options_with_defaults():
     assert isinstance(bane_opts, BANEOptions)
 
     bane_str = _get_bane_command(
-        image=Path("this/is/a/test.fits"), cores=8, bane_options=bane_opts
+        image=Path("this/is/a/test.fits"), bane_options=bane_opts
     )
 
     assert isinstance(bane_str, str)
 
-    expected = "BANE this/is/a/test.fits --cores 8 --stripes 7"
+    expected = f"BANE this/is/a/test.fits --cores {bane_opts.cores} --stripes {bane_opts.cores - 1}"
     assert expected == bane_str
 
     bane_opts = BANEOptions(box_size=(3, 5), grid_size=None)
     bane_str = _get_bane_command(
-        image=Path("this/is/a/test.fits"), cores=8, bane_options=bane_opts
+        image=Path("this/is/a/test.fits"), bane_options=bane_opts
     )
-    expected = "BANE this/is/a/test.fits --cores 8 --stripes 7 --box 3 5"
+    expected = f"BANE this/is/a/test.fits --cores {bane_opts.cores} --stripes {bane_opts.cores - 1} --box 3 5"
     assert expected == bane_str
 
 
