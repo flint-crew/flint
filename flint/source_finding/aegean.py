@@ -224,6 +224,9 @@ def cli() -> None:
             bane_options=bane_options,
             aegean_options=aegean_options,
         )
+    else:
+        logger.info(f"Mode '{args.mode}' is not known.")
+        parser.print_help()
 
 
 if __name__ == "__main__":
