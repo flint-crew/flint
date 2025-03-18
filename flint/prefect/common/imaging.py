@@ -187,12 +187,12 @@ def task_extract_solution_path(calibrate_cmd: CalibrateCommand) -> Path:
     return calibrate_cmd.solution_path
 
 
-# BANE sometimes gets cauht in some stalled staTE
-@task(retries=3)
+@task
 def task_run_bane_and_aegean(
     image: WSCleanResult | LinmosResult,
     aegean_container: Path,
-    timelimit_seconds: int | float = 60 * 45,
+    update_bane_options: dict[str, Any] | None = None,
+    update_aegean_options: dict[str, Any] | None = None,
 ) -> AegeanOutputs:
     """Run BANE and Aegean against a FITS image.
 
@@ -205,7 +205,8 @@ def task_run_bane_and_aegean(
     Args:
         image (Union[WSCleanResult, LinmosResult]): The image that will be searched
         aegean_container (Path): Path to a singularity container containing BANE and aegean
-        timelimit_seconds (Union[int,float], optional): The maximum amount of time, in seconds, before an exception is raised. Defaults to 45*60.
+        update_bane_options (dict[str, Any] | None, optional): Over-ride any default options of BANEOptions. If None defaults are used. Defaults to None.
+        update_aegean_options (dict[str, Any] | None, optional): Over-ride any default options of AegeanOptions. If None defaults are used. Defaults to None.
 
     Raises:
         ValueError: Raised when ``image`` is not a supported type
@@ -235,7 +236,10 @@ def task_run_bane_and_aegean(
         raise ValueError(f"Unexpected type, have received {type(image)} for {image=}. ")
 
     aegean_outputs = run_bane_and_aegean(
-        image=image_path, aegean_container=aegean_container
+        image=image_path,
+        aegean_container=aegean_container,
+        update_bane_options=update_bane_options,
+        update_aegean_options=update_aegean_options,
     )
 
     return aegean_outputs

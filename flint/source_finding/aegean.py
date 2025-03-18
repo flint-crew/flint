@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from argparse import ArgumentParser
 from pathlib import Path
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 from astropy.io import fits
 
@@ -121,6 +121,8 @@ def run_bane_and_aegean(
     aegean_container: Path,
     bane_options: BANEOptions | None = None,
     aegean_options: AegeanOptions | None = None,
+    update_bane_options: dict[str, Any] | None = None,
+    update_aegean_options: dict[str, Any] | None = None,
 ) -> AegeanOutputs:
     """Run BANE, the background and noise estimator, and aegean, the source finder,
     against an input image. This function attempts to hook into the AegeanTools
@@ -131,12 +133,19 @@ def run_bane_and_aegean(
         aegean_container (Path): Path to a singularity container that was the AegeanTools packages installed.
         bane_options (Optional[BANEOptions], optional): The options that are provided to BANE. If None defaults of BANEOptions are used. Defaults to None.
         aegean_options (Optional[AegeanOptions], optional): The options that are provided to Aegean. if None defaults of AegeanOptions are used. Defaults to None.
+        update_bane_options (dict[str, Any] | None, optional): Over-ride any default options of BANEOptions. If None defaults are used. Defaults to None.
+        update_aegean_options (dict[str, Any] | None, optional): Over-ride any default options of AegeanOptions. If None defaults are used. Defaults to None.
 
     Returns:
         AegeanOutputs: The newly created BANE products
     """
     bane_options = bane_options if bane_options else BANEOptions()
+    if update_bane_options:
+        bane_options = bane_options.with_options(**update_bane_options)
+
     aegean_options = aegean_options if aegean_options else AegeanOptions()
+    if update_aegean_options:
+        aegean_options = aegean_options.with_options(**update_aegean_options)
 
     image = image.absolute()
     base_output = str(image.parent / image.stem)
