@@ -259,7 +259,7 @@ def gaincal_applycal_ms(
         GainCallError: Raised when raise_error_on_fail is True and gaincal does not converge.
 
     Returns:
-        MS: THe self-calibrated measurement set.
+        MS: The self-calibrated measurement set.
     """
     logger.info(f"Measurement set to be self-calibrated: ms={ms}")
 

@@ -302,9 +302,23 @@ def process_science_fields(
 
     beam_aegean_outputs = None
     if run_aegean:
+        update_bane_options = get_options_from_strategy(
+            strategy=strategy,
+            mode="bane",
+            round_info=0,
+            operation="selfcal",
+        )
+        update_aegean_options = get_options_from_strategy(
+            strategy=strategy,
+            mode="aegean",
+            round_info=0,
+            operation="selfcal",
+        )
         beam_aegean_outputs = task_run_bane_and_aegean.map(
             image=wsclean_results,
             aegean_container=unmapped(field_options.aegean_container),
+            update_bane_options=unmapped(update_bane_options),
+            update_aegean_options=unmapped(update_aegean_options),
         )
         beam_summaries = task_update_with_options.map(
             input_object=beam_summaries, components=beam_aegean_outputs
@@ -384,19 +398,36 @@ def process_science_fields(
                 ),
                 allow_beam_masks=field_options.use_beam_masks,
             ):
-                # Early versions of the masking procedure required aegean outputs
-                # to construct the sginal images. Since aegean is run outside of
-                # this self-cal loop once already, we can skip their creation on
-                # the first loop
-                # TODO: the aegean outputs are only needed should the signal image be needed
+                # TODO: the aegean outputs are only needed should
+                # the signal image be needed or per beam sources are needed
+                update_bane_options = get_options_from_strategy(
+                    strategy=strategy,
+                    mode="bane",
+                    round_info=current_round,
+                    operation="selfcal",
+                )
+                update_aegean_options = get_options_from_strategy(
+                    strategy=strategy,
+                    mode="aegean",
+                    round_info=current_round,
+                    operation="selfcal",
+                )
+
                 beam_aegean_outputs = (
                     task_run_bane_and_aegean.map(
                         image=wsclean_results,
                         aegean_container=unmapped(field_options.aegean_container),
+                        update_bane_options=unmapped(update_bane_options),
+                        update_aegean_options=unmapped(update_aegean_options),
                     )
                     if (current_round >= 2 or not beam_aegean_outputs)
                     else beam_aegean_outputs
                 )
+                # Early versions of the masking procedure required aegean outputs
+                # to construct the sginal images. Since aegean is run outside of
+                # this self-cal loop once already, we can skip their creation on
+                # the first loop
+
                 update_masking_options = get_options_from_strategy(
                     strategy=strategy,
                     mode="masking",

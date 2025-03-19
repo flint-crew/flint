@@ -28,6 +28,9 @@
   - Convert flux columns to Jy
 - Improved docs
 - Added chunking to the NaN/UVW/zero flagging during selfcal
+- Added `update_bane_options` and `update_aegean_options` to `flint.source_finding.aegean`
+  - Initially to support using more cores
+  - Patched in the `get_options_from_strategy` function in the continuum flow
 
 # 0.2.13
 

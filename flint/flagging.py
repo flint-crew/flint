@@ -142,7 +142,7 @@ def nan_zero_extreme_flag_ms(
     flag_extreme_dxy: bool = True,
     dxy_thresh: float = 4.0,
     nan_data_on_flag: bool = False,
-    chunk_size: int = 250000,
+    chunk_size: int = 100000,
 ) -> MS:
     """Will flag a MS based on NaNs or zeros in the nominated data column of a measurement set.
     These NaNs might be introduced into a column via the application of a applysolutions task.
@@ -159,7 +159,7 @@ def nan_zero_extreme_flag_ms(
         flag_extreme_dxy (bool, optional): Whether Stokes-V will be inspected and flagged. Defaults to True.
         dxy_thresh (float, optional): Threshold used in the Stokes-V case. Defaults to 4.0.
         nan_data_on_flag (bool, optional): If True, data whose FLAG is set to True will become NaNs. Defaults to False.
-        chunk_size (int, optional): Number of rows to process at a time. Defaults to 250000.
+        chunk_size (int, optional): Number of rows to process at a time. Defaults to 100000.
 
     Returns:
         MS: The container of the processed MS
@@ -209,7 +209,7 @@ def nan_zero_extreme_flag_ms(
                 data[flags] = np.nan
                 logger.info(f"Setting {np.sum(flags)} DATA items to NaN.")
                 tab.putcol(data_column, data, startrow=start_row, nrow=chunk_size)
-
+            tab.flush()
             idx += 1
 
         tab.close()
