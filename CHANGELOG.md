@@ -1,6 +1,6 @@
 # Change log
 
-# dev
+# v0.3.0
 
 - Attempts to clean up the prefect tasks related to convolution and linmos
   - Added a `LinmosOptions`
