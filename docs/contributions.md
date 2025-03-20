@@ -34,7 +34,7 @@ These `pre-commit` checks are also executed when submitting a pull request back 
 
 ## Type hints
 
-Even though `python` is a dynamically typed language, `flint` makes extensive use of type hinting throughout its code base. This gives code analysis tools like `ruff` and `mypy` contextual information that helps to improve code quality and reduce bugs. E
+Even though `python` is a dynamically typed language, `flint` makes extensive use of type hinting throughout its code base. This gives code analysis tools like `ruff` and `mypy` contextual information that helps to improve code quality and reduce bugs.
 
 Functions throughout `flint` should all be typed, including all inputs and returns:
 
@@ -58,6 +58,20 @@ def my_function(arg1: str, arg2: int, arg3: int | float | None = None) -> None:
 ### Functions return something
 
 Try to have all functions return something, even if it is an input. Seems silly, but is often useful.
+
+### Specify keyword arguments everywhere
+
+`Python` allows arguments to be pass by their name, even if they are positional. For example
+
+```python
+def bar(param1, param2, an_optional_parameter=3) -> None:
+    return "JackSparrow"
+
+
+bar(param2="Thisisparam2", param1="and Param1 is after param2", an_optional_parameter=2)
+```
+
+Note that although `param1` and `param2` are mandatory and positional arguments, we have been able to specify them by their name. Please do try to use this approach when using `flint` functions internally. It makes changes to the API a little more robust, and makes reading unfamiliar code easier to understand at a glance (i.e. more descriptive).
 
 ### Referencing paths
 
