@@ -166,3 +166,12 @@ We live in a time not bound by character per line limits. Use descriptive names 
 Think of the future you being confused over the difference of `iidx` and `jiidx`.
 
 Also, consider putting the type of the variable in the variable name, e.g. `input_file_path = Path(...)`.
+
+## Indentation levels
+If things become to indented then there is likely some logic that could be factored out into a separate function. For instance, deeply indented flow control in a loop could be refactored so that each loop is calling a function. This helps with developing robust tests.
+
+## Loop end conditions
+Should a loop be used do make sure that there is some terminating condition. The bbvious case is iterating over a list, where the `__next__` method indicates when the end of the list has been reached. For something like looping over until convergence has been reached (e.g. iterative sigma-clipping) always include an upper bound on how many times the loop may be executed.
+
+## Use `assert` to make clear impossible conditions
+`assert` statements are very useful to ensure some states can never be reached. They make the code more robust in that potential failure modes are not silently ignored. Don't be afraid of using them, and don't be afreaid of failing vocally. This is much preferred over 'maybe working but not sure'.
