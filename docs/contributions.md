@@ -34,7 +34,7 @@ These `pre-commit` checks are also executed when submitting a pull request back 
 
 ## Type hints
 
-Even though `python` is a dynamically typed language, `flint` makes extensive use of type hinting throughout its code base. This gives code analysis tools like `ruff` and `mypy` contextual information that helps to improve code quality and reduce bugs. E
+Even though `python` is a dynamically typed language, `flint` makes extensive use of type hinting throughout its code base. This gives code analysis tools like `ruff` and `mypy` contextual information that helps to improve code quality and reduce bugs.
 
 Functions throughout `flint` should all be typed, including all inputs and returns:
 
@@ -55,11 +55,33 @@ def my_function(arg1: str, arg2: int, arg3: int | float | None = None) -> None:
     pass
 ```
 
-### Functions return something
+## Functions return something
 
 Try to have all functions return something, even if it is an input. Seems silly, but is often useful.
 
-### Referencing paths
+```python
+def write_output(data: Any, output_path: Path) -> Path:
+    with open(output_path, "w") as output_file:
+        output_file.write(data)
+
+    return output_path
+```
+
+## Specify keyword arguments everywhere
+
+`Python` allows arguments to be pass by their name, even if they are positional. For example
+
+```python
+def bar(param1, param2, an_optional_parameter=3) -> None:
+    return "JackSparrow"
+
+
+bar(param2="Thisisparam2", param1="and Param1 is after param2", an_optional_parameter=2)
+```
+
+Note that although `param1` and `param2` are mandatory and positional arguments, we have been able to specify them by their name. Please do try to use this approach when using `flint` functions internally. It makes changes to the API a little more robust, and makes reading unfamiliar code easier to understand at a glance (i.e. more descriptive).
+
+## Referencing paths
 
 When attempting to handle a path-like string (e.g. for a file on disk) do using the `Path` object from the `pathlib` in the standard library. It will make your life a lot easier.
 
@@ -74,13 +96,13 @@ b = a.parent / "but/level"
 b.mkdir(parent=True, exist_ok=True)  # make parent directories if need
 ```
 
-### Docstrings
+## Docstrings
 
 Do attempt to provide doc-strings for all functions. Should a function be sufficiently small and not intended for public consumption a short message may be placed as a string instead.
 
 `flint-crew` have adopted the [Google python docstring (with types) style](https://sphinxcontrib-napoleon.readthedocs.io/en/latest/example_google.html). If you are developed with `vscode` we recommend the `autodocstring - Python Docstring Generator` tool to automatically template the docstring for you.
 
-### Use the `BaseOptions` class
+## Use the `BaseOptions` class
 
 All (or most) of `flint`'s `Options` classes are derived from `flint.options.BaseOptions`. This uses `pydantic` in order to validate upon class initialisation that the provided values match the types they are listed as having.
 
@@ -112,7 +134,7 @@ new_pirate = existing_pirate.with_options(age=42)
 assert new_pirate is not existing_pirage, "They are different instances"
 ```
 
-### Function sizes and unit tests
+## Function sizes and unit tests
 
 `Flint` has a preference towards a procedural style of coding - although we do have classes we try to keep methods attached to them lite. This is a matter of preference, but so far it has been useful.
 
@@ -137,10 +159,19 @@ Should the path to the file note be specified all tests across all files will be
 
 We currently do not have the facility to test code that passes through a container call.
 
-### Naming variables, functions and other things
+## Naming variables, functions and other things
 
 We live in a time not bound by character per line limits. Use descriptive names and do not skip a character or two to save space. Be verbose. Trust (or accept) that the code formatter will do things anyway.
 
 Think of the future you being confused over the difference of `iidx` and `jiidx`.
 
 Also, consider putting the type of the variable in the variable name, e.g. `input_file_path = Path(...)`.
+
+## Indentation levels
+If things become to indented then there is likely some logic that could be factored out into a separate function. For instance, deeply indented flow control in a loop could be refactored so that each loop is calling a function. This helps with developing robust tests.
+
+## Loop end conditions
+Should a loop be used do make sure that there is some terminating condition. The bbvious case is iterating over a list, where the `__next__` method indicates when the end of the list has been reached. For something like looping over until convergence has been reached (e.g. iterative sigma-clipping) always include an upper bound on how many times the loop may be executed.
+
+## Use `assert` to make clear impossible conditions
+`assert` statements are very useful to ensure some states can never be reached. They make the code more robust in that potential failure modes are not silently ignored. Don't be afraid of using them, and don't be afreaid of failing vocally. This is much preferred over 'maybe working but not sure'.
