@@ -26,37 +26,23 @@ from flint.ms import (
     consistent_ms_frequencies,
     find_mss,
     get_freqs_from_ms,
-    subtract_model_from_data_column,
 )
 from flint.naming import get_sbid_from_path
 from flint.options import (
     AddModelSubtractFieldOptions,
-    BaseOptions,
     SubtractFieldOptions,
     add_options_to_parser,
     create_options_from_parser,
 )
+from flint.predict.crystalball import CrystalBallOptions
 from flint.prefect.clusters import get_dask_runner
 from flint.prefect.common.imaging import (
     convolve_then_linmos,
     task_get_common_beam_from_results,
     task_wsclean_imager,
 )
-from flint.prefect.common.predict import task_addmodel_to_ms
-
-
-# TODO: The wsclean pol mode conflicts with the addmodel one. Consider opens.
-class CrystalBallOptions(BaseOptions):
-    """Options related to running crystal ball"""
-
-    attempt_crystalball: bool = False
-    """Attempt to predict the model visibilities using ``crystalball``"""
-    crystallball_wsclean_pol_mode: list[str] = ["i"]
-    """The polarisation of the wsclean model that was generated"""
-    row_chunks: int = 0
-    "Number of rows of input MS that are processed in a single chunk. If 0 it will be set automatically. Default is 0."
-    model_chunks: int = 0
-    "Number of sky model components that are processed in a single chunk. If 0 it will be set automatically. Default is 0."
+from flint.prefect.common.ms import task_subtract_model_from_ms
+from flint.prefect.common.predict import task_addmodel_to_ms, task_crystalball_to_ms
 
 
 def _check_and_verify_options(
@@ -175,54 +161,6 @@ def find_and_setup_mss(
         raise FrequencyMismatchError("There is a mismatch in frequencies")
 
     return science_mss
-
-
-task_subtract_model_from_ms = task(subtract_model_from_data_column)
-
-
-@task
-def task_crystalball_to_ms(ms: MS, crystalball_options: CrystalBallOptions) -> MS:
-    """Predict model visibilities into a measurement set using a previously constructed
-    blackboard sky model. See ``wsclean -save-source-list`. This used the ``crystalball``
-    python package, which under the hood taps into the same dask task runner running
-    this flow.
-
-    Visibilities are predicted into the MS's ``MODEL_DATA`` column.
-
-    Args:
-        ms (MS): The measurement set where model visibilities will be predicted into.
-        crystalball_options (CrystalBallOptions): Options around the crystal ball operation
-
-    Returns:
-        MS: An updated MS with the model column set
-    """
-    from crystalball.crystalball import predict
-    from prefect_dask import get_dask_client
-
-    from flint.imager.wsclean import get_wsclean_output_source_list_path
-    from flint.prefect.helpers import enable_loguru_support
-
-    # crystalball uses loguru. We want to try to attach a handler
-    enable_loguru_support()
-
-    for idx, pol in enumerate(crystalball_options.crystallball_wsclean_pol_mode):
-        wsclean_source_list_path = get_wsclean_output_source_list_path(
-            name_path=ms.path, pol=pol
-        )
-        assert wsclean_source_list_path.exists(), (
-            f"{wsclean_source_list_path=} was requested, but does not exist"
-        )
-
-        with get_dask_client() as client:
-            predict(
-                ms=str(ms.path),
-                sky_model=str(wsclean_source_list_path),
-                client=client,
-                row_chunks=crystalball_options.row_chunks,
-                model_chunks=crystalball_options.model_chunks,
-            )
-
-    return ms.with_options(model_column="MODEL_DATA")
 
 
 @task

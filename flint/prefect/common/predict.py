@@ -7,6 +7,52 @@ from prefect import task
 from flint.logging import logger
 from flint.ms import MS
 from flint.options import AddModelSubtractFieldOptions
+from flint.predict.crystalball import CrystalBallOptions
+
+
+@task
+def task_crystalball_to_ms(ms: MS, crystalball_options: CrystalBallOptions) -> MS:
+    """Predict model visibilities into a measurement set using a previously constructed
+    blackboard sky model. See ``wsclean -save-source-list`. This used the ``crystalball``
+    python package, which under the hood taps into the same dask task runner running
+    this flow.
+
+    Visibilities are predicted into the MS's ``MODEL_DATA`` column.
+
+    Args:
+        ms (MS): The measurement set where model visibilities will be predicted into.
+        crystalball_options (CrystalBallOptions): Options around the crystal ball operation
+
+    Returns:
+        MS: An updated MS with the model column set
+    """
+    from crystalball.crystalball import predict
+    from prefect_dask import get_dask_client
+
+    from flint.imager.wsclean import get_wsclean_output_source_list_path
+    from flint.prefect.helpers import enable_loguru_support
+
+    # crystalball uses loguru. We want to try to attach a handler
+    enable_loguru_support()
+
+    for idx, pol in enumerate(crystalball_options.crystallball_wsclean_pol_mode):
+        wsclean_source_list_path = get_wsclean_output_source_list_path(
+            name_path=ms.path, pol=pol
+        )
+        assert wsclean_source_list_path.exists(), (
+            f"{wsclean_source_list_path=} was requested, but does not exist"
+        )
+
+        with get_dask_client() as client:
+            predict(
+                ms=str(ms.path),
+                sky_model=str(wsclean_source_list_path),
+                client=client,
+                row_chunks=crystalball_options.row_chunks,
+                model_chunks=crystalball_options.model_chunks,
+            )
+
+    return ms.with_options(model_column="MODEL_DATA")
 
 
 @task
