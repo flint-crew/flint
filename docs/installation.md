@@ -4,6 +4,25 @@ The `flint` module itself is built in pure Python and can be installed using `pi
 
 For compiled tools, `flint` uses `singularity` containers. Users must install `singularity` or `apptainer` on their system for these to work. If given the choice, install `apptainer`, which is the community developed and maintained fork of `singularity`.
 
+## Containerised install
+
+We now support a containerised installation. Note that these containers internally contain `apptainer`. We have not tested nested containers for stability. The primary build script is available in `containers/Dockerfile`. We also provide pre-built images on [GitHub](https://github.com/flint-crew/flint/pkgs/container/flint). You can pull these by running either:
+
+```bash
+# Using Docker
+# If on ARM (i.e. Apple Silicon) the `--platform=linux/x86_64` is required
+docker pull ghcr.io/flint-crew/flint:{tag} --platform=linux/x86_64
+```
+
+or
+
+```bash
+# Using apptainer/singulartiy
+singularity pull docker://ghcr.io/flint-crew/flint:{tag}
+```
+
+See the [GitHub packages](https://github.com/flint-crew/flint/pkgs/container/flint) page for the list of available version tags.
+
 ## Containers
 
 We separately maintain a set of required containers. Pre-built containers are hosted on [DockerHub](https://hub.docker.com/r/alecthomson/flint-containers/tags), and the underlying build scripts can be found over in the [`flint-containers` repository](https://github.com/flint-crew/flint-containers).
