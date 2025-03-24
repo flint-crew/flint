@@ -25,4 +25,3 @@ WORKDIR /flint
 RUN uv pip install .[casa] --compile-bytecode
 
 WORKDIR /root
-ENTRYPOINT [ "/bin/bash" ]
