@@ -30,8 +30,6 @@ jobs:
       - uses: pre-commit/action@v3.0.1
         with:
           extra_args: --hook-stage manual --all-files
-  setup:
-    uses: ./.github/workflows/setup-deps.yml
 
   checks:
     name: Check Python ${{ matrix.python-version }} on ${{ matrix.runs-on }}
