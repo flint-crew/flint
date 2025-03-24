@@ -2,4 +2,5 @@
 
 ```{toctree}
 predict/addmodel.md
+predict/crystalball.md
 ```
