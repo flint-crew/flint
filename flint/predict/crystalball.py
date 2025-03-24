@@ -103,6 +103,12 @@ def get_parser() -> ArgumentParser:
         help="The name of the model data column",
         default="MODEL_DATA",
     )
+    parser.add_argument(
+        "--wsclean-source-list-path",
+        type=Path,
+        default=None,
+        help="Path to the model to load. If None one is guessed from the MS name.",
+    )
 
     parser = add_options_to_parser(parser=parser, options_class=CrystalBallOptions)
 
@@ -119,7 +125,11 @@ def cli() -> None:
     )
     ms = MS(path=args.ms, model_column=args.model_column)
 
-    crystalball_predict(ms=ms, crystalball_options=crystalball_options)
+    crystalball_predict(
+        ms=ms,
+        crystalball_options=crystalball_options,
+        wsclean_source_list_path=args.wsclean_source_list_path,
+    )
 
 
 if __name__ == "__main__":
