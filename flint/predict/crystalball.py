@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from argparse import ArgumentParser
 from pathlib import Path
+from typing import Any
 
 from crystalball.crystalball import predict
 from dask.distributed import Client
@@ -33,6 +34,7 @@ def crystalball_predict(
     wsclean_source_list_path: Path | None = None,
     dask_client: Client | None = None,
     output_column: str = "MODEL_DATA",
+    update_crystalball_options: dict[str, Any] | None = None,
 ) -> MS:
     """A very simply wrapper around the `Crystalball.predict` function. Basic
     checks to ensure that the BB6 style source model path exists, which is the
@@ -47,10 +49,16 @@ def crystalball_predict(
         wsclean_source_list_path (Path | None, optional): The path to the file with the model components to predict. If None an attempt is made to find it from the MS. Defaults to None.
         dask_client (Client | None, optional): A specialised Dask distributed task. If None one is created by `crystalball`. Defaults to None.
         output_column (str, optional): The column to predict into. The `MS.model_column` will reflect this. Defaults to "MODEL_DATA".
+        update_crystalball_options (dict[str, Any] | None, optional): Update options to the provided crystalball_options. Defaults to None.
 
     Returns:
         MS: The MS that was predicted into, with the `model_column` set appropriately.
     """
+    if update_crystalball_options:
+        crystalball_options = crystalball_options.with_options(
+            **update_crystalball_options
+        )
+
     if wsclean_source_list_path is None:
         assert len(crystalball_options.crystallball_wsclean_pol_mode) == 1, (
             "Only a single polarisation mode is currently supported."
@@ -65,9 +73,9 @@ def crystalball_predict(
     assert isinstance(wsclean_source_list_path, Path), (
         f"{wsclean_source_list_path=}, which appears not to be a Path"
     )
-    assert wsclean_source_list_path.exists(), (
-        f"{wsclean_source_list_path=} was requested, but does not exist"
-    )
+    if not wsclean_source_list_path.exists():
+        message = f"{wsclean_source_list_path=} was requested, but does not exist"
+        raise FileNotFoundError(message)
 
     logger.info(f"Adding {wsclean_source_list_path=} to {ms.path=}")
     logger.info(f"Predicting into {output_column=} with Crystalball")
