@@ -14,6 +14,12 @@ from flint.predict.crystalball import (
 )
 from flint.utils import get_packaged_resource_path
 
+from .test_helpers import ms_example
+
+# This is a dummy usage to avoid the import of
+# the fixture being removed
+_ = ms_example
+
 
 def test_get_parser():
     """A simple test to obtain the parser. Tests imports as well."""
