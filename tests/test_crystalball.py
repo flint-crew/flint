@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from casacore.tables import table
 
 from flint.ms import MS
 from flint.predict.crystalball import (
@@ -57,6 +58,9 @@ def test_example_prediction_ms(ms_example):
     )
     assert model_path.exists()
 
+    with table(str(ms_path)) as tab:
+        assert "MODEL_DATA" not in tab.colnames()
+
     crystalball_options = CrystalBallOptions()
     ms = crystalball_predict(
         ms=ms,
@@ -64,3 +68,8 @@ def test_example_prediction_ms(ms_example):
         wsclean_source_list_path=model_path,
     )
     assert ms.model_column == "MODEL_DATA"
+
+    with table(str(ms_path)) as tab:
+        assert "MODEL_DATA" in tab.colnames()
+
+    # TODO: Need to ensure that the 1934 predict model data is actually correct
