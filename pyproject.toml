@@ -47,7 +47,7 @@ dependencies = [
     "ConfigArgParse>=1.7",
     "fitscube>=0.5.0",
     "astroquery>=0.4.8.dev0",
-    "crystalball @ git+https://github.com/caracal-pipeline/crystalball.git@78f087b",
+    "crystalball>=0.4.3",
 ]
 
 [tool.hatch]
