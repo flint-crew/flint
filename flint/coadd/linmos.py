@@ -746,7 +746,7 @@ def cli() -> None:
         )
         if args.yandasoft_container is None:
             linmos_names = create_linmos_names(
-                name_prefix=args.image_output_name,
+                name_prefix=args.base_output_name,
                 parset_output_path=args.parset_output_path,
             )
             generate_linmos_parameter_set(

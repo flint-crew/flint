@@ -56,7 +56,7 @@ Therefore it may be unwise to use such a sky-model as the basis of bandpass cali
 
 ### `calibrate` and `wsclean --save-source-list` style
 
-This is a self-descriptive format format that supports point sources and two-dimensional Gaussians.
+This is a self-descriptive format format that supports point sources and two-dimensional Gaussians. This format is also known as the `BBS` style.
 
 Positions are in the J2000 epoch. The nominal frequenci is encoded in Hz as part of the `ReferenceFrequency` column title. Fluxes are recorded in Jy. Major and minor axis sizes of Gaussian components are in units of arcsecond, with the PA in degrees.
 
@@ -68,6 +68,8 @@ This file format is what `wsclean` produces via its `--save-source-list` option.
 Format = Name, Type, Ra, Dec, I, SpectralIndex, LogarithmicSI, ReferenceFrequency='743990740.7407408', MajorAxis, MinorAxis, Orientation
 174748-312315,GAUSSIAN,17:47:48.619992,-31.23.15.20016,0.19411106571231185,[-3.806350913533059,-4.135453173684361],true,743990740.7407408,68.5999984741211,68.5999984741211,59.79999923706055,
 ```
+
+A more thorough and complete version of [this BBS style format may be accessed here](https://support.astron.nl/LOFARImagingCookbook/bbs.html).
 
 ### `hyperdrive` style
 
