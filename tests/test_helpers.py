@@ -1,3 +1,6 @@
+"""Nothing more than a cmmon place to hold functions
+that could be used across many tests"""
+
 from __future__ import annotations
 
 import shutil
