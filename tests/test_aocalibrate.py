@@ -15,35 +15,15 @@ from flint.bptools.smoother import (
     smooth_data,
 )
 from flint.calibrate.aocalibrate import (
-    AddModelOptions,
     AOSolutions,
     CalibrateOptions,
     FlaggedAOSolution,
-    add_model_options_to_command,
     calibrate_options_to_command,
     flag_aosolutions,
     plot_solutions,
     select_refant,
 )
 from flint.utils import get_packaged_resource_path
-
-
-def test_generate_add_model_command():
-    """Ensure we can actually generate the expected addmodel cli command"""
-
-    add_model_options = AddModelOptions(
-        model_path=Path("/jack/sparrow/be/here/SB-sources.txt"),
-        ms_path=Path("/jack/sparrow/be/here/SB.ms"),
-        mode="c",
-        datacolumn="MODEL_DATA",
-    )
-
-    add_model_command = add_model_options_to_command(
-        add_model_options=add_model_options
-    )
-
-    expected_command = "addmodel -datacolumn MODEL_DATA -m c /jack/sparrow/be/here/SB-sources.txt /jack/sparrow/be/here/SB.ms"
-    assert add_model_command == expected_command
 
 
 def test_calibrate_options_to_command():

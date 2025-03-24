@@ -16,6 +16,7 @@ config.md
 flagging.md
 masking.md
 source_finding.md
+predict.md
 contributions.md
 ```
 
