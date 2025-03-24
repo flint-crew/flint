@@ -3,6 +3,7 @@ containers required for flint"""
 
 from __future__ import annotations
 
+import asyncio
 from argparse import ArgumentParser
 from pathlib import Path
 
@@ -22,48 +23,50 @@ class FlintContainer(BaseOptions):
     """The expected file name of the container. This will be appended to the container directory path."""
     description: str | None = None
     """Short description on the purpose of the container"""
+    tag: str = "v1.0"
+    """Tag of the container, if applicable"""
 
 
 calibrate_container = FlintContainer(
     name="calibrate",
     file_name="flint-containers_calibrate.sif",
-    uri="docker://alecthomson/flint-containers:calibrate",
+    uri="docker://ghcr.io/flint-crew/calibrate",
     description="Contains AO calibrate and addmodel",
 )
 wsclean_container = FlintContainer(
     name="wsclean",
     file_name="flint-containers_wsclean.sif",
-    uri="docker://alecthomson/flint-containers:wsclean",
+    uri="docker://ghcr.io/flint-crew/wsclean",
     description="Container with the wsclean deconvolution software",
 )
 askapsoft_contaer = FlintContainer(
     name="askapsoft",
     file_name="flint-containers_askapsoft.sif",
-    uri="docker://alecthomson/flint-containers:askapsoft",
+    uri="docker://ghcr.io/flint-crew/askapsoft",
     description="Container with askapsoft (also known as yandasoft)",
 )
 aoflagger_contaer = FlintContainer(
     name="aoflagger",
     file_name="flint-containers_aoflagger.sif",
-    uri="docker://alecthomson/flint-containers:aoflagger",
+    uri="docker://ghcr.io/flint-crew/aoflagger",
     description="Container with aoflagger, used to autonomously flag measurement sets",
 )
 aegean_contaer = FlintContainer(
     name="aegean",
     file_name="flint-containers_aegean.sif",
-    uri="docker://alecthomson/flint-containers:aegean",
+    uri="docker://ghcr.io/flint-crew/aegean",
     description="Container with aegean, used to source find",
 )
 potato_container = FlintContainer(
     name="potato",
     file_name="flint-containers_potato.sif",
-    uri="docker://alecthomson/flint-containers:potato",
+    uri="docker://ghcr.io/flint-crew/potato",
     description="Peel out that terrible annoying source",
 )
 casa_container = FlintContainer(
     name="casa",
     file_name="flint-containers_casa.sif",
-    uri="docker://alecthomson/flint-containers:casa",
+    uri="docker://ghcr.io/flint-crew/casa",
     description="A monolithic install of the CASA application",
 )
 LIST_OF_KNOWN_CONTAINERS = (
@@ -169,7 +172,33 @@ def verify_known_containers(container_directory: Path | str) -> bool:
     return all(container_valid.values())
 
 
-def download_known_containers(container_directory: Path | str) -> tuple[Path, ...]:
+async def _pull_and_check_container(
+    container_directory: Path,
+    known_container: FlintContainer,
+    expected_output_path: Path,
+) -> None:
+    """Pull a container and check that it was downloaded correctly
+
+    Args:
+        container_directory (Path): Output directory to store containers. Will be created if necessary.
+        known_container (FlintContainer): Container to download
+        expected_output_path (Path): Expected output path
+    """
+    _container_path = await asyncio.to_thread(
+        pull_container,
+        container_directory=container_directory,
+        uri=f"{known_container.uri}:{known_container.tag}",
+        file_name=known_container.file_name,
+    )
+    if not expected_output_path.exists():
+        logger.error(
+            f"{expected_output_path=} but was not. Instead received {_container_path=}"
+        )
+
+
+async def download_known_containers_coro(
+    container_directory: Path | str, new_tag: str | None = None
+) -> tuple[Path, ...]:
     """Download known containers for use throughout flint.
 
     Args:
@@ -185,9 +214,12 @@ def download_known_containers(container_directory: Path | str) -> tuple[Path, ..
         container_directory.mkdir(parents=True)
 
     containers_downloaded = []
+    coros = []
     for idx, known_container in enumerate(LIST_OF_KNOWN_CONTAINERS):
+        if new_tag is not None:
+            known_container = known_container.with_options(tag=new_tag)
         logger.info(
-            f"Downloading {idx + 1} of {len(LIST_OF_KNOWN_CONTAINERS)}, container {known_container.name}"
+            f"Downloading {idx + 1} of {len(LIST_OF_KNOWN_CONTAINERS)}, container {known_container.name}, tag {known_container.tag}"
         )
 
         expected_output_path = container_directory / known_container.file_name
@@ -196,17 +228,16 @@ def download_known_containers(container_directory: Path | str) -> tuple[Path, ..
             logger.info(f"{expected_output_path=} already exists. Skipping.")
             continue
 
-        _container_path = pull_container(
+        coro = _pull_and_check_container(
             container_directory=container_directory,
-            uri=known_container.uri,
-            file_name=known_container.file_name,
+            known_container=known_container,
+            expected_output_path=expected_output_path,
         )
-        if not expected_output_path.exists():
-            logger.error(
-                f"{expected_output_path=} but was not. Instead received {_container_path=}"
-            )
+        coros.append(coro)
 
         containers_downloaded.append(expected_output_path)
+
+    await asyncio.gather(*coros)
 
     logger.info(f"Downloaded {len(containers_downloaded)} new containers")
     return tuple(containers_downloaded)
@@ -232,6 +263,9 @@ def get_parser() -> ArgumentParser:
     download_parser.add_argument(
         "container_directory", type=Path, help="Location to download containers to"
     )
+    download_parser.add_argument(
+        "--tag", type=str, help="Tag of the containers to download", default=None
+    )
 
     verify_parser = subparsers.add_parser(
         name="verify", help="Pull each of the known containers"
@@ -252,7 +286,11 @@ def cli() -> None:
     if args.mode == "list":
         log_known_containers()
     elif args.mode == "download":
-        download_known_containers(container_directory=args.container_directory)
+        asyncio.run(
+            download_known_containers_coro(
+                container_directory=args.container_directory, new_tag=args.tag
+            )
+        )
     elif args.mode == "verify":
         verify_known_containers(container_directory=args.container_directory)
     else:
