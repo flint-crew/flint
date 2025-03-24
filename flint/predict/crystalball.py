@@ -18,8 +18,6 @@ from flint.options import BaseOptions, add_options_to_parser, create_options_fro
 class CrystalBallOptions(BaseOptions):
     """Options related to running crystal ball"""
 
-    attempt_crystalball: bool = False
-    """Attempt to predict the model visibilities using ``crystalball``"""
     crystallball_wsclean_pol_mode: list[str] = ["i"]
     """The polarisation of the wsclean model that was generated"""
     row_chunks: int = 0

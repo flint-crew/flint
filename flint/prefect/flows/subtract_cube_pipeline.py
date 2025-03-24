@@ -65,10 +65,10 @@ def _check_and_verify_options(
             f"{subtract_field_options.yandasoft_container=} does not exist or is not a file"
         )
 
-    if (
-        addmodel_subtract_field_options
-        and addmodel_subtract_field_options.attempt_addmodel
-    ):
+    if subtract_field_options and subtract_field_options.use_addmodel:
+        assert addmodel_subtract_field_options, (
+            "Addmodel usage invoked by no AddModelOptions supplied"
+        )
         assert addmodel_subtract_field_options.calibrate_container is not None, (
             "Calibrate container path is needede for addmodel"
         )
@@ -82,12 +82,12 @@ def _check_and_verify_options(
             f"{addmodel_subtract_field_options.addmodel_cluster_config=}, which should not happen"
         )
 
-    if addmodel_subtract_field_options and crystalball_subtract_field_options:
+    if subtract_field_options:
         assert (
             sum(
                 [
-                    addmodel_subtract_field_options.attempt_addmodel,
-                    crystalball_subtract_field_options.attempt_crystalball,
+                    subtract_field_options.use_addmodel,
+                    subtract_field_options.use_crystalball,
                 ]
             )
             <= 1
@@ -275,7 +275,7 @@ def flow_subtract_cube(
             f"{len(freqs_mhz)} channels and no stagger delay set! Consider setting a stagger delay"
         )
 
-    if addmodel_subtract_field_options.attempt_addmodel:
+    if subtract_field_options.use_addmodel:
         assert addmodel_subtract_field_options.addmodel_cluster_config is not None, (
             f"{addmodel_subtract_field_options.addmodel_cluster_config=}, which should not happen"
         )
@@ -291,7 +291,7 @@ def flow_subtract_cube(
             data_column=subtract_field_options.data_column,
         )
 
-    if crystalball_subtract_field_options.attempt_crystalball:
+    if subtract_field_options.use_crystalball:
         logger.info("Attempting to peer into the crystalball, me'hearty")
         science_mss = task_crystalball_to_ms.map(
             ms=science_mss,
