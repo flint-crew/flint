@@ -310,8 +310,6 @@ class AddModelSubtractFieldOptions(BaseOptions):
     may be used by ``admodel`` to predict model visibilities. See utilities around the ``aocalibrate``
     functions and routines."""
 
-    attempt_addmodel: bool = False
-    """Invoke the ``addmodel`` visibility prediction, including the search for the ``wsclean`` source list"""
     wsclean_pol_mode: list[str] = ["i"]
     """The polarisation of the wsclean model that was generated"""
     calibrate_container: Path | None = None
@@ -352,6 +350,10 @@ class SubtractFieldOptions(BaseOptions):
     """Should the continuum model be subtracted, where to store the output"""
     predict_wsclean_model: bool = False
     """Search for the continuum model produced by wsclean and subtract"""
+    use_addmodel: bool = False
+    """Invoke the ``addmodel`` visibility prediction, including the search for the ``wsclean`` source list"""
+    use_crystalball: bool = False
+    """Attempt to predict the model visibilities using ``crystalball``"""
 
 
 class FieldOptions(BaseOptions):
