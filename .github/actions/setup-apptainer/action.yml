@@ -1,0 +1,11 @@
+name: "Setup Apptainer"
+description: "Install Apptainer on Ubuntu"
+runs:
+  using: "composite"
+  steps:
+    - name: Install Apptainer
+      shell: bash
+      run: |
+        sudo apt-get update && sudo apt-get install -y wget && \
+        wget https://github.com/apptainer/apptainer/releases/download/v1.4.0/apptainer_1.4.0_amd64.deb && \
+        sudo apt-get install -y ./apptainer_1.4.0_amd64.deb
