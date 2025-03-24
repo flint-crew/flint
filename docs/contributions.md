@@ -32,6 +32,14 @@ These `pre-commit` checks are also executed when submitting a pull request back 
 
 *Please do ask* if you are unsure. The type system and `mypy` can be difficult to get used to, but once it clicks you will value your time investment.
 
+## Dev Container
+
+We now provide a [Dev Container](https://code.visualstudio.com/docs/devcontainers/containers) recipe and config. Support for this will depend on your machine and IDE of choice. We have tested this using Docker and Visual Studio Code. If using VSCode, simply install the [Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) addon and run:
+
+```prompt
+> Dev Containers: Reopen in Container
+```
+
 ## Type hints
 
 Even though `python` is a dynamically typed language, `flint` makes extensive use of type hinting throughout its code base. This gives code analysis tools like `ruff` and `mypy` contextual information that helps to improve code quality and reduce bugs.
@@ -168,10 +176,13 @@ Think of the future you being confused over the difference of `iidx` and `jiidx`
 Also, consider putting the type of the variable in the variable name, e.g. `input_file_path = Path(...)`.
 
 ## Indentation levels
+
 If things become to indented then there is likely some logic that could be factored out into a separate function. For instance, deeply indented flow control in a loop could be refactored so that each loop is calling a function. This helps with developing robust tests.
 
 ## Loop end conditions
+
 Should a loop be used do make sure that there is some terminating condition. The bbvious case is iterating over a list, where the `__next__` method indicates when the end of the list has been reached. For something like looping over until convergence has been reached (e.g. iterative sigma-clipping) always include an upper bound on how many times the loop may be executed.
 
 ## Use `assert` to make clear impossible conditions
+
 `assert` statements are very useful to ensure some states can never be reached. They make the code more robust in that potential failure modes are not silently ignored. Don't be afraid of using them, and don't be afreaid of failing vocally. This is much preferred over 'maybe working but not sure'.

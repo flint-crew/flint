@@ -20,9 +20,8 @@ SHELL ["conda", "run", "-n", "base", "/bin/bash", "-c"]
 RUN conda clean --all --yes
 
 # Install flint
-COPY . /flint
+COPY ../ /flint
 WORKDIR /flint
 RUN uv pip install .[casa] .[dev] --compile-bytecode
 
 WORKDIR /root
-ENTRYPOINT [ "/bin/bash" ]
