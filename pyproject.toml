@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 
 [project]
-name = "flint"
+name = "askap-flint"
 authors = [
     {name="Tim Galvin", email="tim.galvin@csiro.au"}
 ]
