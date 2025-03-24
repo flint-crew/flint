@@ -30,14 +30,6 @@ jobs:
       - uses: pre-commit/action@v3.0.1
         with:
           extra_args: --hook-stage manual --all-files
-      - name: Install casacore and boost
-        run: |
-          sudo apt install -y build-essential libcfitsio-dev liblapack-dev libboost-python-dev python3-dev wcslib-dev casacore-dev
-      - name: Install apptainer
-        run: |
-          sudo apt-get update && sudo apt-get install -y wget && \
-          wget https://github.com/apptainer/apptainer/releases/download/v1.4.0/apptainer_1.4.0_amd64.deb && \
-          sudo apt-get install -y ./apptainer_1.4.0_amd64.deb
 
   checks:
     name: Check Python ${{ matrix.python-version }} on ${{ matrix.runs-on }}
@@ -53,6 +45,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Install dependencies
+        uses: ./.github/actions/setup-deps
 
       - uses: actions/setup-python@v5
         with:
