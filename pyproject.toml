@@ -11,7 +11,7 @@ authors = [
 description = "Pipeline for ASKAP processing, and profit along the way"
 readme = "README.md"
 license.file = "LICENSE"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.13"
 classifiers = [
     "Development Status :: 1 - Planning",
     "Intended Audience :: Science/Research",
