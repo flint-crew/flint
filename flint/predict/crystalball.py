@@ -5,6 +5,11 @@ from __future__ import annotations
 from argparse import ArgumentParser
 from pathlib import Path
 
+from crystalball.crystalball import predict
+from dask.distributed import Client
+
+from flint.imager.wsclean import get_wsclean_output_source_list_path
+from flint.logging import logger
 from flint.ms import MS
 from flint.options import BaseOptions, add_options_to_parser, create_options_from_parser
 
@@ -22,8 +27,64 @@ class CrystalBallOptions(BaseOptions):
     "Number of sky model components that are processed in a single chunk. If 0 it will be set automatically. Default is 0."
 
 
-def crystalball_predict(ms: MS, crystalball_options: CrystalBallOptions) -> MS:
-    return ms
+def crystalball_predict(
+    ms: MS,
+    crystalball_options: CrystalBallOptions,
+    wsclean_source_list_path: Path | None = None,
+    dask_client: Client | None = None,
+    output_column: str = "MODEL_DATA",
+) -> MS:
+    """A very simply wrapper around the `Crystalball.predict` function. Basic
+    checks to ensure that the BB6 style source model path exists, which is the
+    format used by the `wsclean -save-source-list` option.
+
+    If no `wsclean_source_list_path` is specified one is guess from the name of the
+    input MS.path.
+
+    Args:
+        ms (MS): The MS instance whose path is to the measurement set to predict into.
+        crystalball_options (CrystalBallOptions): Options that control the `crystalball.predict` call.
+        wsclean_source_list_path (Path | None, optional): The path to the file with the model components to predict. If None an attempt is made to find it from the MS. Defaults to None.
+        dask_client (Client | None, optional): A specialised Dask distributed task. If None one is created by `crystalball`. Defaults to None.
+        output_column (str, optional): The column to predict into. The `MS.model_column` will reflect this. Defaults to "MODEL_DATA".
+
+    Returns:
+        MS: The MS that was predicted into, with the `model_column` set appropriately.
+    """
+    if wsclean_source_list_path is None:
+        assert len(crystalball_options.crystallball_wsclean_pol_mode) == 1, (
+            "Only a single polarisation mode is currently supported."
+        )
+
+        pol = crystalball_options.crystallball_wsclean_pol_mode[0]
+        logger.info(f"Using {pol=}")
+        wsclean_source_list_path = get_wsclean_output_source_list_path(
+            name_path=ms.path, pol=pol
+        )
+
+    assert isinstance(wsclean_source_list_path, Path), (
+        f"{wsclean_source_list_path=}, which appears not to be a Path"
+    )
+    assert wsclean_source_list_path.exists(), (
+        f"{wsclean_source_list_path=} was requested, but does not exist"
+    )
+
+    logger.info(f"Adding {wsclean_source_list_path=} to {ms.path=}")
+    logger.info(f"Predicting into {output_column=} with Crystalball")
+
+    if dask_client:
+        logger.info(f"Using {dask_client=}")
+
+    predict(
+        ms=str(ms.path),
+        sky_model=str(wsclean_source_list_path),
+        output_column=output_column,
+        client=dask_client,
+        row_chunks=crystalball_options.row_chunks,
+        model_chunks=crystalball_options.model_chunks,
+    )
+
+    return ms.with_options(model_column="MODEL_DATA")
 
 
 def get_parser() -> ArgumentParser:
