@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y wget && \
 
 # Create conda environment
 WORKDIR /root
+# settomg libsqlite for https://github.com/PrefectHQ/prefect/issues/17186
 RUN conda install -c conda-forge python=3.12 libsqlite=3.46.1 boost casacore compilers
 # Make RUN commands use the new environment:
 SHELL ["conda", "run", "-n", "base", "/bin/bash", "-c"]
