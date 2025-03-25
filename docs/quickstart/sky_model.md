@@ -62,7 +62,7 @@ Positions are in the J2000 epoch. The nominal frequenci is encoded in Hz as part
 
 The nominal intensity column `I` is measured at the reference frequency. A list polynomial co-efficients in logarithmic space may be provided in the `SpectralIndex` column.
 
-This file format is what `wsclean` produces via its `--save-source-list` option. Below is an example of the header and first row of the sky-model. This style of sky-model may be used as an innput for `crystalball` and `addmodel`, as {ref}`described in the subtract cube imaging workflow <subtractcube>`.
+This file format is what `wsclean` produces via its `--save-source-list` option. Below is an example of the header and first row of the sky-model. This style of sky-model may be used as an input for `crystalball` and `addmodel`, as {ref}`described in the subtract cube imaging workflow <subtractcube>`.
 
 ```bash
 Format = Name, Type, Ra, Dec, I, SpectralIndex, LogarithmicSI, ReferenceFrequency='743990740.7407408', MajorAxis, MinorAxis, Orientation
