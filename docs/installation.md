@@ -23,8 +23,11 @@ git clone https://github.com/flint-crew/flint.git
 cd flint
 pip install .
 ```
+## External Dependencies
 
 For compiled tools, `flint` uses `singularity` containers. Users must install `singularity` or `apptainer` on their system for these to work. If given the choice, install `apptainer`, which is the community developed and maintained fork of `singularity`.
+
+`Flint` does not attempt to install `singularity` or `apptainer` .
 
 ## Containerised install
 
