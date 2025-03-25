@@ -5,7 +5,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Install apptainer
 WORKDIR /tmp
-RUN apt-get update && apt-get install -y wget && \
+RUN apt-get update && apt-get install -y wget rsync vim && \
     wget https://github.com/apptainer/apptainer/releases/download/v1.4.0/apptainer_1.4.0_amd64.deb && \
     apt-get install -y ./apptainer_1.4.0_amd64.deb && \
     rm ./apptainer_1.4.0_amd64.deb && \
