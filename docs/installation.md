@@ -23,6 +23,15 @@ git clone https://github.com/flint-crew/flint.git
 cd flint
 pip install .
 ```
+
+## Python support
+
+We are currently supporting Python 3.11 and 3.12, which is enforced in the `pyproject.toml`:
+
+```bash
+requires-python = ">=3.11,<3.13"
+```
+
 ## External Dependencies
 
 For compiled tools, `flint` uses `singularity` containers. Users must install `singularity` or `apptainer` on their system for these to work. If given the choice, install `apptainer`, which is the community developed and maintained fork of `singularity`.
