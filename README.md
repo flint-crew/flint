@@ -1,15 +1,16 @@
-[![codecov](https://codecov.io/gh/flint-crew/flint/graph/badge.svg?token=7ZEKJ78TBZ)](https://codecov.io/gh/flint-crew/flint)
+[![Codecov][codecov-badge]][codecov-link]
 [![Actions Status][actions-badge]][actions-link]
 [![Documentation Status][rtd-badge]][rtd-link]
 [![PyPI version][pypi-version]][pypi-link]
 [![PyPI platforms][pypi-platforms]][pypi-link]
-
 
 # flint
 
 <!-- SPHINX-START -->
 
 <!-- prettier-ignore-start -->
+[codecov-badge]:            https://codecov.io/gh/flint-crew/flint/graph/badge.svg?token=7ZEKJ78TBZ
+[codecov-link]:             https://codecov.io/gh/flint-crew/flint
 [actions-badge]:            https://github.com/flint-crew/flint/workflows/CI/badge.svg
 [actions-link]:             https://github.com/flint-crew/flint/actions
 [pypi-link]:                https://pypi.org/project/askap-flint/
