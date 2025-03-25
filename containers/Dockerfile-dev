@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y wget && \
 
 # Create conda environment
 WORKDIR /root
-RUN conda install -c conda-forge python=3.12 boost casacore compilers
+RUN conda install -c conda-forge python=3.12 libsqlite=3.46.1 boost casacore compilers
 # Make RUN commands use the new environment:
 SHELL ["conda", "run", "-n", "base", "/bin/bash", "-c"]
 RUN conda clean --all --yes
