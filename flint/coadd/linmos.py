@@ -761,6 +761,7 @@ def cli() -> None:
                 parset_output_path=args.parset_output_path,
                 weight_list=args.weight_list,
                 linmos_options=linmos_options,
+                container=args.yandasoft_container
             )
     elif args.mode == "trim":
         images = args.images
