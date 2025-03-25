@@ -7,14 +7,15 @@
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 from __future__ import annotations
 
-import importlib.metadata
 import shutil
 from pathlib import Path
+
+import flint
 
 project = "flint"
 copyright = "2025, Tim Galvin"
 author = "Tim Galvin"
-version = release = importlib.metadata.version("flint")
+version = release = flint.__version__
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
