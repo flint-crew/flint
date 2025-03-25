@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from flint.sclient import pull_container
+from flint.sclient import pull_container, run_singularity_command
 
 from .test_helpers import which
 
@@ -33,3 +33,34 @@ def test_pull_apptainer(tmpdir):
     assert temp_container.exists()
     assert isinstance(output_path, Path)
     assert output_path == temp_container
+
+
+def test_raise_error_no_container() -> None:
+    """Should an incorrect path be given an error should be raised"""
+
+    no_exists_container = Path("JackBeNotHereMate.sif")
+    assert not no_exists_container.exists()
+
+    with pytest.raises(FileNotFoundError):
+        run_singularity_command(image=no_exists_container, command="PiratesbeHere")
+
+
+def test_positive_max_retries() -> None:
+    """Make sure an error is raised if `max_retries` reaches break case"""
+    no_exists_container = Path("JackBeNotHereMate.sif")
+    assert not no_exists_container.exists()
+
+    # These errors are fired off before the check for the container is made
+    with pytest.raises(ValueError):
+        run_singularity_command(
+            image=no_exists_container, command="PiratesbeHere", max_retries=0
+        )
+    with pytest.raises(ValueError):
+        run_singularity_command(
+            image=no_exists_container, command="PiratesbeHere", max_retries=-222
+        )
+
+    with pytest.raises(FileNotFoundError):
+        run_singularity_command(
+            image=no_exists_container, command="PiratesbeHere", max_retries=111
+        )

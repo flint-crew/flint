@@ -58,7 +58,7 @@ def run_singularity_command(
         bind_dirs (Optional[Union[Path,Collection[Path]]], optional): Specifies a Path, or list of Paths, to bind to in the container. Defaults to None.
         stream_callback_func (Optional[Callable], optional): Provide a function that is applied to each line of output text when singularity is running and `stream=True`. IF provide it should accept a single (string) parameter. If None, nothing happens. Defaultds to None.
         ignore_logging_output (bool, optional): If `True` output from the executed singularity command is not logged. Defaults to False.
-        max_reties (int, optional): If a callback handler is specified which raised an `AttemptRerunException`, this signifies how many attempts should be made. Defaults to 2.
+        max_reties (int, optional): If a callback handler is specified which raised an `AttemptRerunException`, this signifies how many attempts should be made. Each rerun will recall `run_singularity_command` lowering this value. Defaults to 2.
 
     Raises:
         FileNotFoundError: Thrown when container image not found
