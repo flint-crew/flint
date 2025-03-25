@@ -4,14 +4,14 @@ build-backend = "hatchling.build"
 
 
 [project]
-name = "flint"
+name = "askap-flint"
 authors = [
     {name="Tim Galvin", email="tim.galvin@csiro.au"}
 ]
 description = "Pipeline for ASKAP processing, and profit along the way"
 readme = "README.md"
 license.file = "LICENSE"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.13"
 classifiers = [
     "Development Status :: 1 - Planning",
     "Intended Audience :: Science/Research",
@@ -47,7 +47,7 @@ dependencies = [
     "ConfigArgParse>=1.7",
     "fitscube>=0.5.0",
     "astroquery>=0.4.8.dev0",
-    "crystalball @ git+https://github.com/caracal-pipeline/crystalball.git@78f087b",
+    "crystalball>=0.4.3",
 ]
 
 [tool.hatch]
@@ -97,6 +97,8 @@ flint_validation_plot = "flint.validation:cli"
 flint_masking = "flint.masking:cli"
 flint_potato = "flint.peel.potato:cli"
 flint_leakage = "flint.leakage:cli"
+flint_addmodel = "flint.predict.addmodel:cli"
+flint_crystalball = "flint.predict.crystalball:cli"
 flint_flow_bandpass_calibrate = "flint.prefect.flows.bandpass_pipeline:cli"
 flint_flow_continuum_pipeline = "flint.prefect.flows.continuum_pipeline:cli"
 flint_flow_subtract_cube_pipeline = "flint.prefect.flows.subtract_cube_pipeline:cli"

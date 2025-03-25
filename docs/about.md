@@ -1,9 +1,9 @@
 # About
 
 This `flint` package is trying to get a minimum start-to-finish calibration and
-imaging workflow written for `RACS` style ASKAP data. `python` functions are
-used to do the work, and `prefect` is used to orchestrate their usage into a
-larger pipeline.
+imaging workflow. While initially written for `RACS` style ASKAP data a variety of support for larger measurement sets and different imaging modes have been added.
+
+`Flint` is made up of normal `python` functions that perform specialised operations, which are then turned into pipeline stages using `prefect`.
 
 Most of the `python` routines have a CLI that can be used to test them in a
 piecewise sense. These entry points are installed as programs available on the
@@ -39,9 +39,14 @@ command line. They are listed below with a brief description:
   [potatopeel](https://gitlab.com/Sunmish/potato/-/tree/main). Criteria used to
   assess which sources to peel is fairly minimumal, and at the time of writing
   only the reference set of sources packaged within `flint` are
-  considered. -`flint_archive`: Operations around archiving and copying final
-  data products into place. -`flint_catalogue`: Download reference catalogues
-  that are expected by `flint`
+  considered.
+-`flint_archive`: Operations around archiving and copying final
+  data products into place.
+-`flint_catalogue`: Download reference catalogues
+  that are expected by `flint`.
+- `flint_leakage`: Basic plotting and visualisation of leakage surfaces give Stokes I and V source catalogues amd corresponding images.
+- `flint_addmodel`: Predict model visibilities given a BBS style model file using the `addmodel` program.
+- `flint_crustalball`: Predict model visibilities given a BBS style model file using the `crystalball` program.
 
 The following commands use the `prefect` framework to link together individual
 tasks together (outlined above) into a single data-processing pipeline.

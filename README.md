@@ -13,8 +13,6 @@ Yarrrr-Harrrr fiddly-dee!
 
 ## Documentation
 
-<!-- TODO: Link to built docs -->
-
 Full documentation is provided on
 [ReadtheDocs](https://askap-flint.readthedocs.io/).
 
@@ -23,8 +21,15 @@ Full documentation is provided on
 Contributions are welcome! Please do submit a pull-request or issue if you spot
 something you would like to address.
 
+The pre-packed module may be installed from PyPi:
+
+```bash
+pip install askap-flint
+```
 The full set of dev tooling can be installed via:
 
 ```bash
+git clone https://github.com/flint-crew/flint.git
+cd flint
 pip install '.[dev]'
 ```

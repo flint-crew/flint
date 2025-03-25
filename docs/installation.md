@@ -2,7 +2,41 @@
 
 The `flint` module itself is built in pure Python and can be installed using `pip`. We highly recommend using [uv](https://docs.astral.sh/uv/) for speedy installation.
 
+We publish releases on PyPI:
+
+```bash
+# PyPI release
+pip install askap-flint
+```
+
+You can also install directly from the git repository:
+
+```bash
+# Direct git install (latest push)
+pip install git+https://github.com/flint-crew/flint.git
+```
+
+Or, from a local clone:
+
+```bash
+git clone https://github.com/flint-crew/flint.git
+cd flint
+pip install .
+```
+
+## Python support
+
+We are currently supporting Python 3.11 and 3.12, which is enforced in the `pyproject.toml`:
+
+```bash
+requires-python = ">=3.11,<3.13"
+```
+
+## External Dependencies
+
 For compiled tools, `flint` uses `singularity` containers. Users must install `singularity` or `apptainer` on their system for these to work. If given the choice, install `apptainer`, which is the community developed and maintained fork of `singularity`.
+
+`Flint` does not attempt to install `singularity` or `apptainer` .
 
 ## Containerised install
 
