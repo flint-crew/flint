@@ -1,9 +1,24 @@
-[![pre-commit.ci status](https://results.pre-commit.ci/badge/github/flint-crew/flint/main.svg)](https://results.pre-commit.ci/latest/github/flint-crew/flint/main)
 [![codecov](https://codecov.io/gh/flint-crew/flint/graph/badge.svg?token=7ZEKJ78TBZ)](https://codecov.io/gh/flint-crew/flint)
+[![Actions Status][actions-badge]][actions-link]
+[![Documentation Status][rtd-badge]][rtd-link]
+[![PyPI version][pypi-version]][pypi-link]
+[![PyPI platforms][pypi-platforms]][pypi-link]
+
 
 # flint
 
 <!-- SPHINX-START -->
+
+<!-- prettier-ignore-start -->
+[actions-badge]:            https://github.com/flint-crew/flint/workflows/CI/badge.svg
+[actions-link]:             https://github.com/flint-crew/flint/actions
+[pypi-link]:                https://pypi.org/project/askap-flint/
+[pypi-platforms]:           https://img.shields.io/pypi/pyversions/askap-flint
+[pypi-version]:             https://img.shields.io/pypi/v/askap-flint
+[rtd-badge]:                https://readthedocs.org/projects/askap-flint/badge/?version=latest
+[rtd-link]:                 https://askap-flint.readthedocs.io/en/latest/?badge=latest
+
+<!-- prettier-ignore-end -->
 
 A pirate themed ASKAP pipeline.
 
