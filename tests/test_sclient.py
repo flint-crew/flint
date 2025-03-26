@@ -14,9 +14,10 @@ if which("singularity") is None:
     pytest.skip("Singularity is not installed", allow_module_level=True)
 
 
-def test_pull_apptainer(tmpdir):
-    """Attempt to pull down an example container"""
-    temp_container_dir = Path(tmpdir) / "container_dl"
+@pytest.fixture(scope="session")
+def hello_world_container(tmp_path_factory) -> Path:
+    """Download the hello world container once and use it across the session"""
+    temp_container_dir = Path(tmp_path_factory.mktemp("hello_world"))
     temp_container_dir.mkdir(parents=True, exist_ok=True)
 
     name = "example.sif"
@@ -29,13 +30,22 @@ def test_pull_apptainer(tmpdir):
         uri="docker://hello-world:linux",
         file_name=name,
     )
-
-    assert temp_container.exists()
-    assert isinstance(output_path, Path)
-    assert output_path == temp_container
+    return output_path
 
 
-def test_raise_error_no_container() -> None:
+def test_pull_apptainer(hello_world_container):
+    """Attempt to pull down an example container"""
+
+    assert hello_world_container.exists()
+    assert isinstance(hello_world_container, Path)
+
+
+def test_run_singularity_command(hello_world_container):
+    """Make sure that the running of a container works"""
+    run_singularity_command(image=hello_world_container, command="echo 'JackSparrow'")
+
+
+def test_raise_error_no_container_noexist() -> None:
     """Should an incorrect path be given an error should be raised"""
 
     no_exists_container = Path("JackBeNotHereMate.sif")
