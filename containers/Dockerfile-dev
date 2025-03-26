@@ -5,7 +5,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Install apptainer
 WORKDIR /tmp
-RUN apt-get update && apt-get install -y wget && \
+RUN apt-get update && apt-get install -y wget rsync && \
     wget https://github.com/apptainer/apptainer/releases/download/v1.4.0/apptainer_1.4.0_amd64.deb && \
     apt-get install -y ./apptainer_1.4.0_amd64.deb && \
     rm ./apptainer_1.4.0_amd64.deb && \
@@ -14,7 +14,8 @@ RUN apt-get update && apt-get install -y wget && \
 
 # Create conda environment
 WORKDIR /root
-RUN conda install -c conda-forge python=3.12 boost casacore compilers
+# setting libsqlite for https://github.com/PrefectHQ/prefect/issues/17186
+RUN conda install -c conda-forge python=3.12 libsqlite=3.46.1 boost casacore compilers
 # Make RUN commands use the new environment:
 SHELL ["conda", "run", "-n", "base", "/bin/bash", "-c"]
 RUN conda clean --all --yes
