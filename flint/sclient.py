@@ -5,13 +5,20 @@ from __future__ import annotations
 from pathlib import Path
 from subprocess import CalledProcessError
 from time import sleep
-from typing import Callable, Collection
+from typing import Callable, Collection, NamedTuple
 
 from spython.main import Client as sclient
 
 from flint.exceptions import AttemptRerunException
 from flint.logging import logger
 from flint.utils import get_job_info, log_job_environment
+
+
+class ContainerCommandResults(NamedTuple):
+    """Description of the command execution results"""
+
+    attempts: int
+    """Number of attempts the command took"""
 
 
 def pull_container(container_directory: Path, uri: str, file_name: str) -> Path:
