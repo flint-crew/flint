@@ -23,6 +23,5 @@ def test_enable_loguru_support():
     error, though whether it still works is a completely different
     question!"""
 
-    with prefect_test_harness():
-        with disable_run_logger():
-            assert example_flow() == "JackSparrow"
+    with prefect_test_harness(), disable_run_logger():
+        assert example_flow() == "JackSparrow"
