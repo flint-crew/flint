@@ -28,7 +28,7 @@ pip install .
 
 We are currently supporting Python 3.11 and 3.12, which is enforced in the `pyproject.toml`:
 
-```bash
+```toml
 requires-python = ">=3.11,<3.13"
 ```
 
