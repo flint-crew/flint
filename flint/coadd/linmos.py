@@ -707,7 +707,7 @@ def get_parser() -> ArgumentParser:
         "images", type=Path, nargs="+", help="The images that will be coadded"
     )
     parset_parser.add_argument(
-        "parset_output_path", type=Path, help="The output path of the linmos parser"
+        "parset_output_path", type=Path, help="The output path of the linmos parset"
     )
     parset_parser.add_argument(
         "--weight-list",
@@ -761,6 +761,7 @@ def cli() -> None:
                 parset_output_path=args.parset_output_path,
                 weight_list=args.weight_list,
                 linmos_options=linmos_options,
+                container=args.yandasoft_container,
             )
     elif args.mode == "trim":
         images = args.images
