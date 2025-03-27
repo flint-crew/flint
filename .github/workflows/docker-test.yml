@@ -1,4 +1,4 @@
-name: Publish Docker images
+name: Test Docker images
 
 on:
   workflow_dispatch:
