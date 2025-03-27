@@ -21,7 +21,7 @@ jobs:
       id-token: write
     strategy:
         matrix:
-            dockerfile: [containers/Dockerfile", "containers/Dockerfile-dev"]
+            dockerfile: ["containers/Dockerfile", "containers/Dockerfile-dev"]
     steps:
       - name: Check out the repo
         uses: actions/checkout@v4
