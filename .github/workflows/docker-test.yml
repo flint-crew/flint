@@ -62,8 +62,14 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Test
+      - name: Test internal apptainer
         run: |
           docker run --privileged --rm \
             ${{ env.REGISTRY }}/${{ github.repository_owner }}/flint:${{ env.TAG_SUFFIX }}-test \
             apptainer run docker://hello-world:linux
+
+      - name: Test flint command
+        run: |
+          docker run --privileged --rm \
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/flint:${{ env.TAG_SUFFIX }}-test \
+            flint_wsclean --help
