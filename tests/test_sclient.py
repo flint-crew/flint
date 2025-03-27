@@ -27,7 +27,7 @@ def hello_world_container(tmp_path_factory) -> Path:
 
     output_path = pull_container(
         container_directory=temp_container_dir,
-        uri="docker://hello-world:linux",
+        uri="docker://alpine:latest",
         file_name=name,
     )
     return output_path
