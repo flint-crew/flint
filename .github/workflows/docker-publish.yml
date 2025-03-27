@@ -51,6 +51,20 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+
+      - name: Build and export to Docker
+        uses: docker/build-push-action@v6
+        with:
+          load: true
+          tags: ${{ env.REGISTRY }}/${{ github.repository_owner }}/flint:${{ env.TAG_SUFFIX }}-test
+
+      - name: Test
+        run: |
+          docker run --rm \
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/flint:${{ env.TAG_SUFFIX }}-test \
+            apptainer run docker://hello-world:linux
+
+
       - name: Build and push Docker image
         id: push
         uses: docker/build-push-action@v6
