@@ -59,9 +59,11 @@ jobs:
           file: ${{ matrix.dockerfile }}
           load: true
           tags: ${{ env.REGISTRY }}/${{ github.repository_owner }}/flint:${{ env.TAG_SUFFIX }}-test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Test
         run: |
-          docker run --rm \
+          docker run --privileged --rm \
             ${{ env.REGISTRY }}/${{ github.repository_owner }}/flint:${{ env.TAG_SUFFIX }}-test \
             apptainer run docker://hello-world:linux
