@@ -131,3 +131,4 @@ tests/*.png
 flint/_version.py
 example.yaml
 test.yml
+example.sif
