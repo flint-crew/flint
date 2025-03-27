@@ -1,22 +1,29 @@
-name: Publish Docker images
+name: Test Docker images
 
 on:
-  release:
-    types: [published]
   workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - main
+    paths:
+      - "containers/**"
 
 env:
   REGISTRY: ghcr.io
 
 jobs:
   push_to_registry:
-    name: Push Docker images to GHCR
+    name: Test Docker images on GHCR
     runs-on: ubuntu-latest
     permissions:
       packages: write
       contents: read
       attestations: write
       id-token: write
+    strategy:
+        matrix:
+            dockerfile: ["containers/Dockerfile", "containers/Dockerfile-dev"]
     steps:
       - name: Check out the repo
         uses: actions/checkout@v4
@@ -32,13 +39,6 @@ jobs:
             echo "TAG_SUFFIX=${LATEST_RELEASE}-${SHORT_HASH}" >> $GITHUB_ENV
           fi
 
-      - name: Log in to the Container registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Extract metadata (tags, labels) for Docker
         id: meta
         uses: docker/metadata-action@v5
@@ -52,11 +52,11 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
 
-      - name: Build and export to Docker
+      - name: Build
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: containers/Dockerfile  # Builds the correct Dockerfile
+          file: ${{ matrix.dockerfile }}
           load: true
           tags: ${{ env.REGISTRY }}/${{ github.repository_owner }}/flint:${{ env.TAG_SUFFIX }}-test
           cache-from: type=gha
@@ -67,17 +67,3 @@ jobs:
           docker run --privileged --rm \
             ${{ env.REGISTRY }}/${{ github.repository_owner }}/flint:${{ env.TAG_SUFFIX }}-test \
             apptainer run docker://hello-world:linux
-
-
-      - name: Build and push Docker image
-        id: push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: containers/Dockerfile  # Builds the correct Dockerfile
-          push: true
-          tags: ${{ env.REGISTRY }}/${{ github.repository_owner }}/flint:${{ env.TAG_SUFFIX }}  # Explicitly set tag
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          platforms: linux/x86_64
