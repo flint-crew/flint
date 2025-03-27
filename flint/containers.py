@@ -203,6 +203,7 @@ async def download_known_containers_coro(
 
     Args:
         container_directory (Path | str): Output directory to store containers. Will be created if necessary.
+        new_tag (str, optional): The tag associated with the containers to download. If None the latest image will be downloaded. Defaults to None.
 
     Returns:
         tuple[Path, ...]: Paths to all containers downloaded
@@ -241,6 +242,27 @@ async def download_known_containers_coro(
 
     logger.info(f"Downloaded {len(containers_downloaded)} new containers")
     return tuple(containers_downloaded)
+
+
+def download_known_containers(
+    container_directory: Path | str, new_tag: str | None = None
+) -> tuple[Path, ...]:
+    """Download known containers for use throughout flint. This
+    calls the async enabled download function and blocks until results
+    are gathered.
+
+    Args:
+        container_directory (Path | str): Output directory to store containers. Will be created if necessary.
+        new_tag (str, optional): The tag associated with the containers to download. If None the latest image will be downloaded. Defaults to None.
+
+    Returns:
+        tuple[Path, ...]: Paths to all containers downloaded
+    """
+    return asyncio.run(
+        download_known_containers_coro(
+            container_directory=container_directory, new_tag=new_tag
+        )
+    )
 
 
 def get_parser() -> ArgumentParser:
@@ -286,11 +308,10 @@ def cli() -> None:
     if args.mode == "list":
         log_known_containers()
     elif args.mode == "download":
-        asyncio.run(
-            download_known_containers_coro(
-                container_directory=args.container_directory, new_tag=args.tag
-            )
+        download_known_containers(
+            container_directory=args.container_directory, new_tag=args.tag
         )
+
     elif args.mode == "verify":
         verify_known_containers(container_directory=args.container_directory)
     else:
