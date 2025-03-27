@@ -62,7 +62,7 @@ jobs:
 
       - name: Test
         run: |
-          docker run --rm \
+          docker run --cap-add SYS_ADMIN --device /dev/fuse --rm \
             ${{ env.REGISTRY }}/${{ github.repository_owner }}/flint:${{ env.TAG_SUFFIX }}-test \
             apptainer run docker://hello-world:linux
 
