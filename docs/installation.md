@@ -21,7 +21,7 @@ Or, from a local clone:
 ```bash
 git clone https://github.com/flint-crew/flint.git
 cd flint
-pip install .
+pip install -e .
 ```
 
 ## Python support
