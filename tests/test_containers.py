@@ -12,6 +12,7 @@ from flint.containers import (
     FlintContainer,
     _sanity_check_containers,
     download_known_containers,
+    get_known_container_path,
     log_known_containers,
     verify_known_containers,
 )
@@ -97,3 +98,17 @@ def test_verify_containers_with_containers(flint_containers):
     """Make sure the actual containers downloaded register as correct. This
     uses the download fixture"""
     assert verify_known_containers(container_directory=flint_containers)
+
+
+def test_get_known_container_path(flint_containers):
+    """Get the to a known container"""
+    casa_container = get_known_container_path(
+        container_directory=flint_containers, name="casa"
+    )
+    assert isinstance(casa_container, Path)
+    assert casa_container.exists()
+
+    with pytest.raises(ValueError):
+        casa_container = get_known_container_path(
+            container_directory=flint_containers, name="JackSparrowNotBeKnown"
+        )

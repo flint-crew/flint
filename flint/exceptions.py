@@ -7,6 +7,12 @@ class FlintException(Exception):
     pass
 
 
+class UnknownContainerException(FlintException):
+    """An unknown container was requested"""
+
+    pass
+
+
 class NamingException(FlintException):
     """Raised when there are issues with naming"""
 

@@ -176,13 +176,16 @@ async def _pull_and_check_container(
     container_directory: Path,
     known_container: FlintContainer,
     expected_output_path: Path,
-) -> None:
+) -> Path:
     """Pull a container and check that it was downloaded correctly
 
     Args:
         container_directory (Path): Output directory to store containers. Will be created if necessary.
         known_container (FlintContainer): Container to download
         expected_output_path (Path): Expected output path
+
+    Returns:
+        Path: The expected path of the container
     """
     _container_path = await asyncio.to_thread(
         pull_container,
@@ -194,6 +197,8 @@ async def _pull_and_check_container(
         logger.error(
             f"{expected_output_path=} but was not. Instead received {_container_path=}"
         )
+
+    return expected_output_path
 
 
 async def download_known_containers_coro(
