@@ -18,7 +18,10 @@ from flint.flagging import (
 from flint.ms import MS
 from flint.utils import get_packaged_resource_path
 
+from .test_containers import flint_containers
 from .test_helpers import which
+
+_ = flint_containers  # make sure fixture is imported and not linted away
 
 
 @pytest.fixture
