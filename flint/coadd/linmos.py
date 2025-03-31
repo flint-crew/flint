@@ -564,9 +564,19 @@ def generate_linmos_parameter_set(
         f"linmos.useweightslog    = true\n"
         f"linmos.weighttype       = Combined\n"
         f"linmos.weightstate      = Inherent\n"
-        f"linmos.cutoff           = 0\n"  # This `cutoff` is based on weights, not primary beam attenuation
-        f"linmos.finalcutoff           = {linmos_options.cutoff}\n"  # This one though, uses the PB.
+        f"linmos.cutoff           = {linmos_options.cutoff}\n"  # This `cutoff` is based on weights per-beam, and when COMBINED is the ON-cutoff
+        f"linmos.finalcutoff           = 0.0\n"  # This one is applied to the set of final co-added field weightds
     )
+    # NOTE; The yandasoft linmos task implements inverse variance weighting when the weighttype=combined.
+    # Internally an array is constructed as: pb*pb*wt. Here the `wt` are the weighting terms constructed
+    # per image by `generate_weight_list_and)files`. The weight returned there is 1/rms**2. T%he cutoff
+    # defined by linmos.cutoff is used as `wt(x,y) > cutouff^2 * max(wt)` per-beam. This is essentiallty
+    # the pb cutoff. The squared cutoff placed the cutoff in the inverse variance space, and the max(wt)
+    # scales it relative to the peak weight (or pb). Now, the `linmos.finalcutoff` is the same process
+    # but applied to the final weights formed through the co-adding. This is turning to blank out non-uniform
+    # regions of the image, e.g. edge and poorly imaged centeral beams. We prefer to
+    # have this second pass flagging to be turned off to ensure the entire 'in beam' region is returned.
+
     # Construct the holography section of the linmos parset
     remove_leakage = (linmos_options.holofile is not None) and (
         ".i." not in str(next(iter(images)))
