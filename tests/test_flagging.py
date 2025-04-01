@@ -9,8 +9,19 @@ import numpy as np
 import pytest
 from casacore.tables import table
 
-from flint.flagging import flag_ms_zero_uvws, nan_zero_extreme_flag_ms
+from flint.containers import get_known_container_path
+from flint.flagging import (
+    flag_ms_aoflagger,
+    flag_ms_zero_uvws,
+    nan_zero_extreme_flag_ms,
+)
+from flint.ms import MS
 from flint.utils import get_packaged_resource_path
+
+from .test_containers import flint_containers
+from .test_helpers import which
+
+_ = flint_containers  # make sure fixture is imported and not linted away
 
 
 @pytest.fixture
@@ -135,3 +146,43 @@ def test_nan_zero_extreme_flag_ms_with_chunks_and_datanan(ms_example):
         assert np.sum(np.isnan(data)) > np.sum(np.isnan(original_data))
         assert np.sum(uvw_mask) > 0
         assert np.all(flags[uvw_mask] == True)  # noQA: E712
+
+
+# Vontainer related options
+if which("singularity") is None:
+    pytest.skip("Singularity is not installed", allow_module_level=True)
+
+
+def test_aoflagger(flint_containers, ms_example) -> None:
+    """Ensure we can run a aoflagger recipe"""
+
+    aoflagger_path = get_known_container_path(
+        container_directory=flint_containers, name="aoflagger"
+    )
+    assert isinstance(aoflagger_path, Path)
+    assert aoflagger_path.exists()
+
+    ms = MS(path=ms_example, column="DATA")
+
+    with table(str(ms.path), readonly=False) as tab:
+        orig_flags = tab.getcol("FLAG")
+        tab.putcol("FLAG", np.zeros_like(orig_flags))
+        # Reset the flags to ensure aoflagger does the
+        # right set of things
+        pre_flag = np.sum(orig_flags)
+
+    flag_ms = flag_ms_aoflagger(ms=ms, container=aoflagger_path)
+
+    assert isinstance(flag_ms, MS)
+    assert flag_ms.path == ms.path
+
+    with table(str(ms.path), readonly=True) as tab:
+        # uvws shape is (row, coord)
+        uvws = tab.getcol("UVW")
+        # flags shapoe is {row, channel, pol}
+        flags = tab.getcol("FLAG")
+        post_flag = np.sum(flags)
+        u = uvws[:, 0]
+        assert np.all(u[~flags[:, 0, 0]] != 0)
+
+    assert pre_flag == post_flag
