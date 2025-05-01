@@ -17,7 +17,6 @@ with a ``.``.
 from __future__ import annotations
 
 import re
-import os
 from argparse import ArgumentParser
 from glob import glob
 from numbers import Number
@@ -885,62 +884,61 @@ def create_wsclean_cmd(
         image_prefix_str=str(name_argument_path),
     )
 
-
-def rotate_cube(output_cube_name: str, inplace: bool = True) -> None:
+def rotate_cube(output_cube_path: str | Path, inplace: bool = True) -> Path:
     """
     Rotate the FITS cube axes to a shape of (chan, pol, dec, ra)
-    which is what yandasoft linmos tasks like.
-    
-    If inplace is False, writes to a temporary file and
-    replaces the original file after successful write.
+    which is what yandasoft linmos tasks expect.
 
     Parameters
     ----------
-    output_cube_name : str
+    output_cube_path : str | Path
         Path to the FITS cube to rotate.
     inplace : bool, optional
         If True, modify the file in-place. If False, write to a temporary file and
         then replace the original. Default True
+
+    Returns
+    -------
+    Path
+        Path to the rotated FITS cube.
     """
-    # Determine temporary path if not inplace
-    if not inplace:
-        base, ext = os.path.splitext(output_cube_name)
-        tmp_name = f"{base}_rotated{ext}"
-    
+    output_path = Path(output_cube_path)
+    logger.info(f"Rotating FITS axes of {output_path.name}")
+
     # Read original data and header
-    with fits.open(output_cube_name, mode='readonly', memmap=True) as hdul:
-        hdu = hdul[0]
-        header = hdu.header.copy()
-        data_cube = hdu.data.copy()
+    with fits.open(output_path, mode='readonly', memmap=True) as hdul:
+        header = hdul[0].header.copy()
+        data_cube = hdul[0].data.copy()
 
     # Swap axes in header
     tmp_header = header.copy()
     for a, b in ((3, 4), (4, 3)):
-        header[f"CTYPE{a}"]  = tmp_header[f"CTYPE{b}"]
-        header[f"CRPIX{a}"]  = tmp_header[f"CRPIX{b}"]
-        header[f"CRVAL{a}"]  = tmp_header[f"CRVAL{b}"]
-        header[f"CDELT{a}"]  = tmp_header[f"CDELT{b}"]
-        header[f"CUNIT{a}"]  = tmp_header[f"CUNIT{b}"]
+        header[f"CTYPE{a}"] = tmp_header[f"CTYPE{b}"]
+        header[f"CRPIX{a}"] = tmp_header[f"CRPIX{b}"]
+        header[f"CRVAL{a}"] = tmp_header[f"CRVAL{b}"]
+        header[f"CDELT{a}"] = tmp_header[f"CDELT{b}"]
+        header[f"CUNIT{a}"] = tmp_header[f"CUNIT{b}"]
 
-    # Move data axis: cube shape (pol, chan, dec, ra) to (chan, pol, dec, ra)
+    # Move data axis: (pol, chan, dec, ra) → (chan, pol, dec, ra)
     rotated_data = np.moveaxis(data_cube, 1, 0)
 
     if inplace:
-        # Write back in place
-        logger.info(f"Rotating {output_cube_name=} in place")
-        with fits.open(output_cube_name, mode='update', memmap=True) as hdul:
+        logger.info(f"Rotating {output_path.name} in place")
+        with fits.open(output_path, mode='update', memmap=True) as hdul:
             hdul[0].data = rotated_data
             hdul[0].header = header
             hdul.flush()
-    else:
-        # Write to temporary file
-        logger.info(f"Writing rotated cube to temporary file {tmp_name}")
-        hdu = fits.PrimaryHDU(data=rotated_data, header=header)
-        hdu.writeto(tmp_name, overwrite=True)
-        # Replace original file
-        os.remove(output_cube_name)
-        os.rename(tmp_name, output_cube_name)
-        logger.info(f"Replaced original {output_cube_name} with rotated cube")
+        return output_path
+
+    # Not in-place: write to temp then replace
+    tmp_path = output_path.with_name(f"{output_path.stem}_rotated{output_path.suffix}")
+    logger.info(f"Writing rotated cube to temporary file {tmp_path.name}")
+    fits.PrimaryHDU(data=rotated_data, header=header).writeto(tmp_path, overwrite=True)
+
+    output_path.unlink()
+    tmp_path.rename(output_path)
+    logger.info(f"Replaced original {output_path.name} with rotated cube")
+    return output_path
 
 def combine_image_set_to_cube(
     image_set: ImageSet,
