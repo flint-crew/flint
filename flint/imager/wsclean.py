@@ -182,6 +182,7 @@ class WSCleanOptions(BaseOptions):
     flint_make_cube_inplace: bool = True
     """Rotate the cube for the linmos axis ordering in place, or do it via a temporary file that then gets deleted. Good thing to turn off when getting weird OSErrors on file writing"""
 
+
 class WSCleanResult(BaseOptions):
     """Simple container for a wsclean command."""
 
@@ -884,6 +885,7 @@ def create_wsclean_cmd(
         image_prefix_str=str(name_argument_path),
     )
 
+
 def rotate_cube(output_cube_path: str | Path, inplace: bool = True) -> Path:
     """
     Rotate the FITS cube axes to a shape of (chan, pol, dec, ra)
@@ -906,7 +908,7 @@ def rotate_cube(output_cube_path: str | Path, inplace: bool = True) -> Path:
     logger.info(f"Rotating FITS axes of {output_path.name}")
 
     # Read original data and header
-    with fits.open(output_path, mode='readonly', memmap=True) as hdul:
+    with fits.open(output_path, mode="readonly", memmap=True) as hdul:
         header = hdul[0].header.copy()
         data_cube = hdul[0].data.copy()
 
@@ -924,7 +926,7 @@ def rotate_cube(output_cube_path: str | Path, inplace: bool = True) -> Path:
 
     if inplace:
         logger.info(f"Rotating {output_path.name} in place")
-        with fits.open(output_path, mode='update', memmap=True) as hdul:
+        with fits.open(output_path, mode="update", memmap=True) as hdul:
             hdul[0].data = rotated_data
             hdul[0].header = header
             hdul.flush()
@@ -939,6 +941,7 @@ def rotate_cube(output_cube_path: str | Path, inplace: bool = True) -> Path:
     tmp_path.rename(output_path)
     logger.info(f"Replaced original {output_path.name} with rotated cube")
     return output_path
+
 
 def combine_image_set_to_cube(
     image_set: ImageSet,
@@ -1166,7 +1169,8 @@ def run_wsclean_imager(
 
     if make_cube_from_subbands:
         image_set = combine_image_set_to_cube(
-            image_set=image_set, remove_original_images=True,
+            image_set=image_set,
+            remove_original_images=True,
             inplace=wsclean_result.options.flint_make_cube_inplace,
         )
 
