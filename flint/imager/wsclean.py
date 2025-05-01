@@ -16,8 +16,8 @@ with a ``.``.
 
 from __future__ import annotations
 
-import re
 import os
+import re
 from argparse import ArgumentParser
 from glob import glob
 from numbers import Number
@@ -182,6 +182,7 @@ class WSCleanOptions(BaseOptions):
     """Opposite of -ms-weighting; can be used to turn off MF weighting in -join-channels mode"""
     flint_make_cube_inplace: bool = True
     """Rotate the cube for the linmos axis ordering in place, or do it via a temporary file that then gets deleted. Good thing to turn off when getting weird OSErrors on file writing"""
+
 
 class WSCleanResult(BaseOptions):
     """Simple container for a wsclean command."""
@@ -890,7 +891,7 @@ def rotate_cube(output_cube_name: str, inplace: bool = True) -> None:
     """
     Rotate the FITS cube axes to a shape of (chan, pol, dec, ra)
     which is what yandasoft linmos tasks like.
-    
+
     If inplace is False, writes to a temporary file and
     replaces the original file after successful write.
 
@@ -906,9 +907,9 @@ def rotate_cube(output_cube_name: str, inplace: bool = True) -> None:
     if not inplace:
         base, ext = os.path.splitext(output_cube_name)
         tmp_name = f"{base}_rotated{ext}"
-    
+
     # Read original data and header
-    with fits.open(output_cube_name, mode='readonly', memmap=True) as hdul:
+    with fits.open(output_cube_name, mode="readonly", memmap=True) as hdul:
         hdu = hdul[0]
         header = hdu.header.copy()
         data_cube = hdu.data.copy()
@@ -916,11 +917,11 @@ def rotate_cube(output_cube_name: str, inplace: bool = True) -> None:
     # Swap axes in header
     tmp_header = header.copy()
     for a, b in ((3, 4), (4, 3)):
-        header[f"CTYPE{a}"]  = tmp_header[f"CTYPE{b}"]
-        header[f"CRPIX{a}"]  = tmp_header[f"CRPIX{b}"]
-        header[f"CRVAL{a}"]  = tmp_header[f"CRVAL{b}"]
-        header[f"CDELT{a}"]  = tmp_header[f"CDELT{b}"]
-        header[f"CUNIT{a}"]  = tmp_header[f"CUNIT{b}"]
+        header[f"CTYPE{a}"] = tmp_header[f"CTYPE{b}"]
+        header[f"CRPIX{a}"] = tmp_header[f"CRPIX{b}"]
+        header[f"CRVAL{a}"] = tmp_header[f"CRVAL{b}"]
+        header[f"CDELT{a}"] = tmp_header[f"CDELT{b}"]
+        header[f"CUNIT{a}"] = tmp_header[f"CUNIT{b}"]
 
     # Move data axis: cube shape (pol, chan, dec, ra) to (chan, pol, dec, ra)
     rotated_data = np.moveaxis(data_cube, 1, 0)
@@ -928,7 +929,7 @@ def rotate_cube(output_cube_name: str, inplace: bool = True) -> None:
     if inplace:
         # Write back in place
         logger.info(f"Rotating {output_cube_name=} in place")
-        with fits.open(output_cube_name, mode='update', memmap=True) as hdul:
+        with fits.open(output_cube_name, mode="update", memmap=True) as hdul:
             hdul[0].data = rotated_data
             hdul[0].header = header
             hdul.flush()
@@ -941,6 +942,7 @@ def rotate_cube(output_cube_name: str, inplace: bool = True) -> None:
         os.remove(output_cube_name)
         os.rename(tmp_name, output_cube_name)
         logger.info(f"Replaced original {output_cube_name} with rotated cube")
+
 
 def combine_image_set_to_cube(
     image_set: ImageSet,
@@ -1168,7 +1170,8 @@ def run_wsclean_imager(
 
     if make_cube_from_subbands:
         image_set = combine_image_set_to_cube(
-            image_set=image_set, remove_original_images=True,
+            image_set=image_set,
+            remove_original_images=True,
             inplace=wsclean_result.options.flint_make_cube_inplace,
         )
 
