@@ -263,7 +263,15 @@ def test_get_environment_variable(set_env):
     val2 = get_environment_variable("$TEST2")
     assert val2 == "Treasure"
     val3 = get_environment_variable("THISNOEXISTS")
-    assert val3 is None
+    assert (
+        val3 == "THISNOEXISTS"
+    )  # in case the user gives a path that is not a variable return the same thing
+    val4 = get_environment_variable("TEST1/TEST2")
+    assert val4 == "Pirates/Treasure"
+    val5 = get_environment_variable("TEST1/TEST2/TEST3")
+    assert (
+        val5 == "Pirates/Treasure/TEST3"
+    )  # in case the user gives a path that includes variables and directories
 
 
 @pytest.fixture

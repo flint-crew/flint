@@ -204,25 +204,46 @@ def temporarily_move_into(
 def get_environment_variable(
     variable: str | None, default: str | None = None
 ) -> str | None:
-    """Get the value of an environment variable if it exists. If it does not
-    a None is returned.
+    """Expand each “/”-delimited segment as an env-var if it exists.
+
+    Splits `variable` on "/", and for each segment:
+      1. Strips any leading "$".
+      2. If the remaining name matches an env-var, substitutes its value.
+      3. If it started with "$" but the env-var is unset, returns `default`.
+      4. Otherwise leaves the segment literal.
+
+    Rejoins the segments with "/", preserves a trailing slash if present.
 
     Args:
-        variable (Union[str,None]): The variable to lookup. If it starts with `$` it is removed. If `None` is provided `None` is returned.
-        default (Optional[str], optional): If the variable lookup is not resolved this is returned. Defaults to None.
+        variable: e.g. "TEST1/$SLURM_TMPDIR" or "$HOME/subdir" or "literal/path"
+        default: returned if any "$VAR" lookup fails
 
     Returns:
-        Union[str,None]: Value of environment variable if it exists. None if it does not.
+        Expanded path string, `default` on lookup failure, or None if `variable` is None.
     """
     if variable is None:
         return None
 
-    variable = variable.lstrip("$")
-    value = os.getenv(variable)
+    parts = variable.split("/")
+    out_parts: list[str] = []
 
-    value = default if value is None and default is not None else value
+    for part in parts:
+        name = part.lstrip("$")
+        val = os.getenv(name)
 
-    return value
+        # missing placeholder → fallback
+        if part.startswith("$") and val is None:
+            return default
+
+        out_parts.append(val if val is not None else part)
+
+    result = "/".join(out_parts)
+
+    # preserve trailing slash
+    if variable.endswith("/") and not result.endswith("/"):
+        result += "/"
+
+    return result
 
 
 class SlurmInfo(NamedTuple):

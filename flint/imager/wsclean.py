@@ -179,6 +179,8 @@ class WSCleanOptions(BaseOptions):
     """If True do not log the wsclean output"""
     no_mf_weighting: bool = False
     """Opposite of -ms-weighting; can be used to turn off MF weighting in -join-channels mode"""
+    flint_make_cube_inplace: bool = True
+    """Rotate the cube for the linmos axis ordering in place, or do it via a temporary file that then gets deleted. Good thing to turn off when getting weird OSErrors on file writing"""
 
 
 class WSCleanResult(BaseOptions):
@@ -211,6 +213,7 @@ def combine_images_to_cube(
     prefix: str,
     mode: str,
     remove_original_images: bool = False,
+    inplace: bool = True,
 ) -> Path:
     """Combine wsclean subband channel images into a cube. Each collection attribute
     of the input `image_set` will be inspected. The MFS images will be ignored.
@@ -220,7 +223,8 @@ def combine_images_to_cube(
     Args:
         image_set (ImageSet): Collection of wsclean image productds
         remove_original_images (bool, optional): If True, images that went into the cube are removed. Defaults to False.
-
+        inplace (bool, optional): If True, modify the file in-place. If False, write to a temporary file and
+        then replace the original. Default True
     Returns:
         ImageSet: Updated iamgeset describing the new outputs
     """
@@ -230,7 +234,7 @@ def combine_images_to_cube(
 
     logger.info(f"Combining {len(images)} images. {images=}")
     freqs = combine_fits(file_list=images, out_cube=output_cube_name)
-    rotate_cube(output_cube_name)
+    rotate_cube(output_cube_name, inplace=inplace)
 
     # Write out the hdu to preserve the beam table constructed in fitscube
     logger.info(f"Writing {output_cube_name=}")
@@ -705,12 +709,8 @@ def create_wsclean_name_argument(wsclean_options: WSCleanOptions, ms: MS) -> Pat
     name_dir: Path | str | None = ms.path.parent
     temp_dir = wsclean_options_dict.get("temp_dir", None)
     if temp_dir:
-        # Resolve if environment variable
-        name_dir = (
-            get_environment_variable(variable=temp_dir)
-            if isinstance(temp_dir, str) and temp_dir[0] == "$"
-            else Path(temp_dir)
-        )
+        # attempt to resolve possible environment variables flexibly
+        name_dir = get_environment_variable(variable=temp_dir)
 
     assert name_dir is not None, f"{name_dir=} is None, which is bad"
 
@@ -882,34 +882,67 @@ def create_wsclean_cmd(
     )
 
 
-def rotate_cube(output_cube_name) -> None:
-    logger.info(f"Rotating {output_cube_name=}")
-    # This changes the output cube to a shape of (chan, pol, dec, ra)
-    # which is what yandasoft linmos tasks like
-    with fits.open(output_cube_name, mode="update", memmap=True) as hdulist:
-        hdu = hdulist[0]
-        new_header = hdu.header
-        data_cube = hdu.data
+def rotate_cube(output_cube_path: str | Path, inplace: bool = True) -> Path:
+    """
+    Rotate the FITS cube axes to a shape of (chan, pol, dec, ra)
+    which is what yandasoft linmos tasks expect.
 
-        tmp_header = new_header.copy()
-        # Need to swap NAXIS 3 and 4 to make LINMOS happy - booo
-        for a, b in ((3, 4), (4, 3)):
-            new_header[f"CTYPE{a}"] = tmp_header[f"CTYPE{b}"]
-            new_header[f"CRPIX{a}"] = tmp_header[f"CRPIX{b}"]
-            new_header[f"CRVAL{a}"] = tmp_header[f"CRVAL{b}"]
-            new_header[f"CDELT{a}"] = tmp_header[f"CDELT{b}"]
-            new_header[f"CUNIT{a}"] = tmp_header[f"CUNIT{b}"]
+    Parameters
+    ----------
+    output_cube_path : str | Path
+        Path to the FITS cube to rotate.
+    inplace : bool, optional
+        If True, modify the file in-place. If False, write to a temporary file and
+        then replace the original. Default True
 
-        # Cube is currently STOKES, FREQ, RA, DEC - needs to be FREQ, STOKES, RA, DEC
-        data_cube = np.moveaxis(data_cube, 1, 0)
-        hdu.data = data_cube
-        hdu.header = new_header
-        hdulist.flush()
+    Returns
+    -------
+    Path
+        Path to the rotated FITS cube.
+    """
+    output_path = Path(output_cube_path)
+    logger.info(f"Rotating FITS axes of {output_path.name}")
+
+    # Read original data and header
+    with fits.open(output_path, mode="readonly", memmap=True) as hdul:
+        header = hdul[0].header.copy()
+        data_cube = hdul[0].data.copy()
+
+    # Swap axes in header
+    tmp_header = header.copy()
+    for a, b in ((3, 4), (4, 3)):
+        header[f"CTYPE{a}"] = tmp_header[f"CTYPE{b}"]
+        header[f"CRPIX{a}"] = tmp_header[f"CRPIX{b}"]
+        header[f"CRVAL{a}"] = tmp_header[f"CRVAL{b}"]
+        header[f"CDELT{a}"] = tmp_header[f"CDELT{b}"]
+        header[f"CUNIT{a}"] = tmp_header[f"CUNIT{b}"]
+
+    # Move data axis: (pol, chan, dec, ra) → (chan, pol, dec, ra)
+    rotated_data = np.moveaxis(data_cube, 1, 0)
+
+    if inplace:
+        logger.info(f"Rotating {output_path.name} in place")
+        with fits.open(output_path, mode="update", memmap=True) as hdul:
+            hdul[0].data = rotated_data
+            hdul[0].header = header
+            hdul.flush()
+        return output_path
+
+    # Not in-place: write to temp then replace
+    tmp_path = output_path.with_name(f"{output_path.stem}_rotated{output_path.suffix}")
+    logger.info(f"Writing rotated cube to temporary file {tmp_path.name}")
+    fits.PrimaryHDU(data=rotated_data, header=header).writeto(tmp_path, overwrite=True)
+
+    output_path.unlink()
+    tmp_path.rename(output_path)
+    logger.info(f"Replaced original {output_path.name} with rotated cube")
+    return output_path
 
 
 def combine_image_set_to_cube(
     image_set: ImageSet,
     remove_original_images: bool = False,
+    inplace: bool = True,
 ) -> ImageSet:
     """Combine wsclean subband channel images into a cube. Each collection attribute
     of the input `image_set` will be inspected. The MFS images will be ignored.
@@ -919,6 +952,8 @@ def combine_image_set_to_cube(
     Args:
         image_set (ImageSet): Collection of wsclean image productds
         remove_original_images (bool, optional): If True, images that went into the cube are removed. Defaults to False.
+        inplace (bool, optional): If True, modify the file in-place. If False, write to a temporary file and
+        then replace the original. Default True
 
     Returns:
         ImageSet: Updated iamgeset describing the new outputs
@@ -953,7 +988,7 @@ def combine_image_set_to_cube(
         logger.info(f"Combining {len(subband_images)} images. {subband_images=}")
         freqs = combine_fits(file_list=subband_images, out_cube=output_cube_name)
 
-        rotate_cube(output_cube_name)
+        rotate_cube(output_cube_name, inplace=inplace)
 
         # Write out the hdu to preserve the beam table constructed in fitscube
         logger.info(f"Writing {output_cube_name=}")
@@ -1130,7 +1165,9 @@ def run_wsclean_imager(
 
     if make_cube_from_subbands:
         image_set = combine_image_set_to_cube(
-            image_set=image_set, remove_original_images=True
+            image_set=image_set,
+            remove_original_images=True,
+            inplace=wsclean_result.options.flint_make_cube_inplace,
         )
 
     image_set = rename_wsclean_prefix_in_image_set(input_image_set=image_set)
