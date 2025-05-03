@@ -749,7 +749,9 @@ def _resolve_wsclean_key_value_to_cli_str(key: str, value: Any) -> ResolvedCLIRe
 
     logger.debug(f"{key=} {value=} {type(value)=}")
 
-    value = get_environment_variable(variable=value)
+    value = (
+        get_environment_variable(variable=value) if isinstance(value, str) else value
+    )
 
     cmd = None
     unknown = None
