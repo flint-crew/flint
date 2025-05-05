@@ -48,8 +48,8 @@ from flint.options import (
 )
 from flint.sclient import run_singularity_command
 from flint.utils import (
-    get_environment_variable,
     hold_then_move_into,
+    parse_environment_variables,
     remove_files_folders,
 )
 
@@ -709,12 +709,8 @@ def create_wsclean_name_argument(wsclean_options: WSCleanOptions, ms: MS) -> Pat
     name_dir: Path | str | None = ms.path.parent
     temp_dir = wsclean_options_dict.get("temp_dir", None)
     if temp_dir:
-        # Resolve if environment variable
-        name_dir = (
-            get_environment_variable(variable=temp_dir)
-            if isinstance(temp_dir, str) and temp_dir[0] == "$"
-            else Path(temp_dir)
-        )
+        # attempt to resolve possible environment variables flexibly
+        name_dir = parse_environment_variables(variable=temp_dir)
 
     assert name_dir is not None, f"{name_dir=} is None, which is bad"
 
@@ -758,9 +754,7 @@ def _resolve_wsclean_key_value_to_cli_str(key: str, value: Any) -> ResolvedCLIRe
     logger.debug(f"{key=} {value=} {type(value)=}")
 
     value = (
-        get_environment_variable(variable=value)
-        if isinstance(value, str) and value[0] == "$"
-        else value
+        parse_environment_variables(variable=value) if isinstance(value, str) else value
     )
 
     cmd = None

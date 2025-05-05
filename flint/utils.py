@@ -201,28 +201,67 @@ def temporarily_move_into(
         shutil.rmtree(temporary_directory)
 
 
-def get_environment_variable(
+def parse_environment_variables(
     variable: str | None, default: str | None = None
 ) -> str | None:
-    """Get the value of an environment variable if it exists. If it does not
-    a None is returned.
+    """Expand a $VARIABLE environment variable to obtain its value from
+    the environment. The dollar-character is required in its input to be
+    expanded.
+
+    Expanding an environment variable embedded within a Path-like expression
+    is supported. Each “/”-delimited segment as an env-var if it exists.
+
+    Splits `variable` on "/", and for each segment:
+      1. Strips any leading "$".
+      2. If the remaining name matches an env-var, substitutes its value.
+      3. If it started with "$" but the env-var is unset, returns `default`.
+      4. Otherwise leaves the segment literal.
+
+    Rejoins the segments with "/", preserves a trailing slash if present.
+
+    Should a $VARIABLE be specified but is unresolved, the `default` value
+    is returned.
 
     Args:
-        variable (Union[str,None]): The variable to lookup. If it starts with `$` it is removed. If `None` is provided `None` is returned.
-        default (Optional[str], optional): If the variable lookup is not resolved this is returned. Defaults to None.
+        variable: e.g. "TEST1/$SLURM_TMPDIR" or "$HOME/subdir" or "literal/path"
+        default: returned if any "$VAR" lookup fails
 
     Returns:
-        Union[str,None]: Value of environment variable if it exists. None if it does not.
+        Expanded path string, `default` on lookup failure, or None if `variable` is None.
     """
     if variable is None:
         return None
 
-    variable = variable.lstrip("$")
-    value = os.getenv(variable)
+    parts = variable.split("/")
+    out_parts: list[str] = []
 
-    value = default if value is None and default is not None else value
+    for part in parts:
+        if not part.startswith("$"):
+            out_parts.append(part)
+            continue
 
-    return value
+        # At this point the part should resolve to a
+        # environment variable, you dirty sea dog
+        name = part.lstrip("$")
+        val = os.getenv(name)
+
+        # missing placeholder → fallback
+        if val is None:
+            return default
+
+        # This can not be None because of the above. Putting
+        # an assert to capture this behaviour anticipating future
+        # refactoring
+        assert val is not None, f"{val=}, which is not expected"
+        out_parts.append(val)
+
+    result = "/".join(out_parts)
+
+    # preserve trailing slash
+    if variable.endswith("/") and not result.endswith("/"):
+        result += "/"
+
+    return result
 
 
 class SlurmInfo(NamedTuple):
@@ -244,8 +283,8 @@ def get_slurm_info() -> SlurmInfo:
     """
 
     hostname = gethostname()
-    job_id = get_environment_variable("SLURM_JOB_ID")
-    task_id = get_environment_variable("SLURM_ARRAY_TASK_ID")
+    job_id = parse_environment_variables("$SLURM_JOB_ID")
+    task_id = parse_environment_variables("$SLURM_ARRAY_TASK_ID")
     time = str(datetime.datetime.now())
 
     return SlurmInfo(hostname=hostname, job_id=job_id, task_id=task_id, time=time)

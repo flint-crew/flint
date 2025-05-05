@@ -27,12 +27,12 @@ from flint.utils import (
     generate_strict_stub_wcs_header,
     generate_stub_wcs_header,
     get_beam_shape,
-    get_environment_variable,
     get_packaged_resource_path,
     get_pixels_per_beam,
     get_slurm_info,
     hold_then_move_into,
     log_job_environment,
+    parse_environment_variables,
     temporarily_move_into,
     timelimit_on_context,
 )
@@ -256,14 +256,33 @@ def set_env():
     os.environ["TEST2"] = "Treasure"
 
 
-def test_get_environment_variable(set_env):
+def test_parse_environment_variables(set_env):
     """Make sure that the variable is processed nicely when getting environment variable"""
-    val = get_environment_variable("TEST1")
+    val = parse_environment_variables("$TEST1")
     assert val == "Pirates"
-    val2 = get_environment_variable("$TEST2")
+    val2 = parse_environment_variables("$TEST2")
     assert val2 == "Treasure"
-    val3 = get_environment_variable("THISNOEXISTS")
-    assert val3 is None
+    val3 = parse_environment_variables("THISNOEXISTS")
+    assert (
+        val3 == "THISNOEXISTS"
+    )  # in case the user gives a path that is not a variable return the same thing
+    val4 = parse_environment_variables("$TEST1/$TEST2")
+    assert val4 == "Pirates/Treasure"
+    val5 = parse_environment_variables("$TEST1/$TEST2/TEST3")
+    assert (
+        val5 == "Pirates/Treasure/TEST3"
+    )  # in case the user gives a path that includes variables and directories
+
+    val6 = parse_environment_variables("$TEST1/$TEST2/$TEST3")
+    assert val6 is None  # If one goes down all do
+    val7 = parse_environment_variables("$TEST1/$TEST3/$TEST2")
+    assert val7 is None  # Same as above but reordered
+
+    # Same as above but with a trailing slash
+    val8 = parse_environment_variables("$TEST1/$TEST2/")
+    assert val8 == "Pirates/Treasure/"
+
+    assert parse_environment_variables(variable=None) is None
 
 
 @pytest.fixture
