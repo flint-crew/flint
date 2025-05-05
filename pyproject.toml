@@ -71,7 +71,9 @@ dev = [
     "sphinx-copybutton",
     "sphinx-autoapi",
     "sphinx-argparse",
-    "furo"
+    "furo",
+    "pytest-xdist",
+    "pytest-rerunfailures",
 ]
 casa =[
     "python-casacore>=3.6.0",

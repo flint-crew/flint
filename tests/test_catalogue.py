@@ -95,6 +95,7 @@ def test_no_reference_catalogue():
         _ = get_reference_catalogue(reference_directory=Path("./"), survey="NVSS")
 
 
+@pytest.mark.flaky(reruns=3, reruns_delay=2)
 def test_download_vizier_catalogue(tmpdir):
     """Download a example vizier table"""
 
@@ -114,6 +115,7 @@ def test_download_vizier_catalogue(tmpdir):
     assert len(table) == 3414
 
 
+@pytest.mark.flaky(reruns=3, reruns_delay=2)
 def test_get_vizier_catalogue(tmpdir):
     """Download a example vizier table"""
     output_path = Path(tmpdir) / "catalogue1/ICRF.fits"
@@ -140,6 +142,7 @@ def test_get_vizier_catalogue(tmpdir):
         )
 
 
+@pytest.mark.flaky(reruns=3, reruns_delay=2)
 def test_download_vizier_catalogue_dryrun(tmpdir):
     """See if the dry run option in download a example vizier table"""
 
@@ -157,6 +160,7 @@ def test_download_vizier_catalogue_dryrun(tmpdir):
     assert not cata_path.exists()
 
 
+@pytest.mark.flaky(reruns=3, reruns_delay=2)
 def test_download_reference_catalogues(tmpdir):
     """Ensure all catalogues can be downloaded. Not the dry_run=True,
     meaning the catalogues are not all actually dowenloaded
