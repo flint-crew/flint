@@ -201,7 +201,7 @@ def temporarily_move_into(
         shutil.rmtree(temporary_directory)
 
 
-def get_environment_variable(
+def parse_environment_variables(
     variable: str | None, default: str | None = None
 ) -> str | None:
     """Expand a $VARIABLE environment variable to obtain its value from
@@ -283,8 +283,8 @@ def get_slurm_info() -> SlurmInfo:
     """
 
     hostname = gethostname()
-    job_id = get_environment_variable("$SLURM_JOB_ID")
-    task_id = get_environment_variable("$SLURM_ARRAY_TASK_ID")
+    job_id = parse_environment_variables("$SLURM_JOB_ID")
+    task_id = parse_environment_variables("$SLURM_ARRAY_TASK_ID")
     time = str(datetime.datetime.now())
 
     return SlurmInfo(hostname=hostname, job_id=job_id, task_id=task_id, time=time)
