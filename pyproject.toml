@@ -72,7 +72,6 @@ dev = [
     "sphinx-autoapi",
     "sphinx-argparse",
     "furo",
-    "pytest-xdist",
     "pytest-rerunfailures",
 ]
 casa =[
