@@ -204,7 +204,12 @@ def temporarily_move_into(
 def get_environment_variable(
     variable: str | None, default: str | None = None
 ) -> str | None:
-    """Expand each “/”-delimited segment as an env-var if it exists.
+    """Expand a $VARIABLE environment variable to obtain its value from
+    the environment. The dollar-character is required in its input to be
+    expanded.
+
+    Expanding an environment variable embedded within a Path-like expression
+    is supported. Each “/”-delimited segment as an env-var if it exists.
 
     Splits `variable` on "/", and for each segment:
       1. Strips any leading "$".
@@ -213,6 +218,9 @@ def get_environment_variable(
       4. Otherwise leaves the segment literal.
 
     Rejoins the segments with "/", preserves a trailing slash if present.
+
+    Should a $VARIABLE be specified but is unresolved, the `default` value
+    is returned.
 
     Args:
         variable: e.g. "TEST1/$SLURM_TMPDIR" or "$HOME/subdir" or "literal/path"
@@ -228,14 +236,24 @@ def get_environment_variable(
     out_parts: list[str] = []
 
     for part in parts:
+        if not part.startswith("$"):
+            out_parts.append(part)
+            continue
+
+        # At this point the part should resolve to a
+        # environment variable, you dirty sea dog
         name = part.lstrip("$")
         val = os.getenv(name)
 
         # missing placeholder → fallback
-        if part.startswith("$") and val is None:
+        if val is None:
             return default
 
-        out_parts.append(val if val is not None else part)
+        # This can not be None because of the above. Putting
+        # an assert to capture this behaviour anticipating future
+        # refactoring
+        assert val is not None, f"{val=}, which is not expected"
+        out_parts.append(val)
 
     result = "/".join(out_parts)
 
@@ -265,8 +283,8 @@ def get_slurm_info() -> SlurmInfo:
     """
 
     hostname = gethostname()
-    job_id = get_environment_variable("SLURM_JOB_ID")
-    task_id = get_environment_variable("SLURM_ARRAY_TASK_ID")
+    job_id = get_environment_variable("$SLURM_JOB_ID")
+    task_id = get_environment_variable("$SLURM_ARRAY_TASK_ID")
     time = str(datetime.datetime.now())
 
     return SlurmInfo(hostname=hostname, job_id=job_id, task_id=task_id, time=time)

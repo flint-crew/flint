@@ -258,7 +258,7 @@ def set_env():
 
 def test_get_environment_variable(set_env):
     """Make sure that the variable is processed nicely when getting environment variable"""
-    val = get_environment_variable("TEST1")
+    val = get_environment_variable("$TEST1")
     assert val == "Pirates"
     val2 = get_environment_variable("$TEST2")
     assert val2 == "Treasure"
@@ -266,16 +266,21 @@ def test_get_environment_variable(set_env):
     assert (
         val3 == "THISNOEXISTS"
     )  # in case the user gives a path that is not a variable return the same thing
-    val4 = get_environment_variable("TEST1/TEST2")
+    val4 = get_environment_variable("$TEST1/$TEST2")
     assert val4 == "Pirates/Treasure"
-    val5 = get_environment_variable("TEST1/TEST2/TEST3")
+    val5 = get_environment_variable("$TEST1/$TEST2/TEST3")
     assert (
         val5 == "Pirates/Treasure/TEST3"
     )  # in case the user gives a path that includes variables and directories
 
+    val6 = get_environment_variable("$TEST1/$TEST2/$TEST3")
+    assert val6 is None  # If one goes down all do
+    val7 = get_environment_variable("$TEST1/$TEST3/$TEST2")
+    assert val7 is None  # Same as above but reordered
+
     # Same as above but with a trailing slash
-    val4 = get_environment_variable("TEST1/TEST2/")
-    assert val4 == "Pirates/Treasure/"
+    val8 = get_environment_variable("$TEST1/$TEST2/")
+    assert val8 == "Pirates/Treasure/"
 
 
 @pytest.fixture
