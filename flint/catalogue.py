@@ -305,7 +305,7 @@ def download_vizier_catalogue(
     return output_path
 
 
-def download_referencce_catalogues(
+def download_reference_catalogues(
     reference_directory: Path, dry_run: bool = False
 ) -> tuple[Path, ...]:
     """Download all of the expected reference catalogue data that flint relies on
@@ -416,7 +416,7 @@ def cli() -> None:
     args = parser.parse_args()
 
     if args.mode == "download":
-        download_referencce_catalogues(reference_directory=args.reference_directory)
+        download_reference_catalogues(reference_directory=args.reference_directory)
     elif args.mode == "list":
         list_known_reference_catalogues()
     elif args.mode == "verify":
