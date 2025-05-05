@@ -273,6 +273,10 @@ def test_get_environment_variable(set_env):
         val5 == "Pirates/Treasure/TEST3"
     )  # in case the user gives a path that includes variables and directories
 
+    # Same as above but with a trailing slash
+    val4 = get_environment_variable("TEST1/TEST2/")
+    assert val4 == "Pirates/Treasure/"
+
 
 @pytest.fixture
 def ms_example(tmpdir):
