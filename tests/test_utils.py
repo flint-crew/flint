@@ -282,6 +282,8 @@ def test_get_environment_variable(set_env):
     val8 = get_environment_variable("$TEST1/$TEST2/")
     assert val8 == "Pirates/Treasure/"
 
+    assert get_environment_variable(variable=None) is None
+
 
 @pytest.fixture
 def ms_example(tmpdir):
