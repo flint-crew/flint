@@ -11,7 +11,7 @@ from flint.catalogue import (
     KNOWN_REFERENCE_CATALOGUES,
     Catalogue,
     _guess_catalogue_type,
-    download_referencce_catalogues,
+    download_reference_catalogues,
     download_vizier_catalogue,
     get_reference_catalogue,
     guess_column_in_table,
@@ -168,7 +168,7 @@ def test_download_reference_catalogues(tmpdir):
     output_dir = Path(tmpdir) / "catalogue2"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    outputs = download_referencce_catalogues(
+    outputs = download_reference_catalogues(
         reference_directory=output_dir, dry_run=True
     )
 
