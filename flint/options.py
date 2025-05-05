@@ -268,7 +268,7 @@ def create_options_from_parser(
 
 
 class BandpassOptions(BaseOptions):
-    """Container that reoresents the flint related options that
+    """Container that represents the flint related options that
     might be used throughout the processing of bandpass calibration
     data.
 
