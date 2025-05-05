@@ -58,7 +58,6 @@ metadata.allow-direct-references = true
 
 [project.optional-dependencies]
 dev = [
-    "black",
     "mypy",
     "isort",
     "pre-commit",
@@ -73,6 +72,7 @@ dev = [
     "sphinx-argparse",
     "furo",
     "pytest-rerunfailures",
+    "pytest-xdist",
 ]
 casa =[
     "python-casacore>=3.6.0",
