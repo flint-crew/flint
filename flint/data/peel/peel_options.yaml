@@ -1,0 +1,10 @@
+# potato_peel_defaults.yaml
+
+# Whether to use direct model subtraction (no self-cal) for faint sources
+direct_subtract: true
+
+# Create an image after each calibration/subtraction loop
+intermediate_peels: true
+
+# Directory for temporary wsclean files
+T: "peel"

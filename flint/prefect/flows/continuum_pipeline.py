@@ -36,6 +36,7 @@ from flint.options import (
     create_options_from_parser,
     dump_field_options_to_yaml,
 )
+from flint.peel.potato import load_potato_yaml
 from flint.prefect.clusters import get_dask_runner
 from flint.prefect.common.imaging import (
     create_convol_linmos_images,
@@ -147,6 +148,7 @@ def process_science_fields(
     split_path: Path,
     field_options: FieldOptions,
     bandpass_path: Path | None = None,
+    potato_peel_options: dict | None = None,
 ) -> None:
     # Verify no nasty incompatible options
     _check_field_options(field_options=field_options)
@@ -268,6 +270,7 @@ def process_science_fields(
             ms=preprocess_science_mss,
             potato_container=field_options.potato_container,
             update_wsclean_options=unmapped(potato_wsclean_init),
+            update_potato_peel_options=potato_peel_options,
         )
 
     stokes_v_mss = preprocess_science_mss
@@ -555,6 +558,7 @@ def setup_run_process_science_field(
     split_path: Path,
     field_options: FieldOptions,
     bandpass_path: Path | None = None,
+    potato_peel_options: str | Path | None = None,
 ) -> None:
     science_sbid = get_sbid_from_path(path=science_path)
 
@@ -567,6 +571,18 @@ def setup_run_process_science_field(
 
     dask_task_runner = get_dask_runner(cluster=cluster_config)
 
+    # parse potato peel override options if any
+    if potato_peel_options:
+        potato_peel_options = Path(potato_peel_options)
+        if potato_peel_options.exists():
+            potato_peel_strategy = load_potato_yaml(
+                input_yaml=potato_peel_options, verify=True
+            )
+        else:
+            raise FileNotFoundError(
+                f"Could not find the potato peel options file {potato_peel_options}"
+            )
+
     process_science_fields.with_options(
         name=f"Flint Continuum Pipeline - {science_sbid}", task_runner=dask_task_runner
     )(
@@ -574,6 +590,7 @@ def setup_run_process_science_field(
         bandpass_path=bandpass_path,
         split_path=split_path,
         field_options=field_options,
+        potato_peel_options=potato_peel_strategy,
     )
 
     # TODO: Put the archive stuff here?
@@ -610,6 +627,13 @@ def get_parser() -> ArgumentParser:
         help="Path to a cluster configuration file, or a known cluster name. ",
     )
 
+    parser.add_argument(
+        "--potato-peel-options",
+        type=Path,
+        default=None,
+        help="YAML file with key/value overrides for PotatoPeelOptions",
+    )
+
     parser = add_options_to_parser(parser=parser, options_class=FieldOptions)
 
     return parser
@@ -636,6 +660,7 @@ def cli() -> None:
         bandpass_path=args.calibrated_bandpass_path,
         split_path=args.split_path,
         field_options=field_options,
+        potato_peel_options=args.potato_peel_options,
     )
 
 

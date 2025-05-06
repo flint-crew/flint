@@ -23,6 +23,7 @@ from typing import Any, Collection, NamedTuple
 
 import astropy.units as u
 import numpy as np
+import yaml
 from astropy.coordinates import SkyCoord
 from astropy.table import Table
 from casacore.tables import table
@@ -38,6 +39,16 @@ from flint.utils import (
     generate_strict_stub_wcs_header,
     get_packaged_resource_path,
 )
+
+
+# A simple representation to pass around. Will help the type
+# analysis and future pirates be clear with their mutinous
+# intentions
+class PotatoPeelStrategy(dict):
+    """Base representation for handling a loaded PotatoPeelStrategy
+    strategy"""
+
+    pass
 
 
 class PotatoConfigOptions(NamedTuple):
@@ -123,6 +134,72 @@ class PotatoPeelOptions(NamedTuple):
         items = self._asdict()
         items.update(**kwargs)
         return PotatoPeelOptions(**items)
+
+
+def verify_potato_configuration(
+    input_strategy: Any,  # strategy object containing `potato_peel_options`
+    raise_on_error: bool = True,
+) -> bool:
+    """
+    Perform basic checks on the potato-peel configuration portion of a strategy.
+    Ensures that all provided keys map to valid PotatoPeelOptions fields.
+
+    Args:
+        input_strategy: Strategy object with attribute `potato_peel_options` (dict)
+        raise_on_error: Whether to raise ValueError on invalid keys
+
+    Returns:
+        True if valid, False otherwise (or raises if raise_on_error=True)
+    """
+    errors: list[str] = []
+
+    cfg = input_strategy
+    # do we want to make yaml headers e.g.
+    # .get("potato_peel_options", None) ??
+
+    if cfg is None:
+        # errors.append("Strategy does not define 'potato_peel_options'.")
+        errors.append("Input strategy is None")
+    elif not isinstance(cfg, dict):
+        errors.append(f"Input must be a dict, got {type(cfg).__name__}.")
+    else:
+        valid_keys = set(PotatoPeelOptions._fields)
+        for key in cfg.keys():
+            if key not in valid_keys:
+                errors.append(
+                    f"Unknown potato peel option '{key}' (allowed: {sorted(valid_keys)})."
+                )
+
+    valid = not errors
+    if not valid:
+        for err in errors:
+            logger.warning(err)
+        if raise_on_error:
+            raise ValueError("Invalid potato_peel_options configuration.")
+    return valid
+
+
+def load_potato_yaml(input_yaml: Path, verify: bool = True) -> PotatoPeelStrategy:
+    """Load in a potato configuration file, which
+    will be used to form the strategy for peeling of sources in a field.
+
+    Args:
+        input_yaml (Path): The peelingstrategy.yaml to use
+        verify (bool, optional): Apply some basic checks to ensure a correctly formed strategy. Defaults to True.
+
+    Returns:
+        Strategy: The parameters of the peeling to use.
+    """
+
+    logger.info(f"Loading {input_yaml} file. ")
+
+    with open(input_yaml) as in_file:
+        input_strategy = PotatoPeelStrategy(yaml.load(in_file, Loader=yaml.Loader))
+
+    if verify:
+        verify_potato_configuration(input_strategy=input_strategy)
+
+    return input_strategy
 
 
 def load_known_peel_sources() -> Table:

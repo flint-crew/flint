@@ -25,6 +25,7 @@ from flint.peel.potato import (
     find_sources_to_peel,
     get_source_props_from_table,
     load_known_peel_sources,
+    load_potato_yaml,
     source_within_image_fov,
 )
 from flint.sky_model import (
@@ -53,7 +54,15 @@ def ms_example(tmpdir):
     return ms_path
 
 
-# TODO: NEED TESTS FOR THE POTATO PEEL OPTIONS
+@pytest.fixture
+def potato_peel_strategy():
+    strategy = get_packaged_resource_path(
+        package="flint", filename="data/peel/peel_options.yaml"
+    )
+
+    return strategy
+
+
 # TODO: NEED TESTS FOR THE POTATO PEEL COMMAND
 
 
@@ -141,6 +150,25 @@ def test_potato_peel_command(ms_example):
 
     # expected_command = f"hot_potato {str(ms.path)} 1.0000 --ras 83.82499999999999 79.94999999999999 --decs -5.386388888888889 -45.764722222222225 --peel_fovs 0.11850000000000001 0.105 -n Orion_A Pictor_A -solint 30 -calmode P -minpeelflux 0.5 -refant 1 --direct_subtract --intermediate_peels -T peel "
     # assert peel_command.command == expected_command
+
+
+def test_update_potato_peel_options(potato_peel_strategy):
+    """Test to see if the potato peel options can be updated correctly using an input yaml file"""
+
+    # Load potato peel strategy file, potato_peel_defaults.yaml
+    potato_peel_strategy = Path(potato_peel_strategy)
+    potato_peel_strategy = load_potato_yaml(
+        input_yaml=potato_peel_strategy, verify=True
+    )
+
+    # check if we can update the PotatoPeelOptions
+    potato_peel_options = PotatoPeelOptions()
+    potato_peel_options = potato_peel_options.with_options(**potato_peel_strategy)
+
+    assert isinstance(potato_peel_options, PotatoPeelOptions)
+    assert potato_peel_options.direct_subtract
+    assert potato_peel_options.intermediate_peels
+    assert potato_peel_options.T == "peel"
 
 
 def test_potato_config_command():
