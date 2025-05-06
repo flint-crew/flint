@@ -293,7 +293,6 @@ def process_science_fields(
         else wsclean_results
     )
 
-    # TODO: This should be waited!
     beam_summaries = task_create_beam_summary.map(
         ms=preprocess_science_mss, image_set=wsclean_results
     )
@@ -383,8 +382,11 @@ def process_science_fields(
                 casa_container=field_options.casa_container,
                 update_gain_cal_options=unmapped(update_gain_options),
                 wait_for=[
-                    field_summary
-                ],  # To make sure field summary is created with unzipped MSs
+                    field_summary,
+                    # To make sure field summary is created with unzipped MSs
+                    beam_summaries,
+                    # to make sure gaincal does not run before the beam summary
+                ],
             )  # type: ignore
             stokes_v_mss = cal_mss
 
