@@ -22,6 +22,7 @@ from flint.peel.potato import (
     PotatoPeelOptions,
     _potato_config_command,
     _potato_peel_command,
+    create_run_potato_peel,
     find_sources_to_peel,
     get_source_props_from_table,
     load_known_peel_sources,
@@ -54,7 +55,6 @@ def ms_example(tmpdir):
 
 
 # TODO: NEED TESTS FOR THE POTATO PEEL OPTIONS
-# TODO: NEED TESTS FOR THE POTATO PEEL COMMAND
 
 
 def test_source_in_image_fov():
@@ -283,3 +283,75 @@ def test_bad_pb_model():
         generate_pb(
             pb_type="ThisDoesNotExist", freqs=freq, aperture=aperture, offset=offset
         )
+
+
+def test_create_run_potato_peel_with_custom_T(tmp_path, ms_example, monkeypatch):
+    """Exercise create_run_potato_peel: T override, directory creation and singularity run."""
+
+    # set up a fake container and MS
+    potato_container = tmp_path / "potato.sif"
+    potato_container.write_text("")  # doesn't actually get used
+    ms = MS(path=ms_example, column="DATA")
+
+    # build arguments exactly as in the peel command tests
+    image_opts = WSCleanOptions(size=8000, scale="2.5arcsec")
+    sources = find_sources_to_peel(ms=ms, image_options=image_opts)
+    props = get_source_props_from_table(table=sources)
+    peel_args = PotatoPeelArguments(
+        ms=ms.path,
+        ras=props.source_ras,
+        decs=props.source_decs,
+        peel_fovs=props.source_fovs,
+        n=props.source_names,
+        image_fov=1.0,
+    )
+
+    # choose a T that doesn't exist yet
+    tdir = tmp_path / "peel_temp"
+    peel_opts = PotatoPeelOptions(T=str(tdir))
+
+    # capture create_directory calls
+    created = []
+    monkeypatch.setattr(
+        "flint.peel.potato.create_directory",
+        lambda directory: created.append(directory),
+    )
+
+    # capture run_singularity_command calls
+    runs = []
+    monkeypatch.setattr(
+        "flint.peel.potato.run_singularity_command",
+        lambda image, command, bind_dirs: runs.append(
+            {
+                "image": image,
+                "command": command,
+                "bind_dirs": bind_dirs,
+            }
+        ),
+    )
+
+    # call the function under test
+    cmd = create_run_potato_peel(
+        potato_container=potato_container,
+        ms=ms,
+        potato_peel_arguments=peel_args,
+        potato_peel_options=peel_opts,
+    )
+
+    # returned command must match what _potato_peel_command produces
+    assert isinstance(cmd, PotatoPeelCommand)
+    assert runs, "run_singularity_command was not invoked"
+
+    # directory should have been created exactly once
+    assert created == [Path(peel_opts.T)]
+
+    # verify bind_dirs passed into the run call
+    run_call = runs[0]
+    bd = run_call["bind_dirs"]
+    assert Path(ms.path) in bd
+    assert Path(ms.path).parent in bd
+    assert Path(peel_opts.T) in bd
+
+    # verify singularity invocation was with our container and the generated command
+    assert run_call["image"] == potato_container
+    assert run_call["command"] == cmd.command

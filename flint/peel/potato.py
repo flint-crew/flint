@@ -530,15 +530,14 @@ def create_run_potato_peel(
     # make sure the container can bind to all necessary directories. This
     # includes the potential directory used by wsclean to temporarily store
     # files
-    bind_dirs = [
-        ms.path,
-    ]
+    # and the ms.path.parent directory which hosts the potato peel config file
+    bind_dirs = [ms.path, ms.path.parent]
     if potato_peel_options.T is not None:
         if not Path(potato_peel_options.T).exists():
             create_directory(directory=Path(potato_peel_options.T))
         bind_dirs.append(Path(potato_peel_options.T))
 
-    # Now run the command and hope foe the best you silly pirate
+    # Now run the command and hope for the best you silly pirate
     run_singularity_command(
         image=potato_container, command=potato_peel_command.command, bind_dirs=bind_dirs
     )
