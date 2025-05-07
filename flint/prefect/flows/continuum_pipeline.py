@@ -384,7 +384,7 @@ def process_science_fields(
                 wait_for=[
                     field_summary,
                     # To make sure field summary is created with unzipped MSs
-                    beam_summaries,
+                    *beam_summaries,
                     # to make sure gaincal does not run before the beam summary
                 ],
             )  # type: ignore
