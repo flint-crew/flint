@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,8 @@ from flint.containers import (
 
 from .test_helpers import which
 
+IN_GITHUB_ACTIONS = os.getenv(key="GITHUB_ACTIONS") == "true"
+
 
 def test_sanity_check_containers():
     """Make sure that the reference containers are valid with a simple set of checks.
@@ -35,7 +38,7 @@ def test_sanity_check_containers():
 
 def test_verify_known_containers(tmpdir):
     """Check that our verify function works. This will cheat and
-    crate some temporary file with the expected file name as the
+    create some temporary file with the expected file name as the
      verify function in of itself (currently) only checks to see
      if a file exists"""
     container_directory = Path(tmpdir) / "containers1"
@@ -88,18 +91,21 @@ def flint_containers(tmp_path_factory) -> Path:
     return flint_container_path
 
 
+@pytest.mark.skipif(IN_GITHUB_ACTIONS, reason="Do not run this in a GitHub action")
 def test_download_flint_containers(flint_containers) -> None:
     """Start the download of the flint containers"""
     assert isinstance(flint_containers, Path)
     assert flint_containers.exists()
 
 
+@pytest.mark.skipif(IN_GITHUB_ACTIONS, reason="Do not run this in a GitHub action")
 def test_verify_containers_with_containers(flint_containers):
     """Make sure the actual containers downloaded register as correct. This
     uses the download fixture"""
     assert verify_known_containers(container_directory=flint_containers)
 
 
+@pytest.mark.skipif(IN_GITHUB_ACTIONS, reason="Do not run this in a GitHub action")
 def test_get_known_container_path(flint_containers):
     """Get the to a known container"""
     casa_container = get_known_container_path(
