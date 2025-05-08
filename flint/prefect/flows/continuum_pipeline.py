@@ -264,10 +264,14 @@ def process_science_fields(
         potato_wsclean_init = get_options_from_strategy(
             strategy=strategy, mode="wsclean", round_info=0, operation="selfcal"
         )
+        potato_peel_options = get_options_from_strategy(
+            strategy=strategy, operation="potatopeel"
+        )
         preprocess_science_mss = task_potato_peel.map(
             ms=preprocess_science_mss,
             potato_container=field_options.potato_container,
             update_wsclean_options=unmapped(potato_wsclean_init),
+            update_potato_peel_options=unmapped(potato_peel_options),
         )
 
     stokes_v_mss = preprocess_science_mss

@@ -112,7 +112,7 @@ class PotatoPeelOptions(NamedTuple):
     """Whether a direct model subtraction (without self-cal) should be used ift he source is faint"""
     intermediate_peels: bool = True
     """Creates an image after each calibration and subtraction loop to show iterative improvements of the subject peel source"""
-    T: str | Path = "peel"
+    tmp: str | Path | None = None
     """Where the temporary wsclean files will be written to"""
     minuvimage: float | None = None
     """The minimum uv distance in wavelengths to use for imaging"""
@@ -532,10 +532,17 @@ def create_run_potato_peel(
     # files
     # and the ms.path.parent directory which hosts the potato peel config file
     bind_dirs = [ms.path, ms.path.parent]
-    if potato_peel_options.T is not None:
-        if not Path(potato_peel_options.T).exists():
-            create_directory(directory=Path(potato_peel_options.T))
-        bind_dirs.append(Path(potato_peel_options.T))
+    if potato_peel_options.tmp is None:
+        tmp_dir = Path(ms.path.parent) / "peel"
+        logger.info(f"Unset potato peel temporary directory. Setting to {tmp_dir!s}")
+        potato_peel_options.with_options(tmp=tmp_dir)
+
+    assert potato_peel_options.tmp is not None, (
+        f"{potato_peel_options.tmp=}, which should not happen"
+    )
+    if not Path(potato_peel_options.tmp).exists():
+        create_directory(directory=Path(potato_peel_options.tmp))
+    bind_dirs.append(Path(potato_peel_options.tmp))
 
     # Now run the command and hope for the best you silly pirate
     run_singularity_command(
@@ -640,15 +647,27 @@ def potato_peel(
 
     logger.info(f"Will be peeling {len(peel_tab)} objects: {peel_tab['Name']}")
 
-    update_potato_config_options = (
-        update_potato_config_options if update_potato_config_options else {}
-    )
-    potato_config_options = PotatoConfigOptions(**update_potato_config_options)
-    potato_config_command = create_run_potato_config(
-        potato_container=potato_container,
-        ms_path=ms,
-        potato_config_options=potato_config_options,
-    )
+    # Should the user specify the potato peel configuration to use we
+    # need to short circuit the creation of the config
+    potato_peel_options = PotatoPeelOptions()
+    if update_potato_peel_options:
+        potato_peel_options = potato_peel_options.with_options(
+            **update_potato_peel_options
+        )
+
+    if potato_peel_options.c is None:
+        update_potato_config_options = (
+            update_potato_config_options if update_potato_config_options else {}
+        )
+        potato_config_options = PotatoConfigOptions(**update_potato_config_options)
+        potato_config_command = create_run_potato_config(
+            potato_container=potato_container,
+            ms_path=ms,
+            potato_config_options=potato_config_options,
+        )
+        potato_peel_options = potato_peel_options.with_options(
+            c=potato_config_command.config_path
+        )
 
     ms = prepare_ms_for_potato(ms=ms)
 
@@ -661,14 +680,6 @@ def potato_peel(
         image_fov=0.01,
         n=normalised_source_props.source_names,
     )
-
-    potato_peel_options = PotatoPeelOptions(
-        c=potato_config_command.config_path,
-    )
-    if update_potato_peel_options:
-        potato_peel_options = potato_peel_options.with_options(
-            **update_potato_peel_options
-        )
 
     create_run_potato_peel(
         potato_container=potato_container,
