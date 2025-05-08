@@ -255,7 +255,7 @@ def process_science_fields(
     logger.info(f"{field_summary=}")
 
     if field_options.wsclean_container is None:
-        logger.info("No wsclean container provided. Rerutning. ")
+        logger.info("No wsclean container provided. Returning. ")
         return
 
     if field_options.potato_container:
@@ -265,7 +265,7 @@ def process_science_fields(
             strategy=strategy, mode="wsclean", round_info=0, operation="selfcal"
         )
         potato_peel_options = get_options_from_strategy(
-            strategy=strategy, operation="potatopeel"
+            strategy=strategy, mode="potatopeel", round_info=0, operation="selfcal"
         )
         preprocess_science_mss = task_potato_peel.map(
             ms=preprocess_science_mss,
