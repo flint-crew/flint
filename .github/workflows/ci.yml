@@ -65,9 +65,9 @@ jobs:
       - name: Test package
         run: >-
           python -m pytest -ra --cov --cov-report=xml --cov-report=term
-          --durations=20 -n auto -p no:warnings
+          --durations=20 -n auto -p no:warnings --skip-slow
       # -p no:warnings is needed to avoid warnings errors caused by VOTable
-
+      # --skip-slow will jump over long running tests, like downloading from dockerhub
       - name: Upload coverage report
         uses: codecov/codecov-action@v5.4.2
         with:

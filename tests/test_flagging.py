@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import shutil
 from pathlib import Path
 
@@ -23,8 +22,6 @@ from .test_containers import flint_containers
 from .test_helpers import which
 
 _ = flint_containers  # make sure fixture is imported and not linted away
-
-IN_GITHUB_ACTIONS = os.getenv("GITHUB_ACTIONS") == "true"
 
 
 @pytest.fixture
@@ -156,7 +153,7 @@ if which("singularity") is None:
     pytest.skip("Singularity is not installed", allow_module_level=True)
 
 
-@pytest.mark.skipif(IN_GITHUB_ACTIONS, reason="Do not run this in a GitHub action")
+@pytest.mark.slow
 def test_aoflagger(flint_containers, ms_example) -> None:
     """Ensure we can run a aoflagger recipe"""
 
