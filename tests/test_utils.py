@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import math
 import os
-import shutil
 import time
 from pathlib import Path
 from typing import Any
@@ -283,23 +282,6 @@ def test_parse_environment_variables(set_env):
     assert val8 == "Pirates/Treasure/"
 
     assert parse_environment_variables(variable=None) is None
-
-
-@pytest.fixture
-def ms_example(tmpdir):
-    ms_zip = Path(
-        get_packaged_resource_path(
-            package="flint.data.tests",
-            filename="SB39400.RACS_0635-31.beam0.small.ms.zip",
-        )
-    )
-    outpath = Path(tmpdir) / "39400"
-
-    shutil.unpack_archive(ms_zip, outpath)
-
-    ms_path = Path(outpath) / "SB39400.RACS_0635-31.beam0.small.ms"
-
-    return ms_path
 
 
 def test_copy_directory(ms_example, tmpdir):

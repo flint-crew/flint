@@ -8,11 +8,6 @@ import pytest
 
 from flint.sclient import pull_container, run_singularity_command
 
-from .test_helpers import which
-
-if which("singularity") is None:
-    pytest.skip("Singularity is not installed", allow_module_level=True)
-
 
 @pytest.fixture(scope="session")
 @pytest.mark.flaky(reruns=3, reruns_delay=2)
@@ -34,6 +29,7 @@ def hello_world_container(tmp_path_factory) -> Path:
     return output_path
 
 
+@pytest.mark.require_singularity
 def test_pull_apptainer(hello_world_container):
     """Attempt to pull down an example container"""
 
@@ -41,6 +37,7 @@ def test_pull_apptainer(hello_world_container):
     assert isinstance(hello_world_container, Path)
 
 
+@pytest.mark.require_singularity
 def test_run_singularity_command(hello_world_container):
     """Make sure that the running of a container works"""
     run_singularity_command(image=hello_world_container, command="echo 'JackSparrow'")

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 import astropy.units as u
@@ -34,25 +33,6 @@ from flint.sky_model import (
     SincSquaredResponse,
     generate_pb,
 )
-from flint.utils import get_packaged_resource_path
-
-
-@pytest.fixture
-def ms_example(tmpdir):
-    ms_zip = Path(
-        get_packaged_resource_path(
-            package="flint.data.tests",
-            filename="SB39400.RACS_0635-31.beam0.small.ms.zip",
-        )
-    )
-    outpath = Path(tmpdir) / "39400"
-
-    shutil.unpack_archive(ms_zip, outpath)
-
-    ms_path = Path(outpath) / "SB39400.RACS_0635-31.beam0.small.ms"
-
-    return ms_path
-
 
 # TODO: NEED TESTS FOR THE POTATO PEEL OPTIONS
 
