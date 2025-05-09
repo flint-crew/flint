@@ -55,6 +55,12 @@ version.source = "vcs"
 build.hooks.vcs.version-file = "flint/_version.py"
 metadata.allow-direct-references = true
 
+[tool.hatch.build]
+sources = ["flint"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["flint"]
+
 
 [project.optional-dependencies]
 dev = [
