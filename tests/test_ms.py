@@ -157,23 +157,6 @@ def test_copy_preprocess_ms(casda_example, tmpdir):
         )
 
 
-@pytest.fixture
-def ms_example(tmpdir):
-    ms_zip = Path(
-        get_packaged_resource_path(
-            package="flint.data.tests",
-            filename="SB39400.RACS_0635-31.beam0.small.ms.zip",
-        )
-    )
-    outpath = Path(tmpdir) / "39400"
-
-    shutil.unpack_archive(ms_zip, outpath)
-
-    ms_path = Path(outpath) / "SB39400.RACS_0635-31.beam0.small.ms"
-
-    return ms_path
-
-
 def test_check_column_in_ms(ms_example):
     """See whether columns are present in the MS, and whether the order of checking is correct"""
     ms = MS(path=Path(ms_example), column="DATA")
