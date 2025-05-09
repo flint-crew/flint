@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-from argparse import ArgumentParser
-
 import pytest
 
 
-def pytest_addoptions(parser: ArgumentParser):
+def pytest_addoption(parser):
     """Add custom flint pytesting options"""
-    parser.add_argument("--skip-slow", action="store_true")
+    parser.addoption("--skip-slow", action="store_true")
 
 
 def pytest_configure(config):
