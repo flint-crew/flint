@@ -54,7 +54,6 @@ dependencies = [
 version.source = "vcs"
 build.hooks.vcs.version-file = "flint/_version.py"
 metadata.allow-direct-references = true
-build.sources = ["flint"]
 build.targets.wheel.packages = ["flint"]
 
 
