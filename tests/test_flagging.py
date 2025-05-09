@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 import numpy as np
@@ -16,29 +15,6 @@ from flint.flagging import (
     nan_zero_extreme_flag_ms,
 )
 from flint.ms import MS
-from flint.utils import get_packaged_resource_path
-
-from .test_containers import flint_containers
-from .test_helpers import which
-
-_ = flint_containers  # make sure fixture is imported and not linted away
-
-
-@pytest.fixture
-def ms_example(tmpdir):
-    ms_zip = Path(
-        get_packaged_resource_path(
-            package="flint.data.tests",
-            filename="SB39400.RACS_0635-31.beam0.small.ms.zip",
-        )
-    )
-    outpath = Path(tmpdir) / "39400"
-
-    shutil.unpack_archive(ms_zip, outpath)
-
-    ms_path = Path(outpath) / "SB39400.RACS_0635-31.beam0.small.ms"
-
-    return ms_path
 
 
 def test_flag_ms_zero_uvws(ms_example):
@@ -149,11 +125,12 @@ def test_nan_zero_extreme_flag_ms_with_chunks_and_datanan(ms_example):
 
 
 # Vontainer related options
-if which("singularity") is None:
-    pytest.skip("Singularity is not installed", allow_module_level=True)
+# if which("singularity") is None:
+#     pytest.skip("Singularity is not installed", allow_module_level=True)
 
 
 @pytest.mark.slow
+@pytest.mark.require_singularity
 def test_aoflagger(flint_containers, ms_example) -> None:
     """Ensure we can run a aoflagger recipe"""
 

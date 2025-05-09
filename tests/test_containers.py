@@ -11,13 +11,10 @@ from flint.containers import (
     LIST_OF_KNOWN_CONTAINERS,
     FlintContainer,
     _sanity_check_containers,
-    download_known_containers,
     get_known_container_path,
     log_known_containers,
     verify_known_containers,
 )
-
-from .test_helpers import which
 
 
 def test_sanity_check_containers():
@@ -68,27 +65,8 @@ def test_log_containers():
     log_known_containers()
 
 
-if which("singularity") is None:
-    pytest.skip("Singularity is not installed", allow_module_level=True)
-
-
-@pytest.fixture(scope="session")
-def flint_containers(tmp_path_factory) -> Path:
-    """Download all of the flint containers"""
-    flint_container_path = Path(tmp_path_factory.mktemp("download_containers"))
-    flint_container_path.mkdir(parents=True, exist_ok=True)
-
-    container_paths = download_known_containers(
-        container_directory=flint_container_path, new_tag=None
-    )
-
-    assert all(isinstance(path, Path) for path in container_paths)
-    assert all(path.exists() for path in container_paths)
-
-    return flint_container_path
-
-
 @pytest.mark.slow
+@pytest.mark.require_singularity
 def test_download_flint_containers(flint_containers) -> None:
     """Start the download of the flint containers"""
     assert isinstance(flint_containers, Path)
@@ -96,6 +74,7 @@ def test_download_flint_containers(flint_containers) -> None:
 
 
 @pytest.mark.slow
+@pytest.mark.require_singularity
 def test_verify_containers_with_containers(flint_containers):
     """Make sure the actual containers downloaded register as correct. This
     uses the download fixture"""
@@ -103,6 +82,7 @@ def test_verify_containers_with_containers(flint_containers):
 
 
 @pytest.mark.slow
+@pytest.mark.require_singularity
 def test_get_known_container_path(flint_containers):
     """Get the to a known container"""
     casa_container = get_known_container_path(
