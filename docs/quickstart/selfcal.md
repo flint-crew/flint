@@ -86,9 +86,9 @@ defaults:
     flood_fill: true
     flood_fill_positive_seed_clip: 6
     flood_fill_positive_flood_clip: 1.25
-    flood_fill_use_mbc_adaptive_max_depth: 4
-    flood_fill_use_mbc_adaptive_skew_delta: 0.025
-    flood_fill_use_mbc_adaptive_step_factor: 4
+    flood_fill_use_mac_adaptive_max_depth: 4
+    flood_fill_use_mac_adaptive_skew_delta: 0.025
+    flood_fill_use_mac_adaptive_step_factor: 4
     grow_low_snr_island: false
     grow_low_snr_island_clip: 1.75
     grow_low_snr_island_size: 12046
@@ -134,10 +134,10 @@ selfcal:
       uvrange: '>400m'
       nspw: 2
     masking:
-      flood_fill_use_mbc: true
+      flood_fill_use_mac: true
       flood_fill_positive_seed_clip: 1.5
       flood_fill_positive_flood_clip: 1.2
-      flood_fill_use_mbc_box_size: 400
+      flood_fill_use_mac_box_size: 400
   2:
     wsclean:
       auto_mask: 2
@@ -151,10 +151,10 @@ selfcal:
       uvrange: '>400m'
       nspw: 4
     masking:
-      flood_fill_use_mbc: true
+      flood_fill_use_mac: true
       flood_fill_positive_seed_clip: 1.2
       flood_fill_positive_flood_clip: 1.1
-      flood_fill_use_mbc_box_size: 300
+      flood_fill_use_mac_box_size: 300
   3:
     wsclean:
       auto_mask: 2.0
@@ -168,10 +168,10 @@ selfcal:
       uvrange: '>400m'
       nspw: 2
     masking:
-      flood_fill_use_mbc: true
+      flood_fill_use_mac: true
       flood_fill_positive_seed_clip: 1.2
       flood_fill_positive_flood_clip: 0.8
-      flood_fill_use_mbc_box_size: 60
+      flood_fill_use_mac_box_size: 60
   4:
     wsclean:
       auto_mask: 2.0
@@ -184,10 +184,10 @@ selfcal:
       uvrange: '>400m'
       nspw: 2
     masking:
-      flood_fill_use_mbc: true
+      flood_fill_use_mac: true
       flood_fill_positive_seed_clip: 1.2
       flood_fill_positive_flood_clip: 0.7
-      flood_fill_use_mbc_box_size: 60
+      flood_fill_use_mac_box_size: 60
 stokesv:
   wsclean:
     pol: v

@@ -69,23 +69,6 @@ def test_get_wsclean_output_source_list_path():
     assert source_path == test_source_path
 
 
-@pytest.fixture
-def ms_example(tmpdir):
-    ms_zip = Path(
-        get_packaged_resource_path(
-            package="flint.data.tests",
-            filename="SB39400.RACS_0635-31.beam0.small.ms.zip",
-        )
-    )
-    outpath = Path(tmpdir) / "39400"
-
-    shutil.unpack_archive(ms_zip, outpath)
-
-    ms_path = Path(outpath) / "SB39400.RACS_0635-31.beam0.small.ms"
-
-    return ms_path
-
-
 @pytest.fixture(scope="session", autouse=True)
 def set_env():
     """Set up variables for a specific test"""

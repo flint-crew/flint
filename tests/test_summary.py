@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 import numpy as np
@@ -43,23 +42,6 @@ def aegean_outputs_example():
     )
 
     return aegean_outputs
-
-
-@pytest.fixture
-def ms_example(tmpdir):
-    ms_zip = Path(
-        get_packaged_resource_path(
-            package="flint.data.tests",
-            filename="SB39400.RACS_0635-31.beam0.small.ms.zip",
-        )
-    )
-    outpath = Path(tmpdir) / "39400"
-
-    shutil.unpack_archive(ms_zip, outpath)
-
-    ms_path = Path(outpath) / "SB39400.RACS_0635-31.beam0.small.ms"
-
-    return ms_path
 
 
 def test_create_beam_summary(ms_example, aegean_outputs_example):

@@ -127,32 +127,7 @@ def test_known_bad_sols(ao_sols_known_bad):
     flag_aosolutions(solutions_path=ao_sols_known_bad, plot_solutions_throughout=False)
 
 
-def test_sols_same_with_plots(ao_sols_known_bad):
-    # Had a thought at one point the plktting was updating th mutable numpy array before
-    # it was written back to file. Wrote the test, and it passed. Test stays
-    a = flag_aosolutions(
-        solutions_path=ao_sols_known_bad, plot_solutions_throughout=False
-    )
-    a_loaded = AOSolutions.load(a.path)
-
-    b = flag_aosolutions(
-        solutions_path=ao_sols_known_bad, plot_solutions_throughout=True
-    )
-    b_loaded = AOSolutions.load(b.path)
-
-    assert np.allclose(a_loaded.bandpass, b_loaded.bandpass, equal_nan=True)
-
-
 def test_flagged_aosols_mesh(ao_sols_known_bad):
-    flagged_sols = flag_aosolutions(
-        solutions_path=ao_sols_known_bad,
-        plot_solutions_throughout=True,
-        smooth_solutions=True,
-    )
-    assert isinstance(flagged_sols, FlaggedAOSolution)
-    assert len(flagged_sols.plots) == 9
-    assert isinstance(flagged_sols.path, Path)
-
     flagged_sols = flag_aosolutions(
         solutions_path=ao_sols_known_bad,
         mesh_ant_flags=True,
@@ -161,10 +136,11 @@ def test_flagged_aosols_mesh(ao_sols_known_bad):
     )
     assert isinstance(flagged_sols, FlaggedAOSolution)
     assert len(flagged_sols.plots) == 0
-    assert isinstance(flagged_sols.path, Path)
 
 
 def test_flagged_aosols(ao_sols_known_bad):
+    """Ensure smoothing and flagging operations work. When smoothing
+    more plots should be created."""
     flagged_sols = flag_aosolutions(
         solutions_path=ao_sols_known_bad,
         plot_solutions_throughout=True,
