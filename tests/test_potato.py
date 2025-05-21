@@ -265,7 +265,7 @@ def test_bad_pb_model():
         )
 
 
-def test_create_run_potato_peel_with_custom_T(tmp_path, ms_example, monkeypatch):
+def test_create_run_potato_peel_with_custom_tmp(tmp_path, ms_example, monkeypatch):
     """Exercise create_run_potato_peel: T override, directory creation and singularity run."""
 
     # set up a fake container and MS
@@ -288,7 +288,7 @@ def test_create_run_potato_peel_with_custom_T(tmp_path, ms_example, monkeypatch)
 
     # choose a T that doesn't exist yet
     tdir = tmp_path / "peel_temp"
-    peel_opts = PotatoPeelOptions(T=str(tdir))
+    peel_opts = PotatoPeelOptions(tmp=str(tdir))
 
     # capture create_directory calls
     created = []
@@ -323,14 +323,14 @@ def test_create_run_potato_peel_with_custom_T(tmp_path, ms_example, monkeypatch)
     assert runs, "run_singularity_command was not invoked"
 
     # directory should have been created exactly once
-    assert created == [Path(peel_opts.T)]
+    assert created == [Path(peel_opts.tmp)]
 
     # verify bind_dirs passed into the run call
     run_call = runs[0]
     bd = run_call["bind_dirs"]
     assert Path(ms.path) in bd
     assert Path(ms.path).parent in bd
-    assert Path(peel_opts.T) in bd
+    assert Path(peel_opts.tmp) in bd
 
     # verify singularity invocation was with our container and the generated command
     assert run_call["image"] == potato_container
