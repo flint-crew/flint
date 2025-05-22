@@ -360,7 +360,7 @@ def _potato_options_to_command(
     """
     skip_keys = tuple(skip_keys) if skip_keys else tuple()
 
-    DOUBLE = ("ras", "decs", "peel_fovs", "intermediate_peels", "direct_subtract")
+    DOUBLE = ("ras", "decs", "peel_fovs", "intermediate_peels", "direct_subtract", "tmp")
 
     sub_options = ""
     for key, value in potato_options._asdict().items():
@@ -520,13 +520,6 @@ def create_run_potato_peel(
         PotatoPeelCommand: The executed `hot_potato` command
     """
 
-    # Construct the command
-    potato_peel_command = _potato_peel_command(
-        ms=ms,
-        potato_peel_arguments=potato_peel_arguments,
-        potato_peel_options=potato_peel_options,
-    )
-
     # make sure the container can bind to all necessary directories. This
     # includes the potential directory used by wsclean to temporarily store
     # files
@@ -535,7 +528,7 @@ def create_run_potato_peel(
     if potato_peel_options.tmp is None:
         tmp_dir = Path(ms.path.parent) / "peel"
         logger.info(f"Unset potato peel temporary directory. Setting to {tmp_dir!s}")
-        potato_peel_options.with_options(tmp=tmp_dir)
+        potato_peel_options = potato_peel_options.with_options(tmp=tmp_dir)
 
     assert potato_peel_options.tmp is not None, (
         f"{potato_peel_options.tmp=}, which should not happen"
@@ -543,6 +536,13 @@ def create_run_potato_peel(
     if not Path(potato_peel_options.tmp).exists():
         create_directory(directory=Path(potato_peel_options.tmp))
     bind_dirs.append(Path(potato_peel_options.tmp))
+
+    # Construct the command
+    potato_peel_command = _potato_peel_command(
+        ms=ms,
+        potato_peel_arguments=potato_peel_arguments,
+        potato_peel_options=potato_peel_options,
+    )
 
     # Now run the command and hope for the best you silly pirate
     run_singularity_command(

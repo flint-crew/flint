@@ -322,8 +322,12 @@ def test_create_run_potato_peel_with_custom_tmp(tmp_path, ms_example, monkeypatc
     assert isinstance(cmd, PotatoPeelCommand)
     assert runs, "run_singularity_command was not invoked"
 
+    # verify that hot_potato was called with a tempdir according to the hot_potato argparse
+    assert "--tmp" in cmd.command or "-T" in cmd.command
+
     # directory should have been created exactly once
     assert created == [Path(peel_opts.tmp)]
+
 
     # verify bind_dirs passed into the run call
     run_call = runs[0]
@@ -331,6 +335,41 @@ def test_create_run_potato_peel_with_custom_tmp(tmp_path, ms_example, monkeypatc
     assert Path(ms.path) in bd
     assert Path(ms.path).parent in bd
     assert Path(peel_opts.tmp) in bd
+
+    # verify singularity invocation was with our container and the generated command
+    assert run_call["image"] == potato_container
+    assert run_call["command"] == cmd.command
+
+
+
+    # also test what if user doesnt set a tmpdir
+    runs = []
+    peel_opts = PotatoPeelOptions(tmp=None)
+
+    # call the function under test
+    cmd = create_run_potato_peel(
+        potato_container=potato_container,
+        ms=ms,
+        potato_peel_arguments=peel_args,
+        potato_peel_options=peel_opts,
+    )
+
+    # returned command must match what _potato_peel_command produces
+    assert isinstance(cmd, PotatoPeelCommand)
+    assert runs, "run_singularity_command was not invoked"
+
+    # verify that hot_potato was called with a tempdir according to the hot_potato argparse
+    assert "--tmp" in cmd.command or "-T" in cmd.command
+
+    # verify that tempdir is set to ms.path.parent/peel in case no tmpdir is set
+    print(cmd)
+    assert "/peel" in cmd.command 
+
+    # verify bind_dirs passed into the run call
+    run_call = runs[0]
+    bd = run_call["bind_dirs"]
+    assert Path(ms.path) in bd
+    assert Path(ms.path).parent in bd
 
     # verify singularity invocation was with our container and the generated command
     assert run_call["image"] == potato_container
