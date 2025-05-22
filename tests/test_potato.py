@@ -271,7 +271,6 @@ def test_create_run_potato_peel_with_custom_tmp(tmp_path, ms_example, monkeypatc
 
     # set up a fake container and MS
     potato_container = tmp_path / "potato.sif"
-    potato_container.write_text("")  # doesn't actually get used
     ms = MS(path=ms_example, column="DATA")
 
     # build arguments exactly as in the peel command tests
@@ -287,7 +286,7 @@ def test_create_run_potato_peel_with_custom_tmp(tmp_path, ms_example, monkeypatc
         image_fov=1.0,
     )
 
-    # choose a T that doesn't exist yet
+    # choose a temp dir that doesn't exist yet
     tdir = tmp_path / "peel_temp"
     peel_opts = PotatoPeelOptions(tmp=str(tdir))
 
@@ -342,7 +341,6 @@ def test_prepare_potato_options(tmp_path, ms_example, monkeypatch):
     """See if we can generate the correct set of options"""
     # set up a fake container and MS
     potato_container = tmp_path / "potato.sif"
-    potato_container.write_text("")  # doesn't actually get used
     ms = MS(path=ms_example, column="DATA")
 
     # capture run_singularity_command calls
