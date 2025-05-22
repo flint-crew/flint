@@ -360,7 +360,14 @@ def _potato_options_to_command(
     """
     skip_keys = tuple(skip_keys) if skip_keys else tuple()
 
-    DOUBLE = ("ras", "decs", "peel_fovs", "intermediate_peels", "direct_subtract", "tmp")
+    DOUBLE = (
+        "ras",
+        "decs",
+        "peel_fovs",
+        "intermediate_peels",
+        "direct_subtract",
+        "tmp",
+    )
 
     sub_options = ""
     for key, value in potato_options._asdict().items():
