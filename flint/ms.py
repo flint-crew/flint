@@ -797,6 +797,7 @@ def copy_and_preprocess_casda_askap_ms(
     instrument_column: str = "INSTRUMENT_DATA",
     fix_stokes_factor: bool = True,
     output_directory: Path = Path("./"),
+    skip_fixms: bool = False,
 ) -> MS:
     """Convert an ASKAP pipeline MS from CASDA into a FLINT form. This involves
     making a copy of it, updating its name, and then preprocessing.
@@ -817,6 +818,7 @@ def copy_and_preprocess_casda_askap_ms(
         instrument_column (str, optional): The name of the column to be created with data in the instrument frame. Defaults to "INSTRUMENT_DATA".
         fix_stokes_factor (bool, optional): Whether to scale the visibilities to account for the factor of 2 error. Defaults to True.
         output_directory (Path, optional): The output directory that the preprocessed MS will be placed into. Defaults to Path("./").
+        skip_fixms (bool, optional): If True, the fixms step will be skipped. Defaults to False. Assumes the user has already ran fixms on the MS. Prevents creation of the INSTRUMENT_DATA column.
 
     Returns:
         MS: a corrected and preprocessed measurement set
@@ -829,6 +831,10 @@ def copy_and_preprocess_casda_askap_ms(
 
     ms = ms.with_options(path=out_ms_path)
 
+    if skip_fixms:
+        logger.info(f"Skipping the fixms step per user request. Assuming this has been done and the fixed visibilities are stored in the {data_column}.")
+        return ms.with_options(column=data_column)
+    
     logger.info(
         f"Will be running CASDA ASKAP MS conversion operations against {ms.path!s}."
     )

@@ -431,6 +431,8 @@ class FieldOptions(BaseOptions):
     """Co-add cubes formed throughout imaging together. Cubes will be smoothed channel-wise to a common resolution. Only performed on final set of images"""
     update_model_data_with_source_list: bool = False
     """Attempt to update a MSs MODEL_DATA column with a source list (e.g. source list output from wsclean)"""
+    skip_fixms: bool = False
+    """Skip the fixms step for an ASKAP CASDA measurement set. Assumes the user has already ran fixms on it. Prevents creation of the INSTRUMENT_DATA column."""
 
 
 class PolFieldOptions(BaseOptions):
