@@ -85,6 +85,15 @@ def test_get_potato_peel_options(package_strategy_operations):
         operation="selfcal",
     )
     assert options["tmp"] == "JackSparrowBeHere"
+    assert options["minuvpeel"] == 1112
+
+    options = get_options_from_strategy(
+        strategy=package_strategy_operations,
+        mode="potatopeel",
+        operation="selfcal",
+    )
+    assert options["tmp"] == "ThePearl"
+    assert options["minuvpeel"] == 1112
 
 
 def test_copy_and_timestamp(tmpdir):
