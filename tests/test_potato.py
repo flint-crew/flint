@@ -328,7 +328,6 @@ def test_create_run_potato_peel_with_custom_tmp(tmp_path, ms_example, monkeypatc
     # directory should have been created exactly once
     assert created == [Path(peel_opts.tmp)]
 
-
     # verify bind_dirs passed into the run call
     run_call = runs[0]
     bd = run_call["bind_dirs"]
@@ -340,9 +339,7 @@ def test_create_run_potato_peel_with_custom_tmp(tmp_path, ms_example, monkeypatc
     assert run_call["image"] == potato_container
     assert run_call["command"] == cmd.command
 
-
-
-    # also test what if user doesnt set a tmpdir
+    # also test what if user does not set a tmpdir
     runs = []
     peel_opts = PotatoPeelOptions(tmp=None)
 
@@ -363,7 +360,7 @@ def test_create_run_potato_peel_with_custom_tmp(tmp_path, ms_example, monkeypatc
 
     # verify that tempdir is set to ms.path.parent/peel in case no tmpdir is set
     print(cmd)
-    assert "/peel" in cmd.command 
+    assert "/peel" in cmd.command
 
     # verify bind_dirs passed into the run call
     run_call = runs[0]
