@@ -605,6 +605,52 @@ def _print_ms_colnames(ms: MS) -> MS:
     return ms
 
 
+def _prepare_potato_options(
+    ms: MS,
+    potato_container: Path,
+    update_potato_config_options: dict[str, Any] | None = None,
+    update_potato_peel_options: dict[str, Any] | None = None,
+) -> tuple[PotatoConfigOptions | None, PotatoPeelOptions]:
+    """Create the appropriate set of potato option class instances. This function
+    will assess if a configuration file has been specified, and if not it will
+    generate one from the `potato` configuration generator program. This is
+    a call out to singularity.
+
+    Args:
+        ms (MS): The measurement set to be peeled
+        potato_container (Path): Path to the container that holds `potato`
+        update_potato_config_options (dict[str, Any]): Options to override defaults of the PotatoConfigOptions. Defaults to None.
+        update_potato_peel_options (dict[str, Any]): Options to override defaults of the PotatoPeelOptions. Defaults to None.
+
+    Returns:
+        tuple[PotatoConfigOptions | None, PotatoPeelOptions]: The populated set of classes. If a user provide configuration was provided there None is returned in place of PotatoConfigOptions
+    """
+    # Should the user specify the potato peel configuration to use we
+    # need to short circuit the creation of the config
+    potato_peel_options = PotatoPeelOptions()
+    if update_potato_peel_options:
+        potato_peel_options = potato_peel_options.with_options(
+            **update_potato_peel_options
+        )
+
+    potato_config_options = None
+    if potato_peel_options.c is None:
+        update_potato_config_options = (
+            update_potato_config_options if update_potato_config_options else {}
+        )
+        potato_config_options = PotatoConfigOptions(**update_potato_config_options)
+        potato_config_command = create_run_potato_config(
+            potato_container=potato_container,
+            ms_path=ms,
+            potato_config_options=potato_config_options,
+        )
+        potato_peel_options = potato_peel_options.with_options(
+            c=potato_config_command.config_path
+        )
+
+    return potato_config_options, potato_peel_options
+
+
 def potato_peel(
     ms: MS,
     potato_container: Path,
@@ -647,27 +693,14 @@ def potato_peel(
 
     logger.info(f"Will be peeling {len(peel_tab)} objects: {peel_tab['Name']}")
 
-    # Should the user specify the potato peel configuration to use we
-    # need to short circuit the creation of the config
-    potato_peel_options = PotatoPeelOptions()
-    if update_potato_peel_options:
-        potato_peel_options = potato_peel_options.with_options(
-            **update_potato_peel_options
-        )
-
-    if potato_peel_options.c is None:
-        update_potato_config_options = (
-            update_potato_config_options if update_potato_config_options else {}
-        )
-        potato_config_options = PotatoConfigOptions(**update_potato_config_options)
-        potato_config_command = create_run_potato_config(
-            potato_container=potato_container,
-            ms_path=ms,
-            potato_config_options=potato_config_options,
-        )
-        potato_peel_options = potato_peel_options.with_options(
-            c=potato_config_command.config_path
-        )
+    # Create the potato config file, if rneeded, and return the
+    # appropriate peel class.
+    _, potato_peel_options = _prepare_potato_options(
+        ms=ms,
+        potato_container=potato_container,
+        update_potato_config_options=update_potato_config_options,
+        update_potato_peel_options=update_potato_peel_options,
+    )
 
     ms = prepare_ms_for_potato(ms=ms)
 

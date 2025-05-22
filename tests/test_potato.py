@@ -21,6 +21,7 @@ from flint.peel.potato import (
     PotatoPeelOptions,
     _potato_config_command,
     _potato_peel_command,
+    _prepare_potato_options,
     create_run_potato_peel,
     find_sources_to_peel,
     get_source_props_from_table,
@@ -335,3 +336,44 @@ def test_create_run_potato_peel_with_custom_tmp(tmp_path, ms_example, monkeypatc
     # verify singularity invocation was with our container and the generated command
     assert run_call["image"] == potato_container
     assert run_call["command"] == cmd.command
+
+
+def test_prepare_potato_options(tmp_path, ms_example, monkeypatch):
+    """See if we can generate the correct set of options"""
+    # set up a fake container and MS
+    potato_container = tmp_path / "potato.sif"
+    potato_container.write_text("")  # doesn't actually get used
+    ms = MS(path=ms_example, column="DATA")
+
+    # capture run_singularity_command calls
+    runs = []
+    monkeypatch.setattr(
+        "flint.peel.potato.run_singularity_command",
+        lambda image, command, bind_dirs: runs.append(
+            {
+                "image": image,
+                "command": command,
+                "bind_dirs": bind_dirs,
+            }
+        ),
+    )
+
+    config_options, peel_options = _prepare_potato_options(
+        ms=ms, potato_container=potato_container
+    )
+
+    assert isinstance(config_options, PotatoConfigOptions)
+    assert isinstance(peel_options, PotatoPeelOptions)
+    assert peel_options.c == ms.path.parent / "SB39400.RACS_0635-31.beam0.potato.config"
+
+    new_config = Path(tmp_path) / "JackieBoy.config"
+    update_peel_options = {"c": new_config}
+    config_options, peel_options = _prepare_potato_options(
+        ms=ms,
+        potato_container=potato_container,
+        update_potato_peel_options=update_peel_options,
+    )
+
+    assert config_options is None
+    assert isinstance(peel_options, PotatoPeelOptions)
+    assert peel_options.c == new_config
