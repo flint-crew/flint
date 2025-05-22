@@ -73,6 +73,20 @@ def package_strategy_path():
     return example
 
 
+def test_get_potato_peel_options(package_strategy_operations):
+    """Ensure that we are able to access potato peel options"""
+    strategy = package_strategy_operations
+    verify_configuration(input_strategy=strategy)
+
+    options = get_options_from_strategy(
+        strategy=package_strategy_operations,
+        round_info=0,
+        mode="potatopeel",
+        operation="selfcal",
+    )
+    assert options["tmp"] == "JackSparrowBeHere"
+
+
 def test_copy_and_timestamp(tmpdir):
     # a single function toe rename and copy a file because pirates needs to be efficient
     example = get_packaged_resource_path(
