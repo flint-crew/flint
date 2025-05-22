@@ -342,7 +342,7 @@ def test_create_run_potato_peel_with_custom_tmp(tmp_path, ms_example, monkeypatc
 
 
 
-    # also test what if user doesnt set a tmpdir
+    # also test what if user does not set a tmpdir
     runs = []
     peel_opts = PotatoPeelOptions(tmp=None)
 
