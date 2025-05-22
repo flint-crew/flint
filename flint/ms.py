@@ -832,7 +832,7 @@ def copy_and_preprocess_casda_askap_ms(
     ms = ms.with_options(path=out_ms_path)
 
     if skip_fixms:
-        logger.info(f"Skipping the fixms step per user request. Assuming this has been done and the fixed visibilities are stored in the {data_column}.")
+        logger.info(f"Skipping the fixms step per user request. Assuming this has been done and the fixed visibilities are stored in the {data_column} column.")
         return ms.with_options(column=data_column)
     
     logger.info(
