@@ -824,10 +824,13 @@ def copy_and_preprocess_casda_askap_ms(
     ms = MS.cast(casda_ms)
 
     out_ms_path = output_directory / create_ms_name(ms_path=ms.path)
-    logger.info(f"New MS name: {out_ms_path}")
-    out_ms_path = copy_directory(input_directory=ms.path, output_directory=out_ms_path)
+    if ms.path != out_ms_path:
+        logger.info(f"New MS name: {out_ms_path}")
+        out_ms_path = copy_directory(
+            input_directory=ms.path, output_directory=out_ms_path
+        )
 
-    ms = ms.with_options(path=out_ms_path)
+        ms = ms.with_options(path=out_ms_path)
 
     logger.info(
         f"Will be running CASDA ASKAP MS conversion operations against {ms.path!s}."
