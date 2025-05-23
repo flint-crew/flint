@@ -473,3 +473,19 @@ def test_subtract_model_from_data_column_ms_column_new_column(tmpdir):
 
         data = tab.getcol("DATA")
         assert np.all(data == ones)
+
+
+def test_copy_and_preprocess_casda_askap_ms_container_errors():
+    """Make sure the expected container errors are raised should
+    it not be passed through properly
+    """
+    with pytest.raises(FileNotFoundError):
+        copy_and_preprocess_casda_askap_ms(
+            casda_ms=Path("ThisNotNeeded"),
+            casa_container=Path("ThisWillRaiseAnError"),
+        )
+    with pytest.raises(TypeError):
+        copy_and_preprocess_casda_askap_ms(
+            casda_ms=Path("ThisNotNeeded"),
+            casa_container=None,
+        )
