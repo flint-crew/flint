@@ -61,28 +61,28 @@ def test_private_minimum_absolute_clip():
 
     image = np.ones(SHAPE) * -1.0
     image[10, 10] = -2
-    private_mbc_mask = _minimum_absolute_clip(image=image, box_size=10)
-    mbc_mask = minimum_absolute_clip(image=image, box_size=10)
-    assert np.all(~mbc_mask)
-    assert np.all(private_mbc_mask == mbc_mask)
+    private_mac_mask = _minimum_absolute_clip(image=image, box_size=10)
+    mac_mask = minimum_absolute_clip(image=image, box_size=10)
+    assert np.all(~mac_mask)
+    assert np.all(private_mac_mask == mac_mask)
 
     image[12, 12] = 5
-    private_mbc_mask = _minimum_absolute_clip(image=image)
-    mbc_mask = minimum_absolute_clip(image=image)
-    assert np.sum(mbc_mask) == 1
-    assert np.all(private_mbc_mask == mbc_mask)
+    private_mac_mask = _minimum_absolute_clip(image=image)
+    mac_mask = minimum_absolute_clip(image=image)
+    assert np.sum(mac_mask) == 1
+    assert np.all(private_mac_mask == mac_mask)
 
     image[12, 12] = 0
-    private_mbc_mask = _minimum_absolute_clip(image=image)
-    mbc_mask = minimum_absolute_clip(image=image)
-    assert np.all(~mbc_mask)
-    assert np.all(private_mbc_mask == mbc_mask)
+    private_mac_mask = _minimum_absolute_clip(image=image)
+    mac_mask = minimum_absolute_clip(image=image)
+    assert np.all(~mac_mask)
+    assert np.all(private_mac_mask == mac_mask)
 
     image[12, 12] = 5
-    private_mbc_mask = _minimum_absolute_clip(image=image, increase_factor=3)
-    mbc_mask = minimum_absolute_clip(image=image, increase_factor=3)
-    assert np.all(~mbc_mask)
-    assert np.all(private_mbc_mask == mbc_mask)
+    private_mac_mask = _minimum_absolute_clip(image=image, increase_factor=3)
+    mac_mask = minimum_absolute_clip(image=image, increase_factor=3)
+    assert np.all(~mac_mask)
+    assert np.all(private_mac_mask == mac_mask)
 
 
 def test_create_signal_from_rmsbkg():
@@ -123,7 +123,7 @@ def test_need_to_make_signal():
     masking_options = MaskingOptions()
     assert _need_to_make_signal(masking_options=masking_options)
 
-    masking_options = MaskingOptions(flood_fill_use_mbc=True)
+    masking_options = MaskingOptions(flood_fill_use_mac=True)
     assert not _need_to_make_signal(masking_options=masking_options)
 
 
@@ -132,14 +132,14 @@ def test_arg_parser_cli_and_masking_options():
     options which are properly converted to a MaskingOptions object"""
     parser = get_parser()
     args = parser.parse_args(
-        args="mask img --rms-fits rms --bkg-fits bkg --flood-fill --flood-fill-positive-seed-clip 10 --flood-fill-positive-flood-clip 1. --flood-fill-use-mbc --flood-fill-use-mbc-box-size 100".split()
+        args="mask img --rms-fits rms --bkg-fits bkg --flood-fill --flood-fill-positive-seed-clip 10 --flood-fill-positive-flood-clip 1. --flood-fill-use-mac --flood-fill-use-mac-box-size 100".split()
     )
     masking_options = create_options_from_parser(
         parser_namespace=args, options_class=MaskingOptions
     )
     assert isinstance(masking_options, MaskingOptions)
     assert masking_options.flood_fill
-    assert masking_options.flood_fill_use_mbc
+    assert masking_options.flood_fill_use_mac
     assert masking_options.flood_fill_positive_seed_clip == 10.0
     assert masking_options.flood_fill_positive_flood_clip == 1.0
 

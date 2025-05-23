@@ -69,6 +69,6 @@ jobs:
       # -p no:warnings is needed to avoid warnings errors caused by VOTable
       # --skip-slow will jump over long running tests, like downloading from dockerhub
       - name: Upload coverage report
-        uses: codecov/codecov-action@v5.4.2
+        uses: codecov/codecov-action@v5.4.3
         with:
           token: ${{ secrets.CODECOV_TOKEN }}

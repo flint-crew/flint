@@ -45,15 +45,15 @@ class MaskingOptions(BaseOptions):
     """The clipping level to seed islands that will be grown to lower signal metric"""
     flood_fill_positive_flood_clip: float = 1.5
     """Clipping level used to grow seeded islands down to"""
-    flood_fill_use_mbc: bool = False
+    flood_fill_use_mac: bool = False
     """If True, the clipping levels are used as the `increase_factor` when using a minimum absolute clip"""
-    flood_fill_use_mbc_box_size: int = 75
-    """The size of the mbc box size should mbc be used"""
-    flood_fill_use_mbc_adaptive_step_factor: float = 2.0
+    flood_fill_use_mac_box_size: int = 75
+    """The size of the mac box size should mac be used"""
+    flood_fill_use_mac_adaptive_step_factor: float = 2.0
     """Stepping size used to increase box by should adaptive detect poor boxcar statistics"""
-    flood_fill_use_mbc_adaptive_skew_delta: float = 0.2
+    flood_fill_use_mac_adaptive_skew_delta: float = 0.2
     """A box is consider too small for a pixel if the fractional proportion of positive pixels is larger than the deviation away of (0.5 + frac). This threshold is therefore 0 to 0.5"""
-    flood_fill_use_mbc_adaptive_max_depth: int | None = None
+    flood_fill_use_mac_adaptive_max_depth: int | None = None
     """Determines the number of adaptive boxcar scales to use when constructing seed mask. If None no adaptive boxcar sizes"""
     grow_low_snr_island: bool = False
     """Whether to attempt to grow a mask to capture islands of low SNR (e.g. diffuse emission)"""
@@ -546,22 +546,22 @@ def reverse_negative_flood_fill(
     logger.info("Will be reversing flood filling")
     logger.info(f"{masking_options=} ")
 
-    if masking_options.flood_fill_use_mbc:
+    if masking_options.flood_fill_use_mac:
         positive_mask = minimum_absolute_clip(
             image=base_image,
             increase_factor=masking_options.flood_fill_positive_seed_clip,
-            box_size=masking_options.flood_fill_use_mbc_box_size,
-            adaptive_max_depth=masking_options.flood_fill_use_mbc_adaptive_max_depth,
-            adaptive_box_step=masking_options.flood_fill_use_mbc_adaptive_step_factor,
-            adaptive_skew_delta=masking_options.flood_fill_use_mbc_adaptive_skew_delta,
+            box_size=masking_options.flood_fill_use_mac_box_size,
+            adaptive_max_depth=masking_options.flood_fill_use_mac_adaptive_max_depth,
+            adaptive_box_step=masking_options.flood_fill_use_mac_adaptive_step_factor,
+            adaptive_skew_delta=masking_options.flood_fill_use_mac_adaptive_skew_delta,
         )
         flood_floor_mask = minimum_absolute_clip(
             image=base_image,
             increase_factor=masking_options.flood_fill_positive_flood_clip,
-            box_size=masking_options.flood_fill_use_mbc_box_size,
-            adaptive_max_depth=masking_options.flood_fill_use_mbc_adaptive_max_depth,
-            adaptive_box_step=masking_options.flood_fill_use_mbc_adaptive_step_factor,
-            adaptive_skew_delta=masking_options.flood_fill_use_mbc_adaptive_skew_delta,
+            box_size=masking_options.flood_fill_use_mac_box_size,
+            adaptive_max_depth=masking_options.flood_fill_use_mac_adaptive_max_depth,
+            adaptive_box_step=masking_options.flood_fill_use_mac_adaptive_step_factor,
+            adaptive_skew_delta=masking_options.flood_fill_use_mac_adaptive_skew_delta,
         )
     else:
         # Sanity check the upper clip level, you rotten seadog
@@ -630,7 +630,7 @@ def _create_signal_from_rmsbkg(
 
 def _need_to_make_signal(masking_options: MaskingOptions) -> bool:
     """Isolated functions to consider whether a signal image is needed"""
-    return not masking_options.flood_fill_use_mbc
+    return not masking_options.flood_fill_use_mac
 
 
 def create_snr_mask_from_fits(
@@ -671,7 +671,7 @@ def create_snr_mask_from_fits(
         fits_image=fits_image_path, include_signal_path=create_signal_fits
     )
 
-    # TODOL Make the bkg and rms images optional. Don't need to load if mbc is usede
+    # TODOL Make the bkg and rms images optional. Don't need to load if mac is usede
     with fits.open(fits_image_path) as fits_image:
         fits_header = fits_image[0].header  # type: ignore
         signal_data = fits_image[0].data  # type: ignore
@@ -703,7 +703,7 @@ def create_snr_mask_from_fits(
     # contain a cube of images.
     if masking_options.flood_fill:
         # TODO: The image and signal masks both don't need to be inputs. Image is only used
-        # if mbc = True
+        # if mac = True
         mask_data = reverse_negative_flood_fill(
             base_image=np.squeeze(signal_data),
             masking_options=masking_options,
