@@ -31,6 +31,8 @@ from flint.naming import (
     get_sbid_from_path,
 )
 from flint.options import (
+    MS,
+    AddModelSubtractFieldOptions,
     FieldOptions,
     add_options_to_parser,
     create_options_from_parser,
@@ -56,6 +58,7 @@ from flint.prefect.common.imaging import (
     validation_items,
 )
 from flint.prefect.common.ms import task_add_model_source_list_to_ms
+from flint.prefect.common.predict import task_addmodel_to_ms
 from flint.prefect.common.utils import (
     task_archive_sbid,
     task_create_beam_summary,
@@ -65,6 +68,7 @@ from flint.prefect.common.utils import (
     task_update_with_options,
 )
 from flint.selfcal.utils import consider_skip_selfcal_on_round
+from flint.sky_model import SkyModelOptions, create_sky_model
 
 
 def _check_field_options(field_options: FieldOptions) -> None:
@@ -140,12 +144,32 @@ def _check_create_output_split_science_path(
 
     return output_split_science_path
 
+##########################################################
+# TODO make things a task in the proper location, where?
+from prefect import task  # noqa: E402, I001
+
+@task
+def task_create_sky_model(
+    ms: MS,
+    sky_model_options: SkyModelOptions,
+) -> MS:
+    """Create a sky model for the given measurement set.
+
+    Args:
+        ms (MS): The measurement set to create a sky model for.
+        sky_model_options (SkyModelOptions): The options to use when creating the sky model.
+
+    Returns:
+        MS: The measurement set with the sky model applied.
+    """
+    return create_sky_model(ms_path=ms.path, sky_model_options=sky_model_options)
 
 @flow(name="Flint Deep Continuum Pipeline")
 def process_science_fields(
     science_path: Path,
     split_path: Path,
     field_options: FieldOptions,
+    cluster_config: str | Path,
     bandpass_path: Path | None = None,
 ) -> None:
     # Verify no nasty incompatible options
@@ -189,7 +213,10 @@ def process_science_fields(
         extract_components_from_name(name=science_mss[0].path), CASDANameComponents
     ):
         preprocess_science_mss = task_copy_and_preprocess_casda_askap_ms.map(
-            casda_ms=science_mss, output_directory=output_split_science_path, skip_fixms=field_options.skip_fixms
+            casda_ms=science_mss, output_directory=output_split_science_path,
+            skip_fixms=field_options.skip_fixms,
+            data_column=unmapped(field_options.data_column) # before skip_fixms, it was a safe assumption to always copy only the DATA column
+                                                            # now, the user could have fixed visibilities in DATA or CORRECTED_DATA column
         )
         preprocess_science_mss = task_flag_ms_aoflagger.map(  # type: ignore
             ms=preprocess_science_mss, container=field_options.flagger_container
@@ -253,6 +280,82 @@ def process_science_fields(
         holography_path=field_options.holofile,
     )  # type: ignore
     logger.info(f"{field_summary=}")
+
+
+    if field_options.skymodel_directory is not None:
+
+        logger.info(f"Using {field_options.skymodel_directory=} for initial self-calibration")
+
+        # TODO: consider how to have the user provide the other skymodel options. Another config file? Part of the selfcal config? separate options?
+        # use get_options_from_strategy() equivalent to potato_peel ?
+        # EO: my preferred solution would be to have it be part of the selfcal strategy config file.
+        sky_model_options = SkyModelOptions()
+        hardcoded_for_test_calcskymodel = {
+            "reference_catalogue_directory": field_options.skymodel_directory,
+            # contains the tweaked racs-low.fits file
+            "reference_name": "RACSLOW",
+            # pranks flint into using the tweaked racs-low.fits file found above
+            "write_calibrate_model": True,
+            #  Should the model for calibrate be created. The output will have .calibrate.txt suffix appended to the MS path
+            "write_ds9_region": True,
+            # Should a DS9 region file be created. The output will have .ds9.reg suffix appended to the MS path.
+        }
+        sky_model_options = sky_model_options.with_options(**hardcoded_for_test_calcskymodel)
+
+        logger.info(f"Calculating skymodel from catalogue {sky_model_options.reference_name=} in directory {sky_model_options.reference_catalogue_directory=}")
+
+        skymodel = task_create_sky_model.map(ms=preprocess_science_mss, sky_model_options=unmapped(sky_model_options))
+
+        """
+        NOTE: the following options are hardcoded into the task_addmodel_to_ms
+        is that okay to keep them there forever?
+
+        "remove_datacolumn": True,
+        # inputs for AddModelOptions
+        "model_path": skymodel.calibrate_model, # how would we even map this?
+        "ms_path": preprocess_science_mss.path, # or this
+        "mode": "c", # copy model to visibilities
+        "datacolumn": "MODEL_DATA"
+        """
+
+        # TODO: similar question here, do we want to expose these options to the user? Perhaps only the wsclean_pol_mode?
+        hardcoded_subtract_field_options = {
+            "wsclean_pol_mode": ["i"],
+            # """The polarisation of the wsclean model that was generated"""
+            "calibrate_container": field_options.calibrate_container,
+            # """Path to the container with the calibrate software (including addmodel)"""
+            "addmodel_cluster_config": cluster_config
+            # """Specify a cluster configuration file"""
+        }
+        
+        logger.info("Adding skymodel to measurement sets")
+
+        addmodel_subtract_field_options = AddModelSubtractFieldOptions()
+        addmodel_subtract_field_options = addmodel_subtract_field_options.with_options(**hardcoded_subtract_field_options)
+
+        # send off the addmodel tasks, which should wait for the create_skymodel task to finish
+        preprocess_science_mss = task_addmodel_to_ms.map(
+            ms=preprocess_science_mss,
+            addmodel_subtract_options=unmapped(addmodel_subtract_field_options),
+            model_path=skymodel.calibrate_model,
+            # wait_for=[*skymodel] # should be implicitly handled by the model_path dependency
+        )
+
+        # then gaincal against that model to start off the selfcal process
+        preprocess_science_mss = task_gaincal_applycal_ms.map(
+            ms=preprocess_science_mss,
+            selfcal_round=1, # default
+            archive_input_ms=field_options.zip_ms,
+            skip_selfcal=False,
+            rename_ms=field_options.rename_ms,
+            archive_cal_table=True,
+            casa_container=field_options.casa_container,
+            update_gain_cal_options=None, # might want to think about exposing this in skycal options as well, e.g. solint, uvrange, etc.
+                                          # that makes a good case for skycal options to be part of the config_strategy.yml file
+        )
+
+        # then we can start the selfcal loop as normal.
+
 
     if field_options.wsclean_container is None:
         logger.info("No wsclean container provided. Returning. ")
@@ -580,6 +683,7 @@ def setup_run_process_science_field(
         bandpass_path=bandpass_path,
         split_path=split_path,
         field_options=field_options,
+        cluster_config=cluster_config,
     )
 
     # TODO: Put the archive stuff here?
@@ -602,12 +706,6 @@ def get_parser() -> ArgumentParser:
         type=Path,
         default=Path("."),
         help="Location to write field-split MSs to. Will attempt to use the parent name of a directory when writing out a new MS. ",
-    )
-    parser.add_argument(
-        "--calibrated-bandpass-path",
-        type=Path,
-        default=None,
-        help="Path to directory containing the uncalibrated beam-wise measurement sets that contain the bandpass calibration source. If None then the '--sky-model-directory' should be provided. ",
     )
     parser.add_argument(
         "--cluster-config",
