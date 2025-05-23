@@ -823,6 +823,13 @@ def copy_and_preprocess_casda_askap_ms(
     """
     ms = MS.cast(casda_ms)
 
+    if casa_container is None:
+        raise TypeError(f"{casa_container=}, which is bad.")
+    if not Path(casa_container).exists():
+        raise FileNotFoundError(f"{casa_container=} does not exist")
+
+    # TODO: This could probably be replaced with the mstransform?
+    # Save the extra hit to disk later on.
     out_ms_path = output_directory / create_ms_name(ms_path=ms.path)
     if ms.path != out_ms_path:
         logger.info(f"New MS name: {out_ms_path}")
