@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from prefect import task
 
 from flint.logging import logger
@@ -48,27 +50,42 @@ def task_crystalball_to_ms(ms: MS, crystalball_options: CrystalBallOptions) -> M
 def task_addmodel_to_ms(
     ms: MS,
     addmodel_subtract_options: AddModelSubtractFieldOptions,
+    model_path: Path | None = None,
 ) -> MS:
     from flint.imager.wsclean import get_wsclean_output_source_list_path
     from flint.predict.addmodel import AddModelOptions, add_model
 
     logger.info(f"Searching for wsclean source list for {ms.path}")
     for idx, pol in enumerate(addmodel_subtract_options.wsclean_pol_mode):
-        wsclean_source_list_path = get_wsclean_output_source_list_path(
-            name_path=ms.path, pol=pol
-        )
-        assert wsclean_source_list_path.exists(), (
-            f"{wsclean_source_list_path=} was requested, but does not exist"
-        )
 
-        # This should attempt to add model of different polarisations together.
-        # But to this point it is a future proof and is not tested.
-        addmodel_options = AddModelOptions(
-            model_path=wsclean_source_list_path,
-            ms_path=ms.path,
-            mode="c" if idx == 0 else "a",
-            datacolumn="MODEL_DATA",
-        )
+        if model_path is None:
+            # attempt to resolve the wsclean source list path
+            wsclean_source_list_path = get_wsclean_output_source_list_path(
+                name_path=ms.path, pol=pol
+            )
+            assert wsclean_source_list_path.exists(), (
+                f"{wsclean_source_list_path=} was requested, but does not exist"
+            )
+
+            # This should attempt to add model of different polarisations together.
+            # But to this point it is a future proof and is not tested.
+            addmodel_options = AddModelOptions(
+                model_path=wsclean_source_list_path,
+                ms_path=ms.path,
+                mode="c" if idx == 0 else "a",
+                datacolumn="MODEL_DATA",
+            )
+
+        else:
+            # assume user inputs the model_path
+            addmodel_options = AddModelOptions(
+                model_path=model_path,
+                ms_path=ms.path,
+                mode="c" if idx == 0 else "a",
+                datacolumn="MODEL_DATA",
+            )
+            # TODO: open up the options of mode and datacolumn?
+
         assert addmodel_subtract_options.calibrate_container is not None, (
             f"{addmodel_subtract_options.calibrate_container=}, which should not happen"
         )
