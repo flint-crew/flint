@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from prefect import task
 
 from flint.logging import logger
 from flint.ms import MS
 from flint.options import AddModelSubtractFieldOptions
 from flint.predict.crystalball import CrystalBallOptions
+from flint.sky_model import SkyModel
 
 
 @task
@@ -50,7 +49,7 @@ def task_crystalball_to_ms(ms: MS, crystalball_options: CrystalBallOptions) -> M
 def task_addmodel_to_ms(
     ms: MS,
     addmodel_subtract_options: AddModelSubtractFieldOptions,
-    model_path: Path | None = None,
+    skymodel: SkyModel | None = None,
 ) -> MS:
     from flint.imager.wsclean import get_wsclean_output_source_list_path
     from flint.predict.addmodel import AddModelOptions, add_model
@@ -58,7 +57,7 @@ def task_addmodel_to_ms(
     logger.info(f"Searching for wsclean source list for {ms.path}")
     for idx, pol in enumerate(addmodel_subtract_options.wsclean_pol_mode):
 
-        if model_path is None:
+        if skymodel is None:
             # attempt to resolve the wsclean source list path
             wsclean_source_list_path = get_wsclean_output_source_list_path(
                 name_path=ms.path, pol=pol
@@ -79,7 +78,7 @@ def task_addmodel_to_ms(
         else:
             # assume user inputs the model_path
             addmodel_options = AddModelOptions(
-                model_path=model_path,
+                model_path=skymodel.calibrate_model,
                 ms_path=ms.path,
                 mode="c" if idx == 0 else "a",
                 datacolumn="MODEL_DATA",

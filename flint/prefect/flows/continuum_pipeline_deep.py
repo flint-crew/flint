@@ -337,7 +337,7 @@ def process_science_fields(
         preprocess_science_mss = task_addmodel_to_ms.map(
             ms=preprocess_science_mss,
             addmodel_subtract_options=unmapped(addmodel_subtract_field_options),
-            model_path=skymodel.calibrate_model,
+            skymodel=skymodel, # should be mapped correctly
             # wait_for=[*skymodel] # should be implicitly handled by the model_path dependency
         )
 
