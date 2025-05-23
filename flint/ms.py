@@ -793,9 +793,9 @@ def preprocess_askap_ms(
 
 def copy_and_preprocess_casda_askap_ms(
     casda_ms: MS | Path,
+    casa_container: Path,
     data_column: str = "DATA",
     instrument_column: str = "INSTRUMENT_DATA",
-    fix_stokes_factor: bool = True,
     output_directory: Path = Path("./"),
 ) -> MS:
     """Convert an ASKAP pipeline MS from CASDA into a FLINT form. This involves
@@ -823,39 +823,37 @@ def copy_and_preprocess_casda_askap_ms(
     """
     ms = MS.cast(casda_ms)
 
-    out_ms_path = output_directory / create_ms_name(ms_path=ms.path)
-    logger.info(f"New MS name: {out_ms_path}")
-    out_ms_path = copy_directory(input_directory=ms.path, output_directory=out_ms_path)
+    if casa_container is None:
+        raise TypeError(f"{casa_container=}, which is bad.")
+    if not Path(casa_container).exists():
+        raise FileNotFoundError(f"{casa_container=} does not exist")
 
-    ms = ms.with_options(path=out_ms_path)
+    # TODO: This could probably be replaced with the mstransform?
+    # Save the extra hit to disk later on.
+    out_ms_path = output_directory / create_ms_name(ms_path=ms.path)
+    if ms.path != out_ms_path:
+        logger.info(f"New MS name: {out_ms_path}")
+        out_ms_path = copy_directory(
+            input_directory=ms.path, output_directory=out_ms_path
+        )
+
+        ms = ms.with_options(path=out_ms_path)
 
     logger.info(
         f"Will be running CASDA ASKAP MS conversion operations against {ms.path!s}."
     )
 
-    with table(str(ms.path), ack=False, readonly=False) as tab:
-        column_names = tab.colnames()
-        assert data_column in column_names and instrument_column not in column_names, (
-            f"{ms.path} column names failed. {data_column=} {instrument_column=} {column_names=}"
-        )
-        tab.renamecol(data_column, instrument_column)
-        tab.flush()
-
-    logger.info("Correcting directions. ")
-    fix_ms_dir(ms=str(ms.path))
-
-    logger.info("Applying rotation matrix to correlations. ")
-    logger.info(
-        f"Rotating visibilities for {ms.path} with data_column={instrument_column} and corrected_data_column={data_column}"
+    return preprocess_askap_ms(
+        ms=ms,
+        data_column=data_column,
+        instrument_column=instrument_column,
+        overwrite=True,
+        skip_rotation=False,  # CASDA always requires rotation
+        fix_stokes_factor=True,  # CASDA always requires fixing the factor of 2
+        apply_ms_transform=True,  # CASDA MSs often need the silly mstranform applied
+        casa_container=casa_container,
+        rename=False,  # We have already renamed the MS
     )
-    fix_ms_corrs(
-        ms=ms.path,
-        data_column=instrument_column,
-        corrected_data_column=data_column,
-        fix_stokes_factor=fix_stokes_factor,
-    )
-
-    return ms.with_options(column=data_column)
 
 
 def rename_ms_and_columns_for_selfcal(
@@ -1033,6 +1031,11 @@ def get_parser() -> ArgumentParser:
         help="Path to the ASKAP pipeline produced MS obtained through casda",
     )
     casda_parser.add_argument(
+        "casa_container",
+        type=Path,
+        help="Path to the casa container that will be used to transform the MS",
+    )
+    casda_parser.add_argument(
         "--output-directory",
         type=Path,
         default=Path("./"),
@@ -1063,7 +1066,9 @@ def cli() -> None:
             logger.info(f"{args.ms1} is not compatible with {args.ms2}")
     if args.mode == "casda":
         copy_and_preprocess_casda_askap_ms(
-            casda_ms=Path(args.casda_ms), output_directory=Path(args.output_directory)
+            casda_ms=Path(args.casda_ms),
+            output_directory=Path(args.output_directory),
+            casa_container=Path(args.casa_container),
         )
 
 
