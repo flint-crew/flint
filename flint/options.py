@@ -433,7 +433,10 @@ class FieldOptions(BaseOptions):
     """Attempt to update a MSs MODEL_DATA column with a source list (e.g. source list output from wsclean)"""
     skip_fixms: bool = False
     """Skip the fixms step for an ASKAP CASDA measurement set. Assumes the user has already ran fixms on it. Prevents creation of the INSTRUMENT_DATA column."""
-
+    data_column: str = "DATA"
+    """The data column of the MS that should be used for self-calibration and imaging. """
+    skymodel_directory: Path | None = None
+    """Path to the skymodel directory that will be used for imaging. For now, assumes the file is called racs-low.fits"""
 
 class PolFieldOptions(BaseOptions):
     """Container that represents the flint related options that
