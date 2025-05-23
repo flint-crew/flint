@@ -713,6 +713,12 @@ def get_parser() -> ArgumentParser:
         default="petrichor",
         help="Path to a cluster configuration file, or a known cluster name. ",
     )
+    parser.add_argument(
+        "--calibrated-bandpass-path",
+        type=Path,
+        default=None,
+        help="Path to directory containing the uncalibrated beam-wise measurement sets that contain the bandpass calibration source. If None then the '--sky-model-directory' should be provided. ",
+    )
 
     parser = add_options_to_parser(parser=parser, options_class=FieldOptions)
 
