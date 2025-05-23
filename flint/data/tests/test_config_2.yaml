@@ -1,5 +1,8 @@
 version: 0.2
 defaults:
+  potatopeel:
+    tmp: "ThePearl"
+    minuvpeel: 1112
   wsclean:
     abs_mem: 100
     local_rms_window: 65
@@ -74,6 +77,8 @@ defaults:
 selfcal:
   0:
     wsclean: {}
+    potatopeel:
+      tmp: "JackSparrowBeHere"
   1:
     wsclean:
       data_column: "EXAMPLE"

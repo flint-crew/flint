@@ -21,6 +21,7 @@ from flint.peel.potato import (
     PotatoPeelOptions,
     _potato_config_command,
     _potato_peel_command,
+    _prepare_potato_options,
     create_run_potato_peel,
     find_sources_to_peel,
     get_source_props_from_table,
@@ -265,12 +266,11 @@ def test_bad_pb_model():
         )
 
 
-def test_create_run_potato_peel_with_custom_T(tmp_path, ms_example, monkeypatch):
+def test_create_run_potato_peel_with_custom_tmp(tmp_path, ms_example, monkeypatch):
     """Exercise create_run_potato_peel: T override, directory creation and singularity run."""
 
     # set up a fake container and MS
     potato_container = tmp_path / "potato.sif"
-    potato_container.write_text("")  # doesn't actually get used
     ms = MS(path=ms_example, column="DATA")
 
     # build arguments exactly as in the peel command tests
@@ -286,9 +286,9 @@ def test_create_run_potato_peel_with_custom_T(tmp_path, ms_example, monkeypatch)
         image_fov=1.0,
     )
 
-    # choose a T that doesn't exist yet
+    # choose a temp dir that doesn't exist yet
     tdir = tmp_path / "peel_temp"
-    peel_opts = PotatoPeelOptions(T=str(tdir))
+    peel_opts = PotatoPeelOptions(tmp=str(tdir))
 
     # capture create_directory calls
     created = []
@@ -322,16 +322,92 @@ def test_create_run_potato_peel_with_custom_T(tmp_path, ms_example, monkeypatch)
     assert isinstance(cmd, PotatoPeelCommand)
     assert runs, "run_singularity_command was not invoked"
 
+    # verify that hot_potato was called with a tempdir according to the hot_potato argparse
+    assert "--tmp" in cmd.command or "-T" in cmd.command
+
     # directory should have been created exactly once
-    assert created == [Path(peel_opts.T)]
+    assert created == [Path(peel_opts.tmp)]
 
     # verify bind_dirs passed into the run call
     run_call = runs[0]
     bd = run_call["bind_dirs"]
     assert Path(ms.path) in bd
     assert Path(ms.path).parent in bd
-    assert Path(peel_opts.T) in bd
+    assert Path(peel_opts.tmp) in bd
 
     # verify singularity invocation was with our container and the generated command
     assert run_call["image"] == potato_container
     assert run_call["command"] == cmd.command
+
+    # also test what if user does not set a tmpdir
+    runs = []
+    peel_opts = PotatoPeelOptions(tmp=None)
+
+    # call the function under test
+    cmd = create_run_potato_peel(
+        potato_container=potato_container,
+        ms=ms,
+        potato_peel_arguments=peel_args,
+        potato_peel_options=peel_opts,
+    )
+
+    # returned command must match what _potato_peel_command produces
+    assert isinstance(cmd, PotatoPeelCommand)
+    assert runs, "run_singularity_command was not invoked"
+
+    # verify that hot_potato was called with a tempdir according to the hot_potato argparse
+    assert "--tmp" in cmd.command or "-T" in cmd.command
+
+    # verify that tempdir is set to ms.path.parent/peel in case no tmpdir is set
+    print(cmd)
+    assert "/peel" in cmd.command
+
+    # verify bind_dirs passed into the run call
+    run_call = runs[0]
+    bd = run_call["bind_dirs"]
+    assert Path(ms.path) in bd
+    assert Path(ms.path).parent in bd
+
+    # verify singularity invocation was with our container and the generated command
+    assert run_call["image"] == potato_container
+    assert run_call["command"] == cmd.command
+
+
+def test_prepare_potato_options(tmp_path, ms_example, monkeypatch):
+    """See if we can generate the correct set of options"""
+    # set up a fake container and MS
+    potato_container = tmp_path / "potato.sif"
+    ms = MS(path=ms_example, column="DATA")
+
+    # capture run_singularity_command calls
+    runs = []
+    monkeypatch.setattr(
+        "flint.peel.potato.run_singularity_command",
+        lambda image, command, bind_dirs: runs.append(
+            {
+                "image": image,
+                "command": command,
+                "bind_dirs": bind_dirs,
+            }
+        ),
+    )
+
+    config_options, peel_options = _prepare_potato_options(
+        ms=ms, potato_container=potato_container
+    )
+
+    assert isinstance(config_options, PotatoConfigOptions)
+    assert isinstance(peel_options, PotatoPeelOptions)
+    assert peel_options.c == ms.path.parent / "SB39400.RACS_0635-31.beam0.potato.config"
+
+    new_config = Path(tmp_path) / "JackieBoy.config"
+    update_peel_options = {"c": new_config}
+    config_options, peel_options = _prepare_potato_options(
+        ms=ms,
+        potato_container=potato_container,
+        update_potato_peel_options=update_peel_options,
+    )
+
+    assert config_options is None
+    assert isinstance(peel_options, PotatoPeelOptions)
+    assert peel_options.c == new_config
