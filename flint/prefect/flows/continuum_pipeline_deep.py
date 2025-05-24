@@ -344,7 +344,7 @@ def process_science_fields(
         # then gaincal against that model to start off the selfcal process
         preprocess_science_mss = task_gaincal_applycal_ms.map(
             ms=preprocess_science_mss,
-            selfcal_round=1, # default
+            selfcal_round=0, # before selfcal loop starts
             archive_input_ms=field_options.zip_ms,
             skip_selfcal=False,
             rename_ms=field_options.rename_ms,
@@ -353,6 +353,8 @@ def process_science_fields(
             update_gain_cal_options=None, # might want to think about exposing this in skycal options as well, e.g. solint, uvrange, etc.
                                           # that makes a good case for skycal options to be part of the config_strategy.yml file
         )
+
+        # rename the ms to get rid of round or set round=0 above? 
 
         # then we can start the selfcal loop as normal.
 
