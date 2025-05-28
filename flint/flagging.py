@@ -512,7 +512,7 @@ def get_parser() -> ArgumentParser:
         "--window",
         type=float,
         default=1800.0,
-        help="Time window in seconds around sunrise/sunset to flag. Will flag everything in sunrise(sunset) +/- window, meaning the entire window is twice this size. Defaults to 1800 seconds (30 minutes)."
+        help="Time window in seconds around sunrise/sunset to flag. Will flag everything in sunrise(sunset) +/- window, meaning the entire window is twice this size. Defaults to 1800 seconds (30 minutes).",
     )
     twilight_parser.add_argument(
         "--which",
