@@ -189,7 +189,9 @@ def process_science_fields(
         extract_components_from_name(name=science_mss[0].path), CASDANameComponents
     ):
         preprocess_science_mss = task_copy_and_preprocess_casda_askap_ms.map(
-            casda_ms=science_mss, output_directory=output_split_science_path
+            casda_ms=science_mss,
+            casa_container=field_options.casa_container,
+            output_directory=output_split_science_path,
         )
         preprocess_science_mss = task_flag_ms_aoflagger.map(  # type: ignore
             ms=preprocess_science_mss, container=field_options.flagger_container

@@ -129,14 +129,33 @@ def _test_the_data(ms):
     assert np.allclose(data[:, 10, 0], expected_data)
 
 
-def test_copy_preprocess_ms(casda_example, tmpdir):
+def test_copy_preprocess_ms(casda_example, tmpdir, monkeypatch):
     """Run the copying and preprocessing for the casda askap. This is not testing the actual contents or the
     output visibility file yet. Just sanity around the process."""
+    casa_container = Path(tmpdir) / "casa_container.sif"
+    casa_container.write_text("This is a container that does not exist.")
+    # capture run_singularity_command calls
 
     output_path = Path(tmpdir) / "casda_ms"
+    from flint.naming import create_ms_name
+    from flint.utils import copy_directory
+
+    # Put the transform MS into place since it is not going to be created
+    # by the skipped singularity run command
+    transform_ms = output_path / (create_ms_name(ms_path=casda_example) + "_transform")
+
+    runs = []
+    monkeypatch.setattr(
+        "flint.sclient.run_singularity_command",
+        lambda image, command, bind_dirs, *args, **kwargs: runs.append(
+            copy_directory(casda_example, transform_ms)
+        ),
+    )
 
     new_ms = copy_and_preprocess_casda_askap_ms(
-        casda_ms=Path(casda_example), output_directory=output_path
+        casda_ms=Path(casda_example),
+        casa_container=casa_container,
+        output_directory=output_path,
     )
     _test_the_data(ms=new_ms.path)
 
@@ -144,6 +163,7 @@ def test_copy_preprocess_ms(casda_example, tmpdir):
     with pytest.raises(ValueError):
         copy_and_preprocess_casda_askap_ms(
             casda_ms=Path(casda_example) / "Thisdoesnotexist",
+            casa_container=casa_container,
             output_directory=output_path,
         )
 
@@ -153,6 +173,7 @@ def test_copy_preprocess_ms(casda_example, tmpdir):
             casda_ms=Path(
                 "thisdoesnotexist/scienceData.EMU_0529-60.SB50538.EMU_0529-60.beam08_averaged_cal.leakage.ms"
             ),
+            casa_container=casa_container,
             output_directory=output_path / "New",
         )
 
@@ -452,3 +473,19 @@ def test_subtract_model_from_data_column_ms_column_new_column(tmpdir):
 
         data = tab.getcol("DATA")
         assert np.all(data == ones)
+
+
+def test_copy_and_preprocess_casda_askap_ms_container_errors():
+    """Make sure the expected container errors are raised should
+    it not be passed through properly
+    """
+    with pytest.raises(FileNotFoundError):
+        copy_and_preprocess_casda_askap_ms(
+            casda_ms=Path("ThisNotNeeded"),
+            casa_container=Path("ThisWillRaiseAnError"),
+        )
+    with pytest.raises(TypeError):
+        copy_and_preprocess_casda_askap_ms(
+            casda_ms=Path("ThisNotNeeded"),
+            casa_container=None,
+        )
