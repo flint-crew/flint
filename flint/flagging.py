@@ -550,7 +550,7 @@ def cli() -> None:
     elif args.mode == "antenna":
         flag_ms_by_antenna_ids(ms=args.ms, ant_ids=args.antenna_ids)
     elif args.mode == "flagtwilight":
-        # ms = MS(path=args.ms)
+        ms = MS(path=args.ms)
         describe_ms(ms, verbose=True)
         flag_ms_by_sunrise_sunset(ms=ms, window=args.window, which=args.which)
         describe_ms(ms, verbose=True)
