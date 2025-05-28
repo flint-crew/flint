@@ -354,6 +354,7 @@ def flag_ms_by_antenna_ids(ms: Path | MS, ant_ids: int | Collection[int]) -> MS:
 
     return ms
 
+
 def flag_ms_by_sunrise_sunset(
     ms: Path | MS,
     window: float = 1800.0,
@@ -383,7 +384,7 @@ def flag_ms_by_sunrise_sunset(
     # 1. Build EarthLocation from ANTENNA table
     # —————————————————————————————————————————————————————————————
     with table(str(ms.path) + "/ANTENNA", readonly=True) as ant_tab:
-        xyz = ant_tab.getcol("POSITION")     # shape (n_ant,3) in meters, ITRF
+        xyz = ant_tab.getcol("POSITION")  # shape (n_ant,3) in meters, ITRF
     # use the average position of all antennas
     mean_xyz = np.mean(xyz, axis=0)
     location = EarthLocation.from_geocentric(*mean_xyz, unit="m")
@@ -392,7 +393,7 @@ def flag_ms_by_sunrise_sunset(
     # 2. Read all times, convert to astropy Time in UTC
     # —————————————————————————————————————————————————————————————
     with table(str(ms.path), readonly=True) as tab:
-        times = tab.getcol("TIME")          # as MJD days or seconds?
+        times = tab.getcol("TIME")  # as MJD days or seconds?
         # If TIME is in seconds since MJD epoch:
         times = Time(times / 86400.0, format="mjd", scale="utc")
         # If it’s already in MJD days, drop the division above.
@@ -426,7 +427,9 @@ def flag_ms_by_sunrise_sunset(
             for tstart, tend in flag_windows:
                 mask |= (times >= tstart) & (times <= tend)
 
-            logger.info(f"Flagging {window:.1f} seconds around sunrise/sunset will flag {(np.sum(mask)/len(mask)*100):.2f}% of the measurement set")
+            logger.info(
+                f"Flagging {window:.1f} seconds around sunrise/sunset will flag {(np.sum(mask) / len(mask) * 100):.2f}% of the measurement set"
+            )
 
             # apply
             flags[mask] = True
@@ -434,6 +437,7 @@ def flag_ms_by_sunrise_sunset(
             tab.flush()
 
     return ms
+
 
 def get_parser() -> ArgumentParser:
     """Create the argument parser for the flagging
@@ -499,24 +503,22 @@ def get_parser() -> ArgumentParser:
     twilight_parser = subparser.add_parser(
         "flagtwilight",
         description="Flag visibilities around sunrise/sunset events",
-        help="Flag data around sunrise or sunset within a time window"
+        help="Flag data around sunrise or sunset within a time window",
     )
     twilight_parser.add_argument(
-        "ms",
-        type=Path,
-        help="Path to the measurement set to flag"
+        "ms", type=Path, help="Path to the measurement set to flag"
     )
     twilight_parser.add_argument(
         "--window",
         type=float,
         default=1800.0,
-        help="Time window in seconds around sunrise/sunset to flag"
+        help="Time window in seconds around sunrise/sunset to flag",
     )
     twilight_parser.add_argument(
         "--which",
         choices=["nearest", "previous", "next"],
         default="nearest",
-        help="Which sunrise/sunset event to use for each date in the MS. Default 'nearest' should be sufficient for single-track observations."
+        help="Which sunrise/sunset event to use for each date in the MS. Default 'nearest' should be sufficient for single-track observations.",
     )
 
     return parser
@@ -550,12 +552,9 @@ def cli() -> None:
     elif args.mode == "flagtwilight":
         # ms = MS(path=args.ms)
         describe_ms(ms, verbose=True)
-        flag_ms_by_sunrise_sunset(
-            ms=ms,
-            window=args.window,
-            which=args.which
-        )
+        flag_ms_by_sunrise_sunset(ms=ms, window=args.window, which=args.which)
         describe_ms(ms, verbose=True)
+
 
 if __name__ == "__main__":
     cli()
