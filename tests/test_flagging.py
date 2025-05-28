@@ -167,6 +167,7 @@ def test_aoflagger(flint_containers, ms_example) -> None:
 
     assert pre_flag == post_flag
 
+
 def test_flag_ms_by_sunrise_sunset_all(ms_example):
     """With a huge window, every row in the MS should be flagged."""
     # zero out all flags first
@@ -181,15 +182,20 @@ def test_flag_ms_by_sunrise_sunset_all(ms_example):
         flags = tab.getcol("FLAG")
         assert np.all(flags), "All visibilities should be flagged when window is huge"
 
+
 def test_parser_flag_twilight():
     """Ensure the 'flagtwilight' subparser exposes the right args."""
     parser = get_parser()
-    args = parser.parse_args([
-        "flagtwilight",
-        "my.ms",
-        "--window", "300.0",
-        "--which", "previous",
-    ])
+    args = parser.parse_args(
+        [
+            "flagtwilight",
+            "my.ms",
+            "--window",
+            "300.0",
+            "--which",
+            "previous",
+        ]
+    )
 
     assert args.mode == "flagtwilight"
     assert isinstance(args.ms, Path) and args.ms.name == "my.ms"
