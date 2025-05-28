@@ -46,6 +46,7 @@ from flint.prefect.common.imaging import (
     task_create_apply_solutions_cmd,
     task_create_image_mask_model,
     task_flag_ms_aoflagger,
+    task_flag_ms_by_sunrise_sunset,
     task_gaincal_applycal_ms,
     task_potato_peel,
     task_preprocess_askap_ms,
@@ -146,6 +147,7 @@ def _check_create_output_split_science_path(
 
 ##########################################################
 # TODO make things a task in the proper location, where?
+# is the answer flint.common.imaging? 
 from prefect import task  # noqa: E402, I001
 
 @task
@@ -281,14 +283,30 @@ def process_science_fields(
     )  # type: ignore
     logger.info(f"{field_summary=}")
 
+    # Additional flagging should be requested during the selfcal 0 round.
+    flagging_options = get_options_from_strategy(
+                strategy=strategy, mode="flagging", round_info=0, operation="selfcal"
+            )
+    
+    if flagging_options.mode is None:
+        logger.info("No flagging options provided, not doing additional flagging.")
+    elif flagging_options.mode == "flagtwilight":
+        logger.info("User requested flagging data around twilight.")
+
+        preprocess_science_mss = task_flag_ms_by_sunrise_sunset(
+            ms=preprocess_science_mss,
+            flagging_options=unmapped(flagging_options)
+        )
+
 
     if field_options.skymodel_directory is not None:
 
         logger.info(f"Using {field_options.skymodel_directory=} for initial self-calibration")
 
         # TODO: consider how to have the user provide the other skymodel options. Another config file? Part of the selfcal config? separate options?
-        # use get_options_from_strategy() equivalent to potato_peel ?
-        # EO: my preferred solution would be to have it be part of the selfcal strategy config file.
+        # EO: my preferred solution would be to have it be part of the selfcal strategy config file
+        # at selfcal: 0 level, i.e. using get_options_from_strategy( , round_info=0, operation="selfcal")
+        # thoughts welcome
         sky_model_options = SkyModelOptions()
         hardcoded_for_test_calcskymodel = {
             "reference_catalogue_directory": field_options.skymodel_directory,

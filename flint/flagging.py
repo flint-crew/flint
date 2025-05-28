@@ -18,7 +18,7 @@ from numpy.typing import NDArray
 from flint.exceptions import MSError
 from flint.logging import logger
 from flint.ms import check_column_in_ms, critical_ms_interaction, describe_ms
-from flint.options import MS
+from flint.options import MS, BaseOptions
 from flint.sclient import run_singularity_command
 from flint.utils import get_packaged_resource_path
 
@@ -35,6 +35,15 @@ class AOFlaggerCommand(NamedTuple):
     strategy_file: Path | None = None
     """The path to the aoflagging strategy file to use"""
 
+class FlaggingOptions(BaseOptions):
+    """Options provided to the flint_flagger module. Currently only allows for flagging around twilight"""
+
+    mode: str | None = None
+    """Which additional flagging to do. Currently should be 'flagtwilight'. Future options could be 'aoflagger', 'nanflag' and 'antenna'. Default None to skip extra flagging. """
+    window: float = 1800.0
+    """Time window in seconds around sunrise/sunset to flag. Will flag everything in sunrise(sunset) +/- window, meaning the entire window is twice this size. Defaults to 1800 seconds (30 minutes). """
+    which: str = "nearest"
+    """ Which sunrise/sunset event to use for each date in the MS. Default 'nearest' should be sufficient for single-track observations. """
 
 def flag_ms_zero_uvws(ms: MS, chunk_size: int = 10000) -> MS:
     """Flag out the UVWs in a measurement set that have values of zero.

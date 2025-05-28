@@ -28,7 +28,7 @@ from flint.convol import (
     get_common_beam,
     get_cube_common_beam,
 )
-from flint.flagging import flag_ms_aoflagger
+from flint.flagging import FlaggingOptions, flag_ms_aoflagger, flag_ms_by_sunrise_sunset
 from flint.imager.wsclean import (
     ImageSet,
     WSCleanOptions,
@@ -150,6 +150,25 @@ def task_flag_ms_aoflagger(ms: FlagMS, container: Path) -> FlagMS:
 
     return ms
 
+@task
+def task_flag_ms_by_sunrise_sunset(ms: MS, flagging_options: FlaggingOptions) -> MS:
+    """
+    Flag a measurement set by sunrise and sunset times. See flag_ms_by_sunrise_sunset()
+
+    FlaggingOptions:
+        mode: str | None = None
+            Which additional flagging to do. Currently should be 'flagtwilight'. Future options could be 'aoflagger', 'nanflag' and 'antenna'.
+        window: float = 1800.0
+            Time window in seconds around sunrise/sunset to flag. Will flag everything in sunrise(sunset) +/- window, meaning the entire window is twice this size. Defaults to 1800 seconds (30 minutes). 
+        which: str = "nearest"
+            Which sunrise/sunset event to use for each date in the MS. Default 'nearest' should be sufficient for single-track observations.
+
+    """
+
+    assert flagging_options['mode'] == 'flagtwilight', "FlaggingOptions mode should be flagtwilight"
+    flagging_options.pop("mode")
+
+    return flag_ms_by_sunrise_sunset(ms=ms, **flagging_options)
 
 @task
 def task_bandpass_create_apply_solutions_cmd(

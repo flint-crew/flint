@@ -13,6 +13,7 @@ from typing import Any
 
 import yaml
 
+from flint.flagging import FlaggingOptions
 from flint.imager.wsclean import WSCleanOptions
 from flint.logging import logger
 from flint.masking import MaskingOptions
@@ -42,6 +43,7 @@ MODE_OPTIONS_MAPPING = {
     "bane": BANEOptions,
     "aegean": AegeanOptions,
     "potatopeel": PotatoPeelOptions,
+    "flagging": FlaggingOptions
 }
 POLARISATION_MAPPING = {
     "total": "i",
