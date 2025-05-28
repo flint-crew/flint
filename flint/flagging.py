@@ -394,7 +394,7 @@ def flag_ms_by_sunrise_sunset(
     # —————————————————————————————————————————————————————————————
     with table(str(ms.path), readonly=True) as tab:
         times = tab.getcol("TIME")  # as MJD days or seconds?
-        # If TIME is in seconds since MJD epoch:
+        # TIME should be in seconds since MJD epoch:
         times = Time(times / 86400.0, format="mjd", scale="utc")
         # If it’s already in MJD days, drop the division above.
 
