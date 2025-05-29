@@ -289,9 +289,9 @@ def process_science_fields(
                 strategy=strategy, mode="flagging", round_info=0, operation="selfcal"
             )
     
-    if flagging_options.mode is None:
+    if flagging_options['mode'] is None:
         logger.info("No flagging options provided, not doing additional flagging.")
-    elif flagging_options.mode == "flagtwilight":
+    elif flagging_options['mode'] == "flagtwilight":
         logger.info("User requested flagging data around twilight.")
 
         preprocess_science_mss = task_flag_ms_by_sunrise_sunset(
