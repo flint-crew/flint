@@ -816,7 +816,6 @@ def copy_and_preprocess_casda_askap_ms(
         casda_ms (Union[MS, Path]): The measurement set to preprocess
         data_column (str, optional): The column with data to preprocess. Defaults to "DATA".
         instrument_column (str, optional): The name of the column to be created with data in the instrument frame. Defaults to "INSTRUMENT_DATA".
-        fix_stokes_factor (bool, optional): Whether to scale the visibilities to account for the factor of 2 error. Defaults to True.
         output_directory (Path, optional): The output directory that the preprocessed MS will be placed into. Defaults to Path("./").
         skip_fixms (bool, optional): If True, the fixms step will be skipped. Defaults to False. Assumes the user has already ran fixms on the MS. Prevents creation of the INSTRUMENT_DATA column.
 
@@ -825,9 +824,9 @@ def copy_and_preprocess_casda_askap_ms(
     """
     ms = MS.cast(casda_ms)
 
-    if casa_container is None:
+    if casa_container is None and not skip_fixms:
         raise TypeError(f"{casa_container=}, which is bad.")
-    if not Path(casa_container).exists():
+    if not Path(casa_container).exists() and not skip_fixms:
         raise FileNotFoundError(f"{casa_container=} does not exist")
 
     # TODO: This could probably be replaced with the mstransform?
