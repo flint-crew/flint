@@ -357,10 +357,10 @@ def flag_ms_by_antenna_ids(ms: Path | MS, ant_ids: int | Collection[int]) -> MS:
 
 def flag_ms_by_sunrise_sunset(
     ms: Path | MS,
-    pre_sunrise: float = 6 * 60, # 6 minutes
-    post_sunrise: float = 30 * 60, # 30 minutes
-    pre_sunset: float = 30 * 60, # 30 minutes
-    post_sunset: float = 6 * 60, # 6 minutes
+    pre_sunrise: float = 6 * 60,  # 6 minutes
+    post_sunrise: float = 30 * 60,  # 30 minutes
+    pre_sunset: float = 30 * 60,  # 30 minutes
+    post_sunset: float = 6 * 60,  # 6 minutes
     which: str = "nearest",
 ) -> MS:
     """
@@ -381,7 +381,7 @@ def flag_ms_by_sunrise_sunset(
             Seconds before sunset to flag. Defaults to 1800 seconds = 30 min.
         post_sunset (float, optional):
             Seconds after sunset to flag. Defaults to 360 seconds = 6 min.
-            
+
         which ({"nearest","next","previous"}, optional):
             Passed to astroplan.Observer.sun_rise_time / sun_set_time to pick
             the appropriate event each day. Defaults to "nearest".
@@ -422,7 +422,6 @@ def flag_ms_by_sunrise_sunset(
         # sunset window
         flag_windows.append((ss - pre_sunset * u.s, ss + post_sunset * u.s))
 
-
     # 4. Flag any rows whose TIME falls in any of those windows
     with critical_ms_interaction(input_ms=ms.path) as critical_path:
         with table(str(critical_path), readonly=False, ack=False) as tab:
@@ -434,7 +433,9 @@ def flag_ms_by_sunrise_sunset(
             for tstart, tend in flag_windows:
                 mask |= (times >= tstart) & (times <= tend)
 
-            logger.info(f" Flagging (pre,post) = ({pre_sunrise=}, {post_sunrise=}) / ({pre_sunset=}, {post_sunset=}) seconds around sunrise/sunset. ")
+            logger.info(
+                f" Flagging (pre,post) = ({pre_sunrise=}, {post_sunrise=}) / ({pre_sunset=}, {post_sunset=}) seconds around sunrise/sunset. "
+            )
             logger.info(
                 f"This will flag {(np.sum(mask) / len(mask) * 100):.2f}% of the measurement set"
             )

@@ -192,15 +192,22 @@ def test_flag_ms_by_sunrise_sunset_all(ms_example):
 def test_parser_flag_twilight():
     """Ensure the 'flagtwilight' subparser exposes the new pre/post args."""
     parser = get_parser()
-    args = parser.parse_args([
-        "flagtwilight",
-        "my.ms",
-        "--pre-sunrise", "120.0",
-        "--post-sunrise", "180.0",
-        "--pre-sunset", "240.0",
-        "--post-sunset", "300.0",
-        "--which", "previous",
-    ])
+    args = parser.parse_args(
+        [
+            "flagtwilight",
+            "my.ms",
+            "--pre-sunrise",
+            "120.0",
+            "--post-sunrise",
+            "180.0",
+            "--pre-sunset",
+            "240.0",
+            "--post-sunset",
+            "300.0",
+            "--which",
+            "previous",
+        ]
+    )
 
     assert args.mode == "flagtwilight"
     assert isinstance(args.ms, Path) and args.ms.name == "my.ms"
