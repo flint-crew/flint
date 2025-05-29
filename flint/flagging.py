@@ -36,14 +36,33 @@ class AOFlaggerCommand(NamedTuple):
     """The path to the aoflagging strategy file to use"""
 
 class FlaggingOptions(BaseOptions):
-    """Options provided to the flint_flagger module. Currently only allows for flagging around twilight"""
+    """Options provided to the flint_flagger module.
+
+    Supports multiple flagging modes ('aoflagger', 'nanflag', 'antenna', 'flagtwilight', etc.).
+    """
 
     mode: str | None = None
-    """Which additional flagging to do. Currently should be 'flagtwilight'. Future options could be 'aoflagger', 'nanflag' and 'antenna'. Default None to skip extra flagging. """
-    window: float = 1800.0
-    """Time window in seconds around sunrise/sunset to flag. Will flag everything in sunrise(sunset) +/- window, meaning the entire window is twice this size. Defaults to 1800 seconds (30 minutes). """
+    """Which additional flagging to do.
+    One of 'aoflagger', 'nanflag', 'antenna', 'flagtwilight', or None to skip extra flagging.
+    """
+
+    pre_sunrise: float = 6 * 60.0
+    """Seconds before sunrise to flag. Defaults to 360 (6 minutes)."""
+
+    post_sunrise: float = 30 * 60.0
+    """Seconds after sunrise to flag. Defaults to 1800 (30 minutes)."""
+
+    pre_sunset: float = 30 * 60.0
+    """Seconds before sunset to flag. Defaults to 1800 (30 minutes)."""
+
+    post_sunset: float = 6 * 60.0
+    """Seconds after sunset to flag. Defaults to 360 (6 minutes)."""
+
     which: str = "nearest"
-    """ Which sunrise/sunset event to use for each date in the MS. Default 'nearest' should be sufficient for single-track observations. """
+    """Which sunrise/sunset event to use for each date.
+    Choices are 'nearest', 'previous', or 'next'. Defaults to 'nearest'.
+    """
+
 
 def flag_ms_zero_uvws(ms: MS, chunk_size: int = 10000) -> MS:
     """Flag out the UVWs in a measurement set that have values of zero.
@@ -421,30 +440,51 @@ def flag_ms_by_sunrise_sunset(
 
     # 3. Compute sunrise/sunset for each date (should observation cover multiple dates)
     observer = Observer(location=location, timezone="UTC")
-    flag_windows: list[tuple[Time, Time]] = []
+    labeled_windows: list[tuple[str, Time, Time]] = []
     for d in dates:
         t0 = Time(d.tolist().isoformat(), format="iso", scale="utc")
         sr = observer.sun_rise_time(t0, which=which)
         ss = observer.sun_set_time(t0, which=which)
         # sunrise window
-        flag_windows.append((sr - pre_sunrise * u.s, sr + post_sunrise * u.s))
+        labeled_windows.append(("sunrise",
+                                 sr - pre_sunrise * u.s,
+                                 sr + post_sunrise * u.s))
         # sunset window
-        flag_windows.append((ss - pre_sunset * u.s, ss + post_sunset * u.s))
+        labeled_windows.append(("sunset",
+                                 ss - pre_sunset * u.s,
+                                 ss + post_sunset * u.s))
 
     # 4. Flag any rows whose TIME falls in any of those windows
     with critical_ms_interaction(input_ms=ms.path) as critical_path:
         with table(str(critical_path), readonly=False, ack=False) as tab:
             times = Time(tab.getcol("TIME") / 86400.0, format="mjd", scale="utc")
+            obs_start = times.min()
+            obs_end = times.max()
             flags = tab.getcol("FLAG")
 
-            # build mask over all windows
+            # build mask over all labeled windows
             mask = np.zeros(len(times), dtype=bool)
-            for tstart, tend in flag_windows:
+            for _, tstart, tend in labeled_windows:
                 mask |= (times >= tstart) & (times <= tend)
 
             logger.info(
                 f" Flagging (pre,post) = ({pre_sunrise=}, {post_sunrise=}) / ({pre_sunset=}, {post_sunset=}) seconds around sunrise/sunset. "
             )
+
+            # log each window as seconds since obs_start
+            for label, tstart, tend in labeled_windows:
+                if (tend < obs_start) or (tstart > obs_end):
+                    logger.info(
+                        f"Found {label} flag window not overlapping with observation"
+                    )
+                else:
+                    start_off = (max(tstart, obs_start) - obs_start).to_value(u.s)
+                    end_off   = (min(tend,   obs_end  ) - obs_start).to_value(u.s)
+                    logger.info(
+                        f"Found {label} flag window overlapping with time window "
+                        f"{int(start_off)}-{int(end_off)} seconds since start of observation"
+                    )
+
             logger.info(
                 f"This will flag {(np.sum(mask) / len(mask) * 100):.2f}% of the measurement set"
             )
