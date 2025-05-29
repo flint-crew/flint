@@ -296,7 +296,8 @@ def process_science_fields(
 
         preprocess_science_mss = task_flag_ms_by_sunrise_sunset.map(
             ms=preprocess_science_mss,
-            flagging_options=unmapped(flagging_options)
+            flagging_options=unmapped(flagging_options),
+            wait_for=[field_summary]
         )
 
 
