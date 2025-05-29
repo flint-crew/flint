@@ -217,6 +217,7 @@ def process_science_fields(
         preprocess_science_mss = task_copy_and_preprocess_casda_askap_ms.map(
             casda_ms=science_mss, output_directory=output_split_science_path,
             skip_fixms=field_options.skip_fixms,
+            casa_container=field_options.casa_container,
             data_column=unmapped(field_options.data_column) # before skip_fixms, it was a safe assumption to always copy only the DATA column
                                                             # now, the user could have fixed visibilities in DATA or CORRECTED_DATA column
         )
