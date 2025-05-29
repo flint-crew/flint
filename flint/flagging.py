@@ -357,18 +357,31 @@ def flag_ms_by_antenna_ids(ms: Path | MS, ant_ids: int | Collection[int]) -> MS:
 
 def flag_ms_by_sunrise_sunset(
     ms: Path | MS,
-    window: float = 1800.0,
+    pre_sunrise: float = 6 * 60, # 6 minutes
+    post_sunrise: float = 30 * 60, # 30 minutes
+    pre_sunset: float = 30 * 60, # 30 minutes
+    post_sunset: float = 6 * 60, # 6 minutes
     which: str = "nearest",
 ) -> MS:
     """
-    Flag all visibilities taken within ±window seconds of local sunrise or sunset.
+    Flag all visibilities taken within the specified windows around local sunrise and sunset.
+
+    NOTE: Uses astroplan, which defines sunset/sunrise as the time the centre of the sun is at the horizon.
+    Fun fact: The sun takes only about 2 minutes from "first touch" of the horizon "last touch" of the horizon.
 
     Args:
         ms (Path|MS):
             Input measurement set (or MS object). Must contain an ANTENNA table
             with XYZ positions in ITRF.
-        window (float, optional):
-            Time window in seconds around sunrise/sunset to flag. Defaults to 1800 s (30 min).
+        pre_sunrise (float, optional):
+            Seconds before sunrise to flag. Defaults to 360 seconds = 6 min.
+        post_sunrise (float, optional):
+            Seconds after sunrise to flag. Defaults to 1800 seconds = 30 min.
+        pre_sunset (float, optional):
+            Seconds before sunset to flag. Defaults to 1800 seconds = 30 min.
+        post_sunset (float, optional):
+            Seconds after sunset to flag. Defaults to 360 seconds = 6 min.
+            
         which ({"nearest","next","previous"}, optional):
             Passed to astroplan.Observer.sun_rise_time / sun_set_time to pick
             the appropriate event each day. Defaults to "nearest".
@@ -380,18 +393,14 @@ def flag_ms_by_sunrise_sunset(
     ms = MS.cast(ms)
     logger.info(f"Flagging rows around sunrise/sunset for {ms.path!s}")
 
-    # —————————————————————————————————————————————————————————————
     # 1. Build EarthLocation from ANTENNA table
-    # —————————————————————————————————————————————————————————————
     with table(str(ms.path) + "/ANTENNA", readonly=True) as ant_tab:
         xyz = ant_tab.getcol("POSITION")  # shape (n_ant,3) in meters, ITRF
     # use the average position of all antennas
     mean_xyz = np.mean(xyz, axis=0)
     location = EarthLocation.from_geocentric(*mean_xyz, unit="m")
 
-    # —————————————————————————————————————————————————————————————
     # 2. Read all times, convert to astropy Time in UTC
-    # —————————————————————————————————————————————————————————————
     with table(str(ms.path), readonly=True) as tab:
         times = tab.getcol("TIME")  # as MJD days or seconds?
         # TIME should be in seconds since MJD epoch:
@@ -401,22 +410,20 @@ def flag_ms_by_sunrise_sunset(
     # group by observation date (UTC calendar date)
     dates = np.unique(times.datetime.astype("datetime64[D]"))
 
-    # —————————————————————————————————————————————————————————————
-    # 3. Compute sunrise/sunset for each date
-    # —————————————————————————————————————————————————————————————
+    # 3. Compute sunrise/sunset for each date (should observation cover multiple dates)
     observer = Observer(location=location, timezone="UTC")
-    flag_windows = []
+    flag_windows: list[tuple[Time, Time]] = []
     for d in dates:
         t0 = Time(d.tolist().isoformat(), format="iso", scale="utc")
         sr = observer.sun_rise_time(t0, which=which)
         ss = observer.sun_set_time(t0, which=which)
-        # record start/end of flagging windows
-        flag_windows.append((sr - window * u.s, sr + window * u.s))
-        flag_windows.append((ss - window * u.s, ss + window * u.s))
+        # sunrise window
+        flag_windows.append((sr - pre_sunrise * u.s, sr + post_sunrise * u.s))
+        # sunset window
+        flag_windows.append((ss - pre_sunset * u.s, ss + post_sunset * u.s))
 
-    # —————————————————————————————————————————————————————————————
+
     # 4. Flag any rows whose TIME falls in any of those windows
-    # —————————————————————————————————————————————————————————————
     with critical_ms_interaction(input_ms=ms.path) as critical_path:
         with table(str(critical_path), readonly=False, ack=False) as tab:
             times = Time(tab.getcol("TIME") / 86400.0, format="mjd", scale="utc")
@@ -427,8 +434,9 @@ def flag_ms_by_sunrise_sunset(
             for tstart, tend in flag_windows:
                 mask |= (times >= tstart) & (times <= tend)
 
+            logger.info(f" Flagging (pre,post) = ({pre_sunrise=}, {post_sunrise=}) / ({pre_sunset=}, {post_sunset=}) seconds around sunrise/sunset. ")
             logger.info(
-                f"Flagging {window:.1f} seconds around sunrise/sunset will flag {(np.sum(mask) / len(mask) * 100):.2f}% of the measurement set"
+                f"This will flag {(np.sum(mask) / len(mask) * 100):.2f}% of the measurement set"
             )
 
             # apply
@@ -503,16 +511,34 @@ def get_parser() -> ArgumentParser:
     twilight_parser = subparser.add_parser(
         "flagtwilight",
         description="Flag visibilities around sunrise/sunset events",
-        help="Flag data around sunrise or sunset within a time window",
+        help="Flag data around sunrise or sunset specified time windows",
     )
     twilight_parser.add_argument(
         "ms", type=Path, help="Path to the measurement set to flag"
     )
     twilight_parser.add_argument(
-        "--window",
+        "--pre-sunrise",
         type=float,
-        default=1800.0,
-        help="Time window in seconds around sunrise/sunset to flag. Will flag everything in sunrise(sunset) +/- window, meaning the entire window is twice this size. Defaults to 1800 seconds (30 minutes).",
+        default=6 * 60.0,
+        help="Seconds before sunrise to flag (default: 360).",
+    )
+    twilight_parser.add_argument(
+        "--post-sunrise",
+        type=float,
+        default=30 * 60.0,
+        help="Seconds after sunrise to flag (default: 1800).",
+    )
+    twilight_parser.add_argument(
+        "--pre-sunset",
+        type=float,
+        default=30 * 60.0,
+        help="Seconds before sunset to flag (default: 1800).",
+    )
+    twilight_parser.add_argument(
+        "--post-sunset",
+        type=float,
+        default=6 * 60.0,
+        help="Seconds after sunset to flag (default: 360).",
     )
     twilight_parser.add_argument(
         "--which",
@@ -552,7 +578,14 @@ def cli() -> None:
     elif args.mode == "flagtwilight":
         ms = MS(path=args.ms)
         describe_ms(ms, verbose=True)
-        flag_ms_by_sunrise_sunset(ms=ms, window=args.window, which=args.which)
+        flag_ms_by_sunrise_sunset(
+            ms=args.ms,
+            pre_sunrise=args.pre_sunrise,
+            post_sunrise=args.post_sunrise,
+            pre_sunset=args.pre_sunset,
+            post_sunset=args.post_sunset,
+            which=args.which,
+        )
         describe_ms(ms, verbose=True)
 
 
