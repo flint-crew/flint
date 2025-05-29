@@ -35,6 +35,7 @@ class AOFlaggerCommand(NamedTuple):
     strategy_file: Path | None = None
     """The path to the aoflagging strategy file to use"""
 
+
 class FlaggingOptions(BaseOptions):
     """Options provided to the flint_flagger module.
 
@@ -446,13 +447,13 @@ def flag_ms_by_sunrise_sunset(
         sr = observer.sun_rise_time(t0, which=which)
         ss = observer.sun_set_time(t0, which=which)
         # sunrise window
-        labeled_windows.append(("sunrise",
-                                 sr - pre_sunrise * u.s,
-                                 sr + post_sunrise * u.s))
+        labeled_windows.append(
+            ("sunrise", sr - pre_sunrise * u.s, sr + post_sunrise * u.s)
+        )
         # sunset window
-        labeled_windows.append(("sunset",
-                                 ss - pre_sunset * u.s,
-                                 ss + post_sunset * u.s))
+        labeled_windows.append(
+            ("sunset", ss - pre_sunset * u.s, ss + post_sunset * u.s)
+        )
 
     # 4. Flag any rows whose TIME falls in any of those windows
     with critical_ms_interaction(input_ms=ms.path) as critical_path:
@@ -479,7 +480,7 @@ def flag_ms_by_sunrise_sunset(
                     )
                 else:
                     start_off = (max(tstart, obs_start) - obs_start).to_value(u.s)
-                    end_off   = (min(tend,   obs_end  ) - obs_start).to_value(u.s)
+                    end_off = (min(tend, obs_end) - obs_start).to_value(u.s)
                     logger.info(
                         f"Found {label} flag window overlapping with time window "
                         f"{int(start_off)}-{int(end_off)} seconds since start of observation"
