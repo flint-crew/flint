@@ -294,7 +294,7 @@ def process_science_fields(
     elif flagging_options['mode'] == "flagtwilight":
         logger.info("User requested flagging data around twilight.")
 
-        preprocess_science_mss = task_flag_ms_by_sunrise_sunset(
+        preprocess_science_mss = task_flag_ms_by_sunrise_sunset.map(
             ms=preprocess_science_mss,
             flagging_options=unmapped(flagging_options)
         )
@@ -369,13 +369,11 @@ def process_science_fields(
             rename_ms=field_options.rename_ms,
             archive_cal_table=True,
             casa_container=field_options.casa_container,
-            update_gain_cal_options=None, # might want to think about exposing this in skycal options as well, e.g. solint, uvrange, etc.
+            update_gain_cal_options=None, # TODO: might want to think about exposing this in skycal options as well, e.g. solint, uvrange, etc.
                                           # that makes a good case for skycal options to be part of the config_strategy.yml file
         )
 
-        # rename the ms to get rid of round or set round=0 above? 
-
-        # then we can start the selfcal loop as normal.
+        # then we can start the selfcal loop as in the continuum_pipeline flow.
 
 
     if field_options.wsclean_container is None:
