@@ -173,6 +173,7 @@ def process_science_fields(
     field_options: FieldOptions,
     cluster_config: str | Path,
     bandpass_path: Path | None = None,
+    ms_is_casda: bool = False,
 ) -> None:
     # Verify no nasty incompatible options
     _check_field_options(field_options=field_options)
@@ -213,7 +214,8 @@ def process_science_fields(
     # at sea for to long. Should refactor (or mask a EMU only).
     if isinstance(
         extract_components_from_name(name=science_mss[0].path), CASDANameComponents
-    ):
+    ) or ms_is_casda:
+        
         preprocess_science_mss = task_copy_and_preprocess_casda_askap_ms.map(
             casda_ms=science_mss, output_directory=output_split_science_path,
             skip_fixms=field_options.skip_fixms,
@@ -225,6 +227,8 @@ def process_science_fields(
             ms=preprocess_science_mss, container=field_options.flagger_container
         )
     else:
+
+        raise NotImplementedError("TODO: Implement for non-CASDA MSs")
         # TODO: This will likely need to be expanded should any
         # other calibration strategies get added
         # Scan the existing bandpass directory for the existing solutions
@@ -277,6 +281,7 @@ def process_science_fields(
         )
         return
 
+    # TODO: why dont we map this to do it in parallel for every beam?
     field_summary = task_create_field_summary.submit(
         mss=preprocess_science_mss,
         cal_sbid_path=bandpass_path,
@@ -684,6 +689,7 @@ def setup_run_process_science_field(
     split_path: Path,
     field_options: FieldOptions,
     bandpass_path: Path | None = None,
+    ms_is_casda: bool = False,
 ) -> None:
     science_sbid = get_sbid_from_path(path=science_path)
 
@@ -704,6 +710,7 @@ def setup_run_process_science_field(
         split_path=split_path,
         field_options=field_options,
         cluster_config=cluster_config,
+        ms_is_casda=ms_is_casda,
     )
 
     # TODO: Put the archive stuff here?
@@ -740,6 +747,13 @@ def get_parser() -> ArgumentParser:
         help="Path to directory containing the uncalibrated beam-wise measurement sets that contain the bandpass calibration source. If None then the '--sky-model-directory' should be provided. ",
     )
 
+    parser.add_argument(
+        "--ms-is-casda",
+        action="store_true",
+        default=False,
+        help="Overwrite automatic naming convention check. Assume that the MSs are CASDA ASKAP MSs irrespective of the MS name. Default False",
+    )    
+
     parser = add_options_to_parser(parser=parser, options_class=FieldOptions)
 
     return parser
@@ -766,6 +780,7 @@ def cli() -> None:
         bandpass_path=args.calibrated_bandpass_path,
         split_path=args.split_path,
         field_options=field_options,
+        ms_is_casda=args.ms_is_casda,
     )
 
 
