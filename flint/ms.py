@@ -22,8 +22,8 @@ import numpy as np
 from astropy.coordinates import EarthLocation, SkyCoord
 from astropy.time import Time
 from casacore.tables import table, taql
-from fixms.fix_ms_corrs import fix_ms_corrs
-from fixms.fix_ms_dir import fix_ms_dir
+from fixms.fix_ms_corrs import fix_ms_corrs  # type: ignore
+from fixms.fix_ms_dir import fix_ms_dir  # type: ignore
 
 from flint.casa import copy_with_mstranform
 from flint.logging import logger
