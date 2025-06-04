@@ -281,10 +281,11 @@ def process_science_fields(
         )
         return
 
-    field_summary = task_create_field_summary.map(
+    # TODO: why dont we map this to do it in parallel for every beam?
+    field_summary = task_create_field_summary.submit(
         mss=preprocess_science_mss,
-        cal_sbid_path=unmapped(bandpass_path),
-        holography_path=unmapped(field_options.holofile),
+        cal_sbid_path=bandpass_path,
+        holography_path=field_options.holofile,
     )  # type: ignore
     logger.info(f"{field_summary=}")
 
