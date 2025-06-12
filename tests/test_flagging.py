@@ -12,9 +12,16 @@ from flint.containers import get_known_container_path
 from flint.flagging import (
     flag_ms_aoflagger,
     flag_ms_zero_uvws,
+    jolly_uvw_flagger,
     nan_zero_extreme_flag_ms,
 )
 from flint.ms import MS
+
+
+def test_jolly_uvw_flag(ms_example):
+    """Simple test to ensure that the interface into the
+    jolly-roger uvw sun flagger is behaving"""
+    jolly_uvw_flagger(ms=MS.cast(ms=ms_example))
 
 
 def test_flag_ms_zero_uvws(ms_example):
