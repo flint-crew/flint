@@ -37,6 +37,7 @@ from flint.options import (
     dump_field_options_to_yaml,
 )
 from flint.prefect.clusters import get_dask_runner
+from flint.prefect.common.flagging import task_jolly_uvw_flagger
 from flint.prefect.common.imaging import (
     create_convol_linmos_images,
     create_convolve_linmos_cubes,
@@ -241,6 +242,15 @@ def process_science_fields(
             data_column=unmapped("CORRECTED_DATA"),
             instrument_column=unmapped("DATA"),
             overwrite=True,
+        )
+
+    if field_options.use_sun_uvw_flagging:
+        update_uvw_flag_options = get_options_from_strategy(
+            strategy=strategy, mode="jollyuvwflag", round_info=0, operation="selfcal"
+        )
+        preprocess_science_mss = task_jolly_uvw_flagger.map(
+            ms=preprocess_science_mss,
+            update_uvw_flag_options=unmapped(update_uvw_flag_options),
         )
 
     if field_options.no_imaging:

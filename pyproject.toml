@@ -77,7 +77,8 @@ dev = [
 ]
 casa =[
     "python-casacore>=3.6.0",
-    "fixms>=0.4.0"
+    "fixms>=0.4.0",
+    "jolly-roger>=0.0.2"
 ]
 
 [project.scripts]

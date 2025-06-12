@@ -5,21 +5,59 @@ from __future__ import annotations
 import math
 from argparse import ArgumentParser
 from pathlib import Path
-from typing import Collection, NamedTuple
+from typing import Any, Collection
 
 import numpy as np
 from casacore.tables import table
+from jolly_roger.flagger import JollyRogerOptions, flag
 from numpy.typing import NDArray
 
 from flint.exceptions import MSError
 from flint.logging import logger
 from flint.ms import check_column_in_ms, critical_ms_interaction, describe_ms
-from flint.options import MS
+from flint.options import MS, BaseOptions
 from flint.sclient import run_singularity_command
 from flint.utils import get_packaged_resource_path
 
 
-class AOFlaggerCommand(NamedTuple):
+class UVWFlagOptions(BaseOptions):
+    """Settings to provide to jolly-roger (u,v,w) flagging"""
+
+    min_scale_deg: float = 0.075
+    """Minimum angular scale to project to UVW"""
+    min_horizon_limit_deg: float = -3
+    """The minimum elevation for the sun projected baselines to be considered for flagging"""
+    max_horizon_limit_deg: float = 90
+    """The minimum elevation for the sun projected baselines to be considered for flagging"""
+
+
+def jolly_uvw_flagger(
+    ms: MS, update_uvw_flag_options: dict[str, Any] | None = None
+) -> MS:
+    """Use `jolly-roger` to flag visibilities if their uv-distance when
+    projected towards the Sun is shorter than some selected angular size.
+
+    Args:
+        ms (MS): The measurement set to flag
+        update_uvw_flag_options (dict[str, Any] | None, optional): Options to provide to the JollyRogerOptions. Defaults to None.
+
+    Returns:
+        MS: The MS that was flagged
+    """
+
+    uvw_flag_options = UVWFlagOptions()
+    if update_uvw_flag_options:
+        uvw_flag_options = uvw_flag_options.with_options(**update_uvw_flag_options)
+
+    logger.info(f"Running Jolly-Roger (uvw)-flagger on {ms.path=}")
+
+    jolly_options = JollyRogerOptions(**uvw_flag_options._asdict())
+    flag(ms_path=ms.path, flag_options=jolly_options)
+
+    return ms
+
+
+class AOFlaggerCommand(BaseOptions):
     """The command to use when running aoflagger"""
 
     cmd: str
