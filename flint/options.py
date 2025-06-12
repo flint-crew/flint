@@ -354,6 +354,8 @@ class SubtractFieldOptions(BaseOptions):
     """Invoke the ``addmodel`` visibility prediction, including the search for the ``wsclean`` source list"""
     use_crystalball: bool = False
     """Attempt to predict the model visibilities using ``crystalball``"""
+    subtract_only: bool = False
+    """Only perform the continuum subtraction"""
 
 
 class FieldOptions(BaseOptions):
