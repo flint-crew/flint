@@ -305,6 +305,11 @@ def flow_subtract_cube(
             update_tracked_column=True,
         )
 
+    # Fellow Captain Zic request, arrr
+    if subtract_field_options.subtract_only:
+        logger.info("The '--subtract-only' option has been specified. No imaging.")
+        return
+
     channel_parset_list = []
     for channel, freq_mhz in enumerate(freqs_mhz):
         logger.info(f"Imaging {channel=} {freq_mhz=}")
