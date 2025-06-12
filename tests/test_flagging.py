@@ -23,6 +23,11 @@ def test_jolly_uvw_flag(ms_example):
     jolly-roger uvw sun flagger is behaving"""
     jolly_uvw_flagger(ms=MS.cast(ms=ms_example))
 
+    with table(str(ms_example), ack=False, readonly=False) as tab:
+        flags = tab.getcol("FLAG")
+        flags = flags | False
+        tab.putcol("FLAG", flags)
+
     update = {"min_scale_deg": 0.0, "min_horizon_limit_deg": -90.0}
     jolly_uvw_flagger(ms=MS.cast(ms=ms_example), update_uvw_flag_options=update)
     with table(str(ms_example), ack=False) as tab:
