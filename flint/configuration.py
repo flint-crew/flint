@@ -43,7 +43,7 @@ MODE_OPTIONS_MAPPING = {
     "bane": BANEOptions,
     "aegean": AegeanOptions,
     "potatopeel": PotatoPeelOptions,
-    "uvwflag": UVWFlagOptions,
+    "jollyuvwflag": UVWFlagOptions,
 }
 POLARISATION_MAPPING = {
     "total": "i",

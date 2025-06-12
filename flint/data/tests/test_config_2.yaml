@@ -73,9 +73,12 @@ defaults:
       - .*png
       - .*csv
       - testing_for_sparrow.csv
+  jollyuvwflag:
+    min_scale_deg: 0.075
 
 selfcal:
   0:
+    jollyuvwflag: {}
     wsclean: {}
     potatopeel:
       tmp: "JackSparrowBeHere"

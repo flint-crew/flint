@@ -9,7 +9,7 @@ from typing import Any, Collection
 
 import numpy as np
 from casacore.tables import table
-from jolly_roger.flagger import JollyRogerOptions, flag
+from jolly_roger.flagger import JollyRogerFlagOptions, flag
 from numpy.typing import NDArray
 
 from flint.exceptions import MSError
@@ -51,7 +51,7 @@ def jolly_uvw_flagger(
 
     logger.info(f"Running Jolly-Roger (uvw)-flagger on {ms.path=}")
 
-    jolly_options = JollyRogerOptions(**uvw_flag_options._asdict())
+    jolly_options = JollyRogerFlagOptions(**uvw_flag_options._asdict())
     flag(ms_path=ms.path, flag_options=jolly_options)
 
     return ms

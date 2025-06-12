@@ -73,6 +73,22 @@ def package_strategy_path():
     return example
 
 
+def test_jolly_uvw_flagger(package_strategy_operations):
+    """Test to ensure the jolly roger flag step is correctly extracted"""
+    # verify it
+    strategy = package_strategy_operations
+    verify_configuration(input_strategy=strategy)
+
+    options = get_options_from_strategy(
+        strategy=package_strategy_operations,
+        round_info=0,
+        mode="jollyuvwflag",
+        operation="selfcal",
+    )
+    assert options["min_scale_deg"] == 0.075
+    # min_scale_deg: float = 0.075
+
+
 def test_get_potato_peel_options(package_strategy_operations):
     """Ensure that we are able to access potato peel options"""
     strategy = package_strategy_operations
