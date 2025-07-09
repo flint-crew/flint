@@ -73,7 +73,10 @@ def task_jolly_roger_tractor(
     Returns:
         MS: Reference to modified measurement set
     """
+    from flint.ms import critical_ms_interaction
 
+    # TODO: How should the columns be handled here? Do we want to
+    # only update in place?
     update_tukey_tractor_options = (
         update_tukey_tractor_options if update_tukey_tractor_options else {}
     )
@@ -84,6 +87,11 @@ def task_jolly_roger_tractor(
     update_tukey_tractor_options["output_column"] = data_column
     update_tukey_tractor_options["overwrite"] = True
 
-    return jolly_roger_tractor(
-        ms=ms, update_tukey_tractor_options=update_tukey_tractor_options
-    )
+    with critical_ms_interaction(input_ms=ms.path) as critical_ms_path:
+        critical_ms = ms.with_options(path=critical_ms_path)
+
+        out_ms = jolly_roger_tractor(
+            ms=critical_ms, update_tukey_tractor_options=update_tukey_tractor_options
+        )
+
+    return out_ms.with_options(path=ms.path)
