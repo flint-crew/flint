@@ -9,6 +9,7 @@ from typing import Any
 import astropy.units as u
 import numpy as np
 from jolly_roger.tractor import TukeyTractorOptions as JollyTukeyTractorOptions
+from jolly_roger.tractor import tukey_tractor
 
 from flint.logging import logger
 from flint.options import (
@@ -44,8 +45,8 @@ class TukeyTractorOptions(BaseOptions):
     """If the output column exists it will be overwritten"""
     chunk_size: int = 1000
     """Size of the row-wise chunking iterator"""
-    apply_towards_object: bool = False
-    """apply the taper using the delay towards the target object."""
+    apply_towards_object: bool = True
+    """apply the taper using the delay towards the target object. Otherwise delays away from zero are nulled with potential for significant smearing effects."""
     target_object: str = "Sun"
     """The target object to apply the delay towards."""
     elevation_cut_deg: float = --1
@@ -97,6 +98,12 @@ def jolly_roger_tractor(
         tukey_tractor_options = tukey_tractor_options.with_options(
             **update_tukey_tractor_options
         )
+
+    jolly_tukey_tractor_options = _create_jolly_tractor_options(
+        ms_path=ms.path, tukey_tractor_options=tukey_tractor_options
+    )
+    logger.info("Running the jolly-roger's tukey tractor")
+    tukey_tractor(tukey_tractor_options=jolly_tukey_tractor_options)
 
     return ms
 
