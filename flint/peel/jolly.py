@@ -49,7 +49,7 @@ class TukeyTractorOptions(BaseOptions):
     """apply the taper using the delay towards the target object. Otherwise delays away from zero are nulled with potential for significant smearing effects."""
     target_object: str = "Sun"
     """The target object to apply the delay towards."""
-    elevation_cut_deg: float = --1
+    elevation_cut_deg: float = -1
     """The elevation cut-off for the target object, in degrees. Defaults to -1."""
     ignore_nyquist_zone: int = 2
     """Do not apply the tukey taper if object is beyond this Nyquist zone"""
