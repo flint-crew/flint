@@ -55,7 +55,10 @@ from flint.prefect.common.imaging import (
     task_zip_ms,
     validation_items,
 )
-from flint.prefect.common.ms import task_add_model_source_list_to_ms
+from flint.prefect.common.ms import (
+    task_add_model_source_list_to_ms,
+    task_jolly_roger_tractor,
+)
 from flint.prefect.common.utils import (
     task_archive_sbid,
     task_create_beam_summary,
@@ -276,6 +279,17 @@ def process_science_fields(
             update_potato_peel_options=unmapped(potato_peel_options),
         )
 
+    if field_options.use_jolly_tukey_tractor:
+        tukey_tractor_options = get_options_from_strategy(
+            strategy=strategy, mode="tukeytractor", round_info=0, operation="selfcal"
+        )
+        preprocess_science_mss = task_jolly_roger_tractor.map(
+            ms=preprocess_science_mss,
+            update_tukey_tractor_options=unmapped(tukey_tractor_options),
+        )
+
+    # The stokes-v mss are updated throughout the self-calibration loop
+    # as the file names change
     stokes_v_mss = preprocess_science_mss
     wsclean_results = task_wsclean_imager.map(
         in_ms=preprocess_science_mss,

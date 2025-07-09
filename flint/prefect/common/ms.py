@@ -10,6 +10,7 @@ from prefect import Task, task
 from flint.imager.wsclean import WSCleanResult
 from flint.logging import logger
 from flint.ms import subtract_model_from_data_column
+from flint.peel.jolly import jolly_roger_tractor
 from flint.predict.addmodel import AddModelOptions, add_model
 
 P = ParamSpec("P")
@@ -56,3 +57,4 @@ def add_model_source_list_to_ms(
 
 
 task_add_model_source_list_to_ms: Task[P, R] = task(add_model_source_list_to_ms)
+task_jolly_roger_tractor = task(jolly_roger_tractor)

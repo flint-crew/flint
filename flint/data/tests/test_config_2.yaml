@@ -79,6 +79,8 @@ selfcal:
     wsclean: {}
     potatopeel:
       tmp: "JackSparrowBeHere"
+    tukeytractor:
+      elevation_cut_deg: 10.0
   1:
     wsclean:
       data_column: "EXAMPLE"
