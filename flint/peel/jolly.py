@@ -82,9 +82,19 @@ def _create_jolly_tractor_options(
 
 def jolly_roger_tractor(
     ms: MS | Path,
-    tukey_tractor_options: TukeyTractorOptions | None,
+    tukey_tractor_options: TukeyTractorOptions | None = None,
     update_tukey_tractor_options: dict[str, Any] | None = None,
 ) -> MS:
+    """Run the `jolly_roger` tukey tractor method to null towards an object.
+
+    Args:
+        ms (MS | Path): The measurement set to modify
+        tukey_tractor_options (TukeyTractorOptions | None, optional): Settings to modify the tukey tractor algorithm. If None defaults are used. Defaults to None.
+        update_tukey_tractor_options (dict[str, Any] | None, optional): Over-rides the options of `tukey_tractor_options`. Defaults to None.
+
+    Returns:
+        MS: Reference to modified measurement set
+    """
     ms = MS.cast(ms)
     if tukey_tractor_options is None:
         logger.info("Using default tukey tractor options")

@@ -280,6 +280,8 @@ def process_science_fields(
         )
 
     if field_options.use_jolly_tukey_tractor:
+        # TODO: Need to consider expanding the task below to
+        # handle MS column?
         tukey_tractor_options = get_options_from_strategy(
             strategy=strategy, mode="tukeytractor", round_info=0, operation="selfcal"
         )
