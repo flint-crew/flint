@@ -82,6 +82,7 @@ def task_jolly_roger_tractor(
     logger.info(f"Updating tukey tractor options to modified {data_column=}")
     update_tukey_tractor_options["data_column"] = data_column
     update_tukey_tractor_options["output_column"] = data_column
+    update_tukey_tractor_options["overwrite"] = True
 
     return jolly_roger_tractor(
         ms=ms, update_tukey_tractor_options=update_tukey_tractor_options
