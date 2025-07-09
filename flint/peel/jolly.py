@@ -57,6 +57,9 @@ class TukeyTractorOptions(BaseOptions):
 def _create_jolly_tractor_options(
     ms_path: Path, tukey_tractor_options: TukeyTractorOptions
 ) -> JollyTukeyTractorOptions:
+    if not isinstance(tukey_tractor_options, TukeyTractorOptions):
+        raise TypeError(f"Expect TukeyTaperOptions, got {type(tukey_tractor_options)}")
+
     logger.info("Creating jolly-roget TukeyTractorOptions object")
     return JollyTukeyTractorOptions(
         ms_path=ms_path,
