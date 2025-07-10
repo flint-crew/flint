@@ -252,13 +252,6 @@ def process_science_fields(
         )
         return
 
-    field_summary = task_create_field_summary.submit(
-        mss=preprocess_science_mss,
-        cal_sbid_path=bandpass_path,
-        holography_path=field_options.holofile,
-    )  # type: ignore
-    logger.info(f"{field_summary=}")
-
     if field_options.wsclean_container is None:
         logger.info("No wsclean container provided. Returning. ")
         return
@@ -289,6 +282,16 @@ def process_science_fields(
             ms=preprocess_science_mss,
             update_tukey_tractor_options=unmapped(tukey_tractor_options),
         )
+
+    # Some preprocessing stages (temporarily) modify the MS name.
+    # Run the field summary here to avoid attemptign to read at
+    # poor timem when MS is renamed, ya see dog
+    field_summary = task_create_field_summary.submit(
+        mss=preprocess_science_mss,
+        cal_sbid_path=bandpass_path,
+        holography_path=field_options.holofile,
+    )  # type: ignore
+    logger.info(f"{field_summary=}")
 
     # The stokes-v mss are updated throughout the self-calibration loop
     # as the file names change
