@@ -558,9 +558,11 @@ def process_science_fields(
 
     # zip up the final measurement set, which is not included in the above loop
     if field_options.zip_ms:
-        archive_wait_for = task_zip_ms.map(
-            in_item=wsclean_results, wait_for=archive_wait_for
+        archive_results = task_zip_ms.map(
+            in_item=wsclean_results,
+            wait_for=wsclean_results,  # can zip MS once all imaging done
         )
+        archive_wait_for.extend(archive_results)
 
     if field_options.sbid_archive_path or field_options.sbid_copy_path:
         update_archive_options = get_options_from_strategy(
