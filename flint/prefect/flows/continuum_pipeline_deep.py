@@ -282,6 +282,7 @@ def process_science_fields(
         return
 
     # TODO: why dont we map this to do it in parallel for every beam?
+    # would require changing the create_field_summary function
     field_summary = task_create_field_summary.submit(
         mss=preprocess_science_mss,
         cal_sbid_path=bandpass_path,
@@ -294,7 +295,7 @@ def process_science_fields(
                 strategy=strategy, mode="flagging", round_info=0, operation="selfcal"
             )
     
-    if flagging_options['mode'] is None:
+    if 'mode' not in flagging_options.keys():
         logger.info("No flagging options provided, not doing additional flagging.")
     elif flagging_options['mode'] == "flagtwilight":
         logger.info("User requested flagging data around twilight.")
