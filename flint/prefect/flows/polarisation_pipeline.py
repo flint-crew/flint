@@ -56,6 +56,7 @@ from flint.prefect.common.utils import (
 def process_science_fields_pol(
     flint_ms_directory: Path,
     pol_field_options: PolFieldOptions,
+    ms_is_flint: bool = False,
 ) -> None:
     strategy = load_and_copy_strategy(
         output_split_science_path=flint_ms_directory,
@@ -76,48 +77,52 @@ def process_science_fields_pol(
             data_column=strategy["defaults"].get("data_column", "DATA"),
         )
     )
-    # Check if MSs have been processed by Flint or have been provided by CASDA
-    from_flint_list = [
-        isinstance(extract_components_from_name(ms.path), ProcessedNameComponents)
-        for ms in science_mss
-    ]
-    from_casda_list = [
-        isinstance(extract_components_from_name(ms.path), CASDANameComponents)
-        for ms in science_mss
-    ]
 
-    if not any(from_flint_list) and not any(from_casda_list):
-        raise MSError("No valid MeasurementSets found! Data must be calibrated first.")
+    if not ms_is_flint:
+        # if user has not forced that MS is indeed from previous flint run, perform checks
 
-    if any(from_flint_list) and any(from_casda_list):
-        raise MSError("Cannot mix Flint-processed and CASDA-provided MeasurementSets!")
+        # Check if MSs have been processed by Flint or have been provided by CASDA
+        from_flint_list = [
+            isinstance(extract_components_from_name(ms.path), ProcessedNameComponents)
+            for ms in science_mss
+        ]
+        from_casda_list = [
+            isinstance(extract_components_from_name(ms.path), CASDANameComponents)
+            for ms in science_mss
+        ]
 
-    if any(from_casda_list):
-        assert all(from_casda_list), (
-            "Some MeasurementSets are from Flint, some are from CASDA"
-        )
-        logger.info("Data are from CASDA, need to apply FixMS")
-        if pol_field_options.casa_container is None:
-            msg = "We need to apply FixMS to CASDA-provided data, but no CASA container provided"
-            raise MSError(msg)
+        if not any(from_flint_list) and not any(from_casda_list):
+            raise MSError("No valid MeasurementSets found! Data must be calibrated first.")
 
-        corrected_mss = []
-        for ms in science_mss:
-            corrected_ms = task_preprocess_askap_ms.submit(
-                ms=ms,
-                data_column=strategy["defaults"].get("data_column", "DATA"),
-                skip_rotation=False,
-                fix_stokes_factor=True,
-                apply_ms_transform=True,
-                casa_container=pol_field_options.casa_container,
-                rename=True,
+        if any(from_flint_list) and any(from_casda_list):
+            raise MSError("Cannot mix Flint-processed and CASDA-provided MeasurementSets!")
+
+        if any(from_casda_list):
+            assert all(from_casda_list), (
+                "Some MeasurementSets are from Flint, some are from CASDA"
             )
-            corrected_mss.append(corrected_ms)
+            logger.info("Data are from CASDA, need to apply FixMS")
+            if pol_field_options.casa_container is None:
+                msg = "We need to apply FixMS to CASDA-provided data, but no CASA container provided"
+                raise MSError(msg)
 
-        assert len(corrected_mss) == len(science_mss), (
-            "Number of corrected MSs does not match number of input MSs"
-        )
-        science_mss = corrected_mss
+            corrected_mss = []
+            for ms in science_mss:
+                corrected_ms = task_preprocess_askap_ms.submit(
+                    ms=ms,
+                    data_column=strategy["defaults"].get("data_column", "DATA"),
+                    skip_rotation=False,
+                    fix_stokes_factor=True,
+                    apply_ms_transform=True,
+                    casa_container=pol_field_options.casa_container,
+                    rename=True,
+                )
+                corrected_mss.append(corrected_ms)
+
+            assert len(corrected_mss) == len(science_mss), (
+                "Number of corrected MSs does not match number of input MSs"
+            )
+            science_mss = corrected_mss
 
     field_summary = task_create_field_summary.submit(
         mss=science_mss,
@@ -252,6 +257,7 @@ def setup_run_process_science_field(
     cluster_config: str | Path,
     flint_ms_directory: Path,
     pol_field_options: PolFieldOptions,
+    ms_is_flint: bool = False,
 ) -> None:
     science_sbid = get_sbid_from_path(path=flint_ms_directory)
 
@@ -298,6 +304,13 @@ def get_parser() -> ArgumentParser:
         description="Polarisation processing options",
     )
 
+    parser.add_argument(
+        "--ms-is-flint",
+        action="store_true",
+        default=False,
+        help="Overwrite automatic naming convention check. Assume that the MSs are flint calibrated. Default False",
+    )    
+
     return parser
 
 
@@ -320,6 +333,7 @@ def cli() -> None:
         cluster_config=args.cluster_config,
         flint_ms_directory=args.flint_ms_directory,
         pol_field_options=field_options,
+        ms_is_flint=args.ms_is_flint,
     )
 
 
