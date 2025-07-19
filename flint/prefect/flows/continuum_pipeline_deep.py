@@ -223,9 +223,15 @@ def process_science_fields(
             data_column=unmapped(field_options.data_column) # before skip_fixms, it was a safe assumption to always copy only the DATA column
                                                             # now, the user could have fixed visibilities in DATA or CORRECTED_DATA column
         )
-        preprocess_science_mss = task_flag_ms_aoflagger.map(  # type: ignore
-            ms=preprocess_science_mss, container=field_options.flagger_container
-        )
+
+        if not field_options.skip_aoflagger:
+            preprocess_science_mss = task_flag_ms_aoflagger.map(  # type: ignore
+                ms=preprocess_science_mss, container=field_options.flagger_container
+            )
+        else:
+            logger.info(
+                f"Skipping aoflagger, as requested by {field_options.skip_aoflagger=}"
+            )
     else:
 
         raise NotImplementedError("TODO: Implement for non-CASDA MSs")
