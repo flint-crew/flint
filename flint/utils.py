@@ -515,7 +515,7 @@ def generate_stub_wcs_header(
         )
         pixel_scale = np.abs(pixel_scale.to(u.rad).value)
 
-        pixel_scale = np.array([-pixel_scale, pixel_scale])
+        pixel_scale = np.array([-pixel_scale, pixel_scale])  # type: ignore
 
     # Handle the ref position
     if ra is not None:
