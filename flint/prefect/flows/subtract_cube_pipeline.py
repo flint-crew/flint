@@ -318,7 +318,7 @@ def flow_subtract_cube(
         logger.info("The '--subtract-only' option has been specified. No imaging.")
         return
 
-    if subtract_field_options.timestep_image:
+    if subtract_field_options.channelwise_image_image:
         channel_parset_list = []
         for channel, freq_mhz in enumerate(freqs_mhz):
             logger.info(f"Imaging {channel=} {freq_mhz=}")
@@ -370,7 +370,7 @@ def flow_subtract_cube(
     if subtract_field_options.timestep_image:
         scan_parset_list = []
         for scan, time in enumerate(times):
-            if scan > 300:
+            if scan > 30:
                 logger.critical("Breaking for sanity")
             logger.info(f"Imaging {scan=} {time=}")
             scan_range = (scan, scan + 1)
