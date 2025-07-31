@@ -218,11 +218,13 @@ def get_phase_dir_from_ms(ms: MS | Path) -> SkyCoord:
     return phase_sky
 
 
-def get_times_from_ms(ms: MS | Path) -> Time:
+def get_times_from_ms(ms: MS | Path, unique: bool = False, sort: bool = False) -> Time:
     """Return the observation times from an ASKAP Measurement set.
 
     Args:
         ms (Union[MS, Path]): Measurement set to inspect
+        unique (bool, optional): return only the unique times. Defaults to False.
+        sort (bool, optional): return times in ascending order, otherwise they are returned in the order the MS has them in. Defaults to False.
 
     Returns:
         Time: The observation times
@@ -231,6 +233,11 @@ def get_times_from_ms(ms: MS | Path) -> Time:
     ms = MS.cast(ms)
     with table(str(ms.path), ack=False) as tab:
         times = Time(tab.getcol("TIME") * u.s, format="mjd")
+
+    if unique:
+        times = np.unique(times)
+    if sort:
+        times = np.sort(times)
 
     return times
 

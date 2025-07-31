@@ -20,6 +20,7 @@ from flint.ms import (
     copy_and_preprocess_casda_askap_ms,
     find_mss,
     get_phase_dir_from_ms,
+    get_times_from_ms,
     remove_columns_from_ms,
     rename_ms_and_columns_for_selfcal,
     subtract_model_from_data_column,
@@ -489,3 +490,18 @@ def test_copy_and_preprocess_casda_askap_ms_container_errors():
             casda_ms=Path("ThisNotNeeded"),
             casa_container=None,
         )
+
+
+def test_get_times_from_ms(ms_example) -> None:
+    """Pull out the times from a MS"""
+    times = get_times_from_ms(ms=ms_example)
+    assert len(times) > 1
+    assert len(times) == 1998
+
+    unique_times = get_times_from_ms(ms=ms_example, unique=True)
+    assert len(unique_times) == 3
+
+    unique_times = get_times_from_ms(ms=ms_example, unique=True, sort=True)
+    assert len(unique_times) == 3
+    assert np.argmin(unique_times) == 0
+    assert np.argmax(unique_times) == 2
