@@ -212,6 +212,17 @@ def test_create_imaging_name_prefix():
     name = create_imaging_name_prefix(ms_path=ms.path, channel_range=(100, 108))
     assert name == "SB63789.EMU_1743-51.beam03.round4.ch0100-0108"
 
+    name = create_imaging_name_prefix(
+        ms_path=ms.path, channel_range=(100, 108), scan_range=(234, 345)
+    )
+    assert name == "SB63789.EMU_1743-51.beam03.round4.ch0100-0108.scan0234-0345"
+
+    name = create_imaging_name_prefix(ms_path=ms.path, scan_range=(234, 345))
+    assert name == "SB63789.EMU_1743-51.beam03.round4.scan0234-0345"
+
+    name = create_imaging_name_prefix(ms_path=ms.path, scan_range=(234, 2345))
+    assert name == "SB63789.EMU_1743-51.beam03.round4.scan0234-2345"
+
 
 def test_get_cube_fits_from_paths():
     """Identify the files that contain the cube field and are fits"""

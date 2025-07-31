@@ -184,6 +184,7 @@ def create_imaging_name_prefix(
     ms_path: Path,
     pol: str | None = None,
     channel_range: tuple[int, int] | None = None,
+    scan_range: tuple[int, int] | None = None,
 ) -> str:
     """Given a measurement set and a polarisation, create the naming prefix to be used
     by some imager
@@ -192,16 +193,19 @@ def create_imaging_name_prefix(
         ms (Union[MS,Path]): The measurement set being considered
         pol (Optional[str], optional): Whether a polarsation is being considered. Defaults to None.
         channel_range (Optional[Tuple[int,int]], optional): The channel range that is going to be imaged. Defaults to none.
+        scan_range (Optional[Tuple[int,int]], optional): The scan range that is going to be imaged. Defaults to none.
 
     Returns:
         str: The constructed string name
     """
 
     names = [ms_path.stem]
-    if pol:
+    if pol is not None:
         names.append(f"{pol.lower()}")
-    if channel_range:
+    if channel_range is not None:
         names.append(f"ch{channel_range[0]:04}-{channel_range[1]:04}")
+    if scan_range is not None:
+        names.append(f"scan{scan_range[0]:04}-{scan_range[1]:04}")
 
     return ".".join(names)
 
