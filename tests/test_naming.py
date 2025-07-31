@@ -147,6 +147,51 @@ def test_create_path_from_process_named_components_2():
     assert ex == out
 
 
+def test_create_path_from_process_named_components_with_scan_range():
+    """Make sure we can create a name. The one makes sure we can go full circle"""
+    parent = Path("Jacccckkkk/Sparrow")
+    ex = parent / Path(
+        "SB39400.RACS_0000-123.beam33.spw234.round3.i.ch0123-567444.scan0000-0123"
+    )
+    pcn = processed_ms_format(in_name=ex)
+    out = create_path_from_processed_name_components(
+        processed_name_components=pcn, parent_path=parent
+    )
+    assert ex == out
+
+    parent = Path("Jacccckkkk/Sparrow")
+    ex = parent / Path("SB39400.RACS_0000-123.round3.i.ch0123-0444.scan1234-1236")
+    pcn = processed_ms_format(in_name=ex)
+    out = create_path_from_processed_name_components(
+        processed_name_components=pcn, parent_path=parent
+    )
+    assert ex == out
+
+    parent = Path("Jacccckkkk/Sparrow")
+    ex = parent / Path("SB39400.RACS_0000-123.round3.scan1234-1236")
+    pcn = processed_ms_format(in_name=ex)
+    out = create_path_from_processed_name_components(
+        processed_name_components=pcn, parent_path=parent
+    )
+    assert ex == out
+
+
+def test_processed_name_components_with_scan():
+    """See if the scan regex for the processed name behaves"""
+    parent = Path("Jacccckkkk/Sparrow")
+    ex = parent / Path(
+        "SB39400.RACS_0000-123.beam33.spw234.round3.i.ch0123-567444.scan0000-0123"
+    )
+    pcn = processed_ms_format(in_name=ex)
+    assert isinstance(pcn.scan_range, tuple)
+    assert pcn.scan_range[0] == 0
+    assert pcn.scan_range[1] == 123
+
+    ex = parent / Path("SB39400.RACS_0000-123.beam33.spw234.round3.i.ch0123-567444")
+    pcn = processed_ms_format(in_name=ex)
+    assert pcn.scan_range is None
+
+
 def test_create_imaging_name_prefix():
     """Creates the name that will be used for output image
     products"""
