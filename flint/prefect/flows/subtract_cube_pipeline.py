@@ -26,6 +26,7 @@ from flint.ms import (
     consistent_ms_frequencies,
     find_mss,
     get_freqs_from_ms,
+    get_times_from_ms,
 )
 from flint.naming import get_sbid_from_path
 from flint.options import (
@@ -168,6 +169,7 @@ def task_combine_all_linmos_images(
     linmos_commands: list[LinmosResult],
     remove_original_images: bool = False,
     combine_weights: bool = False,
+    time_domain: bool = False,
 ) -> Path:
     output_cube_path = Path("test.fits")
 
@@ -199,6 +201,7 @@ def task_combine_all_linmos_images(
         file_list=images_to_combine,
         out_cube=output_cube_path,
         max_workers=4,
+        time_domain=time_domain,
     )
 
     if remove_original_images:
@@ -275,6 +278,11 @@ def flow_subtract_cube(
             f"{len(freqs_mhz)} channels and no stagger delay set! Consider setting a stagger delay"
         )
 
+    times = get_times_from_ms(ms=science_mss[0], sort=True, unique=True)
+    logger.info(
+        f"Considering {len(times)} frequencies from {len(science_mss)} channels, minimum {np.min(freqs_mhz)}-{np.max(freqs_mhz)}"
+    )
+
     if subtract_field_options.use_addmodel:
         assert addmodel_subtract_field_options.addmodel_cluster_config is not None, (
             f"{addmodel_subtract_field_options.addmodel_cluster_config=}, which should not happen"
@@ -310,53 +318,106 @@ def flow_subtract_cube(
         logger.info("The '--subtract-only' option has been specified. No imaging.")
         return
 
-    channel_parset_list = []
-    for channel, freq_mhz in enumerate(freqs_mhz):
-        logger.info(f"Imaging {channel=} {freq_mhz=}")
-        channel_range = (channel, channel + 1)
-        channel_wsclean_cmds = task_wsclean_imager.with_options(retries=2).map(
-            in_ms=science_mss,
-            wsclean_container=subtract_field_options.wsclean_container,
-            channel_range=unmapped(channel_range),
-            update_wsclean_options=unmapped(
-                get_options_from_strategy(
-                    strategy=strategy,
-                    mode="wsclean",
-                    operation="subtractcube",
-                )
-            ),
+    if subtract_field_options.timestep_image:
+        channel_parset_list = []
+        for channel, freq_mhz in enumerate(freqs_mhz):
+            logger.info(f"Imaging {channel=} {freq_mhz=}")
+            channel_range = (channel, channel + 1)
+            channel_wsclean_cmds = task_wsclean_imager.with_options(retries=2).map(
+                in_ms=science_mss,
+                wsclean_container=subtract_field_options.wsclean_container,
+                channel_range=unmapped(channel_range),
+                update_wsclean_options=unmapped(
+                    get_options_from_strategy(
+                        strategy=strategy,
+                        mode="wsclean",
+                        operation="subtractcube",
+                    )
+                ),
+            )
+            channel_beam_shape = task_get_common_beam_from_results.submit(
+                wsclean_results=channel_wsclean_cmds,
+                cutoff=subtract_field_options.beam_cutoff,
+                filter_str="image.",
+            )
+            channel_parset = convolve_then_linmos(
+                wsclean_results=channel_wsclean_cmds,
+                beam_shape=channel_beam_shape,
+                linmos_suffix_str=None,
+                field_options=subtract_field_options,
+                convol_mode="image",
+                convol_filter="image.",
+                convol_suffix_str="optimal.conv",
+                trim_linmos_fits=False,  # This is necessary to ensure all images have same pixel-coordinates
+                remove_original_images=True,
+                cleanup_linmos=True,
+            )
+            channel_parset_list.append(channel_parset)
+
+            if subtract_field_options.stagger_delay_seconds:
+                sleep(subtract_field_options.stagger_delay_seconds)
+
+        # 4 - cube concatenated each linmos field together to single file
+        task_combine_all_linmos_images.submit(
+            linmos_commands=channel_parset_list, remove_original_images=True
         )
-        channel_beam_shape = task_get_common_beam_from_results.submit(
-            wsclean_results=channel_wsclean_cmds,
-            cutoff=subtract_field_options.beam_cutoff,
-            filter_str="image.",
-        )
-        channel_parset = convolve_then_linmos(
-            wsclean_results=channel_wsclean_cmds,
-            beam_shape=channel_beam_shape,
-            linmos_suffix_str=None,
-            field_options=subtract_field_options,
-            convol_mode="image",
-            convol_filter="image.",
-            convol_suffix_str="optimal.conv",
-            trim_linmos_fits=False,  # This is necessary to ensure all images have same pixel-coordinates
+        task_combine_all_linmos_images.submit(
+            linmos_commands=channel_parset_list,
             remove_original_images=True,
-            cleanup_linmos=True,
+            combine_weights=True,
         )
-        channel_parset_list.append(channel_parset)
 
-        if subtract_field_options.stagger_delay_seconds:
-            sleep(subtract_field_options.stagger_delay_seconds)
+    if subtract_field_options.timestep_image:
+        scan_parset_list = []
+        for scan, time in enumerate(times):
+            if scan > 300:
+                logger.critical("Breaking for sanity")
+            logger.info(f"Imaging {scan=} {time=}")
+            scan_range = (scan, scan + 1)
+            scan_wsclean_cmds = task_wsclean_imager.with_options(retries=2).map(
+                in_ms=science_mss,
+                wsclean_container=subtract_field_options.wsclean_container,
+                scan_range=unmapped(scan_range),
+                update_wsclean_options=unmapped(
+                    get_options_from_strategy(
+                        strategy=strategy,
+                        mode="wsclean",
+                        operation="subtractcube",
+                    )
+                ),
+            )
+            scan_beam_shape = task_get_common_beam_from_results.submit(
+                wsclean_results=scan_wsclean_cmds,
+                cutoff=subtract_field_options.beam_cutoff,
+                filter_str="image.",
+            )
+            scan_parset = convolve_then_linmos(
+                wsclean_results=scan_wsclean_cmds,
+                beam_shape=scan_beam_shape,
+                linmos_suffix_str=None,
+                field_options=subtract_field_options,
+                convol_mode="image",
+                convol_filter="image.",
+                convol_suffix_str="optimal.conv",
+                trim_linmos_fits=False,  # This is necessary to ensure all images have same pixel-coordinates
+                remove_original_images=True,
+                cleanup_linmos=True,
+            )
+            scan_parset_list.append(scan_parset)
 
-    # 4 - cube concatenated each linmos field together to single file
-    task_combine_all_linmos_images.submit(
-        linmos_commands=channel_parset_list, remove_original_images=True
-    )
-    task_combine_all_linmos_images.submit(
-        linmos_commands=channel_parset_list,
-        remove_original_images=True,
-        combine_weights=True,
-    )
+            if subtract_field_options.stagger_delay_seconds:
+                sleep(subtract_field_options.stagger_delay_seconds)
+
+        # 4 - cube concatenated each linmos field together to single file
+        task_combine_all_linmos_images.submit(
+            linmos_commands=scan_parset_list, remove_original_images=True
+        )
+        task_combine_all_linmos_images.submit(
+            linmos_commands=scan_parset_list,
+            remove_original_images=True,
+            combine_weights=True,
+            time_domain=True,
+        )
 
     return
 

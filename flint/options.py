@@ -356,6 +356,10 @@ class SubtractFieldOptions(BaseOptions):
     """Attempt to predict the model visibilities using ``crystalball``"""
     subtract_only: bool = False
     """Only perform the continuum subtraction"""
+    timestep_image: bool = False
+    """Perform timestep imaging after subtraction"""
+    channelwise_image: bool = False
+    """Perform channel-wise imaing of the residuals"""
 
 
 class FieldOptions(BaseOptions):

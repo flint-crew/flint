@@ -320,9 +320,13 @@ def task_wsclean_imager(
     update_wsclean_options: dict[str, Any] | None = None,
     fits_mask: FITSMaskNames | None = None,
     channel_range: tuple[int, int] | None = None,
+    scan_range: tuple[int, int] | None = None,
     make_cube_from_subbands: bool = True,
 ) -> WSCleanResult:
     """Run the wsclean imager against an input measurement set
+
+    The `channel_range` and `scan_range` options over-write the
+    `update_wsclean_options`, as some flow programmatically create these.
 
     Args:
         in_ms (Union[ApplySolutions, MS]): The measurement set that will be imaged
@@ -330,6 +334,7 @@ def task_wsclean_imager(
         update_wsclean_options (Optional[Dict[str, Any]], optional): Options to update from the default wsclean options. Defaults to None.
         fits_mask (Optional[FITSMaskNames], optional): A path to a clean guard mask. Defaults to None.
         channel_range (Optional[Tuple[int,int]], optional): Add to the wsclean options the specific channel range to be imaged. Defaults to None.
+        scan_range (Optional[Tuple[int,int]], optional): Add to the wsclean options the specific scan range to be imaged. Defaults to None.
 
     Returns:
         WSCleanResult: A resulting wsclean command and resulting meta-data
@@ -347,6 +352,9 @@ def task_wsclean_imager(
 
     if channel_range:
         update_wsclean_options["channel_range"] = channel_range
+
+    if channel_range:
+        update_wsclean_options["interval"] = channel_range
 
     logger.info(f"wsclean inager {ms=}")
     try:
