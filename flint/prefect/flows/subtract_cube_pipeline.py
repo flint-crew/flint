@@ -378,7 +378,7 @@ def flow_subtract_cube(
     if subtract_field_options.timestep_image:
         scan_parset_list = []
         for scan, time in enumerate(times):
-            if scan > 30:
+            if scan > 300:
                 logger.critical("Breaking for sanity")
                 break
             logger.info(f"Imaging {scan=} {time=}")
