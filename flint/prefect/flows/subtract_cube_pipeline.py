@@ -380,6 +380,7 @@ def flow_subtract_cube(
         for scan, time in enumerate(times):
             if scan > 30:
                 logger.critical("Breaking for sanity")
+                break
             logger.info(f"Imaging {scan=} {time=}")
             scan_range = (scan, scan + 1)
             scan_wsclean_cmds = task_wsclean_imager.with_options(retries=2).map(
