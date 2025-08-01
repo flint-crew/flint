@@ -640,6 +640,7 @@ def subtract_model_from_data_column(
     data_column: str | None = None,
     output_column: str | None = None,
     update_tracked_column: bool = False,
+    chunk_size: int | None = None,
 ) -> MS:
     """Execute a ``taql`` query to subtract the MODEL_DATA from a nominated data column.
     This requires the ``model_column`` to already be inserted into the MS. Internally
@@ -652,6 +653,7 @@ def subtract_model_from_data_column(
         data_column (Optional[str], optional): The column where the column will be subtracted. If ``None`` it is taken from the ``column`` nominated by the input ``MS`` instance. Defaults to None.
         output_column (Optional[str], optional): The output column that will be created. If ``None`` it defaults to ``data_column``. Defaults to None.
         update_tracked_column (bool, optional): If True, update ``ms.column`` to the column with subtracted data. Defaults to False.
+        chunk_size (int, optional): The number of rows to manage at a time. If None, `taql` is used. If an `int` iteration with getcol/putcol is used. Defaults to None.
 
     Returns:
         MS: The updated MS
@@ -682,7 +684,26 @@ def subtract_model_from_data_column(
                 tab.flush()
 
             logger.info(f"Subtracting {model_column=} from {data_column=}")
-            taql(f"UPDATE $tab SET {output_column}={data_column}-{model_column}")
+            if chunk_size is None:
+                taql(f"UPDATE $tab SET {output_column}={data_column}-{model_column}")
+            else:
+                current_idx = 0
+                total_rows = len(tab)
+                while current_idx < total_rows:
+                    logger.info(
+                        f"Working on rows {chunk_size=} at {current_idx=} for {total_rows=}"
+                    )
+                    data = tab.getcol(
+                        data_column, start_row=current_idx, nrow=chunk_size
+                    )
+                    model = tab.getcol(
+                        model_column, start_row=current_idx, nrow=chunk_size
+                    )
+                    residual = data - model
+                    tab.putcol(
+                        data_column, residual, startrow=current_idx, nrow=chunk_size
+                    )
+                    current_idx += chunk_size
 
     if update_tracked_column:
         logger.info(f"Updating ms.column to {output_column=}")
