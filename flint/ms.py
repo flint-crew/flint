@@ -689,9 +689,11 @@ def subtract_model_from_data_column(
             else:
                 current_idx = 0
                 total_rows = len(tab)
+                number_of_chunks = np.ceil(total_rows / chunk_size)
+                current_chunk = 1
                 while current_idx < total_rows:
                     logger.info(
-                        f"Working on rows {chunk_size=} at {current_idx=} for {total_rows=}"
+                        f"{current_chunk} of {number_of_chunks}) working on rows {current_idx}-{current_idx + chunk_size} of {total_rows} rows"
                     )
                     data = tab.getcol(
                         data_column, startrow=current_idx, nrow=chunk_size
@@ -704,6 +706,7 @@ def subtract_model_from_data_column(
                         data_column, residual, startrow=current_idx, nrow=chunk_size
                     )
                     current_idx += chunk_size
+                    current_chunk += 1
 
     if update_tracked_column:
         logger.info(f"Updating ms.column to {output_column=}")
