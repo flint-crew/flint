@@ -353,8 +353,8 @@ def task_wsclean_imager(
     if channel_range:
         update_wsclean_options["channel_range"] = channel_range
 
-    if channel_range:
-        update_wsclean_options["interval"] = channel_range
+    if scan_range:
+        update_wsclean_options["interval"] = scan_range
 
     logger.info(f"wsclean inager {ms=}")
     try:
