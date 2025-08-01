@@ -373,6 +373,38 @@ def test_subtract_model_from_data_column(casda_taql_example):
         assert np.all(data == 0 + 0j)
 
 
+def test_subtract_model_from_data_column_in_chunks(casda_taql_example):
+    """Ensure we can subtact the model from the data using an iteration method"""
+    ms = Path(casda_taql_example)
+    assert ms.exists()
+    ms = MS(path=ms)
+
+    from casacore.tables import makearrcoldesc, maketabdesc
+
+    with table(str(ms.path), readonly=False) as tab:
+        data = tab.getcol("DATA")
+        ones = np.ones_like(data, dtype=data.dtype)
+
+        tab.putcol(columnname="DATA", value=ones)
+
+        if "MODEL_DATA" not in tab.colnames():
+            coldesc = tab.getdminfo("DATA")
+            coldesc["NAME"] = "MODEL_DATA"
+            tab.addcols(
+                maketabdesc(makearrcoldesc("MODEL_DATA", 0.0 + 0j, ndim=2)), coldesc
+            )
+            tab.flush()
+        tab.putcol(columnname="MODEL_DATA", value=ones)
+        tab.flush()
+
+    ms = subtract_model_from_data_column(
+        ms=ms, model_column="MODEL_DATA", data_column="DATA", chunk_size=2
+    )
+    with table(str(ms.path)) as tab:
+        data = tab.getcol("DATA")
+        assert np.all(data == 0 + 0j)
+
+
 def test_subtract_model_from_data_column_ms_column(tmpdir):
     """Ensure we can subtact the model from the data via taql"""
     ms_zip = Path(

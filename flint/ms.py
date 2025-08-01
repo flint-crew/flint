@@ -694,10 +694,10 @@ def subtract_model_from_data_column(
                         f"Working on rows {chunk_size=} at {current_idx=} for {total_rows=}"
                     )
                     data = tab.getcol(
-                        data_column, start_row=current_idx, nrow=chunk_size
+                        data_column, startrow=current_idx, nrow=chunk_size
                     )
                     model = tab.getcol(
-                        model_column, start_row=current_idx, nrow=chunk_size
+                        model_column, startrow=current_idx, nrow=chunk_size
                     )
                     residual = data - model
                     tab.putcol(
