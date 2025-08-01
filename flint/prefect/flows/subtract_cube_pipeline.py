@@ -201,7 +201,7 @@ def task_combine_all_linmos_images(
         file_list=images_to_combine,
         out_cube=output_cube_path,
         max_workers=4,
-        time_domain=time_domain,
+        time_domain_mode=time_domain,
     )
 
     if remove_original_images:
