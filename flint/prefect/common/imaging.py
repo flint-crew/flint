@@ -339,7 +339,6 @@ def task_wsclean_imager(
     Returns:
         WSCleanResult: A resulting wsclean command and resulting meta-data
     """
-    from flint.exceptions import CleanDivergenceError
 
     ms = in_ms if isinstance(in_ms, MS) else in_ms.ms
 
@@ -357,42 +356,12 @@ def task_wsclean_imager(
         update_wsclean_options["interval"] = scan_range
 
     logger.info(f"wsclean inager {ms=}")
-    try:
-        return wsclean_imager(
-            ms=ms,
-            wsclean_container=wsclean_container,
-            update_wsclean_options=update_wsclean_options,
-            make_cube_from_subbands=make_cube_from_subbands,
-        )
-    except CleanDivergenceError:
-        # NOTE: If the cleaning failed retry with some larger images
-        # and slower cleaning. Perhaps this should be moved closer
-        # to the wscleaning functionality
-        size = (
-            update_wsclean_options["size"] + 1024
-            if "size" in update_wsclean_options
-            else 8196
-        )
-        mgain = (
-            max(0, update_wsclean_options["mgain"] - 0.1)
-            if "mgain" in update_wsclean_options
-            else 0.6
-        )
-        convergence_wsclean_options = dict(size=size, mgain=mgain)
-        # dicts are mutable. Don't want to change for everything. Unclear to me
-        # how prefect would behave here.
-        update_wsclean_options = update_wsclean_options.copy()
-        update_wsclean_options.update(**convergence_wsclean_options)
-        logger.warning(
-            f"Clean divergence dertected. Rerunning. Updated options {convergence_wsclean_options=}"
-        )
-
-        return wsclean_imager(
-            ms=ms,
-            wsclean_container=wsclean_container,
-            update_wsclean_options=update_wsclean_options,
-            make_cube_from_subbands=make_cube_from_subbands,
-        )
+    return wsclean_imager(
+        ms=ms,
+        wsclean_container=wsclean_container,
+        update_wsclean_options=update_wsclean_options,
+        make_cube_from_subbands=make_cube_from_subbands,
+    )
 
 
 def get_common_beam_from_images(

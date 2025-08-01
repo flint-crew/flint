@@ -707,7 +707,7 @@ def create_wsclean_name_argument(wsclean_options: WSCleanOptions, ms: MS) -> Pat
     # Construct the name property of the string
     pol = wsclean_options.pol
     channel_range = wsclean_options.channel_range
-    scan_range = wsclean_options.scan_range
+    scan_range = wsclean_options.interval
     name_prefix_str = create_imaging_name_prefix(
         ms_path=ms.path,
         pol=pol,
