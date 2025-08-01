@@ -662,6 +662,7 @@ def subtract_model_from_data_column(
 
     output_column = output_column if output_column else data_column
     assert output_column is not None, f"{output_column=}, which is not allowed"
+    logger.info(f"Subtracting {model_column=} from {data_column=} for {ms.path=}")
     with critical_ms_interaction(input_ms=ms.path) as critical_ms:
         with table(str(critical_ms), readonly=False) as tab:
             logger.info("Extracting columns")
