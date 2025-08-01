@@ -318,7 +318,7 @@ def flow_subtract_cube(
             ms=science_mss,
             data_column=subtract_field_options.subtract_data_column,
             update_tracked_column=True,
-            chunk_size=30000,
+            chunk_size=10000,
         )
 
     # Fellow Captain Zic request, arrr
