@@ -689,7 +689,7 @@ def subtract_model_from_data_column(
             else:
                 current_idx = 0
                 total_rows = len(tab)
-                number_of_chunks = np.ceil(total_rows / chunk_size)
+                number_of_chunks = int(np.ceil(total_rows / chunk_size))
                 current_chunk = 1
                 while current_idx < total_rows:
                     logger.info(
