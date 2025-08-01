@@ -282,10 +282,13 @@ def flow_subtract_cube(
     logger.info("Collecting times from representative measurement set")
     times = get_times_from_ms(ms=science_mss[0], sort=True, unique=True)
     logger.info(
-        f"Considering {len(times)} frequencies from {science_mss[0]}, covering {np.min(times)}-{np.max(times)}"
+        f"Considering {len(times)} times from {science_mss[0]}, covering {np.min(times)}-{np.max(times)}"
     )
 
     if subtract_field_options.use_addmodel:
+        logger.info(
+            "Will attempt to predict and subtract continuum model using addmodel"
+        )
         assert addmodel_subtract_field_options.addmodel_cluster_config is not None, (
             f"{addmodel_subtract_field_options.addmodel_cluster_config=}, which should not happen"
         )
