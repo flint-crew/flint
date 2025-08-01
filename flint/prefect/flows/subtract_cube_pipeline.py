@@ -280,7 +280,9 @@ def flow_subtract_cube(
         )
 
     logger.info("Collecting times from representative measurement set")
-    times = get_times_from_ms(ms=science_mss[0], sort=True, unique=True)
+    times = get_times_from_ms(
+        ms=science_mss[0], sort=True, unique=True, return_raw=True
+    )
     logger.info(
         f"Considering {len(times)} times from {science_mss[0]}, covering {np.min(times)}-{np.max(times)}"
     )

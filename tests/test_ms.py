@@ -505,3 +505,21 @@ def test_get_times_from_ms(ms_example) -> None:
     assert len(unique_times) == 3
     assert np.argmin(unique_times) == 0
     assert np.argmax(unique_times) == 2
+
+
+def test_get_times_from_ms_with_raw(ms_example) -> None:
+    """Pull out the times from a MS. Here we are ensuring that the behaviour
+    is correct for when we return floats."""
+    times = get_times_from_ms(ms=ms_example, return_raw=True)
+    assert len(times) > 1
+    assert len(times) == 1998
+
+    unique_times = get_times_from_ms(ms=ms_example, unique=True, return_raw=True)
+    assert len(unique_times) == 3
+
+    unique_times = get_times_from_ms(
+        ms=ms_example, unique=True, sort=True, return_raw=True
+    )
+    assert len(unique_times) == 3
+    assert np.argmin(unique_times) == 0
+    assert np.argmax(unique_times) == 2
