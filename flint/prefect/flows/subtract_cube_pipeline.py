@@ -269,6 +269,7 @@ def flow_subtract_cube(
 
     # 2.5 - Continuum subtract if requested
 
+    logger.info("Collecting frequencies from representative measurement set")
     freqs_mhz = get_freqs_from_ms(ms=science_mss[0]) / 1e6
     logger.info(
         f"Considering {len(freqs_mhz)} frequencies from {science_mss[0]}, range covering {np.min(freqs_mhz)}-{np.max(freqs_mhz)} MHz"
@@ -278,6 +279,7 @@ def flow_subtract_cube(
             f"{len(freqs_mhz)} channels and no stagger delay set! Consider setting a stagger delay"
         )
 
+    logger.info("Collecting times from representative measurement set")
     times = get_times_from_ms(ms=science_mss[0], sort=True, unique=True)
     logger.info(
         f"Considering {len(times)} frequencies from {science_mss[0]}, covering {np.min(times)}-{np.max(times)}"
