@@ -419,7 +419,9 @@ def flow_subtract_cube(
 
         # 4 - cube concatenated each linmos field together to single file
         task_combine_all_linmos_images.submit(
-            linmos_commands=scan_parset_list, remove_original_images=True
+            linmos_commands=scan_parset_list,
+            remove_original_images=True,
+            time_domain_mode=True,
         )
         task_combine_all_linmos_images.submit(
             linmos_commands=scan_parset_list,
