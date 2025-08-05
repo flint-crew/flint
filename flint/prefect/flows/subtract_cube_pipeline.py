@@ -371,11 +371,12 @@ def flow_subtract_cube(
 
         # 4 - cube concatenated each linmos field together to single file
         task_combine_all_linmos_images.submit(
-            linmos_commands=channel_parset_list, remove_original_images=True
+            linmos_commands=channel_parset_list,
+            remove_original_images=subtract_field_options.fitscube_remove_original_images,
         )
         task_combine_all_linmos_images.submit(
             linmos_commands=channel_parset_list,
-            remove_original_images=True,
+            remove_original_images=subtract_field_options.fitscube_remove_original_images,
             combine_weights=True,
         )
 
@@ -425,12 +426,12 @@ def flow_subtract_cube(
         # 4 - cube concatenated each linmos field together to single file
         task_combine_all_linmos_images.submit(
             linmos_commands=scan_parset_list,
-            remove_original_images=True,
+            remove_original_images=subtract_field_options.fitscube_remove_original_images,
             time_domain=True,
         )
         task_combine_all_linmos_images.submit(
             linmos_commands=scan_parset_list,
-            remove_original_images=True,
+            remove_original_images=subtract_field_options.fitscube_remove_original_images,
             combine_weights=True,
             time_domain=True,
         )
