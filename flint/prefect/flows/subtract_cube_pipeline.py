@@ -329,6 +329,10 @@ def flow_subtract_cube(
     if subtract_field_options.channelwise_image:
         channel_parset_list = []
         for channel, freq_mhz in enumerate(freqs_mhz):
+            if channel >= subtract_field_options.max_intervals:
+                logger.critical("Breaking for sanity")
+                break
+
             logger.info(f"Imaging {channel=} {freq_mhz=}")
             channel_range = (channel, channel + 1)
             channel_wsclean_cmds = task_wsclean_imager.with_options(retries=2).map(
@@ -378,9 +382,10 @@ def flow_subtract_cube(
     if subtract_field_options.timestep_image:
         scan_parset_list = []
         for scan, time in enumerate(times):
-            if scan > 300:
+            if scan >= subtract_field_options.max_intervals:
                 logger.critical("Breaking for sanity")
                 break
+
             logger.info(f"Imaging {scan=} {time=}")
             scan_range = (scan, scan + 1)
             scan_wsclean_cmds = task_wsclean_imager.with_options(retries=2).map(

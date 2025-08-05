@@ -360,6 +360,8 @@ class SubtractFieldOptions(BaseOptions):
     """Perform timestep imaging after subtraction"""
     channelwise_image: bool = False
     """Perform channel-wise imaing of the residuals"""
+    max_intervals: int = 500
+    """The maximum number of scans/channels to consider"""
 
 
 class FieldOptions(BaseOptions):
