@@ -136,6 +136,9 @@ def hold_then_move_into(
 
         for file_or_folder in hold_directory.glob("*"):
             logger.info(f"Moving {file_or_folder=} to {move_directory=}")
+            out_files = move_directory / file_or_folder.name
+            if out_files.exists():
+                remove_files_folders(out_files)
             shutil.move(str(file_or_folder), move_directory)
 
         if delete_hold_on_exist:
