@@ -173,9 +173,9 @@ def process_science_fields_pol(
                 image_sets_list.append(_image_set)
         
         # # wait for all image_set tasks for this polarisation to finish
-        # for image_set_future in _image_sets:
-        #     # this will block until that future completes
-        #     image_set_future.result()
+        for image_set_future in _image_sets:
+            # this will block until that future completes
+            image_set_future.result()
 
         image_sets_dict[polarisation] = _image_sets
 
@@ -229,10 +229,10 @@ def process_science_fields_pol(
                             remove_original_images=True,
                         )
 
-                        # # wait for all cube_path tasks for this polarisation to finish
-                        # for cube_path_future in cube_path:
-                        #     # this will block until that future completes
-                        #     cube_path_future.result()
+                        # wait for all cube_path tasks for this polarisation to finish
+                        for cube_path_future in cube_path:
+                            # this will block until that future completes
+                            cube_path_future.result()
 
                         beam_cubes.append(cube_path)
                 stokes_beam_cubes[stokes] = beam_cubes
