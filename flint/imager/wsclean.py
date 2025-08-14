@@ -1062,6 +1062,7 @@ def run_wsclean_imager(
     wsclean_result: WSCleanResult,
     container: Path,
     make_cube_from_subbands: bool = True,
+    recompute: bool = True
 ) -> ImageSet:
     """Run a provided wsclean command. Optionally will clean up files,
     including the dirty beams, psfs and other assorted things.
@@ -1074,11 +1075,14 @@ def run_wsclean_imager(
     Args:
         wsclean_result (WSCleanResult): The command to run, and other properties (cleanup.)
         container (Path): Path to the container with wsclean available in it
-        bind_dirs (Optional[Tuple[Path, ...]], optional): Additional directories to include when binding to the wsclean container. Defaults to None.
-        move_hold_directories (Optional[Tuple[Path,Optional[Path]]], optional): The `move_directory` and `hold_directory` passed to the temporary context manager. If None no `hold_then_move_into` manager is used. Defaults to None.
         make_cube_from_subbands (bool, optional): Form a single FITS cube from the set of sub-band images wsclean produces. Defaults to False.
-        image_prefix_str (Optional[str], optional): The name used to search for wsclean outputs. If None, it is guessed from the name and location of the MS. Defaults to None.
+        recompute (bool, optional): if False, will check whether images already exist and if they do, dont run wsclean again. Useful for partially failed flows. Defaults True (always run wsclean)
 
+        wsclean_result.bind_dirs (Optional[Tuple[Path, ...]], optional): Additional directories to include when binding to the wsclean container. Defaults to None.
+        wsclean_result.move_hold_directories (Optional[Tuple[Path,Optional[Path]]], optional): The `move_directory` and `hold_directory` passed to the temporary context manager. If None no `hold_then_move_into` manager is used. Defaults to None.
+        wsclean_result.image_prefix_str (Optional[str], optional): The name used to search for wsclean outputs. If None, it is guessed from the name and location of the MS. Defaults to None.
+
+        
     Returns:
         ImageSet: The executed wsclean output products.
     """
@@ -1098,6 +1102,55 @@ def run_wsclean_imager(
     if prefix is None:
         prefix = str(ms.path.parent / ms.path.name)
         logger.warning(f"Setting prefix to {prefix}. Likely this is not correct. ")
+
+    pols = _make_pols(pol_str=wsclean_result.options.pol)
+
+    if not recompute:
+
+        if make_cube_from_subbands:
+            raise NotImplementedError("Please set recompute=True for now. Sorry about that. Blame Erik.")
+        
+        logger.info(f"{recompute=}. Checking if WSclean output already exists")
+
+        image_set = get_wsclean_output_names(
+            prefix=prefix,
+            subbands=wsclean_result.options.channels_out,
+            pols=pols,
+            verify_exists=False,
+            output_types=("image", "residual"),
+            check_exists_when_adding=False,
+        )
+
+        # now do the same rename that would have been done after wsclean run
+        imagenames  = [image.parent / _rename_wsclean_title(image.name) for image in image_set.image]
+        residualnames = [residual.parent / _rename_wsclean_title(residual.name) for residual in image_set.residual]
+        # put those in the image set
+        image_set = image_set.with_options(image=imagenames, residual=residualnames)
+        
+        all_images_exist = [image.exists() for image in image_set.image]
+        # all_residuals_exist = [residual.exists() for residual in image_set.residual]
+
+        all_exist = np.all(all_images_exist) #  and np.all(all_residuals_exist)
+
+        # if all exist, we can skip wsclean run. Attach the source list and return
+        if all_exist:
+            logger.info("Found WSclean output already exists! Not rerunning wsclean.")
+
+            if wsclean_result.options.save_source_list:
+                logger.info("Attaching the wsclean clean components SEDs")
+                source_list_path = get_wsclean_output_source_list_path(
+                    name_path=prefix, pol=None
+                )
+                assert source_list_path.exists(), f"{source_list_path=} does not exist"
+                image_set = image_set.with_options(source_list=source_list_path)
+
+            logger.info(f"Constructed {image_set=}")
+
+            return image_set
+    
+        else:
+            logger.info(f"{recompute=} but could not find all files for {image_set=}. Rerunning wsclean anyway.")
+
 
     if move_hold_directories:
         with hold_then_move_into(
@@ -1141,8 +1194,6 @@ def run_wsclean_imager(
     if wsclean_cleanup:
         logger.info("Will clean up files created by wsclean. ")
         rm_files = wsclean_cleanup_files(prefix=prefix, single_channel=single_channel)
-
-    pols = _make_pols(pol_str=wsclean_result.options.pol)
 
     image_set = get_wsclean_output_names(
         prefix=prefix,
