@@ -834,6 +834,57 @@ def convolve_then_linmos(
     return parset
 
 
+@task
+def task_common_beam_convolve_linmos(
+    wsclean_results: list[WSCleanResult],
+    field_options: SubtractFieldOptions,
+    convol_mode: str,
+    convol_filter: str | None = None,
+    convol_suffix_str: str | None = None,
+    remove_original_images: bool = False,
+    trim_linmos_fits: bool = False,
+    cleanup_linmos: bool = False,
+    linmos_suffix_str: str | None = None,
+    field_summary: FieldSummary | None = None,
+) -> LinmosResult:
+    beam_shape = task_get_common_beam_from_results.fn(
+        wsclean_results=wsclean_results,
+        cutoff=field_options.beam_cutoff,
+        filter_str="image.",
+    )
+
+    conv_images = [
+        task_convolve_image.fn(
+            wsclean_result=wsclean_result,
+            beam_shape=unmapped(beam_shape),  # type: ignore
+            cutoff=field_options.beam_cutoff,
+            mode=convol_mode,
+            filter_str=convol_filter,
+            convol_suffix_str=convol_suffix_str,
+            remove_original_images=remove_original_images,
+        )
+        for wsclean_result in wsclean_results
+    ]
+
+    assert field_options.yandasoft_container is not None
+    # Though pol axis could be obtained from field_summary, at this point
+    # it could be a PrefectFuture. Pass it over to the task.
+    linmos_options = LinmosOptions(
+        holofile=field_options.holofile,
+        cutoff=field_options.pb_cutoff,
+        trim_linmos_fits=trim_linmos_fits,
+        cleanup=cleanup_linmos,
+        remove_original_images=remove_original_images,
+    )
+    return task_linmos_images.fn(
+        image_list=flatten_items(items=conv_images),
+        container=field_options.yandasoft_container,
+        suffix_str=linmos_suffix_str,
+        linmos_options=linmos_options,
+        field_summary=field_summary,
+    )  # type: ignore
+
+
 def create_convol_linmos_images(
     wsclean_results: Collection[WSCleanResult],
     field_options: FieldOptions,
