@@ -1231,6 +1231,7 @@ def wsclean_imager(
     wsclean_container: Path,
     update_wsclean_options: dict[str, Any] | None = None,
     make_cube_from_subbands: bool = True,
+    recompute: bool = True,
 ) -> WSCleanResult:
     """Create and run a wsclean imager command against a measurement set.
 
@@ -1238,6 +1239,7 @@ def wsclean_imager(
         ms (Union[Path,MS]): Path to the measurement set that will be imaged
         wsclean_container (Path): Path to the container with wsclean installed
         update_wsclean_options (Optional[Dict[str, Any]], optional): Additional options to update the generated WscleanOptions with. Keys should be attributes of WscleanOptions. Defaults to None.
+        recompute (bool, optional): if False, will check whether images already exist and if they do, dont run wsclean again. Useful for partially failed flows. Defaults True (always run wsclean)
 
     Returns:
         WSCleanResult: _description_
@@ -1261,6 +1263,7 @@ def wsclean_imager(
         wsclean_result=wsclean_result,
         container=wsclean_container,
         make_cube_from_subbands=make_cube_from_subbands,
+        recompute=recompute,
     )
 
     return wsclean_result.with_options(image_set=image_set)
