@@ -39,6 +39,7 @@ from flint.predict.crystalball import CrystalBallOptions
 from flint.prefect.clusters import get_dask_runner
 from flint.prefect.common.imaging import (
     convolve_then_linmos,
+    task_common_beam_convolve_linmos,
     task_get_common_beam_from_results,
     task_wsclean_imager,
 )
@@ -401,14 +402,8 @@ def flow_subtract_cube(
                     )
                 ),
             )
-            scan_beam_shape = task_get_common_beam_from_results.submit(
+            scan_parset = task_common_beam_convolve_linmos.submit(
                 wsclean_results=scan_wsclean_cmds,
-                cutoff=subtract_field_options.beam_cutoff,
-                filter_str="image.",
-            )
-            scan_parset = convolve_then_linmos(
-                wsclean_results=scan_wsclean_cmds,
-                beam_shape=scan_beam_shape,
                 linmos_suffix_str=None,
                 field_options=subtract_field_options,
                 convol_mode="image",
