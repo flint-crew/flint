@@ -340,6 +340,7 @@ def task_wsclean_imager(
     fits_mask: FITSMaskNames | None = None,
     channel_range: tuple[int, int] | None = None,
     make_cube_from_subbands: bool = True,
+    recompute: bool = True,
 ) -> WSCleanResult:
     """Run the wsclean imager against an input measurement set
 
@@ -349,6 +350,7 @@ def task_wsclean_imager(
         update_wsclean_options (Optional[Dict[str, Any]], optional): Options to update from the default wsclean options. Defaults to None.
         fits_mask (Optional[FITSMaskNames], optional): A path to a clean guard mask. Defaults to None.
         channel_range (Optional[Tuple[int,int]], optional): Add to the wsclean options the specific channel range to be imaged. Defaults to None.
+        recompute (bool, optional): if False, will check whether images already exist and if they do, dont run wsclean again. Useful for partially failed flows. Defaults True (always run wsclean)
 
     Returns:
         WSCleanResult: A resulting wsclean command and resulting meta-data
@@ -374,6 +376,7 @@ def task_wsclean_imager(
             wsclean_container=wsclean_container,
             update_wsclean_options=update_wsclean_options,
             make_cube_from_subbands=make_cube_from_subbands,
+            recompute=recompute,
         )
     except CleanDivergenceError:
         # NOTE: If the cleaning failed retry with some larger images
@@ -403,6 +406,7 @@ def task_wsclean_imager(
             wsclean_container=wsclean_container,
             update_wsclean_options=update_wsclean_options,
             make_cube_from_subbands=make_cube_from_subbands,
+            recompute=recompute,
         )
 
 
