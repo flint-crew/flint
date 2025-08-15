@@ -1058,6 +1058,46 @@ def _make_pols(pol_str: str) -> tuple[str, ...] | None:
     return pols
 
 
+def check_wsclean_output_already_exists(prefix: str, wsclean_result: WSCleanResult, pols: tuple[str, ...] | None) -> tuple[bool, ImageSet]:
+    """
+    Check whether expected WSClean output already exists for a given 'prefix'
+
+    Args:
+        prefix (str): The name used to search for wsclean outputs.
+        wsclean_result (WSCleanResult): The command to run, and other properties (cleanup.)
+        pols: (tuple[str, ...]) | None: Tuple of polarisations
+
+    Returns:
+        tuple[bool, ImageSet]
+        
+        bool: True if expected WSClean output (images) exist. Otherwise False.
+        ImageSet: the expected WSClean output
+    
+    """
+
+    image_set = get_wsclean_output_names(
+        prefix=prefix,
+        subbands=wsclean_result.options.channels_out,
+        pols=pols,
+        verify_exists=False,
+        output_types=("image", "residual"),
+        check_exists_when_adding=False,
+    )
+
+    # now do the same rename that would have been done after wsclean run
+    imagenames  = [image.parent / _rename_wsclean_title(image.name) for image in image_set.image]
+    residualnames = [residual.parent / _rename_wsclean_title(residual.name) for residual in image_set.residual]
+    # put those in the image set
+    image_set = image_set.with_options(image=imagenames, residual=residualnames)
+    
+    all_images_exist = [image.exists() for image in image_set.image]
+    # all_residuals_exist = [residual.exists() for residual in image_set.residual]
+
+    all_exist = np.all(all_images_exist) #  and np.all(all_residuals_exist)
+
+    return all_exist, image_set
+
+
 def run_wsclean_imager(
     wsclean_result: WSCleanResult,
     container: Path,
@@ -1106,31 +1146,25 @@ def run_wsclean_imager(
     pols = _make_pols(pol_str=wsclean_result.options.pol)
 
     if not recompute:
-
         if make_cube_from_subbands:
+            # not sure how to deal with this at the moment.
             raise NotImplementedError("Please set recompute=True for now. Sorry about that. Blame Erik.")
+        
         
         logger.info(f"{recompute=}. Checking if WSclean output already exists")
 
-        image_set = get_wsclean_output_names(
-            prefix=prefix,
-            subbands=wsclean_result.options.channels_out,
-            pols=pols,
-            verify_exists=False,
-            output_types=("image", "residual"),
-            check_exists_when_adding=False,
-        )
+        if move_hold_directories:
+            # deal with temp directory. We should check the final directory (move_dir), not the temp dir (hold_dir)
+            move_directory=move_hold_directories[0]
+            hold_directory=move_hold_directories[1]
 
-        # now do the same rename that would have been done after wsclean run
-        imagenames  = [image.parent / _rename_wsclean_title(image.name) for image in image_set.image]
-        residualnames = [residual.parent / _rename_wsclean_title(residual.name) for residual in image_set.residual]
-        # put those in the image set
-        image_set = image_set.with_options(image=imagenames, residual=residualnames)
-        
-        all_images_exist = [image.exists() for image in image_set.image]
-        # all_residuals_exist = [residual.exists() for residual in image_set.residual]
+            check_prefix = prefix.replace(str(hold_directory), str(move_directory))
 
-        all_exist = np.all(all_images_exist) #  and np.all(all_residuals_exist)
+        else:
+            # no tempdir, simply check the prefix
+            check_prefix = prefix
+
+        all_exist, image_set = check_wsclean_output_already_exists(check_prefix, wsclean_result, pols)
 
         # if all exist, we can skip wsclean run. Attach the source list and return
         if all_exist:
@@ -1139,7 +1173,7 @@ def run_wsclean_imager(
             if wsclean_result.options.save_source_list:
                 logger.info("Attaching the wsclean clean components SEDs")
                 source_list_path = get_wsclean_output_source_list_path(
-                    name_path=prefix, pol=None
+                    name_path=check_prefix, pol=None
                 )
                 assert source_list_path.exists(), f"{source_list_path=} does not exist"
                 image_set = image_set.with_options(source_list=source_list_path)
