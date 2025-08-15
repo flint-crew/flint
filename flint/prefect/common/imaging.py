@@ -341,6 +341,7 @@ def task_wsclean_imager(
     channel_range: tuple[int, int] | None = None,
     make_cube_from_subbands: bool = True,
     recompute: bool = True,
+    ignore_tmpdir_files_with_globstr: str | None = None,
 ) -> WSCleanResult:
     """Run the wsclean imager against an input measurement set
 
@@ -351,7 +352,8 @@ def task_wsclean_imager(
         fits_mask (Optional[FITSMaskNames], optional): A path to a clean guard mask. Defaults to None.
         channel_range (Optional[Tuple[int,int]], optional): Add to the wsclean options the specific channel range to be imaged. Defaults to None.
         recompute (bool, optional): if False, will check whether images already exist and if they do, dont run wsclean again. Useful for partially failed flows. Defaults True (always run wsclean)
-
+        ignore_tmpdir_files_with_globstr (str, optional): ignore files from tmpdir moving that contain this string. Useful to set to 'tmp' for when tmp files are somehow moved before WSclean cleans them up.
+                                                           make sure your image name doesn't contain 'tmp' though... 
     Returns:
         WSCleanResult: A resulting wsclean command and resulting meta-data
     """
@@ -377,6 +379,7 @@ def task_wsclean_imager(
             update_wsclean_options=update_wsclean_options,
             make_cube_from_subbands=make_cube_from_subbands,
             recompute=recompute,
+            ignore_tmpdir_files_with_globstr=ignore_tmpdir_files_with_globstr,
         )
     except CleanDivergenceError:
         # NOTE: If the cleaning failed retry with some larger images
@@ -407,6 +410,7 @@ def task_wsclean_imager(
             update_wsclean_options=update_wsclean_options,
             make_cube_from_subbands=make_cube_from_subbands,
             recompute=recompute,
+            ignore_tmpdir_files_with_globstr=ignore_tmpdir_files_with_globstr,
         )
 
 

@@ -1102,7 +1102,8 @@ def run_wsclean_imager(
     wsclean_result: WSCleanResult,
     container: Path,
     make_cube_from_subbands: bool = True,
-    recompute: bool = True
+    recompute: bool = True,
+    ignore_tmpdir_files_with_globstr: str | None = None,
 ) -> ImageSet:
     """Run a provided wsclean command. Optionally will clean up files,
     including the dirty beams, psfs and other assorted things.
@@ -1117,6 +1118,8 @@ def run_wsclean_imager(
         container (Path): Path to the container with wsclean available in it
         make_cube_from_subbands (bool, optional): Form a single FITS cube from the set of sub-band images wsclean produces. Defaults to False.
         recompute (bool, optional): if False, will check whether images already exist and if they do, dont run wsclean again. Useful for partially failed flows. Defaults True (always run wsclean)
+        ignore_tmpdir_files_with_globstr (str, optional): ignore files from tmpdir moving that contain this string. Useful to set to 'tmp' for when tmp files are somehow moved before WSclean cleans them up.
+                                                           make sure your image name doesn't contain 'tmp' though... 
 
         wsclean_result.bind_dirs (Optional[Tuple[Path, ...]], optional): Additional directories to include when binding to the wsclean container. Defaults to None.
         wsclean_result.move_hold_directories (Optional[Tuple[Path,Optional[Path]]], optional): The `move_directory` and `hold_directory` passed to the temporary context manager. If None no `hold_then_move_into` manager is used. Defaults to None.
@@ -1190,6 +1193,7 @@ def run_wsclean_imager(
         with hold_then_move_into(
             move_directory=move_hold_directories[0],
             hold_directory=move_hold_directories[1],
+            ignore_files_with_globstr=ignore_tmpdir_files_with_globstr
         ) as directory:
             sclient_bind_dirs.append(directory)
             run_singularity_command(
@@ -1266,6 +1270,7 @@ def wsclean_imager(
     update_wsclean_options: dict[str, Any] | None = None,
     make_cube_from_subbands: bool = True,
     recompute: bool = True,
+    ignore_tmpdir_files_with_globstr: str | None = None,
 ) -> WSCleanResult:
     """Create and run a wsclean imager command against a measurement set.
 
@@ -1274,6 +1279,8 @@ def wsclean_imager(
         wsclean_container (Path): Path to the container with wsclean installed
         update_wsclean_options (Optional[Dict[str, Any]], optional): Additional options to update the generated WscleanOptions with. Keys should be attributes of WscleanOptions. Defaults to None.
         recompute (bool, optional): if False, will check whether images already exist and if they do, dont run wsclean again. Useful for partially failed flows. Defaults True (always run wsclean)
+        ignore_tmpdir_files_with_globstr (str, optional): ignore files from tmpdir moving that contain this string. Useful to set to 'tmp' for when tmp files are somehow moved before WSclean cleans them up.
+                                                           make sure your image name doesn't contain 'tmp' though... 
 
     Returns:
         WSCleanResult: _description_
@@ -1298,6 +1305,7 @@ def wsclean_imager(
         container=wsclean_container,
         make_cube_from_subbands=make_cube_from_subbands,
         recompute=recompute,
+        ignore_tmpdir_files_with_globstr=ignore_tmpdir_files_with_globstr,
     )
 
     return wsclean_result.with_options(image_set=image_set)
