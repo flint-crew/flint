@@ -157,6 +157,7 @@ def process_science_fields_pol(
                         make_cube_from_subbands=False,  # We will do this later
                         recompute=False, # to not rerun wsclean jobs if some fraction of them already completed succesfully in an earlier run
                         ignore_tmpdir_files_with_globstr='tmp', # ADDED BY ERIK TO IGNORE MOVING WSCLEAN TMP FILES THAT SOMETIMES END UP IN THE MOVE_DIR FROM THE HOLD_DIR
+                        file_exist_ok=True, # ADDED BY ERIK BECAUSE HOLD_THEN_MOVE_INTO KEEPS FAILING FOR A RANDOM SUBSET OF JOBS BECAUSE FILES ALREADY EXIST.
                         update_wsclean_options=unmapped(
                             get_options_from_strategy(
                                 strategy=strategy,
