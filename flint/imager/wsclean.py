@@ -1058,7 +1058,11 @@ def _make_pols(pol_str: str) -> tuple[str, ...] | None:
     return pols
 
 
-def check_wsclean_output_already_exists(prefix: str, wsclean_result: WSCleanResult, pols: tuple[str, ...] | None) -> tuple[bool, ImageSet]:
+def check_wsclean_output_already_exists(
+    prefix: str,
+    wsclean_result: WSCleanResult,
+    pols: tuple[str, ...] | None
+) -> tuple[bool, ImageSet]:
     """
     Check whether expected WSClean output already exists for a given 'prefix'
 
@@ -1104,6 +1108,7 @@ def run_wsclean_imager(
     make_cube_from_subbands: bool = True,
     recompute: bool = True,
     ignore_tmpdir_files_with_globstr: str | None = None,
+    file_exist_ok: bool = False,
 ) -> ImageSet:
     """Run a provided wsclean command. Optionally will clean up files,
     including the dirty beams, psfs and other assorted things.
@@ -1120,6 +1125,8 @@ def run_wsclean_imager(
         recompute (bool, optional): if False, will check whether images already exist and if they do, dont run wsclean again. Useful for partially failed flows. Defaults True (always run wsclean)
         ignore_tmpdir_files_with_globstr (str, optional): ignore files from tmpdir moving that contain this string. Useful to set to 'tmp' for when tmp files are somehow moved before WSclean cleans them up.
                                                            make sure your image name doesn't contain 'tmp' though... 
+        file_exist_ok (bool, optional): if True, will not move from tmpdir if file already exists in target dir. Default False (raises Error if it does exist then.)
+
 
         wsclean_result.bind_dirs (Optional[Tuple[Path, ...]], optional): Additional directories to include when binding to the wsclean container. Defaults to None.
         wsclean_result.move_hold_directories (Optional[Tuple[Path,Optional[Path]]], optional): The `move_directory` and `hold_directory` passed to the temporary context manager. If None no `hold_then_move_into` manager is used. Defaults to None.
@@ -1193,7 +1200,8 @@ def run_wsclean_imager(
         with hold_then_move_into(
             move_directory=move_hold_directories[0],
             hold_directory=move_hold_directories[1],
-            ignore_files_with_globstr=ignore_tmpdir_files_with_globstr
+            ignore_files_with_globstr=ignore_tmpdir_files_with_globstr,
+            file_exist_ok=file_exist_ok
         ) as directory:
             sclient_bind_dirs.append(directory)
             run_singularity_command(
@@ -1271,6 +1279,7 @@ def wsclean_imager(
     make_cube_from_subbands: bool = True,
     recompute: bool = True,
     ignore_tmpdir_files_with_globstr: str | None = None,
+    file_exist_ok: bool = False,
 ) -> WSCleanResult:
     """Create and run a wsclean imager command against a measurement set.
 
@@ -1306,6 +1315,7 @@ def wsclean_imager(
         make_cube_from_subbands=make_cube_from_subbands,
         recompute=recompute,
         ignore_tmpdir_files_with_globstr=ignore_tmpdir_files_with_globstr,
+        file_exist_ok=file_exist_ok,
     )
 
     return wsclean_result.with_options(image_set=image_set)

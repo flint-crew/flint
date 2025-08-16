@@ -97,6 +97,7 @@ def hold_then_move_into(
     hold_directory: Path | None,
     delete_hold_on_exist: bool = True,
     ignore_files_with_globstr: str | None = None, 
+    file_exist_ok: bool = False
 ) -> Generator[Path, None, None]:
     """Create a temporary directory such that anything within it on the
     exit of the context manager is copied over to `move_directory`.
@@ -111,6 +112,7 @@ def hold_then_move_into(
         delete_hold_on_exist (bool, optional): Whether `hold_directory` is deleted on exit of the context. Defaults to True.
         ignore_files_with_globstr (str, optional): ignore files that contain this string. Useful to set to 'tmp' for when tmp files are somehow moved before WSclean cleans them up.
                                                    make sure your image name doesn't contain 'tmp' though... 
+        file_exist_ok (bool, optional): if True, will not move if file already exists in target dir. Default False (raises Error if it does exist then.)
         
     Returns:
         Path: Path to the temporary folder
@@ -142,6 +144,11 @@ def hold_then_move_into(
                 logger.warning(f"Skipping {file_or_folder} because it contains '{ignore_files_with_globstr}'")
                 continue
             logger.info(f"Moving {file_or_folder=} to {move_directory=}")
+
+            if file_exist_ok and (move_directory / file_or_folder.name).exists():
+                logger.warning(f"Skipping {file_or_folder} because it already exists in {move_directory}")
+                continue
+
             shutil.move(str(file_or_folder), move_directory)
 
         if delete_hold_on_exist:
