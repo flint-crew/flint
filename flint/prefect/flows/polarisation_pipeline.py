@@ -155,7 +155,7 @@ def process_science_fields_pol(
                         in_ms=science_ms,
                         wsclean_container=pol_field_options.wsclean_container,
                         make_cube_from_subbands=False,  # We will do this later
-                        recompute=False, # ADDED BY ERIK AS A TEST WHEN SOME FRACTION OF WSCLEAN JOBS FAIL AND WE DONT WANT TO RERUN THE ONES THAT DID NOT FAIL.
+                        recompute=False, # to not rerun wsclean jobs if some fraction of them already completed succesfully in an earlier run
                         ignore_tmpdir_files_with_globstr='tmp', # ADDED BY ERIK TO IGNORE MOVING WSCLEAN TMP FILES THAT SOMETIMES END UP IN THE MOVE_DIR FROM THE HOLD_DIR
                         update_wsclean_options=unmapped(
                             get_options_from_strategy(
