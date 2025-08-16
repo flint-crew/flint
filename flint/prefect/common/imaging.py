@@ -856,7 +856,7 @@ def task_common_beam_convolve_linmos(
     conv_images = [
         task_convolve_image.fn(
             wsclean_result=wsclean_result,
-            beam_shape=unmapped(beam_shape),  # type: ignore
+            beam_shape=beam_shape,
             cutoff=field_options.beam_cutoff,
             mode=convol_mode,
             filter_str=convol_filter,
