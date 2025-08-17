@@ -24,7 +24,7 @@ class CrystalBallOptions(BaseOptions):
     "Number of rows of input MS that are processed in a single chunk. If 0 it will be set automatically. Default is 0."
     model_chunks: int = 0
     "Number of sky model components that are processed in a single chunk. If 0 it will be set automatically. Default is 0."
-    memory_fraction: float = 0.5
+    memory_fraction: float = 0.75
     """The fraction of available memory to use to define the target chunk size"""
 
 
