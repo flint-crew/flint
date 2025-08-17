@@ -24,6 +24,8 @@ class CrystalBallOptions(BaseOptions):
     "Number of rows of input MS that are processed in a single chunk. If 0 it will be set automatically. Default is 0."
     model_chunks: int = 0
     "Number of sky model components that are processed in a single chunk. If 0 it will be set automatically. Default is 0."
+    memory_fraction: float = 0.5
+    """The fraction of available memory to use to define the target chunk size"""
 
 
 def crystalball_predict(
@@ -88,6 +90,7 @@ def crystalball_predict(
         client=dask_client,
         row_chunks=crystalball_options.row_chunks,
         model_chunks=crystalball_options.model_chunks,
+        memory_fraction=crystalball_options.memory_fraction,
     )
 
     return ms.with_options(model_column="MODEL_DATA")
