@@ -1113,6 +1113,7 @@ def run_wsclean_imager(
         with hold_then_move_into(
             move_directory=move_hold_directories[0],
             hold_directory=move_hold_directories[1],
+            append_uuid=True,
         ) as directory:
             sclient_bind_dirs.append(directory)
             run_singularity_command(
