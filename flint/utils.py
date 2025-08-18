@@ -131,7 +131,7 @@ def hold_then_move_into(
     move_directory = Path(move_directory)
 
     if append_uuid and hold_directory is not None:
-        uuid_directory_name = str(uuid.uuid4())
+        uuid_directory_name = str(uuid.uuid4().hex)
         hold_directory = hold_directory / uuid_directory_name
 
     if hold_directory == move_directory or hold_directory is None:
