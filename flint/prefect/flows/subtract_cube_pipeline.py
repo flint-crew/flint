@@ -315,11 +315,17 @@ def flow_subtract_cube(
         )
 
     if subtract_field_options.attempt_subtract:
-        science_mss = task_subtract_model_from_ms.map(
-            ms=science_mss,
-            data_column=subtract_field_options.subtract_data_column,
-            update_tracked_column=True,
-            chunk_size=1000,
+        # TODO: Put this back to a map
+        science_mss = tuple(
+            [
+                task_subtract_model_from_ms(
+                    ms=sms,
+                    data_column=subtract_field_options.subtract_data_column,
+                    update_tracked_column=True,
+                    chunk_size=1000,
+                )
+                for sms in science_mss
+            ]
         )
 
     # Fellow Captain Zic request, arrr
