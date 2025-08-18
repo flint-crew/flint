@@ -356,6 +356,14 @@ class SubtractFieldOptions(BaseOptions):
     """Attempt to predict the model visibilities using ``crystalball``"""
     subtract_only: bool = False
     """Only perform the continuum subtraction"""
+    timestep_image: bool = False
+    """Perform timestep imaging after subtraction"""
+    channelwise_image: bool = False
+    """Perform channel-wise imaing of the residuals"""
+    max_intervals: int = 500
+    """The maximum number of scans/channels to consider"""
+    fitscube_remove_original_images: bool = False
+    """Remove the images that go into forming the fitscube"""
 
 
 class FieldOptions(BaseOptions):

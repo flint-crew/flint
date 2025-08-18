@@ -85,6 +85,9 @@ class WSCleanOptions(BaseOptions):
     Should the `temp_dir` options be specified then all images will be
     created in this location, and then moved over to the same parent directory
     as the imaged MS. This is done by setting the wsclean `-name` argument.
+
+    Options that start with `flint_` are ignored when generating the wsclean command
+    and generally denote some other flint specific operation.
     """
 
     abs_mem: int = 100
@@ -173,14 +176,17 @@ class WSCleanOptions(BaseOptions):
     """Saves the found clean components as a BBS/DP3 text sky model"""
     channel_range: tuple[int, int] | None = None
     """Image a channel range between a lower (inclusive) and upper (exclusive) bound"""
+    interval: tuple[int, int] | None = None
+    """Image a set of scans between a lower (inclusive) and upper (exclusive) bound"""
     no_reorder: bool = False
     """If True turn off the reordering of the MS at the beginning of wsclean"""
-    flint_no_log_wsclean_output: bool = False
-    """If True do not log the wsclean output"""
     no_mf_weighting: bool = False
     """Opposite of -ms-weighting; can be used to turn off MF weighting in -join-channels mode"""
+    # Options below here are not added to wsclean command
     flint_make_cube_inplace: bool = True
     """Rotate the cube for the linmos axis ordering in place, or do it via a temporary file that then gets deleted. Good thing to turn off when getting weird OSErrors on file writing"""
+    flint_no_log_wsclean_output: bool = False
+    """If True do not log the wsclean output"""
 
 
 class WSCleanResult(BaseOptions):
@@ -701,8 +707,12 @@ def create_wsclean_name_argument(wsclean_options: WSCleanOptions, ms: MS) -> Pat
     # Construct the name property of the string
     pol = wsclean_options.pol
     channel_range = wsclean_options.channel_range
+    scan_range = wsclean_options.interval
     name_prefix_str = create_imaging_name_prefix(
-        ms_path=ms.path, pol=pol, channel_range=channel_range
+        ms_path=ms.path,
+        pol=pol,
+        channel_range=channel_range,
+        scan_range=scan_range,
     )
 
     # Now resolve the directory part

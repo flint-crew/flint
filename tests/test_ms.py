@@ -20,6 +20,7 @@ from flint.ms import (
     copy_and_preprocess_casda_askap_ms,
     find_mss,
     get_phase_dir_from_ms,
+    get_times_from_ms,
     remove_columns_from_ms,
     rename_ms_and_columns_for_selfcal,
     subtract_model_from_data_column,
@@ -372,6 +373,38 @@ def test_subtract_model_from_data_column(casda_taql_example):
         assert np.all(data == 0 + 0j)
 
 
+def test_subtract_model_from_data_column_in_chunks(casda_taql_example):
+    """Ensure we can subtact the model from the data using an iteration method"""
+    ms = Path(casda_taql_example)
+    assert ms.exists()
+    ms = MS(path=ms)
+
+    from casacore.tables import makearrcoldesc, maketabdesc
+
+    with table(str(ms.path), readonly=False) as tab:
+        data = tab.getcol("DATA")
+        ones = np.ones_like(data, dtype=data.dtype)
+
+        tab.putcol(columnname="DATA", value=ones)
+
+        if "MODEL_DATA" not in tab.colnames():
+            coldesc = tab.getdminfo("DATA")
+            coldesc["NAME"] = "MODEL_DATA"
+            tab.addcols(
+                maketabdesc(makearrcoldesc("MODEL_DATA", 0.0 + 0j, ndim=2)), coldesc
+            )
+            tab.flush()
+        tab.putcol(columnname="MODEL_DATA", value=ones)
+        tab.flush()
+
+    ms = subtract_model_from_data_column(
+        ms=ms, model_column="MODEL_DATA", data_column="DATA", chunk_size=2
+    )
+    with table(str(ms.path)) as tab:
+        data = tab.getcol("DATA")
+        assert np.all(data == 0 + 0j)
+
+
 def test_subtract_model_from_data_column_ms_column(tmpdir):
     """Ensure we can subtact the model from the data via taql"""
     ms_zip = Path(
@@ -489,3 +522,36 @@ def test_copy_and_preprocess_casda_askap_ms_container_errors():
             casda_ms=Path("ThisNotNeeded"),
             casa_container=None,
         )
+
+
+def test_get_times_from_ms(ms_example) -> None:
+    """Pull out the times from a MS"""
+    times = get_times_from_ms(ms=ms_example)
+    assert len(times) > 1
+    assert len(times) == 1998
+
+    unique_times = get_times_from_ms(ms=ms_example, unique=True)
+    assert len(unique_times) == 3
+
+    unique_times = get_times_from_ms(ms=ms_example, unique=True, sort=True)
+    assert len(unique_times) == 3
+    assert np.argmin(unique_times) == 0
+    assert np.argmax(unique_times) == 2
+
+
+def test_get_times_from_ms_with_raw(ms_example) -> None:
+    """Pull out the times from a MS. Here we are ensuring that the behaviour
+    is correct for when we return floats."""
+    times = get_times_from_ms(ms=ms_example, return_raw=True)
+    assert len(times) > 1
+    assert len(times) == 1998
+
+    unique_times = get_times_from_ms(ms=ms_example, unique=True, return_raw=True)
+    assert len(unique_times) == 3
+
+    unique_times = get_times_from_ms(
+        ms=ms_example, unique=True, sort=True, return_raw=True
+    )
+    assert len(unique_times) == 3
+    assert np.argmin(unique_times) == 0
+    assert np.argmax(unique_times) == 2

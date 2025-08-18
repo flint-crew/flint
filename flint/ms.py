@@ -218,19 +218,31 @@ def get_phase_dir_from_ms(ms: MS | Path) -> SkyCoord:
     return phase_sky
 
 
-def get_times_from_ms(ms: MS | Path) -> Time:
+def get_times_from_ms(
+    ms: MS | Path, unique: bool = False, sort: bool = False, return_raw: float = False
+) -> Time | np.typing.NDArray[np.floating]:
     """Return the observation times from an ASKAP Measurement set.
 
     Args:
         ms (Union[MS, Path]): Measurement set to inspect
+        unique (bool, optional): return only the unique times. Defaults to False.
+        sort (bool, optional): return times in ascending order, otherwise they are returned in the order the MS has them in. Defaults to False.
+        rutern_raw (bool, optional): If True return the times as they are from the MS. Otherwise return as astropy.time.Time. Defaults to False.
 
     Returns:
-        Time: The observation times
+        Time | np.typing.NDArray[np.floating]: The observation times. If `return_raw` is True these are floats, otherwise `Time`.
     """
     # Get the time of the observation
     ms = MS.cast(ms)
     with table(str(ms.path), ack=False) as tab:
-        times = Time(tab.getcol("TIME") * u.s, format="mjd")
+        times = tab.getcol("TIME")
+        if not return_raw:
+            times = Time(tab.getcol("TIME") * u.s, format="mjd")
+
+    if unique:
+        times = np.unique(times)
+    if sort:
+        times = np.sort(times)
 
     return times
 
@@ -628,6 +640,7 @@ def subtract_model_from_data_column(
     data_column: str | None = None,
     output_column: str | None = None,
     update_tracked_column: bool = False,
+    chunk_size: int | None = None,
 ) -> MS:
     """Execute a ``taql`` query to subtract the MODEL_DATA from a nominated data column.
     This requires the ``model_column`` to already be inserted into the MS. Internally
@@ -640,6 +653,7 @@ def subtract_model_from_data_column(
         data_column (Optional[str], optional): The column where the column will be subtracted. If ``None`` it is taken from the ``column`` nominated by the input ``MS`` instance. Defaults to None.
         output_column (Optional[str], optional): The output column that will be created. If ``None`` it defaults to ``data_column``. Defaults to None.
         update_tracked_column (bool, optional): If True, update ``ms.column`` to the column with subtracted data. Defaults to False.
+        chunk_size (int, optional): The number of rows to manage at a time. If None, `taql` is used. If an `int` iteration with getcol/putcol is used. Defaults to None.
 
     Returns:
         MS: The updated MS
@@ -650,7 +664,9 @@ def subtract_model_from_data_column(
 
     output_column = output_column if output_column else data_column
     assert output_column is not None, f"{output_column=}, which is not allowed"
+    logger.info(f"Subtracting {model_column=} from {data_column=} for {ms.path=}")
     with critical_ms_interaction(input_ms=ms.path) as critical_ms:
+        logger.info(f"Interacting with {critical_ms=}")
         with table(str(critical_ms), readonly=False) as tab:
             logger.info("Extracting columns")
             colnames = tab.colnames()
@@ -668,7 +684,28 @@ def subtract_model_from_data_column(
                 tab.flush()
 
             logger.info(f"Subtracting {model_column=} from {data_column=}")
-            taql(f"UPDATE $tab SET {output_column}={data_column}-{model_column}")
+            if chunk_size is None:
+                taql(f"UPDATE $tab SET {output_column}={data_column}-{model_column}")
+            else:
+                current_idx = 0
+                total_rows = len(tab)
+                number_of_chunks = int(np.ceil(total_rows / chunk_size))
+                current_chunk = 1
+                while current_idx < total_rows:
+                    logger.info(
+                        f"{current_chunk} of {number_of_chunks}) working on rows {current_idx}-{current_idx + chunk_size} of {total_rows} rows"
+                    )
+                    data = tab.getcol(
+                        data_column, startrow=current_idx, nrow=chunk_size
+                    )
+                    model = tab.getcol(
+                        model_column, startrow=current_idx, nrow=chunk_size
+                    )
+                    data -= model
+                    del model
+                    tab.putcol(data_column, data, startrow=current_idx, nrow=chunk_size)
+                    current_idx += chunk_size
+                    current_chunk += 1
 
     if update_tracked_column:
         logger.info(f"Updating ms.column to {output_column=}")

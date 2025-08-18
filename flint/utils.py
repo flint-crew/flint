@@ -95,7 +95,8 @@ def timelimit_on_context(
 def hold_then_move_into(
     move_directory: Path,
     hold_directory: Path | None,
-    delete_hold_on_exist: bool = True,
+    delete_hold_on_exit: bool = True,
+    overwrite_if_exists: bool = False,
 ) -> Generator[Path, None, None]:
     """Create a temporary directory such that anything within it on the
     exit of the context manager is copied over to `move_directory`.
@@ -107,7 +108,8 @@ def hold_then_move_into(
     Args:
         move_directory (Path): Final directory location to move items into
         hold_directory (Optional[Path], optional): Location of directory to temporarily base work from. If None provided `move_directory` is returned and no copying/deleting is performed on exit. Defaults to None.
-        delete_hold_on_exist (bool, optional): Whether `hold_directory` is deleted on exit of the context. Defaults to True.
+        delete_hold_on_exit (bool, optional): Whether `hold_directory` is deleted on exit of the context. Defaults to True.
+        overwrite_if_exists (bool, optional): If a file already exists in the move directory overwrite it with a new copy. Defaults to False.
 
     Returns:
         Path: Path to the temporary folder
@@ -136,9 +138,14 @@ def hold_then_move_into(
 
         for file_or_folder in hold_directory.glob("*"):
             logger.info(f"Moving {file_or_folder=} to {move_directory=}")
+            # TODO: Make this optional
+            out_files = move_directory / file_or_folder.name
+            if out_files.exists() and overwrite_if_exists:
+                logger.warn(f"{out_files=} already exists. Deleting.")
+                remove_files_folders(out_files)
             shutil.move(str(file_or_folder), move_directory)
 
-        if delete_hold_on_exist:
+        if delete_hold_on_exit:
             remove_files_folders(hold_directory)
 
 

@@ -184,6 +184,7 @@ def create_imaging_name_prefix(
     ms_path: Path,
     pol: str | None = None,
     channel_range: tuple[int, int] | None = None,
+    scan_range: tuple[int, int] | None = None,
 ) -> str:
     """Given a measurement set and a polarisation, create the naming prefix to be used
     by some imager
@@ -192,16 +193,19 @@ def create_imaging_name_prefix(
         ms (Union[MS,Path]): The measurement set being considered
         pol (Optional[str], optional): Whether a polarsation is being considered. Defaults to None.
         channel_range (Optional[Tuple[int,int]], optional): The channel range that is going to be imaged. Defaults to none.
+        scan_range (Optional[Tuple[int,int]], optional): The scan range that is going to be imaged. Defaults to none.
 
     Returns:
         str: The constructed string name
     """
 
     names = [ms_path.stem]
-    if pol:
+    if pol is not None:
         names.append(f"{pol.lower()}")
-    if channel_range:
+    if channel_range is not None:
         names.append(f"ch{channel_range[0]:04}-{channel_range[1]:04}")
+    if scan_range is not None:
+        names.append(f"scan{scan_range[0]:04}-{scan_range[1]:04}")
 
     return ".".join(names)
 
@@ -456,7 +460,9 @@ class ProcessedNameComponents(NamedTuple):
     pol: str | None = None
     """The polarisation component, if it exists, in a filename. Examples are 'i','q','u','v'. Could be combinations in some cases depending on how it was created (e.g. based on wsclean pol option). """
     channel_range: tuple[int, int] | None = None
-    """The channel range encoded in an file name. Generally are zero-padded, and are two fields of the form ch1234-1235, where the upper bound is exclusive. Defaults to none."""
+    """The channel range encoded in a file name. Generally are zero-padded, and are two fields of the form ch1234-1235, where the upper bound is exclusive. Defaults to None."""
+    scan_range: tuple[int, int] | None = None
+    """The scane range encoded in a file name. Generally are zero-padded and are two fields of the form scan1234-1235, where the epper bound is exclusive. Defaults to None."""
 
 
 def processed_ms_format(
@@ -486,6 +492,7 @@ def processed_ms_format(
         r"((\.round(?P<round>[0-9]+))?)"
         r"((\.(?P<pol>(i|q|u|v|xx|yy|xy|yx)+))?)"
         r"((\.ch(?P<chl>([0-9]+))-(?P<chh>([0-9]+)))?)"
+        r"((\.scan(?P<scanl>([0-9]+))-(?P<scanh>([0-9]+)))?)"
     )
     results = regex.match(in_name)
 
@@ -498,6 +505,9 @@ def processed_ms_format(
     logger.debug(f"Matched groups are: {groups}")
 
     channel_range = (int(groups["chl"]), int(groups["chh"])) if groups["chl"] else None
+    scan_range = (
+        (int(groups["scanl"]), int(groups["scanh"])) if groups["scanl"] else None
+    )
 
     return ProcessedNameComponents(
         sbid=groups["sbid"],
@@ -507,6 +517,7 @@ def processed_ms_format(
         round=groups["round"],
         pol=groups["pol"],
         channel_range=channel_range,
+        scan_range=scan_range,
     )
 
 
@@ -526,21 +537,25 @@ def create_path_from_processed_name_components(
     components = []
 
     # Operate over each field in order and create the formatted field appropriately
-    if processed_name_components.sbid:
+    if processed_name_components.sbid is not None:
         components.append(f"SB{processed_name_components.sbid}")
-    if processed_name_components.field:
+    if processed_name_components.field is not None:
         components.append(processed_name_components.field)
-    if processed_name_components.beam:
+    if processed_name_components.beam is not None:
         components.append(f"beam{int(processed_name_components.beam):02d}")
-    if processed_name_components.spw:
+    if processed_name_components.spw is not None:
         components.append(f"spw{int(processed_name_components.spw):02d}")
-    if processed_name_components.round:
+    if processed_name_components.round is not None:
         components.append(f"round{int(processed_name_components.round)}")
-    if processed_name_components.pol:
+    if processed_name_components.pol is not None:
         components.append(f"{processed_name_components.pol}")
-    if processed_name_components.channel_range:
+    if processed_name_components.channel_range is not None:
         components.append(
             f"ch{processed_name_components.channel_range[0]:04d}-{processed_name_components.channel_range[1]:04d}"
+        )
+    if processed_name_components.scan_range is not None:
+        components.append(
+            f"scan{processed_name_components.scan_range[0]:04d}-{processed_name_components.scan_range[1]:04d}"
         )
 
     # Join then add the parent path

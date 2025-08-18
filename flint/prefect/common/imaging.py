@@ -320,9 +320,13 @@ def task_wsclean_imager(
     update_wsclean_options: dict[str, Any] | None = None,
     fits_mask: FITSMaskNames | None = None,
     channel_range: tuple[int, int] | None = None,
+    scan_range: tuple[int, int] | None = None,
     make_cube_from_subbands: bool = True,
 ) -> WSCleanResult:
     """Run the wsclean imager against an input measurement set
+
+    The `channel_range` and `scan_range` options over-write the
+    `update_wsclean_options`, as some flow programmatically create these.
 
     Args:
         in_ms (Union[ApplySolutions, MS]): The measurement set that will be imaged
@@ -330,11 +334,11 @@ def task_wsclean_imager(
         update_wsclean_options (Optional[Dict[str, Any]], optional): Options to update from the default wsclean options. Defaults to None.
         fits_mask (Optional[FITSMaskNames], optional): A path to a clean guard mask. Defaults to None.
         channel_range (Optional[Tuple[int,int]], optional): Add to the wsclean options the specific channel range to be imaged. Defaults to None.
+        scan_range (Optional[Tuple[int,int]], optional): Add to the wsclean options the specific scan range to be imaged. Defaults to None.
 
     Returns:
         WSCleanResult: A resulting wsclean command and resulting meta-data
     """
-    from flint.exceptions import CleanDivergenceError
 
     ms = in_ms if isinstance(in_ms, MS) else in_ms.ms
 
@@ -348,43 +352,16 @@ def task_wsclean_imager(
     if channel_range:
         update_wsclean_options["channel_range"] = channel_range
 
-    logger.info(f"wsclean inager {ms=}")
-    try:
-        return wsclean_imager(
-            ms=ms,
-            wsclean_container=wsclean_container,
-            update_wsclean_options=update_wsclean_options,
-            make_cube_from_subbands=make_cube_from_subbands,
-        )
-    except CleanDivergenceError:
-        # NOTE: If the cleaning failed retry with some larger images
-        # and slower cleaning. Perhaps this should be moved closer
-        # to the wscleaning functionality
-        size = (
-            update_wsclean_options["size"] + 1024
-            if "size" in update_wsclean_options
-            else 8196
-        )
-        mgain = (
-            max(0, update_wsclean_options["mgain"] - 0.1)
-            if "mgain" in update_wsclean_options
-            else 0.6
-        )
-        convergence_wsclean_options = dict(size=size, mgain=mgain)
-        # dicts are mutable. Don't want to change for everything. Unclear to me
-        # how prefect would behave here.
-        update_wsclean_options = update_wsclean_options.copy()
-        update_wsclean_options.update(**convergence_wsclean_options)
-        logger.warning(
-            f"Clean divergence dertected. Rerunning. Updated options {convergence_wsclean_options=}"
-        )
+    if scan_range:
+        update_wsclean_options["interval"] = scan_range
 
-        return wsclean_imager(
-            ms=ms,
-            wsclean_container=wsclean_container,
-            update_wsclean_options=update_wsclean_options,
-            make_cube_from_subbands=make_cube_from_subbands,
-        )
+    logger.info(f"wsclean inager {ms=}")
+    return wsclean_imager(
+        ms=ms,
+        wsclean_container=wsclean_container,
+        update_wsclean_options=update_wsclean_options,
+        make_cube_from_subbands=make_cube_from_subbands,
+    )
 
 
 def get_common_beam_from_images(
@@ -855,6 +832,57 @@ def convolve_then_linmos(
     )  # type: ignore
 
     return parset
+
+
+@task
+def task_common_beam_convolve_linmos(
+    wsclean_results: list[WSCleanResult],
+    field_options: SubtractFieldOptions,
+    convol_mode: str,
+    convol_filter: str | None = None,
+    convol_suffix_str: str | None = None,
+    remove_original_images: bool = False,
+    trim_linmos_fits: bool = False,
+    cleanup_linmos: bool = False,
+    linmos_suffix_str: str | None = None,
+    field_summary: FieldSummary | None = None,
+) -> LinmosResult:
+    beam_shape = task_get_common_beam_from_results.fn(
+        wsclean_results=wsclean_results,
+        cutoff=field_options.beam_cutoff,
+        filter_str="image.",
+    )
+
+    conv_images = [
+        task_convolve_image.fn(
+            wsclean_result=wsclean_result,
+            beam_shape=beam_shape,
+            cutoff=field_options.beam_cutoff,
+            mode=convol_mode,
+            filter_str=convol_filter,
+            convol_suffix_str=convol_suffix_str,
+            remove_original_images=remove_original_images,
+        )
+        for wsclean_result in wsclean_results
+    ]
+
+    assert field_options.yandasoft_container is not None
+    # Though pol axis could be obtained from field_summary, at this point
+    # it could be a PrefectFuture. Pass it over to the task.
+    linmos_options = LinmosOptions(
+        holofile=field_options.holofile,
+        cutoff=field_options.pb_cutoff,
+        trim_linmos_fits=trim_linmos_fits,
+        cleanup=cleanup_linmos,
+        remove_original_images=remove_original_images,
+    )
+    return task_linmos_images.fn(
+        image_list=flatten_items(items=conv_images),
+        container=field_options.yandasoft_container,
+        suffix_str=linmos_suffix_str,
+        linmos_options=linmos_options,
+        field_summary=field_summary,
+    )  # type: ignore
 
 
 def create_convol_linmos_images(

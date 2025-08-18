@@ -170,6 +170,75 @@ def test_hold_then_move_into(tmpdir: Any):
     assert not hold_directory.exists()
 
 
+def test_hold_then_move_into_when_exists(tmpdir: Any):
+    """See whether the hold directory can have things dumped into it, then
+    moved into place on exit of the context manager. See whether overwriting
+    an existing file behaves correctly."""
+
+    tmpdir = Path(tmpdir)
+
+    hold_directory = Path(tmpdir / "putthingshere")
+    move_directory = Path(tmpdir / "the/final/location")
+    move_directory.mkdir(parents=True, exist_ok=True)
+    no_files = 45
+
+    for i in range(no_files):
+        file: Path = move_directory / f"some_file_{i}.txt"
+        file.write_text(f"This is a file {i}")
+
+    with hold_then_move_into(
+        hold_directory=hold_directory,
+        move_directory=move_directory,
+        overwrite_if_exists=True,
+    ) as put_dir:
+        assert put_dir.exists()
+        for i in range(no_files):
+            file2: Path = put_dir / f"some_file_{i}.txt"
+            file2.write_text(f"This is a file {i}")
+
+        assert len(list(put_dir.glob("*"))) == no_files
+        assert move_directory.exists()
+        assert len(list(move_directory.glob("*"))) == no_files
+
+    assert len(list(move_directory.glob("*"))) == no_files
+    assert not put_dir.exists()
+    assert not hold_directory.exists()
+
+
+def test_hold_then_move_into_when_exists_werror(tmpdir: Any):
+    """See whether the hold directory can have things dumped into it, then
+    moved into place on exit of the context manager. See whether overwriting
+    an existing file behaves correctly."""
+
+    tmpdir = Path(tmpdir)
+
+    hold_directory = Path(tmpdir / "putthingshere")
+    move_directory = Path(tmpdir / "the/final/location")
+    move_directory.mkdir(parents=True, exist_ok=True)
+    no_files = 45
+
+    for i in range(no_files):
+        file: Path = move_directory / f"some_file_{i}.txt"
+        file.write_text(f"This is a file {i}")
+
+    import shutil
+
+    with pytest.raises(shutil.Error):
+        with hold_then_move_into(
+            hold_directory=hold_directory,
+            move_directory=move_directory,
+            overwrite_if_exists=False,
+        ) as put_dir:
+            assert put_dir.exists()
+            for i in range(no_files):
+                file2: Path = put_dir / f"some_file_{i}.txt"
+                file2.write_text(f"This is a file {i}")
+
+            assert len(list(put_dir.glob("*"))) == no_files
+            assert move_directory.exists()
+            assert len(list(move_directory.glob("*"))) == no_files
+
+
 def test_temporarily_move_into_none(tmpdir):
     """Make sure that the temporary context manager returns the same path without
     any deleting should the temporary directory be set to None"""
