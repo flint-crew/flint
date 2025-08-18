@@ -309,23 +309,22 @@ def flow_subtract_cube(
 
     if subtract_field_options.use_crystalball:
         logger.info("Attempting to peer into the crystalball, me'hearty")
-        science_mss = task_crystalball_to_ms.map(
-            ms=science_mss,
-            crystalball_options=unmapped(crystalball_subtract_field_options),
-        )
-
-    if subtract_field_options.attempt_subtract:
-        # TODO: Put this back to a map
         science_mss = tuple(
             [
-                task_subtract_model_from_ms(
+                task_crystalball_to_ms(
                     ms=sms,
-                    data_column=subtract_field_options.subtract_data_column,
-                    update_tracked_column=True,
-                    chunk_size=1000,
+                    crystalball_options=unmapped(crystalball_subtract_field_options),
                 )
                 for sms in science_mss
             ]
+        )
+
+    if subtract_field_options.attempt_subtract:
+        science_mss = task_subtract_model_from_ms.map(
+            ms=science_mss,
+            data_column=subtract_field_options.subtract_data_column,
+            update_tracked_column=True,
+            chunk_size=1000,
         )
 
     # Fellow Captain Zic request, arrr
