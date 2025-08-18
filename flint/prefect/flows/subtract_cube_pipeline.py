@@ -311,10 +311,10 @@ def flow_subtract_cube(
         logger.info("Attempting to peer into the crystalball, me'hearty")
         science_mss = tuple(
             [
-                task_crystalball_to_ms(
+                task_crystalball_to_ms.submit(
                     ms=sms,
                     crystalball_options=unmapped(crystalball_subtract_field_options),
-                )
+                ).result()
                 for sms in science_mss
             ]
         )
