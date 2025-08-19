@@ -24,6 +24,6 @@ RUN conda clean --all --yes
 # Install flint
 COPY ../ /flint
 WORKDIR /flint
-RUN uv sync --frozen --compile-bytecode
+RUN uv pip install -e .[casa] --compile-bytecode
 
 WORKDIR /root
