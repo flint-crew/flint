@@ -35,7 +35,8 @@ def crystalball_predict(
     dask_client: Client | None = None,
     output_column: str = "MODEL_DATA",
     update_crystalball_options: dict[str, Any] | None = None,
-) -> MS:
+    return_delayed: bool = False,
+) -> MS | tuple[MS, Any]:
     """A very simply wrapper around the `Crystalball.predict` function. Basic
     checks to ensure that the BB6 style source model path exists, which is the
     format used by the `wsclean -save-source-list` option.
@@ -83,7 +84,7 @@ def crystalball_predict(
     if dask_client:
         logger.info(f"Using {dask_client=}")
 
-    predict(
+    delayed = predict(
         ms=str(ms.path),
         sky_model=str(wsclean_source_list_path),
         output_column=output_column,
@@ -91,9 +92,15 @@ def crystalball_predict(
         row_chunks=crystalball_options.row_chunks,
         model_chunks=crystalball_options.model_chunks,
         memory_fraction=crystalball_options.memory_fraction,
+        return_delayed=return_delayed,
     )
 
-    return ms.with_options(model_column="MODEL_DATA")
+    ms = ms.with_options(model_column="MODEL_DATA")
+
+    if return_delayed:
+        return ms, delayed
+
+    return ms
 
 
 def get_parser() -> ArgumentParser:

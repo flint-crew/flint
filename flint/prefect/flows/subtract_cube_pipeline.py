@@ -44,7 +44,7 @@ from flint.prefect.common.imaging import (
     task_wsclean_imager,
 )
 from flint.prefect.common.ms import task_subtract_model_from_ms
-from flint.prefect.common.predict import task_addmodel_to_ms, task_crystalball_to_ms
+from flint.prefect.common.predict import task_addmodel_to_ms, task_all_crystalball_to_ms
 
 
 def _check_and_verify_options(
@@ -309,15 +309,20 @@ def flow_subtract_cube(
 
     if subtract_field_options.use_crystalball:
         logger.info("Attempting to peer into the crystalball, me'hearty")
-        science_mss = tuple(
-            [
-                task_crystalball_to_ms.submit(
-                    ms=sms,
-                    crystalball_options=unmapped(crystalball_subtract_field_options),
-                ).result()
-                for sms in science_mss
-            ]
+        science_mss = task_all_crystalball_to_ms.submit(
+            ms=science_mss,
+            crystalball_options=unmapped(crystalball_subtract_field_options),
         )
+
+        # science_mss = tuple(
+        #     [
+        #         task_crystalball_to_ms.submit(
+        #             ms=sms,
+        #             crystalball_options=unmapped(crystalball_subtract_field_options),
+        #         ).result()
+        #         for sms in science_mss
+        #     ]
+        # )
 
     if subtract_field_options.attempt_subtract:
         science_mss = task_subtract_model_from_ms.map(

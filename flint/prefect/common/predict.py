@@ -36,12 +36,63 @@ def task_crystalball_to_ms(ms: MS, crystalball_options: CrystalBallOptions) -> M
 
     with get_dask_client() as client:
         logger.info("Obtained the Client supporting the DaskTaskRunner.")
-        return crystalball_predict(
+        return_ms = crystalball_predict(
             ms=ms,
             crystalball_options=crystalball_options,
             dask_client=client,
             output_column="MODEL_DATA",
         )
+        assert isinstance(return_ms, MS)
+        return return_ms
+
+
+@task
+def task_all_crystalball_to_ms(
+    mss: list[MS], crystalball_options: CrystalBallOptions
+) -> list[MS]:
+    """Predict model visibilities into a measurement set using a previously constructed
+    blackboard sky model. See ``wsclean -save-source-list`. This used the ``crystalball``
+    python package, which under the hood taps into the same dask task runner running
+    this flow.
+
+    Visibilities are predicted into the MS's ``MODEL_DATA`` column.
+
+    Args:
+        ms (list[MS]): The list of all measurement set where model visibilities will be predicted into.
+        crystalball_options (CrystalBallOptions): Options around the crystal ball operation
+
+    Returns:
+        MS: An updated MS with the model column set
+    """
+    from prefect_dask import get_dask_client
+
+    from flint.predict.crystalball import crystalball_predict
+    from flint.prefect.helpers import enable_loguru_support
+
+    # crystalball uses loguru. We want to try to attach a handler
+    enable_loguru_support()
+
+    from typing import Any
+
+    results: list[MS] = []
+    delayed: list[Any] = []
+
+    with get_dask_client() as client:
+        logger.info("Obtained the Client supporting the DaskTaskRunner.")
+        for ms in mss:
+            ms_result, ms_delayed = crystalball_predict(
+                ms=ms,
+                crystalball_options=crystalball_options,
+                dask_client=client,
+                output_column="MODEL_DATA",
+                return_delayed=True,
+            )
+            results.append(ms_result)
+            delayed.extend(ms_delayed)
+
+        c = client.compute(ms_delayed)
+        client.gather(c)
+    return results
 
 
 @task
