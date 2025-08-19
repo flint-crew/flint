@@ -47,6 +47,9 @@ from flint.prefect.common.ms import task_subtract_model_from_ms
 from flint.prefect.common.predict import task_addmodel_to_ms, task_all_crystalball_to_ms
 
 
+import sys
+sys.setrecursionlimit(3000) # Or a higher value if needed
+
 def _check_and_verify_options(
     subtract_field_options: SubtractFieldOptions | None = None,
     addmodel_subtract_field_options: AddModelSubtractFieldOptions | None = None,

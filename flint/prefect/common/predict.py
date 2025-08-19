@@ -64,11 +64,15 @@ def task_all_crystalball_to_ms(
     Returns:
         MS: An updated MS with the model column set
     """
+    import sys
+    sys.setrecursionlimit(3000) # Or a higher value if needed
+
     from prefect_dask import get_dask_client
 
     from flint.predict.crystalball import crystalball_predict
     from flint.prefect.helpers import enable_loguru_support
 
+    
     # crystalball uses loguru. We want to try to attach a handler
     enable_loguru_support()
 
