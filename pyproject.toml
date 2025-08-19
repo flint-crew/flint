@@ -56,6 +56,10 @@ build.hooks.vcs.version-file = "flint/_version.py"
 metadata.allow-direct-references = true
 build.targets.wheel.packages = ["flint"]
 
+[tool.uv]
+managed = true # let uv manage virtualenvs
+package = true # install package in editable mode
+
 
 [project.optional-dependencies]
 dev = [
@@ -217,3 +221,6 @@ extend-exclude = ["*.fits", "flint/data/**/*", "ignore_words.txt"]
 FIELDs = "FIELDs"
 FoV = "FoV"
 outweight= "outweight"
+
+[tool.codespell]
+skip = "*.lock"
