@@ -26,7 +26,7 @@ jobs:
             dockerfile: ["containers/Dockerfile", "containers/Dockerfile-dev"]
     steps:
       - name: Check out the repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Determine tag suffix
         id: tag_suffix
