@@ -73,7 +73,8 @@ def task_all_crystalball_to_ms(
     enable_loguru_support()
 
     from typing import Any
-
+    from dask.distributed import progress as dask_progress
+    
     results: list[MS] = []
     delayed: list[Any] = []
 
@@ -91,7 +92,8 @@ def task_all_crystalball_to_ms(
             delayed.extend(ms_delayed)
 
         c = client.compute(delayed)
-        client.gather(c)
+        dask_progress(c)
+
     return results
 
 
