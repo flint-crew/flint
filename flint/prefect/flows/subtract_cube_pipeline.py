@@ -310,7 +310,7 @@ def flow_subtract_cube(
     if subtract_field_options.use_crystalball:
         logger.info("Attempting to peer into the crystalball, me'hearty")
         science_mss = task_all_crystalball_to_ms.submit(
-            ms=science_mss,
+            mss=science_mss,
             crystalball_options=unmapped(crystalball_subtract_field_options),
         )
 
