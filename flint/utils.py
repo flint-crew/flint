@@ -130,9 +130,13 @@ def hold_then_move_into(
     hold_directory = Path(hold_directory) if hold_directory else None
     move_directory = Path(move_directory)
 
+    logger.info("Hold context manager")
+    logger.info(f"{hold_directory=}")
+    logger.info(f"{move_directory=}")
     if append_uuid and hold_directory is not None:
         uuid_directory_name = str(uuid.uuid4().hex)
         hold_directory = hold_directory / uuid_directory_name
+        logger.info(f"Updated {hold_directory=}")
 
     if hold_directory == move_directory or hold_directory is None:
         move_directory.mkdir(parents=True, exist_ok=True)
