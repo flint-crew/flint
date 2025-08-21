@@ -82,6 +82,8 @@ def task_all_crystalball_to_ms(
     results: list[MS] = []
     delayed: list[Any] = []
 
+    maximum_crystalballs = 5
+
     with get_dask_client() as client:
         logger.info("Obtained the Client supporting the DaskTaskRunner.")
         for ms in mss:
@@ -95,9 +97,11 @@ def task_all_crystalball_to_ms(
             )
             results.append(ms_result)
             delayed.extend(ms_delayed)
-            logger.info(f"Length of writes: {len(delayed)}")
-            # c = client.compute(ms_delayed)
-            # dask_progress(c)
+            if len(delayed) >= maximum_crystalballs:
+                logger.info(f"Length of writes: {len(delayed)}")
+                c = client.compute(ms_delayed)
+                dask_progress(c)
+                delayed = []
 
         c = client.compute(delayed)
         dask_progress(c)
