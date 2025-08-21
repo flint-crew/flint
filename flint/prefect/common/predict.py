@@ -94,11 +94,11 @@ def task_all_crystalball_to_ms(
             )
             results.append(ms_result)
             delayed.extend(ms_delayed)
-            c = client.compute(ms_delayed)
-            dask_progress(c)
+            # c = client.compute(ms_delayed)
+            # dask_progress(c)
 
-        # c = client.compute(delayed)
-        # dask_progress(c)
+        c = client.compute(delayed)
+        dask_progress(c)
 
     return results
 
