@@ -85,6 +85,7 @@ def task_all_crystalball_to_ms(
     with get_dask_client() as client:
         logger.info("Obtained the Client supporting the DaskTaskRunner.")
         for ms in mss:
+            logger.info(f"Adding {ms.path=} to crystalball")
             ms_result, ms_delayed = crystalball_predict(
                 ms=ms,
                 crystalball_options=crystalball_options,
@@ -94,6 +95,7 @@ def task_all_crystalball_to_ms(
             )
             results.append(ms_result)
             delayed.extend(ms_delayed)
+            logger.info(f"Length of writes: {len(delayed)}")
             # c = client.compute(ms_delayed)
             # dask_progress(c)
 
