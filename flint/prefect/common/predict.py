@@ -99,7 +99,7 @@ def task_all_crystalball_to_ms(
             delayed.extend(ms_delayed)
             if len(delayed) >= maximum_crystalballs:
                 logger.info(f"Length of writes: {len(delayed)}")
-                c = client.compute(ms_delayed)
+                c = client.compute(delayed)
                 dask_progress(c)
                 delayed = []
 
