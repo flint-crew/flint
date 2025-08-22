@@ -201,7 +201,7 @@ def task_combine_all_linmos_images(
     _ = combine_fits(
         file_list=images_to_combine,
         out_cube=output_cube_path,
-        max_workers=4,
+        max_workers=2,
         time_domain_mode=time_domain,
     )
 
