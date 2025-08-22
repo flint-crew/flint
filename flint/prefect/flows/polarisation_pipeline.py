@@ -27,6 +27,7 @@ from flint.naming import (
     get_sbid_from_path,
 )
 from flint.options import (
+    MS,
     PolFieldOptions,
     add_options_to_parser,
     create_options_from_parser,
@@ -144,40 +145,48 @@ def process_science_fields_pol(
 
     polarisations: dict[str, str] = strategy.get("polarisation", {"total": {}})
 
-    image_sets_dict: dict[str, PrefectFuture[ImageSet]] = {}
+
+    # fix typing
+    image_sets_dict: dict[str, list[PrefectFuture[ImageSet]]] = {}
     image_sets_list: list[PrefectFuture[ImageSet]] = []
+
+    # track the latest submitted job per MS so we can chain polarisation runs
+    prev_by_ms: dict[MS, PrefectFuture[WSCleanResult]] = {}
+
     for polarisation in polarisations.keys():
-        _image_sets = []
+        _image_sets: list[PrefectFuture[ImageSet]] = []
+
         with tags(f"polarisation-{polarisation}"):
             for science_ms in science_mss:
-                wsclean_result: PrefectFuture[WSCleanResult] = (
-                    task_wsclean_imager.submit(
-                        in_ms=science_ms,
-                        wsclean_container=pol_field_options.wsclean_container,
-                        make_cube_from_subbands=False,  # We will do this later
-                        recompute=False, # to not rerun wsclean jobs if some fraction of them already completed succesfully in an earlier run
-                        ignore_tmpdir_files_with_globstr='tmp', # ADDED BY ERIK TO IGNORE MOVING WSCLEAN TMP FILES THAT SOMETIMES END UP IN THE MOVE_DIR FROM THE HOLD_DIR
-                        file_exist_ok=True, # ADDED BY ERIK BECAUSE HOLD_THEN_MOVE_INTO KEEPS FAILING FOR A RANDOM SUBSET OF JOBS BECAUSE FILES ALREADY EXIST.
-                        update_wsclean_options=unmapped(
-                            get_options_from_strategy(
-                                strategy=strategy,
-                                operation="polarisation",
-                                mode="wsclean",
-                                polarisation=polarisation,
-                            )
-                        ),
-                    )
+                # If we've already launched a job for this MS, make the next polarisation wait for it
+                # WSClean can throw errors if two processes are accessing at the same time.
+                upstream = [prev_by_ms[science_ms]] if science_ms in prev_by_ms else None
+
+                wsclean_result: PrefectFuture[WSCleanResult] = task_wsclean_imager.submit(
+                    in_ms=science_ms,
+                    wsclean_container=pol_field_options.wsclean_container,
+                    make_cube_from_subbands=False,      # we will do this later
+                    recompute=False,                    # to not rerun wsclean jobs if some fraction of them already completed succesfully in an earlier run
+                    ignore_tmpdir_files_with_globstr='tmp', # ADDED BY ERIK TO IGNORE MOVING WSCLEAN TMP FILES THAT SOMETIMES END UP IN THE MOVE_DIR FROM THE HOLD_DIR
+                    file_exist_ok=True,                  # # ADDED BY ERIK BECAUSE HOLD_THEN_MOVE_INTO KEEPS FAILING FOR A RANDOM SUBSET OF JOBS BECAUSE FILES ALREADY EXIST.
+                    update_wsclean_options=unmapped(
+                        get_options_from_strategy(
+                            strategy=strategy,
+                            operation="polarisation",
+                            mode="wsclean",
+                            polarisation=polarisation,
+                        )
+                    ),
+                    wait_for=upstream,  # <-- serialize polarisations per MS, 
+                                        # so that we do not run wsclean on the same MS in parallel
                 )
-                _image_set: PrefectFuture[ImageSet] = task_getattr.submit(
-                    wsclean_result, "image_set"
-                )
+
+                _image_set: PrefectFuture[ImageSet] = task_getattr.submit(wsclean_result, "image_set")
                 _image_sets.append(_image_set)
                 image_sets_list.append(_image_set)
-        
-        # # wait for all image_set tasks for this polarisation to finish
-        # for image_set_future in _image_sets:
-        #     # this will block until that future completes
-        #     image_set_future.result()
+
+                # Update the tail of the chain for this MS
+                prev_by_ms[science_ms] = wsclean_result
 
         image_sets_dict[polarisation] = _image_sets
 
