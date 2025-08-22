@@ -21,6 +21,7 @@ from flint.logging import logger
 from flint.ms import find_mss
 from flint.naming import (
     CASDANameComponents,
+    FITSMaskNames,
     ProcessedNameComponents,
     add_timestamp_to_path,
     extract_components_from_name,
@@ -162,6 +163,19 @@ def process_science_fields_pol(
                 # WSClean can throw errors if two processes are accessing at the same time.
                 upstream = [prev_by_ms[science_ms]] if science_ms in prev_by_ms else None
 
+                if True:
+                    # hardcode for testing
+                    fits_mask_file = science_ms.name.replace(".ms", ".i.MFS.image.fits.mask.fits")
+                    fits_mask_file = Path("/scratch/b/bmg/eosinga/doradogroup/production/697826981770314") / fits_mask_file
+
+                    # create FITS mask per MS
+                    fits_mask = FITSMaskNames(
+                        mask_fits=fits_mask_file,
+                        signal_fits=None
+                    )
+                else:
+                    fits_mask = None
+
                 wsclean_result: PrefectFuture[WSCleanResult] = task_wsclean_imager.submit(
                     in_ms=science_ms,
                     wsclean_container=pol_field_options.wsclean_container,
@@ -169,6 +183,7 @@ def process_science_fields_pol(
                     recompute=False,                    # to not rerun wsclean jobs if some fraction of them already completed succesfully in an earlier run
                     ignore_tmpdir_files_with_globstr='tmp', # ADDED BY ERIK TO IGNORE MOVING WSCLEAN TMP FILES THAT SOMETIMES END UP IN THE MOVE_DIR FROM THE HOLD_DIR
                     file_exist_ok=True,                  # # ADDED BY ERIK BECAUSE HOLD_THEN_MOVE_INTO KEEPS FAILING FOR A RANDOM SUBSET OF JOBS BECAUSE FILES ALREADY EXIST.
+                    fits_mask=fits_mask,                # <-- use the FITS mask we created above. TODO: make user input a fits_mask directory and a fits_mask glob
                     update_wsclean_options=unmapped(
                         get_options_from_strategy(
                             strategy=strategy,
