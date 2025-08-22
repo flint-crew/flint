@@ -164,8 +164,8 @@ def process_science_fields_pol(
                 upstream = [prev_by_ms[science_ms]] if science_ms in prev_by_ms else None
 
                 if True:
-                    # hardcode for testing
-                    fits_mask_file = science_ms.name.replace(".ms", ".i.MFS.image.fits.mask.fits")
+                    # hardcode for testing. Assume the fitsmask is created with the same name as .ms
+                    fits_mask_file = science_ms.path.name.replace(".ms", ".i.MFS.image.fits.mask.fits")
                     fits_mask_file = Path("/scratch/b/bmg/eosinga/doradogroup/production/697826981770314") / fits_mask_file
 
                     # create FITS mask per MS
