@@ -417,18 +417,30 @@ def flow_subtract_cube(
 
             logger.info(f"Imaging {scan=} {time=}")
             scan_range = (scan, scan + 1)
-            scan_wsclean_cmds = task_wsclean_imager.with_options(retries=2).map(
+            update_wsclean_options = get_options_from_strategy(
+                    strategy=strategy,
+                    mode="wsclean",
+                    operation="subtractcube",
+                )
+            scan_wsclean_cmds = task_map_all_wsclean.submit(
                 in_ms=science_mss,
                 wsclean_container=subtract_field_options.wsclean_container,
-                scan_range=unmapped(scan_range),
-                update_wsclean_options=unmapped(
-                    get_options_from_strategy(
-                        strategy=strategy,
-                        mode="wsclean",
-                        operation="subtractcube",
-                    )
-                ),
+                scan_range=scan_range,
+                update_wsclean_options=update_wsclean_options,
             )
+            
+            # scan_wsclean_cmds = task_wsclean_imager.with_options(retries=2).map(
+            #     in_ms=science_mss,
+            #     wsclean_container=subtract_field_options.wsclean_container,
+            #     scan_range=unmapped(scan_range),
+            #     update_wsclean_options=unmapped(
+            #         get_options_from_strategy(
+            #             strategy=strategy,
+            #             mode="wsclean",
+            #             operation="subtractcube",
+            #         )
+            #     ),
+            # )
             scan_parset = task_common_beam_convolve_linmos.submit(
                 wsclean_results=scan_wsclean_cmds,
                 linmos_suffix_str=None,
