@@ -164,6 +164,19 @@ def find_and_setup_mss(
 
     return science_mss
 
+from flint.imager.wsclean import WSCleanResult
+
+@task
+def task_map_all_wsclean(mss: list[MS], *args, **kwargs) -> list[WSCleanResult]
+
+    wsclean_results = []
+    for ms in mss:
+        logger.info(f"Imaging {ms.path}")
+        wsclean_results.append(
+            task_wsclean_imager.fn(in_ms=ms, **kwargs)
+        )
+    return wsclean_results
+
 
 @task
 def task_combine_all_linmos_images(
@@ -336,18 +349,32 @@ def flow_subtract_cube(
 
             logger.info(f"Imaging {channel=} {freq_mhz=}")
             channel_range = (channel, channel + 1)
-            channel_wsclean_cmds = task_wsclean_imager.with_options(retries=2).map(
+            update_wsclean_options = get_options_from_strategy(
+                    strategy=strategy,
+                    mode="wsclean",
+                    operation="subtractcube",
+                )
+            channel_wsclean_cmds = task_map_all_wsclean.submit(
                 in_ms=science_mss,
                 wsclean_container=subtract_field_options.wsclean_container,
-                channel_range=unmapped(channel_range),
-                update_wsclean_options=unmapped(
-                    get_options_from_strategy(
-                        strategy=strategy,
-                        mode="wsclean",
-                        operation="subtractcube",
-                    )
-                ),
+                channel_range=channel_range,
+                update_wsclean_options=update_wsclean_options,
             )
+            
+            # channel_wsclean_cmds = task_wsclean_imager.with_options(retries=2).map(
+            #     in_ms=science_mss,
+            #     wsclean_container=subtract_field_options.wsclean_container,
+            #     channel_range=unmapped(channel_range),
+            #     update_wsclean_options=unmapped(
+            #         get_options_from_strategy(
+            #             strategy=strategy,
+            #             mode="wsclean",
+            #             operation="subtractcube",
+            #         )
+            #     ),
+            # )
+            
+            
             channel_beam_shape = task_get_common_beam_from_results.submit(
                 wsclean_results=channel_wsclean_cmds,
                 cutoff=subtract_field_options.beam_cutoff,
