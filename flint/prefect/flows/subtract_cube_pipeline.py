@@ -167,7 +167,7 @@ def find_and_setup_mss(
 from flint.imager.wsclean import WSCleanResult
 
 @task
-def task_map_all_wsclean(mss: list[MS], *args, **kwargs) -> list[WSCleanResult]
+def task_map_all_wsclean(mss: list[MS], *args, **kwargs) -> list[WSCleanResult]:
 
     wsclean_results = []
     for ms in mss:
