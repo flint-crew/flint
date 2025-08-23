@@ -167,10 +167,10 @@ def find_and_setup_mss(
 from flint.imager.wsclean import WSCleanResult
 
 @task
-def task_map_all_wsclean(mss: list[MS], *args, **kwargs) -> list[WSCleanResult]:
+def task_map_all_wsclean(in_mss: list[MS], *args, **kwargs) -> list[WSCleanResult]:
 
     wsclean_results = []
-    for ms in mss:
+    for ms in in_mss:
         logger.info(f"Imaging {ms.path}")
         wsclean_results.append(
             task_wsclean_imager.fn(in_ms=ms, **kwargs)
@@ -423,7 +423,7 @@ def flow_subtract_cube(
                     operation="subtractcube",
                 )
             scan_wsclean_cmds = task_map_all_wsclean.submit(
-                in_ms=science_mss,
+                in_mss=science_mss,
                 wsclean_container=subtract_field_options.wsclean_container,
                 scan_range=scan_range,
                 update_wsclean_options=update_wsclean_options,
