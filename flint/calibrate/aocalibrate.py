@@ -12,8 +12,10 @@ from typing import (
     NamedTuple,
 )
 
+from casacore.tables import table
 import matplotlib.pyplot as plt
 import numpy as np
+from numpy.typing import NDArray
 
 from flint.bptools.preflagger import (
     construct_jones_over_max_amp_flags,
@@ -34,6 +36,35 @@ from flint.naming import get_aocalibrate_output_path
 from flint.options import MS, BaseOptions
 from flint.sclient import run_singularity_command
 from flint.utils import create_directory
+
+
+class MSMetaData(BaseOptions):
+    """Structure to hold metadata about a measurement set"""
+    stations: list[str]
+    """List of stations in the measurement set"""
+    frequencies_hz: NDArray[np.floating]
+    """Frequencies in the measurement set in Hz"""
+
+def parse_ms_metadata(ms_path: Path | str) -> MSMetaData:
+    """Parse the metadata from a measurement set
+
+    Args:
+        ms_path (Path): Path to the measurement set to parse
+
+    Returns:
+        MSMetaData: The parsed metadata
+    """
+    if isinstance(ms_path, str):
+        ms_path = Path(ms_path)
+    with table(str(ms_path / "ANTENNA"), ack=False) as antenna_table:
+        stations = antenna_table.getcol("NAME")
+    with table(str(ms_path / "SPECTRAL_WINDOW"), ack=False) as spw_table:
+        frequencies_hz = spw_table.getcol("CHAN_FREQ").flatten()
+
+    return MSMetaData(
+        stations=stations,
+        frequencies_hz=frequencies_hz,
+    )
 
 
 class CalibrateOptions(BaseOptions):
@@ -163,7 +194,9 @@ def fill_between_flags(
 
 
 def plot_solutions(
-    solutions: Path | AOSolutions, ref_ant: int | None = 0
+    solutions: Path | AOSolutions, 
+    ref_ant: int | None = 0,
+    ms_path: Path | None = None
 ) -> Collection[Path]:
     """Plot solutions for AO-style solutions
 
@@ -198,7 +231,26 @@ def plot_solutions(
     phases = np.angle(data, deg=True)
     channels = np.arange(ao_sols.nchan)
 
-    ncolumns = 6
+    ant_names = np.arange(ao_sols.nant)
+    x_axis_array = channels
+    x_label = "Channel"
+
+    if ms_path is not None:
+        ms_metadata = parse_ms_metadata(ms_path)
+        assert (ms_metadata.frequencies_hz.shape[0] == ao_sols.nchan), (
+            f"Expected {ao_sols.nchan} channels, found {ms_metadata.frequencies_hz.shape[0]} in {ms_path!s}"
+        )
+        assert (len(ms_metadata.stations) == ao_sols.nant), (
+            f"Expected {ao_sols.nant} antennas, found {len(ms_metadata.stations)} in {ms_path!s}"
+        )
+        frequencies_mhz = ms_metadata.frequencies_hz / 1e6
+
+        x_axis_array = frequencies_mhz
+        x_label = "Frequency / MHz"
+        ant_names = ms_metadata.stations
+        
+
+    ncolumns = 2
     nrows = ao_sols.nant // ncolumns
     if ncolumns * nrows < ao_sols.nant:
         nrows += 1
@@ -210,17 +262,18 @@ def plot_solutions(
 
     for y in range(nrows):
         for x in range(ncolumns):
-            ant = y * nrows + x
+            ant_idx = y * nrows + x
+            ant_name = ant_names[ant_idx]
 
-            amps_xx = amplitudes[ant, :, 0]
-            amps_yy = amplitudes[ant, :, 3]
-            phase_xx = phases[ant, :, 0]
-            phase_yy = phases[ant, :, 3]
+            amps_xx = amplitudes[ant_idx, :, 0]
+            amps_yy = amplitudes[ant_idx, :, 3]
+            phase_xx = phases[ant_idx, :, 0]
+            phase_yy = phases[ant_idx, :, 3]
 
             ratio = amps_xx / amps_yy
 
-            if any([np.sum(~np.isfinite(amps)) == 0 for amps in (amps_xx, amps_yy)]):
-                logger.warning(f"No valid data for {ant=}")
+            if any([np.sum(np.isfinite(amps)) == 0 for amps in (amps_xx, amps_yy)]):
+                logger.warning(f"No valid data for {ant_idx=}")
                 continue
 
             max_amp_xx = (
@@ -247,21 +300,21 @@ def plot_solutions(
             ax_a = axes_amp[y, x]
             ax_r = axes_ratio[y, x]
             ax_a.plot(
-                channels,
+                x_axis_array,
                 amps_xx,
                 marker=None,
                 color="tab:blue",
                 label="X" if y == 0 and x == 0 else None,
             )
             ax_a.plot(
-                channels,
+                x_axis_array,
                 amps_yy,
                 marker=None,
                 color="tab:red",
                 label="Y" if y == 0 and x == 0 else None,
             )
             ax_r.plot(
-                channels,
+                x_axis_array,
                 ratio,
                 marker=None,
                 color="tab:green",
@@ -269,37 +322,47 @@ def plot_solutions(
             )
 
             ax_a.set(
+                ylabel="Amplitude",
+                xlabel=x_label,
                 ylim=(
                     min(min_amp_xx, min_amp_yy) * 0.9,
                     max(max_amp_xx, max_amp_yy) * 1.1,
                 )
             )
             ax_a.axhline(1, color="black", linestyle="--", linewidth=0.5)
-            ax_a.set_title(f"ant{ant:02d}", fontsize=8)
-            fill_between_flags(ax_a, ~np.isfinite(amps_yy) | ~np.isfinite(amps_xx))
+            ax_a.set_title(f"antenna {ant_name}", fontsize=8)
+            # fill_between_flags(ax_a, ~np.isfinite(amps_yy) | ~np.isfinite(amps_xx))
 
-            ax_r.set(ylim=(0.8, 1.2))
+            ax_r.set(
+                ylabel="Amplitude Ratio",
+                xlabel=x_label,
+                ylim=(0.8, 1.2)
+            )
             ax_r.axhline(1, color="black", linestyle="--", linewidth=0.5)
-            ax_r.set_title(f"ant{ant:02d}", fontsize=8)
-            fill_between_flags(ax_r, ~np.isfinite(amps_yy) | ~np.isfinite(amps_xx))
+            ax_r.set_title(f"antenna {ant_name}", fontsize=8)
+            # fill_between_flags(ax_r, ~np.isfinite(amps_yy) | ~np.isfinite(amps_xx))
 
             ax_p.plot(
-                channels,
+                x_axis_array,
                 phase_xx,
                 marker=None,
                 color="tab:blue",
                 label="X" if y == 0 and x == 0 else None,
             )
             ax_p.plot(
-                channels,
+                x_axis_array,
                 phase_yy,
                 marker=None,
                 color="tab:red",
                 label="Y" if y == 0 and x == 0 else None,
             )
-            ax_p.set(ylim=(-200, 200))
-            ax_p.set_title(f"ak{ant:02d}", fontsize=8)
-            fill_between_flags(ax_p, ~np.isfinite(phase_yy) | ~np.isfinite(phase_xx))
+            ax_p.set(
+                ylabel="Phase / deg",
+                xlabel=x_label,
+                ylim=(-200, 200)
+            )
+            ax_p.set_title(f"antenna {ant_name}", fontsize=8)
+            # fill_between_flags(ax_p, ~np.isfinite(phase_yy) | ~np.isfinite(phase_xx))
 
     fig_amp.legend()
     fig_phase.legend()
@@ -603,7 +666,7 @@ def create_calibrate_cmd(
         )
 
     calibrate_options = CalibrateOptions(
-        datacolumn=column, m=calibrate_model, minuv=600
+        datacolumn=column, m=calibrate_model, #minuv=600
     )
     if update_calibrate_options:
         calibrate_options = calibrate_options.with_options(**update_calibrate_options)
@@ -1144,6 +1207,26 @@ def get_parser() -> ArgumentParser:
         help="Directory to write diagnostic plots to. If unset no plots will be created. ",
     )
 
+    plot_parser = subparsers.add_parser(
+        "plot",
+        help="Plot the bandpass solutions in an ao-style binary solutions file",
+    )
+    plot_parser.add_argument(
+        "aosolutions", type=Path, help="Path to the solution file to inspect and plot"
+    )
+    plot_parser.add_argument(
+        "--ref-ant",
+        type=int,
+        default=-1,
+        help="The reference antenna to use when plotting the bandpass solutions. If -1, the best one will be selected.",
+    )
+    plot_parser.add_argument(
+        "--ms",
+        type=Path,
+        default=None,
+        help="The measurement set to use when plotting the bandpass solutions.",
+    )
+
     return parser
 
 
@@ -1175,6 +1258,12 @@ def cli() -> None:
             solutions_path=args.aosolutions,
             flag_cut=args.flag_cut,
             plot_dir=args.plot_dir,
+        )
+    elif args.mode == "plot":
+        _ = plot_solutions(
+            solutions=args.aosolutions,
+            ref_ant=args.ref_ant,
+            ms_path=args.ms,
         )
 
 

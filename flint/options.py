@@ -143,7 +143,11 @@ class BaseOptions(BaseModel):
     """
 
     model_config = ConfigDict(
-        frozen=True, from_attributes=True, use_attribute_docstrings=True, extra="forbid"
+        frozen=True, 
+        from_attributes=True, 
+        use_attribute_docstrings=True, 
+        extra="forbid",
+        arbitrary_types_allowed=True,
     )
 
     def with_options(self: T, /, **kwargs) -> T:
