@@ -15,7 +15,8 @@ from time import sleep
 import numpy as np
 from configargparse import ArgumentParser
 from fitscube.combine_fits import combine_fits
-from prefect import flow, task, unmapped
+from prefect import flow, task, unmapped, tags
+from prefect import get_client as get_prefect_client
 
 from flint.coadd.linmos import LinmosResult
 from flint.configuration import get_options_from_strategy, load_and_copy_strategy
@@ -321,11 +322,16 @@ def flow_subtract_cube(
         )
 
     if subtract_field_options.use_crystalball:
-        logger.info("Attempting to peer into the crystalball, me'hearty")
-        science_mss = task_crystalball_to_ms.map(
-            ms=science_mss,
-            crystalball_options=unmapped(crystalball_subtract_field_options),
-        )
+        with tags("crystalball"):
+            with get_prefect_client() as prefect_client:
+                prefect_client.create_concurrency_limit(
+                    tag="crystalball", concurrent_limit=6
+                )
+            logger.info("Attempting to peer into the crystalball, me'hearty")
+            science_mss = task_crystalball_to_ms.map(
+                ms=science_mss,
+                crystalball_options=unmapped(crystalball_subtract_field_options),
+            )
 
     if subtract_field_options.attempt_subtract:
         science_mss = task_subtract_model_from_ms.map(
