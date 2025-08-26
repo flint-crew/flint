@@ -47,7 +47,7 @@ from flint.prefect.common.ms import task_subtract_model_from_ms
 from flint.prefect.common.predict import task_addmodel_to_ms, task_crystalball_to_ms
 
 import dask
-dask.config.set({"distributed.comm.retry.count": 10})
+dask.config.set({"distributed.comm.retry.count": 20})
 dask.config.set({"distributed.comm.timeouts.connect": 30})
 dask.config.set({"distributed.worker.memory.terminate": False})
 
