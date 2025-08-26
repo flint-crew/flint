@@ -46,6 +46,9 @@ from flint.prefect.common.imaging import (
 from flint.prefect.common.ms import task_subtract_model_from_ms
 from flint.prefect.common.predict import task_addmodel_to_ms, task_crystalball_to_ms
 
+import dask
+dask.config.set({"distributed.comm.retry.count": 10})
+dask.config.set({"distributed.comm.timeouts.connect": 30})
 
 def _check_and_verify_options(
     subtract_field_options: SubtractFieldOptions | None = None,
