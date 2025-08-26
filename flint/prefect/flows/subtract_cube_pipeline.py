@@ -49,6 +49,7 @@ from flint.prefect.common.predict import task_addmodel_to_ms, task_crystalball_t
 import dask
 dask.config.set({"distributed.comm.retry.count": 10})
 dask.config.set({"distributed.comm.timeouts.connect": 30})
+dask.config.set({"distributed.worker.memory.terminate": False})
 
 def _check_and_verify_options(
     subtract_field_options: SubtractFieldOptions | None = None,
