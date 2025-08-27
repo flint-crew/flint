@@ -848,7 +848,7 @@ def create_wsclean_cmd(
     bind_dir_paths = []
 
     name_argument_path = create_wsclean_name_argument(
-        wsclean_options=wsclean_options, ms=ms
+        wsclean_options=wsclean_options, ms=ms, add_uuid=True
     )
     move_directory = ms.path.parent
     hold_directory: Path | None = Path(name_argument_path).parent
