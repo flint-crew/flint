@@ -46,6 +46,7 @@ from flint.prefect.common.imaging import (
 from flint.prefect.common.ms import task_subtract_model_from_ms
 from flint.prefect.common.predict import task_addmodel_to_ms, task_crystalball_to_ms
 
+# Improve the stability of the distributed cluster
 import dask
 dask.config.set({"distributed.comm.retry.count": 20})
 dask.config.set({"distributed.comm.timeouts.connect": 30})
