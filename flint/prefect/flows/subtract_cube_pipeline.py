@@ -12,14 +12,17 @@ from __future__ import annotations
 from pathlib import Path
 from time import sleep
 
+# Improve the stability of the distributed cluster
+import dask
 import numpy as np
 from configargparse import ArgumentParser
 from fitscube.combine_fits import combine_fits
-from prefect import flow, task, unmapped, tags
+from prefect import flow, tags, task, unmapped
 
 from flint.coadd.linmos import LinmosResult
 from flint.configuration import get_options_from_strategy, load_and_copy_strategy
 from flint.exceptions import FrequencyMismatchError
+from flint.imager.wsclean import WSCleanResult
 from flint.logging import logger
 from flint.ms import (
     MS,
@@ -46,11 +49,10 @@ from flint.prefect.common.imaging import (
 from flint.prefect.common.ms import task_subtract_model_from_ms
 from flint.prefect.common.predict import task_addmodel_to_ms, task_crystalball_to_ms
 
-# Improve the stability of the distributed cluster
-import dask
 dask.config.set({"distributed.comm.retry.count": 20})
 dask.config.set({"distributed.comm.timeouts.connect": 30})
 dask.config.set({"distributed.worker.memory.terminate": False})
+
 
 def _check_and_verify_options(
     subtract_field_options: SubtractFieldOptions | None = None,
@@ -169,17 +171,13 @@ def find_and_setup_mss(
 
     return science_mss
 
-from flint.imager.wsclean import WSCleanResult
 
 @task
 def task_map_all_wsclean(in_mss: list[MS], *args, **kwargs) -> list[WSCleanResult]:
-
     wsclean_results = []
     for ms in in_mss:
         logger.info(f"Imaging {ms.path}")
-        wsclean_results.append(
-            task_wsclean_imager.fn(in_ms=ms, **kwargs)
-        )
+        wsclean_results.append(task_wsclean_imager.fn(in_ms=ms, **kwargs))
     return wsclean_results
 
 
@@ -356,17 +354,17 @@ def flow_subtract_cube(
             logger.info(f"Imaging {channel=} {freq_mhz=}")
             channel_range = (channel, channel + 1)
             update_wsclean_options = get_options_from_strategy(
-                    strategy=strategy,
-                    mode="wsclean",
-                    operation="subtractcube",
-                )
+                strategy=strategy,
+                mode="wsclean",
+                operation="subtractcube",
+            )
             channel_wsclean_cmds = task_map_all_wsclean.submit(
                 in_ms=science_mss,
                 wsclean_container=subtract_field_options.wsclean_container,
                 channel_range=channel_range,
                 update_wsclean_options=update_wsclean_options,
             )
-            
+
             # channel_wsclean_cmds = task_wsclean_imager.with_options(retries=2).map(
             #     in_ms=science_mss,
             #     wsclean_container=subtract_field_options.wsclean_container,
@@ -379,8 +377,7 @@ def flow_subtract_cube(
             #         )
             #     ),
             # )
-            
-            
+
             channel_beam_shape = task_get_common_beam_from_results.submit(
                 wsclean_results=channel_wsclean_cmds,
                 cutoff=subtract_field_options.beam_cutoff,
@@ -424,17 +421,17 @@ def flow_subtract_cube(
             logger.info(f"Imaging {scan=} {time=}")
             scan_range = (scan, scan + 1)
             update_wsclean_options = get_options_from_strategy(
-                    strategy=strategy,
-                    mode="wsclean",
-                    operation="subtractcube",
-                )
+                strategy=strategy,
+                mode="wsclean",
+                operation="subtractcube",
+            )
             scan_wsclean_cmds = task_map_all_wsclean.submit(
                 in_mss=science_mss,
                 wsclean_container=subtract_field_options.wsclean_container,
                 scan_range=scan_range,
                 update_wsclean_options=update_wsclean_options,
             )
-            
+
             # scan_wsclean_cmds = task_wsclean_imager.with_options(retries=2).map(
             #     in_ms=science_mss,
             #     wsclean_container=subtract_field_options.wsclean_container,
