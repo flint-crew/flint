@@ -875,6 +875,10 @@ def create_wsclean_cmd(
 
     bind_dir_paths.append(ms.path.parent)
 
+    # TODO: Currently there are two calls into the `parse_environment_variable`
+    # when processing the `-temp-dir` and `-name` options. When using the `FLINT_UUID`
+    # option two separate UUIDs are being used. This is a dirty hack to see if
+    # things work. Captains and their ships need better.`
     for bind_dir_path in bind_dir_paths:
         if not Path(bind_dir_path).exists():
             logger.info(f"Creating {bind_dir_path=}")
