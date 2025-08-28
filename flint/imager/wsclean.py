@@ -875,6 +875,11 @@ def create_wsclean_cmd(
 
     bind_dir_paths.append(ms.path.parent)
 
+    for bind_dir_path in bind_dir_paths:
+        if not Path(bind_dir_path).exists():
+            logger.info(f"Creating {bind_dir_path=}")
+            Path(bind_dir_path).mkdir(parents=True, exist_ok=True)
+
     cmd = "wsclean " + " ".join(cmds)
 
     logger.info(f"Constructed wsclean command: {cmd=}")
