@@ -838,13 +838,13 @@ def create_wsclean_cmd(
     # Some options should also extend the singularity bind directories
     bind_dir_paths = []
 
+    wsclean_options_dict = wsclean_options._asdict()
+
     name_argument_path = create_wsclean_name_argument(
         wsclean_options=wsclean_options, ms=ms
     )
     move_directory = ms.path.parent
     hold_directory: Path | None = Path(name_argument_path).parent
-
-    wsclean_options_dict = wsclean_options._asdict()
 
     unknowns: list[tuple[Any, Any]] = []
     logger.info("Creating wsclean command.")
@@ -1218,6 +1218,12 @@ def wsclean_imager(
     if update_wsclean_options:
         logger.info("Updatting wsclean options with user-provided items. ")
         wsclean_options = wsclean_options.with_options(**update_wsclean_options)
+
+    if isinstance(wsclean_options.temp_dir, str):
+        logger.info(f"Resolving potential expansion for {wsclean_options.temp_dir=}")
+        temp_dir = parse_environment_variables(wsclean_options.temp_dir)
+        logger.info(f"Updating wsclean options with {temp_dir=}")
+        wsclean_options = wsclean_options.with_options(temp_dir=temp_dir)
 
     assert ms.column is not None, "A MS column needs to be elected for imaging. "
     wsclean_options = wsclean_options.with_options(data_column=ms.column)
