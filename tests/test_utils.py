@@ -384,6 +384,20 @@ def test_parse_environment_variables(set_env):
     assert parse_environment_variables(variable=None) is None
 
 
+def test_parse_environment_variables_withuuid(set_env):
+    """Make sure that the variable is processed nicely when getting environment variable"""
+    val = parse_environment_variables("$TEST1")
+    assert val == "Pirates"
+    val2 = parse_environment_variables("$TEST2")
+    assert val2 == "Treasure"
+    val3 = parse_environment_variables("$FLINT_UUID")
+    assert len(val3) == 32
+
+    val4 = parse_environment_variables("$TEST1/$FLINT_UUID")
+    assert len(val4) >= len(val)
+    assert val in val4
+
+
 def test_copy_directory(ms_example, tmpdir):
     """See if we can copy folders"""
     out = Path(tmpdir) / "2"

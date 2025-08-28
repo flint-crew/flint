@@ -17,7 +17,6 @@ with a ``.``.
 from __future__ import annotations
 
 import re
-import uuid
 from argparse import ArgumentParser
 from glob import glob
 from numbers import Number
@@ -689,9 +688,7 @@ def wsclean_cleanup_files(
     return tuple(rm_files)
 
 
-def create_wsclean_name_argument(
-    wsclean_options: WSCleanOptions, ms: MS, add_uuid: bool = False
-) -> Path:
+def create_wsclean_name_argument(wsclean_options: WSCleanOptions, ms: MS) -> Path:
     """Create the value that will be provided to wsclean -name argument. This has
     to be generated. Among things to consider is the desired output directory of imaging
     files. This by default will be alongside the measurement set. If a `temp_dir`
@@ -700,7 +697,6 @@ def create_wsclean_name_argument(
     Args:
         wsclean_options (WSCleanOptions): Set of wsclean options to consider
         ms (MS): The measurement set to be imaged
-        add_uuid (bool, optional): If True files will be written out to a folder whose name is a UUID. Defaults to False.
 
     Returns:
         Path: Value of the -name argument to provide to wsclean
@@ -727,11 +723,6 @@ def create_wsclean_name_argument(
         name_dir = parse_environment_variables(variable=temp_dir)
 
     assert name_dir is not None, f"{name_dir=} is None, which is bad"
-
-    if add_uuid:
-        uuid_dir = str(uuid.uuid4().hex)
-        logger.info(f"Adding {uuid_dir=} to output name")
-        name_dir = Path(name_dir) / uuid_dir
 
     name_argument_path = Path(name_dir) / name_prefix_str
     logger.info(f"Constructed -name {name_argument_path}")
@@ -848,7 +839,7 @@ def create_wsclean_cmd(
     bind_dir_paths = []
 
     name_argument_path = create_wsclean_name_argument(
-        wsclean_options=wsclean_options, ms=ms, add_uuid=True
+        wsclean_options=wsclean_options, ms=ms
     )
     move_directory = ms.path.parent
     hold_directory: Path | None = Path(name_argument_path).parent

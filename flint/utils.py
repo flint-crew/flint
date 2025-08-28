@@ -245,6 +245,10 @@ def parse_environment_variables(
     Should a $VARIABLE be specified but is unresolved, the `default` value
     is returned.
 
+    Some variables can be used to trigger some operation:
+
+    - $FLINT_UUID: resolves to a hex-formatted UUID
+
     Args:
         variable: e.g. "TEST1/$SLURM_TMPDIR" or "$HOME/subdir" or "literal/path"
         default: returned if any "$VAR" lookup fails
@@ -263,10 +267,16 @@ def parse_environment_variables(
             out_parts.append(part)
             continue
 
-        # At this point the part should resolve to a
-        # environment variable, you dirty sea dog
-        name = part.lstrip("$")
-        val = os.getenv(name)
+        val: str | None
+
+        # Test for known directives
+        if part == "$FLINT_UUID":
+            val = str(uuid.uuid4().hex)
+        else:
+            # At this point the part should resolve to a
+            # environment variable, you dirty sea dog
+            name = part.lstrip("$")
+            val = os.getenv(name)
 
         # missing placeholder → fallback
         if val is None:
