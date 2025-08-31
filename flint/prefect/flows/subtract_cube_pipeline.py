@@ -198,6 +198,7 @@ def task_map_all_wsclean(in_mss: list[MS], *args, **kwargs) -> list[WSCleanResul
         # Collect all the results to return from completed wsclean jobs
         wsclean_results = client.compute(wsclean_results)
         progress(wsclean_results)
+        wsclean_results = [r.result() for r in wsclean_results]
 
     return wsclean_results
 
