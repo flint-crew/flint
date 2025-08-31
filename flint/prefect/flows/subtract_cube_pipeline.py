@@ -173,12 +173,30 @@ def find_and_setup_mss(
     return science_mss
 
 
+delayed_task_wsclean_imager = dask.delayed(task_wsclean_imager.fn)
+
+# @task
+# def task_map_all_wsclean(in_mss: list[MS], *args, **kwargs) -> list[WSCleanResult]:
+#     wsclean_results = []
+#     for ms in in_mss:
+#         logger.info(f"Imaging {ms.path}")
+#         wsclean_results.append(task_wsclean_imager.fn(in_ms=ms, **kwargs))
+#     return wsclean_results
+
+
 @task
 def task_map_all_wsclean(in_mss: list[MS], *args, **kwargs) -> list[WSCleanResult]:
-    wsclean_results = []
-    for ms in in_mss:
-        logger.info(f"Imaging {ms.path}")
-        wsclean_results.append(task_wsclean_imager.fn(in_ms=ms, **kwargs))
+    from prefect_dask import get_dask_client
+
+    with get_dask_client() as client:
+        wsclean_results = []
+        for ms in in_mss:
+            logger.info(f"Imaging {ms.path}")
+            wsclean_results.append(delayed_task_wsclean_imager(in_ms=ms, **kwargs))
+
+        # Collect all the results to return from completed wsclean jobs
+        wsclean_results = client.compute(wsclean_results).result()
+
     return wsclean_results
 
 
@@ -218,7 +236,7 @@ def task_combine_all_linmos_images(
     _ = combine_fits(
         file_list=images_to_combine,
         out_cube=output_cube_path,
-        max_workers=2,
+        max_workers=3,
         time_domain_mode=time_domain,
     )
 
