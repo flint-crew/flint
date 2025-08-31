@@ -173,34 +173,34 @@ def find_and_setup_mss(
     return science_mss
 
 
-delayed_task_wsclean_imager = dask.delayed(task_wsclean_imager.fn)
+@task
+def task_map_all_wsclean(in_mss: list[MS], *args, **kwargs) -> list[WSCleanResult]:
+    wsclean_results = []
+    for ms in in_mss:
+        logger.info(f"Imaging {ms.path}")
+        wsclean_results.append(task_wsclean_imager.fn(in_ms=ms, **kwargs))
+    return wsclean_results
+
+
+# delayed_task_wsclean_imager = dask.delayed(task_wsclean_imager.fn)
 
 # @task
 # def task_map_all_wsclean(in_mss: list[MS], *args, **kwargs) -> list[WSCleanResult]:
-#     wsclean_results = []
-#     for ms in in_mss:
-#         logger.info(f"Imaging {ms.path}")
-#         wsclean_results.append(task_wsclean_imager.fn(in_ms=ms, **kwargs))
+#     from dask.distributed import progress
+#     from prefect_dask import get_dask_client
+
+#     with get_dask_client(set_as_default=False) as client:
+#         wsclean_results = []
+#         for ms in in_mss:
+#             logger.info(f"Imaging {ms.path}")
+#             wsclean_results.append(delayed_task_wsclean_imager(in_ms=ms, **kwargs))
+
+#         # Collect all the results to return from completed wsclean jobs
+#         wsclean_results = client.compute(wsclean_results)
+#         progress(wsclean_results)
+#         wsclean_results = [r.result() for r in wsclean_results]
+
 #     return wsclean_results
-
-
-@task
-def task_map_all_wsclean(in_mss: list[MS], *args, **kwargs) -> list[WSCleanResult]:
-    from dask.distributed import progress
-    from prefect_dask import get_dask_client
-
-    with get_dask_client(set_as_default=False) as client:
-        wsclean_results = []
-        for ms in in_mss:
-            logger.info(f"Imaging {ms.path}")
-            wsclean_results.append(delayed_task_wsclean_imager(in_ms=ms, **kwargs))
-
-        # Collect all the results to return from completed wsclean jobs
-        wsclean_results = client.compute(wsclean_results)
-        progress(wsclean_results)
-        wsclean_results = [r.result() for r in wsclean_results]
-
-    return wsclean_results
 
 
 @task
