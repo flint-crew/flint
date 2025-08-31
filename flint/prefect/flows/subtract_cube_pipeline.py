@@ -186,6 +186,7 @@ delayed_task_wsclean_imager = dask.delayed(task_wsclean_imager.fn)
 
 @task
 def task_map_all_wsclean(in_mss: list[MS], *args, **kwargs) -> list[WSCleanResult]:
+    from dask.distributed import progress
     from prefect_dask import get_dask_client
 
     with get_dask_client() as client:
@@ -195,7 +196,8 @@ def task_map_all_wsclean(in_mss: list[MS], *args, **kwargs) -> list[WSCleanResul
             wsclean_results.append(delayed_task_wsclean_imager(in_ms=ms, **kwargs))
 
         # Collect all the results to return from completed wsclean jobs
-        wsclean_results = client.compute(wsclean_results).result()
+        wsclean_results = client.compute(wsclean_results)
+        wsclean_results = progress(wsclean_results)
 
     return wsclean_results
 
