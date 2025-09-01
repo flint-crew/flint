@@ -182,27 +182,6 @@ def task_map_all_wsclean(in_mss: list[MS], *args, **kwargs) -> list[WSCleanResul
     return wsclean_results
 
 
-# delayed_task_wsclean_imager = dask.delayed(task_wsclean_imager.fn)
-
-# @task
-# def task_map_all_wsclean(in_mss: list[MS], *args, **kwargs) -> list[WSCleanResult]:
-#     from dask.distributed import progress
-#     from prefect_dask import get_dask_client
-
-#     with get_dask_client(set_as_default=False) as client:
-#         wsclean_results = []
-#         for ms in in_mss:
-#             logger.info(f"Imaging {ms.path}")
-#             wsclean_results.append(delayed_task_wsclean_imager(in_ms=ms, **kwargs))
-
-#         # Collect all the results to return from completed wsclean jobs
-#         wsclean_results = client.compute(wsclean_results)
-#         progress(wsclean_results)
-#         wsclean_results = [r.result() for r in wsclean_results]
-
-#     return wsclean_results
-
-
 @task
 def task_combine_all_linmos_images(
     linmos_commands: list[LinmosResult],
@@ -387,19 +366,6 @@ def flow_subtract_cube(
                 update_wsclean_options=update_wsclean_options,
             )
 
-            # channel_wsclean_cmds = task_wsclean_imager.with_options(retries=2).map(
-            #     in_ms=science_mss,
-            #     wsclean_container=subtract_field_options.wsclean_container,
-            #     channel_range=unmapped(channel_range),
-            #     update_wsclean_options=unmapped(
-            #         get_options_from_strategy(
-            #             strategy=strategy,
-            #             mode="wsclean",
-            #             operation="subtractcube",
-            #         )
-            #     ),
-            # )
-
             channel_beam_shape = task_get_common_beam_from_results.submit(
                 wsclean_results=channel_wsclean_cmds,
                 cutoff=subtract_field_options.beam_cutoff,
@@ -454,18 +420,6 @@ def flow_subtract_cube(
                 update_wsclean_options=update_wsclean_options,
             )
 
-            # scan_wsclean_cmds = task_wsclean_imager.with_options(retries=2).map(
-            #     in_ms=science_mss,
-            #     wsclean_container=subtract_field_options.wsclean_container,
-            #     scan_range=unmapped(scan_range),
-            #     update_wsclean_options=unmapped(
-            #         get_options_from_strategy(
-            #             strategy=strategy,
-            #             mode="wsclean",
-            #             operation="subtractcube",
-            #         )
-            #     ),
-            # )
             scan_parset = task_common_beam_convolve_linmos.submit(
                 wsclean_results=scan_wsclean_cmds,
                 linmos_suffix_str=None,
