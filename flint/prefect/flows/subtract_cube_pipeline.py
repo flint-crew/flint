@@ -175,6 +175,17 @@ def find_and_setup_mss(
 
 @task
 def task_map_all_wsclean(in_mss: list[MS], *args, **kwargs) -> list[WSCleanResult]:
+    """A single task that internally runs the wsclean imager task while iterates over
+    the input list of measurement sets when run. It performs the same operation as the prefect
+    task enabled `map` operator, but unlike the `.map` method all outputs are tracked in a single
+    prefect task. This is used to lower the load on the prefect server.
+
+    Args:
+        in_mss (list[MS]): List of measurement sets to image
+
+    Returns:
+        list[WSCleanResult]: The list of output wsclean results
+    """
     wsclean_results = []
     for ms in in_mss:
         logger.info(f"Imaging {ms.path}")
@@ -188,7 +199,22 @@ def task_combine_all_linmos_images(
     remove_original_images: bool = False,
     combine_weights: bool = False,
     time_domain: bool = False,
+    bounding_box: bool = False,
+    invalidate_zeros: bool = False,
 ) -> Path:
+    """Use the fits-cube package to take all input images and create a single output cube.
+
+    Args:
+        linmos_commands (list[LinmosResult]): The output linmos commands to concatenated into a single cube.
+        remove_original_images (bool, optional): Remove the original images after the cube has been formed. Defaults to False.
+        combine_weights (bool, optional): Whether to concatenated the images or the weights that are described by the input `linmos_commands`. Defaults to False.
+        time_domain (bool, optional): Whether images are to be formed on the spectral or time axis. Defaults to False.
+        bounding_box (bool, optional): Whether to trim the output cube to include only valid pixels (see fitscube docs). Defaults to False.
+        invalidate_zeros (bool, optional): Where to mark pixels that are exactly zero as invalid (replace with a NaN). Defaults to False.
+
+    Returns:
+        Path: The output cube path
+    """
     output_cube_path = Path("test.fits")
 
     if combine_weights:
@@ -220,6 +246,8 @@ def task_combine_all_linmos_images(
         out_cube=output_cube_path,
         max_workers=3,
         time_domain_mode=time_domain,
+        bounding_box=bounding_box,
+        invalidate_zeros=invalidate_zeros,
     )
 
     if remove_original_images:
@@ -392,11 +420,15 @@ def flow_subtract_cube(
         task_combine_all_linmos_images.submit(
             linmos_commands=channel_parset_list,
             remove_original_images=subtract_field_options.fitscube_remove_original_images,
+            bounding_box=True,
+            invalidate_zeros=True,
         )
         task_combine_all_linmos_images.submit(
             linmos_commands=channel_parset_list,
             remove_original_images=subtract_field_options.fitscube_remove_original_images,
             combine_weights=True,
+            bounding_box=True,
+            invalidate_zeros=True,
         )
 
     if subtract_field_options.timestep_image:
@@ -441,12 +473,16 @@ def flow_subtract_cube(
             linmos_commands=scan_parset_list,
             remove_original_images=subtract_field_options.fitscube_remove_original_images,
             time_domain=True,
+            bounding_box=True,
+            invalidate_zeros=True,
         )
         task_combine_all_linmos_images.submit(
             linmos_commands=scan_parset_list,
             remove_original_images=subtract_field_options.fitscube_remove_original_images,
             combine_weights=True,
             time_domain=True,
+            bounding_box=True,
+            invalidate_zeros=True,
         )
 
     return
