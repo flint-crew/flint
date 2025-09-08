@@ -19,6 +19,24 @@ Format = Name, Type, Ra, Dec, I, SpectralIndex, LogarithmicSI, ReferenceFrequenc
 
 The more cores (or dask workers) available in the `dask` cluster the faster the model prediction will be. The individual compute resources can be small (e.g. 2 CPUs and 8GB per `dask-worker`) but through extreme horizontal scale (upwards of 1000 `dask-worker` instances) the model prediction with `crystalball` can be quicker than `addmodel`. On systems such as `SLURM` this resource configuration may be very easy to schedule.
 
+## Stability
+
+It has been noted that under some conditions it is possible for the `dask.distributed` scheular managing the `crystalball` prediction can stall, wherein all processing essentially stops. The work can be resumed after the schedular recognises a worker has died, which when running on `SLURM` often happens when the job lifetime is reached.
+
+Through experimentation we found the following `dask` configuration settings to be useful:
+
+```
+
+```
+# These improve the stability of the distributed dask cluster, particularly around
+# the usage of crystalball prediction
+dask.config.set({"distributed.comm.retry.count": 20})
+dask.config.set({"distributed.comm.timeouts.connect": 30})
+dask.config.set({"distributed.worker.memory.terminate": False})
+```
+
+These are set when using the `subtract_cube_pipeline`, but are not ;averaged for the `flint_crystalball` program. In this instance consider setting these through the environment (see Dask documentation).
+
 ## Accessing via the CLI
 
 The primary entry point for the visibility prediction with `addmodel` in `flint` is with `flint_addmodel`:
