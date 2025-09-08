@@ -170,6 +170,37 @@ def test_hold_then_move_into(tmpdir: Any):
     assert not hold_directory.exists()
 
 
+def test_hold_then_move_into_wuuid(tmpdir: Any):
+    """See whether the hold directory can have things dumped into it, then
+    moved into place on exit of the context manager. This will add a UUID to
+    the end of the returned Path"""
+
+    tmpdir = Path(tmpdir)
+
+    hold_directory = Path(tmpdir / "putthingshere")
+    move_directory = Path(tmpdir / "the/final/location")
+
+    assert all([not d.exists() for d in (hold_directory, move_directory)])
+    no_files = 45
+    with hold_then_move_into(
+        hold_directory=hold_directory, move_directory=move_directory, append_uuid=True
+    ) as put_dir:
+        assert put_dir.exists()
+
+        assert put_dir != hold_directory
+        for i in range(no_files):
+            file: Path = put_dir / f"some_file_{i}.txt"
+            file.write_text(f"This is a file {i}")
+
+        assert len(list(put_dir.glob("*"))) == no_files
+        assert move_directory.exists()
+        assert len(list(move_directory.glob("*"))) == 0
+
+    assert len(list(move_directory.glob("*"))) == no_files
+    assert not put_dir.exists()
+    assert hold_directory.exists()
+
+
 def test_hold_then_move_into_when_exists(tmpdir: Any):
     """See whether the hold directory can have things dumped into it, then
     moved into place on exit of the context manager. See whether overwriting
@@ -351,6 +382,20 @@ def test_parse_environment_variables(set_env):
     assert val8 == "Pirates/Treasure/"
 
     assert parse_environment_variables(variable=None) is None
+
+
+def test_parse_environment_variables_withuuid(set_env):
+    """Make sure that the variable is processed nicely when getting environment variable"""
+    val = parse_environment_variables("$TEST1")
+    assert val == "Pirates"
+    val2 = parse_environment_variables("$TEST2")
+    assert val2 == "Treasure"
+    val3 = parse_environment_variables("$FLINT_UUID")
+    assert len(val3) == 32
+
+    val4 = parse_environment_variables("$TEST1/$FLINT_UUID")
+    assert len(val4) >= len(val)
+    assert val in val4
 
 
 def test_copy_directory(ms_example, tmpdir):

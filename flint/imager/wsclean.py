@@ -838,13 +838,13 @@ def create_wsclean_cmd(
     # Some options should also extend the singularity bind directories
     bind_dir_paths = []
 
+    wsclean_options_dict = wsclean_options._asdict()
+
     name_argument_path = create_wsclean_name_argument(
         wsclean_options=wsclean_options, ms=ms
     )
     move_directory = ms.path.parent
     hold_directory: Path | None = Path(name_argument_path).parent
-
-    wsclean_options_dict = wsclean_options._asdict()
 
     unknowns: list[tuple[Any, Any]] = []
     logger.info("Creating wsclean command.")
@@ -874,6 +874,15 @@ def create_wsclean_cmd(
     cmds += [f"{ms.path!s} "]
 
     bind_dir_paths.append(ms.path.parent)
+
+    # TODO: Currently there are two calls into the `parse_environment_variable`
+    # when processing the `-temp-dir` and `-name` options. When using the `FLINT_UUID`
+    # option two separate UUIDs are being used. This is a dirty hack to see if
+    # things work. Captains and their ships need better.`
+    for bind_dir_path in bind_dir_paths:
+        if not Path(bind_dir_path).exists():
+            logger.info(f"Creating {bind_dir_path=}")
+            Path(bind_dir_path).mkdir(parents=True, exist_ok=True)
 
     cmd = "wsclean " + " ".join(cmds)
 
@@ -1209,6 +1218,12 @@ def wsclean_imager(
     if update_wsclean_options:
         logger.info("Updatting wsclean options with user-provided items. ")
         wsclean_options = wsclean_options.with_options(**update_wsclean_options)
+
+    if isinstance(wsclean_options.temp_dir, str):
+        logger.info(f"Resolving potential expansion for {wsclean_options.temp_dir=}")
+        temp_dir = parse_environment_variables(wsclean_options.temp_dir)
+        logger.info(f"Updating wsclean options with {temp_dir=}")
+        wsclean_options = wsclean_options.with_options(temp_dir=temp_dir)
 
     assert ms.column is not None, "A MS column needs to be elected for imaging. "
     wsclean_options = wsclean_options.with_options(data_column=ms.column)

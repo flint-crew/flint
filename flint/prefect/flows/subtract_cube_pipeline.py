@@ -12,14 +12,16 @@ from __future__ import annotations
 from pathlib import Path
 from time import sleep
 
+import dask
 import numpy as np
 from configargparse import ArgumentParser
 from fitscube.combine_fits import combine_fits
-from prefect import flow, task, unmapped
+from prefect import flow, tags, task, unmapped
 
 from flint.coadd.linmos import LinmosResult
 from flint.configuration import get_options_from_strategy, load_and_copy_strategy
 from flint.exceptions import FrequencyMismatchError
+from flint.imager.wsclean import WSCleanResult
 from flint.logging import logger
 from flint.ms import (
     MS,
@@ -45,6 +47,12 @@ from flint.prefect.common.imaging import (
 )
 from flint.prefect.common.ms import task_subtract_model_from_ms
 from flint.prefect.common.predict import task_addmodel_to_ms, task_crystalball_to_ms
+
+# These improve the stability of the distributed dask cluster, particularly around
+# the usage of crystalball prediction
+dask.config.set({"distributed.comm.retry.count": 20})
+dask.config.set({"distributed.comm.timeouts.connect": 30})
+dask.config.set({"distributed.worker.memory.terminate": False})
 
 
 def _check_and_verify_options(
@@ -166,12 +174,47 @@ def find_and_setup_mss(
 
 
 @task
+def task_map_all_wsclean(in_mss: list[MS], *args, **kwargs) -> list[WSCleanResult]:
+    """A single task that internally runs the wsclean imager task while iterates over
+    the input list of measurement sets when run. It performs the same operation as the prefect
+    task enabled `map` operator, but unlike the `.map` method all outputs are tracked in a single
+    prefect task. This is used to lower the load on the prefect server.
+
+    Args:
+        in_mss (list[MS]): List of measurement sets to image
+
+    Returns:
+        list[WSCleanResult]: The list of output wsclean results
+    """
+    wsclean_results = []
+    for ms in in_mss:
+        logger.info(f"Imaging {ms.path}")
+        wsclean_results.append(task_wsclean_imager.fn(in_ms=ms, **kwargs))
+    return wsclean_results
+
+
+@task
 def task_combine_all_linmos_images(
     linmos_commands: list[LinmosResult],
     remove_original_images: bool = False,
     combine_weights: bool = False,
     time_domain: bool = False,
+    bounding_box: bool = False,
+    invalidate_zeros: bool = False,
 ) -> Path:
+    """Use the fits-cube package to take all input images and create a single output cube.
+
+    Args:
+        linmos_commands (list[LinmosResult]): The output linmos commands to concatenated into a single cube.
+        remove_original_images (bool, optional): Remove the original images after the cube has been formed. Defaults to False.
+        combine_weights (bool, optional): Whether to concatenated the images or the weights that are described by the input `linmos_commands`. Defaults to False.
+        time_domain (bool, optional): Whether images are to be formed on the spectral or time axis. Defaults to False.
+        bounding_box (bool, optional): Whether to trim the output cube to include only valid pixels (see fitscube docs). Defaults to False.
+        invalidate_zeros (bool, optional): Where to mark pixels that are exactly zero as invalid (replace with a NaN). Defaults to False.
+
+    Returns:
+        Path: The output cube path
+    """
     output_cube_path = Path("test.fits")
 
     if combine_weights:
@@ -201,8 +244,10 @@ def task_combine_all_linmos_images(
     _ = combine_fits(
         file_list=images_to_combine,
         out_cube=output_cube_path,
-        max_workers=4,
+        max_workers=3,
         time_domain_mode=time_domain,
+        bounding_box=bounding_box,
+        invalidate_zeros=invalidate_zeros,
     )
 
     if remove_original_images:
@@ -308,11 +353,12 @@ def flow_subtract_cube(
         )
 
     if subtract_field_options.use_crystalball:
-        logger.info("Attempting to peer into the crystalball, me'hearty")
-        science_mss = task_crystalball_to_ms.map(
-            ms=science_mss,
-            crystalball_options=unmapped(crystalball_subtract_field_options),
-        )
+        with tags("crystalball"):
+            logger.info("Attempting to peer into the crystalball, me'hearty")
+            science_mss = task_crystalball_to_ms.map(
+                ms=science_mss,
+                crystalball_options=unmapped(crystalball_subtract_field_options),
+            )
 
     if subtract_field_options.attempt_subtract:
         science_mss = task_subtract_model_from_ms.map(
@@ -336,18 +382,18 @@ def flow_subtract_cube(
 
             logger.info(f"Imaging {channel=} {freq_mhz=}")
             channel_range = (channel, channel + 1)
-            channel_wsclean_cmds = task_wsclean_imager.with_options(retries=2).map(
+            update_wsclean_options = get_options_from_strategy(
+                strategy=strategy,
+                mode="wsclean",
+                operation="subtractcube",
+            )
+            channel_wsclean_cmds = task_map_all_wsclean.submit(
                 in_ms=science_mss,
                 wsclean_container=subtract_field_options.wsclean_container,
-                channel_range=unmapped(channel_range),
-                update_wsclean_options=unmapped(
-                    get_options_from_strategy(
-                        strategy=strategy,
-                        mode="wsclean",
-                        operation="subtractcube",
-                    )
-                ),
+                channel_range=channel_range,
+                update_wsclean_options=update_wsclean_options,
             )
+
             channel_beam_shape = task_get_common_beam_from_results.submit(
                 wsclean_results=channel_wsclean_cmds,
                 cutoff=subtract_field_options.beam_cutoff,
@@ -374,11 +420,15 @@ def flow_subtract_cube(
         task_combine_all_linmos_images.submit(
             linmos_commands=channel_parset_list,
             remove_original_images=subtract_field_options.fitscube_remove_original_images,
+            bounding_box=True,
+            invalidate_zeros=True,
         )
         task_combine_all_linmos_images.submit(
             linmos_commands=channel_parset_list,
             remove_original_images=subtract_field_options.fitscube_remove_original_images,
             combine_weights=True,
+            bounding_box=True,
+            invalidate_zeros=True,
         )
 
     if subtract_field_options.timestep_image:
@@ -390,18 +440,18 @@ def flow_subtract_cube(
 
             logger.info(f"Imaging {scan=} {time=}")
             scan_range = (scan, scan + 1)
-            scan_wsclean_cmds = task_wsclean_imager.with_options(retries=2).map(
-                in_ms=science_mss,
-                wsclean_container=subtract_field_options.wsclean_container,
-                scan_range=unmapped(scan_range),
-                update_wsclean_options=unmapped(
-                    get_options_from_strategy(
-                        strategy=strategy,
-                        mode="wsclean",
-                        operation="subtractcube",
-                    )
-                ),
+            update_wsclean_options = get_options_from_strategy(
+                strategy=strategy,
+                mode="wsclean",
+                operation="subtractcube",
             )
+            scan_wsclean_cmds = task_map_all_wsclean.submit(
+                in_mss=science_mss,
+                wsclean_container=subtract_field_options.wsclean_container,
+                scan_range=scan_range,
+                update_wsclean_options=update_wsclean_options,
+            )
+
             scan_parset = task_common_beam_convolve_linmos.submit(
                 wsclean_results=scan_wsclean_cmds,
                 linmos_suffix_str=None,
@@ -423,12 +473,16 @@ def flow_subtract_cube(
             linmos_commands=scan_parset_list,
             remove_original_images=subtract_field_options.fitscube_remove_original_images,
             time_domain=True,
+            bounding_box=True,
+            invalidate_zeros=True,
         )
         task_combine_all_linmos_images.submit(
             linmos_commands=scan_parset_list,
             remove_original_images=subtract_field_options.fitscube_remove_original_images,
             combine_weights=True,
             time_domain=True,
+            bounding_box=True,
+            invalidate_zeros=True,
         )
 
     return

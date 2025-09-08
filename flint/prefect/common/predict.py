@@ -34,7 +34,7 @@ def task_crystalball_to_ms(ms: MS, crystalball_options: CrystalBallOptions) -> M
     # crystalball uses loguru. We want to try to attach a handler
     enable_loguru_support()
 
-    with get_dask_client() as client:
+    with get_dask_client(set_as_default=False) as client:
         logger.info("Obtained the Client supporting the DaskTaskRunner.")
         return crystalball_predict(
             ms=ms,

@@ -49,6 +49,7 @@ A 'mode' refers to a set of options for a given tool. As of version 0.2, the fol
 - `archive` : This corresponds to `flint.options.ArchiveOptions`
 - `bane` : This corresponds to `flint.source_finding.aegean.BANEOptions`
 - `aegean` : This corresponds to `flint.source_finding.aegean.AegeanOptions`
+- `potatopeel`: This corresponds to `flint.peel.potato.PotatoPeelOptions`
 
 To see all the available options you can run `flint_{mode} -h` on the command-line.
 All attributes available in the corresponding `Options` class listed above may be

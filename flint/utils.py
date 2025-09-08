@@ -9,6 +9,7 @@ import os
 import shutil
 import signal
 import subprocess
+import uuid
 from contextlib import contextmanager
 from pathlib import Path
 from socket import gethostname
@@ -97,6 +98,7 @@ def hold_then_move_into(
     hold_directory: Path | None,
     delete_hold_on_exit: bool = True,
     overwrite_if_exists: bool = False,
+    append_uuid: bool = False,
 ) -> Generator[Path, None, None]:
     """Create a temporary directory such that anything within it on the
     exit of the context manager is copied over to `move_directory`.
@@ -105,11 +107,17 @@ def hold_then_move_into(
     is immediately returned and no output files are copied or deleted. `move_directory` will be
     created if it does not exist.
 
+    If `append_uuid` is `True` then the returned Path will have a folder whose name is based on a
+    UUID. This UUID will automatically be derived and the output directory will be created. Consider
+    using this is `delete_hold_on_exit` is `True`, especially if running in a multi-threaded context
+    and the `hold_directory` is based on an environment variable (e.g. such as on SLURM).
+
     Args:
         move_directory (Path): Final directory location to move items into
         hold_directory (Optional[Path], optional): Location of directory to temporarily base work from. If None provided `move_directory` is returned and no copying/deleting is performed on exit. Defaults to None.
         delete_hold_on_exit (bool, optional): Whether `hold_directory` is deleted on exit of the context. Defaults to True.
         overwrite_if_exists (bool, optional): If a file already exists in the move directory overwrite it with a new copy. Defaults to False.
+        append_uuid (bool, optional): add a folder whose name is a `uuid` to the returned Path. Defaults to False.
 
     Returns:
         Path: Path to the temporary folder
@@ -121,6 +129,14 @@ def hold_then_move_into(
     # also placed back on exit
     hold_directory = Path(hold_directory) if hold_directory else None
     move_directory = Path(move_directory)
+
+    logger.info("Hold context manager")
+    logger.info(f"{hold_directory=}")
+    logger.info(f"{move_directory=}")
+    if append_uuid and hold_directory is not None:
+        uuid_directory_name = str(uuid.uuid4().hex)
+        hold_directory = hold_directory / uuid_directory_name
+        logger.info(f"Updated {hold_directory=}")
 
     if hold_directory == move_directory or hold_directory is None:
         move_directory.mkdir(parents=True, exist_ok=True)
@@ -229,6 +245,10 @@ def parse_environment_variables(
     Should a $VARIABLE be specified but is unresolved, the `default` value
     is returned.
 
+    Some variables can be used to trigger some operation:
+
+    - $FLINT_UUID: resolves to a hex-formatted UUID
+
     Args:
         variable: e.g. "TEST1/$SLURM_TMPDIR" or "$HOME/subdir" or "literal/path"
         default: returned if any "$VAR" lookup fails
@@ -247,10 +267,16 @@ def parse_environment_variables(
             out_parts.append(part)
             continue
 
-        # At this point the part should resolve to a
-        # environment variable, you dirty sea dog
-        name = part.lstrip("$")
-        val = os.getenv(name)
+        val: str | None
+
+        # Test for known directives
+        if part == "$FLINT_UUID":
+            val = str(uuid.uuid4().hex)
+        else:
+            # At this point the part should resolve to a
+            # environment variable, you dirty sea dog
+            name = part.lstrip("$")
+            val = os.getenv(name)
 
         # missing placeholder → fallback
         if val is None:
