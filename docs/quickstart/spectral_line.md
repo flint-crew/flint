@@ -1,5 +1,5 @@
 (subtractcube)=
-# Spectral line imaging
+# Spectral line and time-step imaging
 
 `flint` has the beginnings of a spectral line workflow that operates against continuum-subtracted visibilities. This mode requires that continuum imaging has been performed using `wsclean`'s `--save-source-list` option, which outputs a text file describing each clean component constructed by `wsclean` and their parameterisation (e.g. location and spatial/spectral shape).
 
