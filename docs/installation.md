@@ -85,6 +85,12 @@ Some functions within `flint` require access to known external catalogues. These
 
 Once these catalogues have been downloaded the `reference_directory` will be required as an input into key functions. The `flint` infrastructure will then access the appropriate reference catalogue as required.
 
+```{admonition} Caution
+:class: caution
+
+Internally the `astroquery` package is used to manage catalogue downloads from `vizier`. Should these fail (.e.g. due to disk quota issues) be sure to clear the `astropy` cache space be re-attempting. Situations have been noted where incomplete file downloads are stored in `astropy`'s cache space, leading `astroquery` to erroneously believe a query request is available. A `UnpicklingError: pickle data was truncated` error is a typical indicator of this.
+```
+
 ## Installing casacore
 
 Provided an appropriate environment, installinf `flint` should be as simple as a
