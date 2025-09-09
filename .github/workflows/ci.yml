@@ -24,7 +24,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.x"
           cache: "pip"
@@ -65,7 +65,7 @@ jobs:
       # -p no:warnings is needed to avoid warnings errors caused by VOTable
       # --skip-slow will jump over long running tests, like downloading from dockerhub
       - name: Upload coverage report
-        uses: codecov/codecov-action@v5.4.3
+        uses: codecov/codecov-action@v5.5.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
 
