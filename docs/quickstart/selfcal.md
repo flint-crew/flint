@@ -32,7 +32,6 @@ defaults:
     local_rms_window: 30
     size: 6128
     local_rms: true
-    force_mask_rounds: 10
     auto_mask: 10
     auto_threshold: 0.75
     threshold: null
@@ -125,7 +124,6 @@ selfcal:
     wsclean:
       auto_mask: 5
       auto_threshold: 1.5
-      force_mask_rounds: 5
       local_rms: False
       nmiter: 9
     gaincal:
@@ -142,7 +140,6 @@ selfcal:
     wsclean:
       auto_mask: 2
       auto_threshold: 1.0
-      force_mask_rounds: 10
       local_rms: false
       nmiter: 11
     gaincal:
@@ -159,7 +156,6 @@ selfcal:
     wsclean:
       auto_mask: 2.0
       auto_threshold: 0.5
-      force_mask_rounds: 10
       local_rms: false
       nmiter: 16
     gaincal:
@@ -176,7 +172,6 @@ selfcal:
     wsclean:
       auto_mask: 2.0
       auto_threshold: 0.5
-      force_mask_rounds: 10
       local_rms: False
     gaincal:
       solint: 480s
