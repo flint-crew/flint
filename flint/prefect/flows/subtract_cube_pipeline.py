@@ -289,7 +289,7 @@ def flow_addmodel_to_mss(
 
 
 @flow
-def flow_subtract_cube(
+async def flow_subtract_cube(
     science_path: Path,
     subtract_field_options: SubtractFieldOptions,
     addmodel_subtract_field_options: AddModelSubtractFieldOptions,
@@ -361,7 +361,7 @@ def flow_subtract_cube(
             )
 
     if subtract_field_options.attempt_subtract:
-        science_mss = task_subtract_model_from_ms.map(
+        science_mss = await task_subtract_model_from_ms.map(
             ms=science_mss,
             data_column=subtract_field_options.subtract_data_column,
             update_tracked_column=True,
@@ -387,7 +387,7 @@ def flow_subtract_cube(
                 mode="wsclean",
                 operation="subtractcube",
             )
-            channel_wsclean_cmds = task_map_all_wsclean.submit(
+            channel_wsclean_cmds = await task_map_all_wsclean.submit(
                 in_ms=science_mss,
                 wsclean_container=subtract_field_options.wsclean_container,
                 channel_range=channel_range,
