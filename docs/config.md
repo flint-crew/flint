@@ -50,6 +50,7 @@ A 'mode' refers to a set of options for a given tool. As of version 0.2, the fol
 - `bane` : This corresponds to `flint.source_finding.aegean.BANEOptions`
 - `aegean` : This corresponds to `flint.source_finding.aegean.AegeanOptions`
 - `potatopeel`: This corresponds to `flint.peel.potato.PotatoPeelOptions`
+- `fitscube`: This correspond to `flint.options.FitsCubeOptions`
 
 To see all the available options you can run `flint_{mode} -h` on the command-line.
 All attributes available in the corresponding `Options` class listed above may be
@@ -91,6 +92,7 @@ through this template method are:
 - `ArchiveOptions` (shorthand `archive`)
 - `BANEOptions` (shorthand `bane`)
 - `AegeanOptions` (shorthand `aegean`)
+- `FitsCubeOptions` (shorthand `fitscube`)
 
 All attributes supported by these options may be set in this template format.
 Not that these options would have to be retrieved within a particular flow and

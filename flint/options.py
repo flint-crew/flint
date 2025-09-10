@@ -541,3 +541,15 @@ class ArchiveOptions(BaseOptions):
     """Regular-expressions to use to collect files that should be tarballed"""
     copy_file_re_patterns: tuple[str, ...] = DEFAULT_COPY_RE_PATTERNS
     """Regular-expressions used to identify files to copy into a final location (not tarred)"""
+
+
+class FitsCubeOptions(BaseOptions):
+    """Container of opptions used to combine images into a single cube using the `fitscube` package.
+    This is particularly useful to manage the larger concatenations."""
+
+    bounding_box: bool = False
+    """Whether to attempt to trim images when combining"""
+    max_workers: int = 4
+    """The number of concurrent workers (readers/writers) that are permitted at a time"""
+    invalidate_zeros: bool = True
+    """Set pixels whose values are exactly 0.0 to not-a-number (nan)"""

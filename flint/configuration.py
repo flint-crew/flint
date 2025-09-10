@@ -17,7 +17,7 @@ from flint.imager.wsclean import WSCleanOptions
 from flint.logging import logger
 from flint.masking import MaskingOptions
 from flint.naming import add_timestamp_to_path
-from flint.options import ArchiveOptions
+from flint.options import ArchiveOptions, FitsCubeOptions
 from flint.peel.potato import PotatoPeelOptions
 from flint.selfcal.casa import GainCalOptions
 from flint.source_finding.aegean import AegeanOptions, BANEOptions
@@ -42,6 +42,7 @@ MODE_OPTIONS_MAPPING = {
     "bane": BANEOptions,
     "aegean": AegeanOptions,
     "potatopeel": PotatoPeelOptions,
+    "fitscube": FitsCubeOptions,
 }
 POLARISATION_MAPPING = {
     "total": "i",

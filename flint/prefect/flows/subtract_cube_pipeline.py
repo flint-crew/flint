@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from time import sleep
+from typing import Any
 
 import dask
 import numpy as np
@@ -33,6 +34,7 @@ from flint.ms import (
 from flint.naming import get_sbid_from_path
 from flint.options import (
     AddModelSubtractFieldOptions,
+    FitsCubeOptions,
     SubtractFieldOptions,
     add_options_to_parser,
     create_options_from_parser,
@@ -199,8 +201,7 @@ def task_combine_all_linmos_images(
     remove_original_images: bool = False,
     combine_weights: bool = False,
     time_domain: bool = False,
-    bounding_box: bool = False,
-    invalidate_zeros: bool = False,
+    update_fits_cube_options: dict[str, Any] | None = None,
 ) -> Path:
     """Use the fits-cube package to take all input images and create a single output cube.
 
@@ -216,6 +217,10 @@ def task_combine_all_linmos_images(
         Path: The output cube path
     """
     output_cube_path = Path("test.fits")
+
+    fits_cube_options = FitsCubeOptions()
+    if update_fits_cube_options is not None:
+        fits_cube_options = fits_cube_options.with_options(**update_fits_cube_options)
 
     if combine_weights:
         logger.info("Combining weight fits files")
@@ -244,10 +249,10 @@ def task_combine_all_linmos_images(
     _ = combine_fits(
         file_list=images_to_combine,
         out_cube=output_cube_path,
-        max_workers=3,
+        max_workers=fits_cube_options.max_workers,
         time_domain_mode=time_domain,
-        bounding_box=bounding_box,
-        invalidate_zeros=invalidate_zeros,
+        bounding_box=fits_cube_options.bounding_box,
+        invalidate_zeros=fits_cube_options.invalidate_zeros,
     )
 
     if remove_original_images:
@@ -417,18 +422,21 @@ def flow_subtract_cube(
                 sleep(subtract_field_options.stagger_delay_seconds)
 
         # 4 - cube concatenated each linmos field together to single file
+        update_fits_cube_options = get_options_from_strategy(
+            strategy=strategy,
+            mode="fitscube",
+            operation="subtractcube",
+        )
         task_combine_all_linmos_images.submit(
             linmos_commands=channel_parset_list,
             remove_original_images=subtract_field_options.fitscube_remove_original_images,
-            bounding_box=True,
-            invalidate_zeros=True,
+            update_fits_cube_options=update_fits_cube_options,
         )
         task_combine_all_linmos_images.submit(
             linmos_commands=channel_parset_list,
             remove_original_images=subtract_field_options.fitscube_remove_original_images,
             combine_weights=True,
-            bounding_box=True,
-            invalidate_zeros=True,
+            update_fits_cube_options=update_fits_cube_options,
         )
 
     if subtract_field_options.timestep_image:
@@ -469,20 +477,23 @@ def flow_subtract_cube(
                 sleep(subtract_field_options.stagger_delay_seconds)
 
         # 4 - cube concatenated each linmos field together to single file
+        update_fits_cube_options = get_options_from_strategy(
+            strategy=strategy,
+            mode="fitscube",
+            operation="subtractcube",
+        )
         task_combine_all_linmos_images.submit(
             linmos_commands=scan_parset_list,
             remove_original_images=subtract_field_options.fitscube_remove_original_images,
             time_domain=True,
-            bounding_box=True,
-            invalidate_zeros=True,
+            update_fits_cube_options=update_fits_cube_options,
         )
         task_combine_all_linmos_images.submit(
             linmos_commands=scan_parset_list,
             remove_original_images=subtract_field_options.fitscube_remove_original_images,
             combine_weights=True,
             time_domain=True,
-            bounding_box=True,
-            invalidate_zeros=True,
+            update_fits_cube_options=update_fits_cube_options,
         )
 
     return
