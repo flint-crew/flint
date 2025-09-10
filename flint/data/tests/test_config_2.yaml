@@ -73,6 +73,8 @@ defaults:
       - .*png
       - .*csv
       - testing_for_sparrow.csv
+  fitscube:
+    max_workers: 123
 
 selfcal:
   0:
