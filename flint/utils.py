@@ -432,7 +432,7 @@ def get_packaged_resource_path(package: str, filename: str) -> Path:
     logger.info(f"Loading {package=} for {filename=}")
     try:
         import importlib_resources as importlib_resources
-    except ImportWarning:
+    except (ImportWarning, ModuleNotFoundError):
         from importlib import resources as importlib_resources
 
     p = importlib_resources.files(package)
