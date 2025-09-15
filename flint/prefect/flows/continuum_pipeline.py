@@ -330,7 +330,7 @@ def process_science_fields(
         )
         field_summary = task_update_with_options.submit(
             input_object=field_summary, beam_summaries=beam_summaries
-        )
+        ).result()
 
     if field_options.yandasoft_container:
         parsets = create_convol_linmos_images(
