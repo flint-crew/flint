@@ -12,7 +12,7 @@ from typing import Any
 
 from configargparse import ArgumentParser
 from prefect import flow, tags, unmapped
-from prefect.utilities.futures import resolve_futures_to_states
+from prefect.futures import wait
 
 from flint.calibrate.aocalibrate import find_existing_solutions
 from flint.catalogue import verify_reference_catalogues
@@ -538,8 +538,8 @@ def process_science_fields(
                 )
                 archive_wait_for.extend(parsets)
 
-    resolve_futures_to_states(wsclean_results)
-    resolve_futures_to_states(parsets)
+    wait(wsclean_results)
+    wait(parsets)
 
     # zip up the final measurement set, which is not included in the above loop
     if field_options.zip_ms:
