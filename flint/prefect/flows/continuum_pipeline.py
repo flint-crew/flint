@@ -70,7 +70,6 @@ from flint.selfcal.utils import consider_skip_selfcal_on_round
 
 def waiter(**kwargs) -> None:
     to_wait = [kwargs[kw] for kw in kwargs if isinstance(kwargs[kw], PrefectFuture)]
-    print(f"\n\n{to_wait=}\n\n")
     logger.info(f"Waiting for {len(to_wait)} prefect futures")
     wait(to_wait)
 
@@ -264,7 +263,7 @@ def process_science_fields(
         cal_sbid_path=bandpass_path,
         holography_path=field_options.holofile,
     )  # type: ignore
-    logger.info(f"{field_summary=}")
+    logger.info(f"{field_summary.result()=}")
 
     if field_options.wsclean_container is None:
         logger.info("No wsclean container provided. Returning. ")
