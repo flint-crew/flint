@@ -71,6 +71,7 @@ from flint.selfcal.utils import consider_skip_selfcal_on_round
 def waiter(**kwargs) -> None:
     to_wait = [kwargs[kw] for kw in kwargs if isinstance(kwargs[kw], PrefectFuture)]
     print(f"\n\n{to_wait=}\n\n")
+    logger.info(f"Waiting for {len(to_wait)} prefect futures")
     wait(to_wait)
 
 
@@ -371,7 +372,7 @@ def process_science_fields(
 
     # Set up the default value should the user activated mask option is not set
     fits_beam_masks = None
-
+    waiter(**locals().copy())
     for current_round in range(1, field_options.rounds + 1):
         with tags(f"selfcal-{current_round}"):
             final_round = current_round == field_options.rounds
