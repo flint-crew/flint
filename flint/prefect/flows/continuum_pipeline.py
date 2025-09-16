@@ -70,6 +70,8 @@ from flint.selfcal.utils import consider_skip_selfcal_on_round
 
 def waiter(**kwargs) -> None:
     logger.info(f"{kwargs.keys()=}")
+    for k in kwargs:
+        logger.critical(f"{k=}\t{kwargs[k]=}")
     to_wait = [kwargs[kw] for kw in kwargs if isinstance(kwargs[kw], PrefectFuture)]
     logger.info(f"Waiting for {len(to_wait)} prefect futures")
     wait(to_wait)
