@@ -12,7 +12,7 @@ from typing import Any
 
 from configargparse import ArgumentParser
 from prefect import flow, tags, unmapped
-from prefect.futures import wait
+from prefect.futures import PrefectFuture, wait
 
 from flint.calibrate.aocalibrate import find_existing_solutions
 from flint.catalogue import verify_reference_catalogues
@@ -66,6 +66,12 @@ from flint.prefect.common.utils import (
     task_update_with_options,
 )
 from flint.selfcal.utils import consider_skip_selfcal_on_round
+
+
+def waiter(**kwargs) -> None:
+    to_wait = [kwargs[kw] for kw in kwargs if isinstance(kwargs[kw], PrefectFuture)]
+    print(f"\n\n{to_wait=}\n\n")
+    wait(to_wait)
 
 
 def _check_field_options(field_options: FieldOptions) -> None:
@@ -251,7 +257,7 @@ def process_science_fields(
         return
 
     field_summary = task_create_field_summary.submit(
-        mss=preprocess_science_mss.result(),
+        mss=preprocess_science_mss,
         cal_sbid_path=bandpass_path,
         holography_path=field_options.holofile,
     )  # type: ignore
@@ -538,9 +544,6 @@ def process_science_fields(
                 )
                 archive_wait_for.extend(parsets)
 
-    wait(wsclean_results)
-    wait(parsets)
-
     # zip up the final measurement set, which is not included in the above loop
     if field_options.zip_ms:
         archive_wait_for = task_zip_ms.map(
@@ -558,7 +561,9 @@ def process_science_fields(
             max_round=field_options.rounds if field_options.rounds else None,
             update_archive_options=update_archive_options,
             wait_for=archive_wait_for,
-        ).result()
+        )
+
+    wait(**locals().copy())
 
 
 def setup_run_process_science_field(
