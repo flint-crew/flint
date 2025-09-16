@@ -361,7 +361,7 @@ async def flow_subtract_cube(
             )
 
     if subtract_field_options.attempt_subtract:
-        science_mss = await task_subtract_model_from_ms.map(
+        science_mss = task_subtract_model_from_ms.map(
             ms=science_mss,
             data_column=subtract_field_options.subtract_data_column,
             update_tracked_column=True,

@@ -12,6 +12,7 @@ from typing import Any
 
 from configargparse import ArgumentParser
 from prefect import flow, tags, unmapped
+from prefect.utilities.futures import resolve_futures_to_states
 
 from flint.calibrate.aocalibrate import find_existing_solutions
 from flint.catalogue import verify_reference_catalogues
@@ -537,11 +538,14 @@ def process_science_fields(
                 )
                 archive_wait_for.extend(parsets)
 
+    resolve_futures_to_states(wsclean_results)
+    resolve_futures_to_states(parsets)
+
     # zip up the final measurement set, which is not included in the above loop
     if field_options.zip_ms:
         archive_wait_for = task_zip_ms.map(
             in_item=wsclean_results, wait_for=archive_wait_for
-        )
+        ).result()
 
     if field_options.sbid_archive_path or field_options.sbid_copy_path:
         update_archive_options = get_options_from_strategy(
@@ -554,7 +558,7 @@ def process_science_fields(
             max_round=field_options.rounds if field_options.rounds else None,
             update_archive_options=update_archive_options,
             wait_for=archive_wait_for,
-        )
+        ).result()
 
 
 def setup_run_process_science_field(
