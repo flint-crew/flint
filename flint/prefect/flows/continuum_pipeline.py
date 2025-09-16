@@ -251,7 +251,7 @@ def process_science_fields(
         return
 
     field_summary = task_create_field_summary.submit(
-        mss=preprocess_science_mss,
+        mss=preprocess_science_mss.result(),
         cal_sbid_path=bandpass_path,
         holography_path=field_options.holofile,
     )  # type: ignore
