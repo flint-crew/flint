@@ -256,6 +256,8 @@ def process_science_fields(
         )
         return
 
+    # TJG: Is the problem the decorator?!
+    waiter(**locals().copy())
     field_summary = task_create_field_summary.submit(
         mss=preprocess_science_mss,
         cal_sbid_path=bandpass_path,
