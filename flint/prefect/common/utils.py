@@ -32,6 +32,10 @@ C = TypeVar("C", bound=Callable)
 
 SUPPORTED_IMAGE_TYPES = ("png",)
 
+@task
+def task_wrap_list_of_inputs(*args) -> list[Any]:
+    logger.info(f"Wrapped {len(args)} inputs")
+    return args
 
 @task
 def task_create_object(object: C, **kwargs) -> C:
@@ -118,13 +122,9 @@ def upload_image_as_artifact(
     return image_uuid
 
 
-@task
-def task_create_field_summary(*args, **kwargs):
-    return create_field_summary(*args, **kwargs)
-
 
 task_update_field_summary = task(update_field_summary)
-# task_create_field_summary = task(create_field_summary)
+task_create_field_summary = task(create_field_summary)
 task_create_beam_summary = task(create_beam_summary)
 task_get_fits_cube_from_paths = task(get_fits_cube_from_paths)
 task_rename_linear_to_stokes = task(rename_linear_to_stokes)

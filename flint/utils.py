@@ -43,14 +43,21 @@ def flatten_items(items: list[Any]) -> list[Any]:
     """
     flat_items = []
 
-    def _flatten(nested):
-        for e in nested:
-            if isinstance(e, (list, tuple)):
-                _flatten(e)
-            else:
-                flat_items.append(e)
+    for item in items:
+        if isinstance(item, (list, tuple)):
+            flat_items.extend(item)
+            continue
+        flat_items.append(item)
 
-    _flatten(items)
+    # TJG: I think the above is the same. No recursion limit
+    # def _flatten(nested):
+    #     for e in nested:
+    #         if isinstance(e, (list, tuple)):
+    #             _flatten(e)
+    #         else:
+    #             flat_items.append(e)
+    # _flatten(items)
+    
     return flat_items
 
 

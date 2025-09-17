@@ -803,6 +803,7 @@ def convolve_then_linmos(
     Returns:
         LinmosResult: Resulting linmos command parset
     """
+    from flint.prefect.common.utils import task_wrap_list_of_inputs
 
     conv_images = task_convolve_image.map(
         wsclean_result=wsclean_results,
@@ -903,6 +904,8 @@ def create_convol_linmos_images(
     Returns:
         List[LinmosResult]: The collection of linmos commands executed.
     """
+    from flint.prefect.common.utils import task_wrap_list_of_inputs
+    
     parsets: list[LinmosResult] = []
 
     beam_str: str = get_beam_resolution_str(mode="optimal")
@@ -915,7 +918,7 @@ def create_convol_linmos_images(
     convol_suffix_str = f"{beam_str}.conv"
 
     beam_shape = task_get_common_beam_from_results.submit(
-        wsclean_results=wsclean_results,
+        wsclean_results=task_wrap_list_of_inputs.submit(*wsclean_results),
         cutoff=field_options.beam_cutoff,
         filter_str=".MFS.",
     )

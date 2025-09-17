@@ -74,6 +74,7 @@ def run_singularity_command(
     if max_retries <= 0:
         raise ValueError("Too many retries")
 
+    logger.info(f"DELETE {image=}")
     if not image.exists():
         raise FileNotFoundError(f"The singularity container {image} was not found. ")
 

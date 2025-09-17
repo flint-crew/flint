@@ -286,6 +286,7 @@ def create_field_summary(
     """
 
     logger.info("Creating field summary object")
+    logger.critical(f"{mss=}")
 
     mss = [MS.cast(ms=ms) for ms in mss]
 

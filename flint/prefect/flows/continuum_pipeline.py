@@ -12,7 +12,7 @@ from typing import Any
 
 from configargparse import ArgumentParser
 from prefect import flow, tags, unmapped
-from prefect.futures import PrefectFuture, wait
+from prefect.futures import PrefectFuture, wait, resolve_futures_to_states
 
 from flint.calibrate.aocalibrate import find_existing_solutions
 from flint.catalogue import verify_reference_catalogues
@@ -64,15 +64,35 @@ from flint.prefect.common.utils import (
     task_flatten,
     task_update_field_summary,
     task_update_with_options,
+    task_wrap_list_of_inputs,
 )
 from flint.selfcal.utils import consider_skip_selfcal_on_round
 
 
+def str_test(val: Any) -> bool:
+    str_type = f"{type(val)}"
+    return ("PPrefect" in str_type and "Future" in str_type)
+
+def flatten(S):
+    if S == []:
+        return S
+    if isinstance(S[0], list):
+        return flatten(S[0]) + flatten(S[1:])
+    return S[:1] + flatten(S[1:])
+
+def get_results(list_of_futures):
+    return [r.result() for r in list_of_futures]
+
 def waiter(**kwargs) -> None:
-    logger.info(f"{kwargs.keys()=}")
-    for k in kwargs:
-        logger.critical(f"{k=}\t{kwargs[k]=}")
-    to_wait = [kwargs[kw] for kw in kwargs if isinstance(kwargs[kw], PrefectFuture)]
+    # Step 1: get a list
+    to_wait = list(kwargs.values())
+    
+    # Step 2: flatten
+    to_wait = flatten(to_wait)
+    logger.critical(f"{to_wait=}")
+    
+    to_wait = [var for var in to_wait if isinstance(var, PrefectFuture)]
+    
     logger.info(f"Waiting for {len(to_wait)} prefect futures")
     wait(to_wait)
 
@@ -260,9 +280,11 @@ def process_science_fields(
         return
 
     # TJG: Is the problem the decorator?!
-    waiter(**locals().copy())
+    # waiter(**locals().copy())
+    logger.info(f"{preprocess_science_mss=}")
     field_summary = task_create_field_summary.submit(
-        mss=preprocess_science_mss,
+        # mss=[p.result() for p in preprocess_science_mss],
+        mss=task_wrap_list_of_inputs.submit(*preprocess_science_mss),
         cal_sbid_path=bandpass_path,
         holography_path=field_options.holofile,
     )  # type: ignore
@@ -341,8 +363,8 @@ def process_science_fields(
             input_object=beam_summaries, components=beam_aegean_outputs
         )
         field_summary = task_update_with_options.submit(
-            input_object=field_summary, beam_summaries=beam_summaries
-        ).result()
+            input_object=field_summary, beam_summaries=task_wrap_list_of_inputs.submit(*beam_summaries)
+        )
 
     if field_options.yandasoft_container:
         parsets = create_convol_linmos_images(
@@ -356,7 +378,7 @@ def process_science_fields(
 
         if run_aegean:
             aegean_field_output = task_run_bane_and_aegean.submit(
-                image=parset, aegean_container=unmapped(field_options.aegean_container)
+                image=parset, aegean_container=field_options.aegean_container
             )  # type: ignore
             field_summary = task_update_field_summary.submit(
                 field_summary=field_summary,
@@ -568,7 +590,7 @@ def process_science_fields(
             wait_for=archive_wait_for,
         )
 
-    wait(**locals().copy())
+    waiter(**locals().copy())
 
 
 def setup_run_process_science_field(
