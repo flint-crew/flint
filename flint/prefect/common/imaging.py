@@ -1006,13 +1006,16 @@ def create_convolve_linmos_cubes(
     current_round: int | None = None,
     additional_linmos_suffix_str: str | None = "cube",
 ):
+    from flint.prefect.common.utils import task_wrap_list_of_inputs
+    
     suffixes = [f"round{current_round}" if current_round is not None else "noselfcal"]
     if additional_linmos_suffix_str:
         suffixes.insert(0, additional_linmos_suffix_str)
     linmos_suffix_str = ".".join(suffixes)
 
+    mapped_wsclean_results = task_wrap_list_of_inputs.submit(*wsclean_results)
     beam_shapes = task_get_cube_common_beam.submit(
-        wsclean_results=wsclean_results, cutoff=field_options.beam_cutoff
+        wsclean_results=mapped_wsclean_results, cutoff=field_options.beam_cutoff
     )
     convolved_cubes = task_convolve_cube.map(
         wsclean_result=wsclean_results,  # type: ignore
@@ -1026,6 +1029,7 @@ def create_convolve_linmos_cubes(
         holofile=field_options.holofile,
         cutoff=field_options.pb_cutoff,
     )
+    mapped_convolved_cubes = task_wrap_list_of_inputs.submit(*convolved_cubes)
     parset = task_linmos_images.submit(
         image_list=convolved_cubes,  # type: ignore
         container=field_options.yandasoft_container,

@@ -388,15 +388,15 @@ def process_science_fields(
             archive_wait_for.append(field_summary)
 
             if run_validation and field_options.reference_catalogue_directory:
-                validation_items(
+                validation_outputs = validation_items(
                     field_summary=field_summary,
                     aegean_outputs=aegean_field_output,
                     reference_catalogue_directory=field_options.reference_catalogue_directory,
                 )
+                archive_wait_for.extend(validation_outputs)
 
     # Set up the default value should the user activated mask option is not set
     fits_beam_masks = None
-    waiter(**locals().copy())
     for current_round in range(1, field_options.rounds + 1):
         with tags(f"selfcal-{current_round}"):
             final_round = current_round == field_options.rounds
@@ -523,7 +523,7 @@ def process_science_fields(
             if final_round and run_aegean and parsets_self:
                 aegean_outputs = task_run_bane_and_aegean.submit(
                     image=parsets_self[-1],
-                    aegean_container=unmapped(field_options.aegean_container),
+                    aegean_container=field_options.aegean_container,
                 )  # type: ignore
                 field_summary = task_update_field_summary.submit(
                     field_summary=field_summary,
@@ -577,6 +577,9 @@ def process_science_fields(
             in_item=wsclean_results, wait_for=archive_wait_for
         ).result()
 
+    
+    waiter(**locals().copy())
+
     if field_options.sbid_archive_path or field_options.sbid_copy_path:
         update_archive_options = get_options_from_strategy(
             strategy=strategy, mode="archive", round_info=0, operation="selfcal"
@@ -588,7 +591,7 @@ def process_science_fields(
             max_round=field_options.rounds if field_options.rounds else None,
             update_archive_options=update_archive_options,
             wait_for=archive_wait_for,
-        )
+        ).result()
 
     waiter(**locals().copy())
 
