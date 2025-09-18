@@ -17,6 +17,7 @@ import numpy as np
 from configargparse import ArgumentParser
 from fitscube.combine_fits import combine_fits
 from prefect import flow, tags, task, unmapped
+from prefect.futures import wait
 
 from flint.coadd.linmos import LinmosResult
 from flint.configuration import get_options_from_strategy, load_and_copy_strategy
@@ -47,6 +48,7 @@ from flint.prefect.common.imaging import (
 )
 from flint.prefect.common.ms import task_subtract_model_from_ms
 from flint.prefect.common.predict import task_addmodel_to_ms, task_crystalball_to_ms
+from flint.prefect.common.utils import task_wrap_list_of_inputs
 
 # These improve the stability of the distributed dask cluster, particularly around
 # the usage of crystalball prediction
@@ -285,11 +287,11 @@ def flow_addmodel_to_mss(
         addmodel_subtract_options=unmapped(addmodel_subtract_field_options),
     )
 
-    return science_mss
+    return task_wrap_list_of_inputs(*science_mss).result()
 
 
 @flow
-async def flow_subtract_cube(
+def flow_subtract_cube(
     science_path: Path,
     subtract_field_options: SubtractFieldOptions,
     addmodel_subtract_field_options: AddModelSubtractFieldOptions,
@@ -373,6 +375,7 @@ async def flow_subtract_cube(
         logger.info("The '--subtract-only' option has been specified. No imaging.")
         return
 
+    to_wait = []
     if subtract_field_options.channelwise_image:
         channel_parset_list = []
         for channel, freq_mhz in enumerate(freqs_mhz):
@@ -387,8 +390,8 @@ async def flow_subtract_cube(
                 mode="wsclean",
                 operation="subtractcube",
             )
-            channel_wsclean_cmds = await task_map_all_wsclean.submit(
-                in_ms=science_mss,
+            channel_wsclean_cmds = task_map_all_wsclean.submit(
+                in_ms=task_wrap_list_of_inputs.submit(*science_mss),
                 wsclean_container=subtract_field_options.wsclean_container,
                 channel_range=channel_range,
                 update_wsclean_options=update_wsclean_options,
@@ -417,19 +420,20 @@ async def flow_subtract_cube(
                 sleep(subtract_field_options.stagger_delay_seconds)
 
         # 4 - cube concatenated each linmos field together to single file
-        task_combine_all_linmos_images.submit(
-            linmos_commands=channel_parset_list,
+        fitscube_image = task_combine_all_linmos_images.submit(
+            linmos_commands=task_wrap_list_of_inputs.submit(*channel_parset_list),
             remove_original_images=subtract_field_options.fitscube_remove_original_images,
             bounding_box=True,
             invalidate_zeros=True,
         )
-        task_combine_all_linmos_images.submit(
-            linmos_commands=channel_parset_list,
+        fitscube_weights = task_combine_all_linmos_images.submit(
+            linmos_commands=task_wrap_list_of_inputs.submit(*channel_parset_list),
             remove_original_images=subtract_field_options.fitscube_remove_original_images,
             combine_weights=True,
             bounding_box=True,
             invalidate_zeros=True,
         )
+        to_wait.extend([fitscube_image, fitscube_weights])
 
     if subtract_field_options.timestep_image:
         scan_parset_list = []
@@ -446,7 +450,7 @@ async def flow_subtract_cube(
                 operation="subtractcube",
             )
             scan_wsclean_cmds = task_map_all_wsclean.submit(
-                in_mss=science_mss,
+                in_mss=task_wrap_list_of_inputs.submit(*science_mss),
                 wsclean_container=subtract_field_options.wsclean_container,
                 scan_range=scan_range,
                 update_wsclean_options=update_wsclean_options,
@@ -469,22 +473,25 @@ async def flow_subtract_cube(
                 sleep(subtract_field_options.stagger_delay_seconds)
 
         # 4 - cube concatenated each linmos field together to single file
-        task_combine_all_linmos_images.submit(
-            linmos_commands=scan_parset_list,
+        fitscube_image = task_combine_all_linmos_images.submit(
+            linmos_commands=task_wrap_list_of_inputs.submit(*scan_parset_list),
             remove_original_images=subtract_field_options.fitscube_remove_original_images,
             time_domain=True,
             bounding_box=True,
             invalidate_zeros=True,
         )
-        task_combine_all_linmos_images.submit(
-            linmos_commands=scan_parset_list,
+        fitscube_weights = task_combine_all_linmos_images.submit(
+            linmos_commands=task_wrap_list_of_inputs.submit(*scan_parset_list),
             remove_original_images=subtract_field_options.fitscube_remove_original_images,
             combine_weights=True,
             time_domain=True,
             bounding_box=True,
             invalidate_zeros=True,
         )
+        to_wait.extend([fitscube_image, fitscube_weights])
 
+    logger.info(f"Awaiting for {to_wait=}")
+    wait(to_wait)
     return
 
 
