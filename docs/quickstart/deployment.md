@@ -53,7 +53,6 @@ through `apptainer`:
 
 # Real Pirates put in their own secure postgres passwords and usernames!!
 export POSTGRES_PASS=PUT_YOUR_PASSWORD_HERE
-export POSTGRES_USER=PUT_YOUR_USER_NAME_HERE
 export POSTGRES_ADDR="your.machine.name.or.ip"
 
 export POSTGRES_DB=prefect # you can change this to whatever you want
@@ -103,7 +102,7 @@ should start it:
 
 ```bash
 export POSTGRES_PASS=PUT_YOUR_PASSWORD_HERE
-export POSTGRES_USER=PUT_YOUR_USER_NAME_HERE
+export POSTGRES_USER=postgres
 export POSTGRES_ADDR=127.0.0.1 # if running on the same machine don't change
 
 export POSTGRES_DB=prefect # you can change this to whatever you want
@@ -153,7 +152,7 @@ server in a web browser to access the `prefect` web page.
 Should you want to run a flow that is registered against this `prefect` instance you will need to set the following environment variable in your workflow scripts:
 
 ```bash
-export APIURL=http://${YOUR_MACHINE_ADDRESS}:4200/api
+export PREFECT_API_URL=http://${YOUR_MACHINE_ADDRESS}:4200/api
 ```
 
 where you put an appropriate IP address or fully qualified hostname of the server running the `prefect` service
@@ -199,3 +198,25 @@ Here a `dask-worker` refers to an agent established by `dask` that carries out w
 See `dask_jobqueue.SLURMCluster` for a complete list of available keyword arguments.
 
 Note that there there are many other `dask` cluster types for a variety of platforms. Redeploying to a new platform should be straightforward if there exists a `dask` cluster interface for it.
+
+## Other Prefect Flow options
+
+In general usage the following `prefect` configuration settings may be of use, particularly in a distributed HPC setting:
+
+```bash
+export PREFECT_API_URL="http://${YOUR_MACHINE_ADDRESS}:4200/api"
+export PREFECT_HOME="$(pwd)/prefect"
+export PREFECT_LOGGING_EXTRA_LOGGERS="flint,fixms"
+export PREFECT_LOGGING_LEVEL="INFO"
+export PREFECT_RESULTS_PERSIST_BY_DEFAULT=true
+```
+
+A shortform description of the settings and their intent in a `flint` context are:
+
+- `PREFECT_API_URL`: Connect the flow to the established `prefect` server. This can be omitted should a short-lived instance be desired.
+- `PREFECT_HOME`: The default location `prefect` should use to store settings, meta-data and persistent task results. On some systems there are strict quota limits on `$HOME`. Setting this to anhother location, such as the launch directory of a flow, might be of use.
+- `PREFECT_LOGGING_EXTRA_LOGGERS`: Specifies which `logging` instances the `prefect` stream-handler should be attached to. General these will be the module name, but this is by convention and not mandatory in python.
+- `PREFECT_LOGGING_LEVEL`: Which logging level should be captured and streamed to the `prefect` server
+- `PREFECT_RESULTS_PERSIST_BY_DEFAULT`: Store the result of each evaluated task to disk. Should a task result be needed later in a flow it can be retrieved from this cache. This is useful in instances where worker agents are unexpectedly killed, allowing for their results to be a simple lookup rather than recomputed.
+
+The usage of these variables are by no means mandatory, and can vary depending on the usage of `flint` and computing platform.
