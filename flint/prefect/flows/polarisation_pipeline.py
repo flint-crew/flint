@@ -166,7 +166,8 @@ def process_science_fields_pol(
                 if True:
                     # hardcode for testing. Assume the fitsmask is created with the same name as .ms
                     fits_mask_file = science_ms.path.name.replace(".ms", ".i.MFS.image.fits.mask.fits")
-                    fits_mask_file = Path("/scratch/b/bmg/eosinga/doradogroup/production/697826981770314") / fits_mask_file
+                    fits_mask_path = Path("/scratch/b/bmg/eosinga/doradogroup/production/688626888568920")
+                    fits_mask_file = fits_mask_path / fits_mask_file
 
                     # create FITS mask per MS
                     fits_mask = FITSMaskNames(
