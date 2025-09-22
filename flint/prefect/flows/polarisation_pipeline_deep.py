@@ -327,6 +327,7 @@ def setup_run_process_science_field(
     cluster_config: str | Path,
     flint_ms_directory: list[Path],
     pol_field_options: PolFieldOptions,
+    ms_is_flint: bool = False,
 ) -> None:
     
 
@@ -359,6 +360,7 @@ def setup_run_process_science_field(
         flint_ms_directory=flint_ms_directory,
         pol_field_options=pol_field_options,
         science_sbids=science_sbids,
+        ms_is_flint=ms_is_flint,
     )
 
 
@@ -388,6 +390,14 @@ def get_parser() -> ArgumentParser:
         description="Polarisation processing options",
     )
 
+    parser.add_argument(
+        "--ms-is-flint",
+        action="store_true",
+        default=False,
+        help="Overwrite automatic naming convention check. Assume that the MSs are flint calibrated. Default False",
+    )    
+
+
     return parser
 
 
@@ -410,6 +420,7 @@ def cli() -> None:
         cluster_config=args.cluster_config,
         flint_ms_directory=args.flint_ms_directory,
         pol_field_options=field_options,
+        ms_is_flint=args.ms_is_flint,
     )
 
 
