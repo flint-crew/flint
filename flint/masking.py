@@ -12,6 +12,7 @@ import astropy.units as u
 import numpy as np
 from astropy.io import fits
 from astropy.wcs import WCS
+from numpy.typing import NDArray
 from radio_beam import Beam
 from reproject import reproject_interp
 from scipy.ndimage import (
@@ -65,6 +66,8 @@ class MaskingOptions(BaseOptions):
     """Erode the mask using the shape of the restoring beam"""
     beam_shape_erode_minimum_response: float = 0.6
     """The minimum response of the beam that is used to form the erode structure shape"""
+    beam_shape_erode_scales: tuple[int, ...] | None = None
+    """The multi-scale convolution sizes, in pixels, to perform a binary erosion with. Output scales are encoded as a bitmapped value (e.g. n'th scale is n'th bit)"""
 
 
 def consider_beam_mask_round(
@@ -102,7 +105,11 @@ def consider_beam_mask_round(
 
 
 def create_beam_mask_kernel(
-    fits_header: fits.Header, kernel_size=100, minimum_response: float = 0.6
+    fits_header: fits.Header,
+    kernel_size=100,
+    minimum_response: float = 0.6,
+    pixel_scale: int | None = None,
+    auto_resize: bool = True,
 ) -> np.ndarray:
     """Make a mask using the shape of a beam in a FITS Header object. The
     beam properties in the ehader are used to generate the two-dimensional
@@ -113,6 +120,8 @@ def create_beam_mask_kernel(
         fits_header (fits.Header): The FITS header to create beam from
         kernel_size (int, optional): Size of the output kernel in pixels. Will be a square. Defaults to 100.
         minimum_response (float, optional): Minimum response of the beam shape for the mask to be constructed from. Defaults to 0.6.
+        pixel_scale (int | None, optional): Convolve the restoring beam by this scale. The input scale is in pixel units. Defaults to None.
+        auto_resize (bool, optional): If True and the kernel is evaluated to all 1's, enlarge the ``kernel_size`` by a factor of 2. Defaults to True.
 
     Raises:
         KeyError: Raised if CDELT1 and CDELT2 missing
@@ -136,32 +145,58 @@ def create_beam_mask_kernel(
         f"Pixel scales {cdelt1=} {cdelt2=}, but must be equal"
     )
 
-    k = beam.as_kernel(
-        pixscale=cdelt1 * u.Unit("deg"), x_size=kernel_size, y_size=kernel_size
-    )
+    pixel_unit = u.Unit("deg")
 
-    return k.array > (np.max(k.array) * minimum_response)
+    if pixel_scale is not None:
+        assert isinstance(pixel_scale, int), (
+            f"{pixel_scale=} and is of type {type(pixel_scale)}, but should be int"
+        )
+        logger.info(f"Convoling {beam=} with {pixel_scale=}")
+        arcsecond_kernel = int(pixel_scale) * cdelt1 * pixel_unit
+        scale_beam = Beam(arcsecond_kernel, arcsecond_kernel, 0 * u.deg)
+
+        logger.info(f"Convolving with {scale_beam=}")
+        beam = beam.convolve(scale_beam)
+
+    for iteration in range(10):
+        k = beam.as_kernel(
+            pixscale=cdelt1 * pixel_unit, x_size=kernel_size, y_size=kernel_size
+        )
+
+        mask = k.array > (np.max(k.array) * minimum_response)
+        if not auto_resize:
+            break
+        if np.any(mask == 0):
+            break
+
+        kernel_size += kernel_size * iteration + 1
+        logger.warning(f"Increasing to {kernel_size=} for {pixel_scale=}")
+    else:
+        logger.warning(
+            f"{kernel_size=} appears too small for {pixel_scale=} after {iteration=}"
+        )
+
+    return mask
 
 
-def beam_shape_erode(
-    mask: np.ndarray, fits_header: fits.Header, minimum_response: float = 0.6
-) -> np.ndarray:
-    """Construct a kernel representing the shape of the restoring beam at
-    a particular level, and use it as the basis of a binary erosion of the
-    input mask.
-
-    The ``fits_header`` is used to construct the beam shape that matches the
-    same pixel size
+def create_multi_scale_erosion(
+    mask: NDArray[np.bool],
+    fits_header: fits.Header,
+    scale: int,
+    minimum_response: float = 0.6,
+) -> NDArray[np.int32]:
+    """Specialised encode per-scale clean masks as bitmapped per-pixel integer values.
 
     Args:
         mask (np.ndarray): The current mask that will be eroded based on the beam shape
         fits_header (fits.Header): The fits header of the mask used to generate the beam kernel shape
+        scales (list[int] | None, optional): Defines the scales that are being used during multi-scale clean. Perform the beam erosion at each of these scales. Defaults to None.
         minimum_response (float, optional): The minimum response of the main restoring beam to craft the shape from. Defaults to 0.6.
 
     Returns:
-        np.ndarray: The eroded beam shape
+        NDArray[np.int32]: _description_
     """
-
+    # Trust no one on the high seas, mate
     if not all([key in fits_header for key in ["BMAJ", "BMIN", "BPA"]]):
         logger.warning(
             "Beam parameters missing. Not performing the beam shape erosion. "
@@ -170,7 +205,7 @@ def beam_shape_erode(
 
     logger.info(f"Eroding the mask using the beam shape with {minimum_response=}")
     beam_mask_kernel = create_beam_mask_kernel(
-        fits_header=fits_header, minimum_response=minimum_response
+        fits_header=fits_header, minimum_response=minimum_response, pixel_scale=scale
     )
 
     # This handles any unsqueezed dimensions
@@ -178,11 +213,62 @@ def beam_shape_erode(
         mask.shape[:-2] + beam_mask_kernel.shape
     )
 
-    erode_mask = scipy_binary_erosion(
-        input=mask, iterations=1, structure=beam_mask_kernel
-    )
+    return scipy_binary_erosion(input=mask, iterations=1, structure=beam_mask_kernel)
 
-    return erode_mask.astype(mask.dtype)
+
+def beam_shape_erode(
+    mask: np.ndarray,
+    fits_header: fits.Header,
+    minimum_response: float = 0.6,
+    scales: list[int] | None = None,
+) -> NDArray[np.bool] | NDArray[np.int32]:
+    """Construct a kernel representing the shape of the restoring beam at
+        a particular level, and use it as the basis of a binary erosion of the
+        input mask.
+
+        The ``fits_header`` is used to construct the beam shape that matches the
+        same pixel size
+
+        The ``scales`` parameters outlines the scales being used to clean at during
+        some multi-scale deconvolution algorithm. If provided the binary eroision is
+        carried out at each scale (the beam is convolved by a circular gaussian at
+        this scale). The outputs are stored as a bitmask per pixel where the n'th scales
+        is stored as the n'th bit.
+
+        Args:
+            mask (np.ndarray): The current mask that will be eroded based on the beam shape
+            fits_header (fits.Header): The fits header of the mask used to generate the beam kernel shape
+            minimum_response (float, optional): The minimum response of the main restoring beam to craft the shape from. Defaults to 0.6.
+            scales (list[int] | None, optional): Defines the scales that are being used during multi-scale clean. Perform the beam erosion at each of these scales. Defaults to None.
+
+        Returns:
+    NDArray[np.bool] | NDArray[np.int32]: The eroded beam shape. If a no/single scale provide it is a bool return, otherwise int32.
+    """
+
+    if not all([key in fits_header for key in ["BMAJ", "BMIN", "BPA"]]):
+        logger.warning(
+            "Beam parameters missing. Not performing the beam shape erosion. "
+        )
+        return mask
+
+    scales = [0] if scales is None else scales
+    assert isinstance(scales, (list, tuple)), f"{scales} should be a list or tuple"
+
+    out_mask = np.zeros(mask.shape)
+
+    for index, scale in enumerate(scales):
+        erode_mask = create_multi_scale_erosion(
+            mask=mask,
+            fits_header=fits_header,
+            scale=scale,
+            minimum_response=minimum_response,
+        )
+        out_mask[erode_mask == 1.0] += 2**index
+
+    if len(scales) == 1:
+        return out_mask.astype(mask.dtype)
+
+    return out_mask
 
 
 def extract_beam_mask_from_mosaic(
@@ -633,6 +719,7 @@ def _need_to_make_signal(masking_options: MaskingOptions) -> bool:
     return not masking_options.flood_fill_use_mac
 
 
+# TODO: Need to rename this function
 def create_snr_mask_from_fits(
     fits_image_path: Path,
     masking_options: MaskingOptions,

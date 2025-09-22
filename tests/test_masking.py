@@ -144,9 +144,25 @@ def test_arg_parser_cli_and_masking_options():
     assert masking_options.flood_fill_positive_flood_clip == 1.0
 
 
-def test_create_beam_mask_kernel():
-    """See whether the beam kernel creation mask can return a correct mask"""
-    fits_header = fits.Header(
+def test_arg_parser_cli_and_masking_options_for_multiscale():
+    """See if the CLI parser is constructed with correct set of
+    options which are properly converted to a MaskingOptions object. Here
+    want to make sure that the multiscale erosion are picked up"""
+    parser = get_parser()
+    args = parser.parse_args(
+        args="mask img --beam-shape-erode-scales 0 1 2 4 --rms-fits rms --bkg-fits bkg --flood-fill --flood-fill-positive-seed-clip 10 --flood-fill-positive-flood-clip 1. --flood-fill-use-mac --flood-fill-use-mac-box-size 100".split()
+    )
+    masking_options = create_options_from_parser(
+        parser_namespace=args, options_class=MaskingOptions
+    )
+    assert isinstance(masking_options, MaskingOptions)
+    assert isinstance(masking_options.beam_shape_erode_scales, list)
+    assert masking_options.beam_shape_erode_scales == [0, 1, 2, 4]
+
+
+@pytest.fixture
+def beam_fits_header() -> fits.Header:
+    return fits.Header(
         dict(
             CDELT1=-0.000694444444444444,
             CDELT2=0.000694444444444444,
@@ -155,6 +171,11 @@ def test_create_beam_mask_kernel():
             BPA=74.6618858613889,
         )
     )
+
+
+def test_create_beam_mask_kernel(beam_fits_header):
+    """See whether the beam kernel creation mask can return a correct mask"""
+    fits_header = beam_fits_header
     mask_1 = create_beam_mask_kernel(fits_header=fits_header)
     assert mask_1.shape == (100, 100)
     assert np.sum(mask_1) == 12
@@ -187,18 +208,57 @@ def test_create_beam_mask_kernel():
         create_beam_mask_kernel(fits_header=fits_header)
 
 
-def test_beam_shape_erode():
+def test_create_beam_mask_kernel_with_scales(beam_fits_header):
+    """See whether the beam kernel creation mask can return a correct mask. Here
+    we also test for different scales."""
+
+    fits_header = beam_fits_header
+    mask_1 = create_beam_mask_kernel(fits_header=fits_header)
+    assert mask_1.shape == (100, 100)
+    assert np.sum(mask_1) == 12
+
+    mask_2 = create_beam_mask_kernel(fits_header=fits_header, pixel_scale=0)
+    assert mask_2.shape == (100, 100)
+    assert np.sum(mask_2) == 12
+
+    assert np.all(mask_1 == mask_2)
+
+    mask_3 = create_beam_mask_kernel(fits_header=fits_header, pixel_scale=4)
+    assert mask_3.shape == (100, 100)
+    assert np.sum(mask_3) == 22
+
+    assert not np.all(mask_1 == mask_3)
+
+    mask_4 = create_beam_mask_kernel(fits_header=fits_header, pixel_scale=32)
+    assert mask_4.shape == (100, 100)
+    assert np.sum(mask_4) == 608
+
+    assert not np.all(mask_1 == mask_4)
+
+
+def test_create_beam_mask_kernel_with_scales_resize(beam_fits_header):
+    """See whether the beam kernel creation mask can return a correct mask. Here
+    we also test for different scales. This is test the resize component of the
+    kernel evaluation"""
+
+    fits_header = beam_fits_header
+    mask_1 = create_beam_mask_kernel(
+        fits_header=fits_header, auto_resize=False, pixel_scale=512
+    )
+    assert np.all(mask_1 == 1)
+
+    fits_header = beam_fits_header
+    mask_2 = create_beam_mask_kernel(
+        fits_header=fits_header, auto_resize=True, pixel_scale=512
+    )
+    assert mask_1.shape != mask_2.shape
+    assert 0 in mask_2
+
+
+def test_beam_shape_erode(beam_fits_header):
     """Ensure that the beam shape erosion approach works. This should drop out pixels
     should the beam shape structure connectivity be statisifed"""
-    fits_header = fits.Header(
-        dict(
-            CDELT1=-0.000694444444444444,
-            CDELT2=0.000694444444444444,
-            BMAJ=0.00340540107886635,
-            BMIN=0.00283268735470751,
-            BPA=74.6618858613889,
-        )
-    )
+    fits_header = beam_fits_header
 
     mask = np.zeros((500, 500)).astype(bool)
 
@@ -213,6 +273,45 @@ def test_beam_shape_erode():
     assert np.sum(mask) == 900
     erode_mask = beam_shape_erode(mask=mask, fits_header=fits_header)
     assert np.sum(erode_mask) == 729
+
+
+def test_beam_shape_erode_scales(beam_fits_header):
+    """Ensure that the beam shape erosion approach works. This should drop out pixels
+    should the beam shape structure connectivity be statisifed"""
+    fits_header = beam_fits_header
+
+    # There should be nothing that passes this
+    mask = np.zeros((500, 500)).astype(bool)
+    mask[300, 300] = True
+    assert np.sum(mask) == 1
+
+    erode_mask = beam_shape_erode(
+        mask=mask, fits_header=fits_header, scales=[0, 2, 4, 8]
+    )
+    assert erode_mask.dtype != mask.dtype
+    assert np.max(erode_mask) == 0.0
+
+    # All scales should pass
+    mask = np.zeros((500, 500)).astype(bool)
+    mask[300:330, 300:330] = True
+    assert np.sum(mask) == 900
+
+    erode_mask = beam_shape_erode(
+        mask=mask, fits_header=fits_header, scales=[0, 2, 4, 8]
+    )
+    assert erode_mask.dtype != mask.dtype
+    assert np.max(erode_mask) == 15
+
+    # All scales should pass
+    mask = np.zeros((500, 500)).astype(bool)
+    mask[300:310, 300:310] = True
+    assert np.sum(mask) == 100
+
+    erode_mask = beam_shape_erode(
+        mask=mask, fits_header=fits_header, scales=[0, 2, 32, 64]
+    )
+    assert erode_mask.dtype != mask.dtype
+    assert np.max(erode_mask) == 3
 
 
 def test_beam_shape_erode_nobeam():
@@ -280,7 +379,7 @@ def fits_dir(tmpdir):
 
 
 def test_make_masking_options():
-    """Just a dump test to make sure the options structure is ok"""
+    """Just a dumb test to make sure the options structure is ok"""
 
     masking_options = MaskingOptions()
 
