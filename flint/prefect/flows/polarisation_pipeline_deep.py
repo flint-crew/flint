@@ -301,7 +301,7 @@ def process_science_fields_pol(
     if "i" not in stokes_beam_cubes.keys():
         force_remove_leakage = False
 
-    linmos_options = task_create_object(
+    linmos_options = task_create_object.submit(
         object=LinmosOptions,
         holofile=pol_field_options.holofile,
         cutoff=pol_field_options.pb_cutoff,
