@@ -151,7 +151,7 @@ def create_beam_mask_kernel(
         assert isinstance(pixel_scale, int), (
             f"{pixel_scale=} and is of type {type(pixel_scale)}, but should be int"
         )
-        logger.info(f"Convoling {beam=} with {pixel_scale=}")
+        logger.debug(f"Convoling {beam=} with {pixel_scale=}")
         arcsecond_kernel = int(pixel_scale) * cdelt1 * pixel_unit
         scale_beam = Beam(arcsecond_kernel, arcsecond_kernel, 0 * u.deg)
 
@@ -203,7 +203,9 @@ def create_multi_scale_erosion(
         )
         return mask
 
-    logger.info(f"Eroding the mask using the beam shape with {minimum_response=}")
+    logger.info(
+        f"Eroding the mask using the beam shape with {minimum_response=} and {scale=}"
+    )
     beam_mask_kernel = create_beam_mask_kernel(
         fits_header=fits_header, minimum_response=minimum_response, pixel_scale=scale
     )
@@ -253,6 +255,7 @@ def beam_shape_erode(
 
     scales = [0] if scales is None else scales
     assert isinstance(scales, (list, tuple)), f"{scales} should be a list or tuple"
+    logger.info(f"Eroding across {scales=}")
 
     out_mask = np.zeros(mask.shape)
 
