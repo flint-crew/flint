@@ -357,16 +357,16 @@ def flow_subtract_cube(
     if subtract_field_options.use_crystalball:
         with tags("crystalball"):
             logger.info("Attempting to peer into the crystalball, me'hearty")
-            # science_mss = task_crystalball_to_ms.map(
-            #     ms=science_mss,
-            #     crystalball_options=unmapped(crystalball_subtract_field_options),
-            # )
-            # wait(science_mss)
+            science_mss = task_crystalball_to_ms.map(
+                ms=science_mss,
+                crystalball_options=unmapped(crystalball_subtract_field_options),
+            )
+            wait(science_mss)
 
-            science_mss = [task_crystalball_to_ms.submit(
-                ms=science_ms,
-                crystalball_options=crystalball_subtract_field_options,
-            ).result() for science_ms in science_mss]
+            # science_mss = [task_crystalball_to_ms.submit(
+            #     ms=science_ms,
+            #     crystalball_options=crystalball_subtract_field_options,
+            # ).result() for science_ms in science_mss]
             
 
     if subtract_field_options.attempt_subtract:
@@ -457,7 +457,7 @@ def flow_subtract_cube(
                 operation="subtractcube",
             )
             scan_wsclean_cmds = task_map_all_wsclean.submit(
-                in_mss=task_wrap_list_of_inputs.submit(*science_mss),
+                in_mss=science_mss,
                 wsclean_container=subtract_field_options.wsclean_container,
                 scan_range=scan_range,
                 update_wsclean_options=update_wsclean_options,
@@ -481,14 +481,14 @@ def flow_subtract_cube(
 
         # 4 - cube concatenated each linmos field together to single file
         fitscube_image = task_combine_all_linmos_images.submit(
-            linmos_commands=task_wrap_list_of_inputs.submit(*scan_parset_list),
+            linmos_commands=scan_parset_list,
             remove_original_images=subtract_field_options.fitscube_remove_original_images,
             time_domain=True,
             bounding_box=True,
             invalidate_zeros=True,
         )
         fitscube_weights = task_combine_all_linmos_images.submit(
-            linmos_commands=task_wrap_list_of_inputs.submit(*scan_parset_list),
+            linmos_commands=scan_parset_list,
             remove_original_images=subtract_field_options.fitscube_remove_original_images,
             combine_weights=True,
             time_domain=True,
