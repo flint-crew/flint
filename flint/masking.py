@@ -220,7 +220,7 @@ def beam_shape_erode(
     mask: np.ndarray,
     fits_header: fits.Header,
     minimum_response: float = 0.6,
-    scales: list[int] | None = None,
+    scales: list[int] | tuple[int, ...] | None = None,
 ) -> NDArray[np.bool] | NDArray[np.int32]:
     """Construct a kernel representing the shape of the restoring beam at
         a particular level, and use it as the basis of a binary erosion of the
@@ -239,7 +239,7 @@ def beam_shape_erode(
             mask (np.ndarray): The current mask that will be eroded based on the beam shape
             fits_header (fits.Header): The fits header of the mask used to generate the beam kernel shape
             minimum_response (float, optional): The minimum response of the main restoring beam to craft the shape from. Defaults to 0.6.
-            scales (list[int] | None, optional): Defines the scales that are being used during multi-scale clean. Perform the beam erosion at each of these scales. Defaults to None.
+            scales (list[int] | tuple[int, ...] | None, optional): Defines the scales that are being used during multi-scale clean. Perform the beam erosion at each of these scales. Defaults to None.
 
         Returns:
     NDArray[np.bool] | NDArray[np.int32]: The eroded beam shape. If a no/single scale provide it is a bool return, otherwise int32.
@@ -806,6 +806,7 @@ def create_snr_mask_from_fits(
             mask=mask_data,
             fits_header=fits_header,
             minimum_response=masking_options.beam_shape_erode_minimum_response,
+            scales=masking_options.beam_shape_erode_scales,
         )
 
     logger.info(f"Writing {mask_names.mask_fits}")
