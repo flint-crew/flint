@@ -180,8 +180,41 @@ def create_image_cube_name(
     return Path(output_cube_name)
 
 
+def common_tokens(strings: list[str], sep: str = ".") -> str:
+    """
+    Find the common tokens across a list of strings.
+    Tokens are compared positionally, and only identical tokens
+    across all strings are kept.
+
+    Parameters
+    ----------
+    strings : list[str]
+        The list of input strings.
+    sep : str, optional
+        Separator used to split tokens (default is ".").
+
+    Returns
+    -------
+    str
+        The common part of the strings, rejoined with `sep`.
+    """
+    if not strings:
+        return ""
+
+    # Split all strings into tokens
+    split_strings = [s.split(sep) for s in strings]
+
+    # Zip by column and check all equal
+    common = []
+    for token_group in zip(*split_strings):
+        if all(tok == token_group[0] for tok in token_group):
+            common.append(token_group[0])
+
+    return sep.join(common)
+
+
 def create_imaging_name_prefix(
-    ms_path: Path,
+    ms_path: Path | list[Path],
     pol: str | None = None,
     channel_range: tuple[int, int] | None = None,
     scan_range: tuple[int, int] | None = None,
@@ -199,7 +232,15 @@ def create_imaging_name_prefix(
         str: The constructed string name
     """
 
-    names = [ms_path.stem]
+    if isinstance(ms_path, list):
+        # TODO: how to deal with naming when multiple MS are provided? (e.g. for joint imaging)
+        # finding the common part of the ms_path.stem seems like a reasonable approach
+        # e.g. "beam00.round4"
+        ms_path_str = common_tokens([str(p.stem) for p in ms_path], sep=".")
+        names = [ms_path_str]
+    else:
+        names = [ms_path.stem]
+    
     if pol is not None:
         names.append(f"{pol.lower()}")
     if channel_range is not None:

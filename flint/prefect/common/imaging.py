@@ -315,7 +315,7 @@ def task_gaincal_applycal_ms(
 
 @task
 def task_wsclean_imager(
-    in_ms: ApplySolutions | MS,
+    in_ms: ApplySolutions | MS | list[MS],
     wsclean_container: Path,
     update_wsclean_options: dict[str, Any] | None = None,
     fits_mask: FITSMaskNames | None = None,
@@ -329,7 +329,7 @@ def task_wsclean_imager(
     `update_wsclean_options`, as some flow programmatically create these.
 
     Args:
-        in_ms (Union[ApplySolutions, MS]): The measurement set that will be imaged
+        in_ms (Union[ApplySolutions, MS, list[MS]]): The measurement set that will be imaged
         wsclean_container (Path): Path to a singularity container with wsclean packages
         update_wsclean_options (Optional[Dict[str, Any]], optional): Options to update from the default wsclean options. Defaults to None.
         fits_mask (Optional[FITSMaskNames], optional): A path to a clean guard mask. Defaults to None.
@@ -340,7 +340,11 @@ def task_wsclean_imager(
         WSCleanResult: A resulting wsclean command and resulting meta-data
     """
 
-    ms = in_ms if isinstance(in_ms, MS) else in_ms.ms
+    if isinstance(in_ms, list):
+        assert len(in_ms) > 0, "Empty list of measurement sets passed to wsclean imager"
+        ms = in_ms
+    else:
+        ms = in_ms if isinstance(in_ms, MS) else in_ms.ms
 
     update_wsclean_options = (
         {} if update_wsclean_options is None else update_wsclean_options
@@ -355,7 +359,7 @@ def task_wsclean_imager(
     if scan_range:
         update_wsclean_options["interval"] = scan_range
 
-    logger.info(f"wsclean inager {ms=}")
+    logger.info(f"wsclean imager {ms=}")
     return wsclean_imager(
         ms=ms,
         wsclean_container=wsclean_container,

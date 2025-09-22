@@ -688,7 +688,7 @@ def wsclean_cleanup_files(
     return tuple(rm_files)
 
 
-def create_wsclean_name_argument(wsclean_options: WSCleanOptions, ms: MS) -> Path:
+def create_wsclean_name_argument(wsclean_options: WSCleanOptions, ms: MS | list[MS]) -> Path:
     """Create the value that will be provided to wsclean -name argument. This has
     to be generated. Among things to consider is the desired output directory of imaging
     files. This by default will be alongside the measurement set. If a `temp_dir`
@@ -709,14 +709,14 @@ def create_wsclean_name_argument(wsclean_options: WSCleanOptions, ms: MS) -> Pat
     channel_range = wsclean_options.channel_range
     scan_range = wsclean_options.interval
     name_prefix_str = create_imaging_name_prefix(
-        ms_path=ms.path,
+        ms_path=ms.path if isinstance(ms, MS) else [m.path for m in ms],
         pol=pol,
         channel_range=channel_range,
         scan_range=scan_range,
     )
 
     # Now resolve the directory part
-    name_dir: Path | str | None = ms.path.parent
+    name_dir: Path | str | None = ms.path.parent if isinstance(ms, MS) else ms[0].path.parent # default to imaging in the directory of the first MS
     temp_dir = wsclean_options_dict.get("temp_dir", None)
     if temp_dir:
         # attempt to resolve possible environment variables flexibly
@@ -805,7 +805,7 @@ def _resolve_wsclean_key_value_to_cli_str(key: str, value: Any) -> ResolvedCLIRe
 
 
 def create_wsclean_cmd(
-    ms: MS,
+    ms: MS | list[MS],
     wsclean_options: WSCleanOptions,
 ) -> WSCleanResult:
     """Create a wsclean command from a WSCleanOptions container
@@ -820,7 +820,7 @@ def create_wsclean_cmd(
     same directory as the measurement set.
 
     Args:
-        ms (MS): The measurement set to be imaged
+        ms (MS): The measurement set(s) to be imaged
         wsclean_options (WSCleanOptions): WSClean options to image with
         container (Optional[Path], optional): If a path to a container is provided the command is executed immediately. Defaults to None.
 
@@ -1195,7 +1195,7 @@ def run_wsclean_imager(
 
 
 def wsclean_imager(
-    ms: Path | MS,
+    ms: Path | MS | list[MS],
     wsclean_container: Path,
     update_wsclean_options: dict[str, Any] | None = None,
     make_cube_from_subbands: bool = True,
@@ -1203,7 +1203,7 @@ def wsclean_imager(
     """Create and run a wsclean imager command against a measurement set.
 
     Args:
-        ms (Union[Path,MS]): Path to the measurement set that will be imaged
+        ms (Union[Path,MS, list[MS]]): Path(s) to the measurement set that will be imaged
         wsclean_container (Path): Path to the container with wsclean installed
         update_wsclean_options (Optional[Dict[str, Any]], optional): Additional options to update the generated WscleanOptions with. Keys should be attributes of WscleanOptions. Defaults to None.
 
@@ -1211,8 +1211,14 @@ def wsclean_imager(
         WSCleanResult: _description_
     """
 
-    # TODO: This should be expanded to support multiple measurement sets
-    ms = MS.cast(ms)
+    if isinstance(ms, list):
+        for m in ms:
+            if not isinstance(m, MS):
+                raise TypeError(f"Expected MS in list, got {type(m)}")
+    
+    else:
+        # cast Path to MS, make a list
+        ms = [MS.cast(ms)]
 
     wsclean_options = WSCleanOptions()
     if update_wsclean_options:
@@ -1225,8 +1231,13 @@ def wsclean_imager(
         logger.info(f"Updating wsclean options with {temp_dir=}")
         wsclean_options = wsclean_options.with_options(temp_dir=temp_dir)
 
-    assert ms.column is not None, "A MS column needs to be elected for imaging. "
-    wsclean_options = wsclean_options.with_options(data_column=ms.column)
+    ms_column = ms[0].column
+    assert ms_column is not None, "A MS column needs to be elected for imaging. "
+    for m in ms:
+        assert m.column == ms_column, f"All MS must have the same column selected for imaging. Instead found {m.column=} while the first MS has {ms_column=}"
+
+
+    wsclean_options = wsclean_options.with_options(data_column=ms_column)
     wsclean_result = create_wsclean_cmd(
         ms=ms,
         wsclean_options=wsclean_options,
