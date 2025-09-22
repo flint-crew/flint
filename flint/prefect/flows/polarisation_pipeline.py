@@ -168,6 +168,7 @@ def process_science_fields_pol(
                     fits_mask_file = science_ms.path.name.replace(".ms", ".i.MFS.image.fits.mask.fits")
                     fits_mask_path = Path("/scratch/b/bmg/eosinga/doradogroup/production/688626888568920")
                     fits_mask_file = fits_mask_path / fits_mask_file
+                    # path only works for Niagara.
 
                     # create FITS mask per MS
                     fits_mask = FITSMaskNames(
