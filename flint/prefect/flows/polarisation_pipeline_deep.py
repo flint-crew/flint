@@ -74,7 +74,7 @@ def process_science_fields_pol(
 ) -> None:
     
     strategy = load_and_copy_strategy(
-        output_split_science_path=flint_ms_directory,
+        output_split_science_path=flint_ms_directory[0], # copy to first SBID path TODO: can we do something more sensible?
         imaging_strategy=pol_field_options.imaging_strategy,
     )
 
@@ -165,7 +165,7 @@ def process_science_fields_pol(
 
     dump_field_options_to_yaml(
         output_path=add_timestamp_to_path(
-            input_path=flint_ms_directory / "pol_field_options.yaml"
+            input_path=flint_ms_directory[0] / "pol_field_options.yaml"
         ),
         field_options=pol_field_options,
     )
