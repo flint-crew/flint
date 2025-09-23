@@ -110,6 +110,8 @@ class WSCleanOptions(BaseOptions):
     """Number of output channels"""
     gap_channel_division: bool = False
     """Calculates the gaps between channels, and splits the input channels into output channels by splitting the largest gap until the number of output channels has been reached"""
+    channel_division_frequencies: list[float] | None = None
+    """Split the bandwidth at the specified frequencies (in Hz) before the normal bandwidth division is performed. This can e.g. be useful for imaging multiple bands with irregular number of channels"""
     mgain: float = 0.7
     """Major cycle gain"""
     nmiter: int = 15
