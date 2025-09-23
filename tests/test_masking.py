@@ -17,6 +17,7 @@ from flint.masking import (
     create_beam_mask_kernel,
     create_options_from_parser,
     create_snr_mask_from_fits,
+    fft_binary_erosion,
     get_parser,
     minimum_absolute_clip,
 )
@@ -319,10 +320,36 @@ def test_beam_shape_erode_scales(beam_fits_header):
     assert np.sum(mask) == 100
 
     erode_mask = beam_shape_erode(
-        mask=mask, fits_header=fits_header, scales=[0, 2, 32, 64]
+        mask=mask, fits_header=fits_header, scales=[0, 2, 32, 64, 128]
     )
     assert erode_mask.dtype != mask.dtype
     assert np.max(erode_mask) == 3
+
+
+def test_fft_binary_erosion() -> None:
+    """Basic test for binaruy erosion done using the FFT approach"""
+    base_shape = (1000, 1000)
+    mask = np.zeros(base_shape)
+    mask[450:550, 450:550] = 1
+
+    kernel = np.zeros(base_shape)
+    kernel[490:510, 490:510] = 1
+    eroded = fft_binary_erosion(mask=mask, kernel=kernel)
+    assert np.sum(eroded) == 6561
+
+    kernel = np.zeros(base_shape)
+    kernel[450:550, 450:550] = 1
+    eroded = fft_binary_erosion(mask=mask, kernel=kernel)
+    assert np.sum(eroded) == 1
+    assert np.unravel_index(np.argmax(eroded), base_shape) == (
+        np.int64(499),
+        np.int64(499),
+    )
+
+    kernel = np.zeros(base_shape)
+    kernel[400:500, 400:500] = 1
+    eroded = fft_binary_erosion(mask=mask, kernel=kernel)
+    assert np.sum(eroded) == 0
 
 
 def test_beam_shape_erode_nobeam():
