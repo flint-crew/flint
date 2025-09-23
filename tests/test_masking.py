@@ -156,8 +156,8 @@ def test_arg_parser_cli_and_masking_options_for_multiscale():
         parser_namespace=args, options_class=MaskingOptions
     )
     assert isinstance(masking_options, MaskingOptions)
-    assert isinstance(masking_options.beam_shape_erode_scales, list)
-    assert masking_options.beam_shape_erode_scales == [0, 1, 2, 4]
+    assert isinstance(masking_options.beam_shape_erode_scales, tuple)
+    assert masking_options.beam_shape_erode_scales == (0, 1, 2, 4)
 
 
 @pytest.fixture

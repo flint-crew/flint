@@ -166,7 +166,13 @@ def create_beam_mask_kernel(
         mask = k.array > (np.max(k.array) * minimum_response)
         if not auto_resize:
             break
-        if np.any(mask == 0):
+
+        if (
+            np.all(mask[0, :] == 0)
+            and np.all(mask[-1, :] == 0)
+            and np.all(mask[:, 0] == 0)
+            and np.all(mask[-1, :] == 0)
+        ):
             break
 
         kernel_size += kernel_size * iteration + 1
@@ -215,6 +221,8 @@ def create_multi_scale_erosion(
         mask.shape[:-2] + beam_mask_kernel.shape
     )
 
+    # TODO: This binary erosion is no good should kernel get too large.
+    # Use a FFT tricksey trick to speed it up.
     return scipy_binary_erosion(input=mask, iterations=1, structure=beam_mask_kernel)
 
 
