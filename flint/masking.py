@@ -155,7 +155,7 @@ def create_beam_mask_kernel(
         arcsecond_kernel = int(pixel_scale) * cdelt1 * pixel_unit
         scale_beam = Beam(arcsecond_kernel, arcsecond_kernel, 0 * u.deg)
 
-        logger.info(f"Convolving with {scale_beam=}")
+        logger.debug(f"Convolving with {scale_beam=}")
         beam = beam.convolve(scale_beam)
 
     if isinstance(kernel_size, int):
@@ -169,6 +169,8 @@ def create_beam_mask_kernel(
     for iteration in range(10):
         y_kernel_size, x_kernel_size = kernel_size
 
+        # NOTE: This could be slow for large sizes.
+        # TODO: Consider evaluating the inner, padding the outer?
         k = beam.as_kernel(
             pixscale=cdelt1 * pixel_unit, x_size=x_kernel_size, y_size=y_kernel_size
         )
@@ -221,9 +223,36 @@ def fft_binary_erosion(
     assert mask.shape == kernel.shape, (
         f"Mismatch in shapes {mask.shape=} {kernel.shape=}"
     )
+    logger.info("Beginning fft erosion ... ")
+    original_shape = mask.shape
 
-    logger.info("To implement fft erosion")
-    return mask
+    mask = mask[..., :, :].astype(float)
+    kernel = kernel[..., :, :].astype(float)
+
+    logger.info(f"{np.sum(kernel)=}")
+
+    fft_mask = np.fft.fft2(mask)
+    fft_kernel = np.fft.fft2(kernel)
+
+    fft_sum = fft_mask * fft_kernel
+    erode_sum = np.fft.fftshift(np.fft.ifft2(fft_sum))
+    erode_sum = np.floor(np.abs(erode_sum) + 0.5)
+
+    logger.info("... finished erosion")
+
+    # Sneaky inspection
+    # fig, (ax, ax2) = plt.subplots(1, 2, sharex=True, sharey=True)
+    # ax.imshow(np.squeeze(erode_sum))
+    # ax2.imshow(np.squeeze(mask))
+    # ax.set(title="Beam Sum")
+    # ax2.set(title="Original Mask")
+
+    # fig2, ax3 = plt.subplots(1, 1)
+    # ax3.imshow(np.squeeze(kernel))
+    # ax3.set(title=f"Beam Shape Kernel - sum {np.sum(kernel)}")
+    # plt.show()
+
+    return (erode_sum >= np.sum(kernel)).reshape(original_shape)
 
 
 def create_multi_scale_erosion(
@@ -252,9 +281,7 @@ def create_multi_scale_erosion(
 
     fft_erosion_mode = scale > 64
 
-    logger.info(
-        f"Eroding the mask using the beam shape with {minimum_response=}, {scale=} and {fft_erosion_mode=}"
-    )
+    logger.info(f"Eroding with {scale=}, {minimum_response=} and {fft_erosion_mode=}")
     beam_mask_kernel = create_beam_mask_kernel(
         fits_header=fits_header,
         minimum_response=minimum_response,
