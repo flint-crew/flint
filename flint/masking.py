@@ -206,7 +206,7 @@ def fft_binary_erosion(
     """Attempt to perform a binary erosion using convolution therom. FFT
     the input mask, FFT the input kernel, multiply, FFT the result. This
     would give the running sum of the kernel moved across the image, which
-    in the base of boolean-type values will be the number of overlapping 1's.
+    in the case of boolean-type values will be the number of overlapping 1's.
 
     The returned mask is after ensuring the kernel total sum matches the running
     sum.
