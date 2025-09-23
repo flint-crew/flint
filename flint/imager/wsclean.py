@@ -196,8 +196,8 @@ class WSCleanResult(BaseOptions):
     """The constructede wsclean command that would be executed."""
     options: WSCleanOptions
     """The set of wslean options used for imaging"""
-    ms: MS
-    """The measurement sets that have been included in the wsclean command. """
+    ms: MS | list[MS]
+    """The measurement set(s) that have been included in the wsclean command. """
     bind_dirs: tuple[Path, ...]
     """Paths that should be binded to when executing the command"""
     move_hold_directories: tuple[Path, Path]
@@ -843,7 +843,11 @@ def create_wsclean_cmd(
     name_argument_path = create_wsclean_name_argument(
         wsclean_options=wsclean_options, ms=ms
     )
-    move_directory = ms.path.parent
+    if isinstance(ms, list):
+        # in case of multiple MS, use the first one as the move directory?
+        move_directory = ms[0].path.parent
+    else:
+        move_directory = ms.path.parent
     hold_directory: Path | None = Path(name_argument_path).parent
 
     unknowns: list[tuple[Any, Any]] = []
@@ -871,9 +875,12 @@ def create_wsclean_cmd(
         raise ValueError(f"Unknown wsclean option types: {msg}")
 
     cmds += [f"-name {name_argument_path!s}"]
-    cmds += [f"{ms.path!s} "]
-
-    bind_dir_paths.append(ms.path.parent)
+    if isinstance(ms, list):
+        cmds += [f"{' '.join([m.path.as_posix() for m in ms])} "]
+        bind_dir_paths += [m.path.parent for m in ms]
+    else:
+        cmds += [f"{ms.path!s} "]
+        bind_dir_paths.append(ms.path.parent)
 
     # TODO: Currently there are two calls into the `parse_environment_variable`
     # when processing the `-temp-dir` and `-name` options. When using the `FLINT_UUID`
@@ -889,10 +896,19 @@ def create_wsclean_cmd(
     logger.info(f"Constructed wsclean command: {cmd=}")
     logger.info("Setting default model data column to 'MODEL_DATA'")
 
+    if isinstance(ms, list):
+        return_ms = []
+        for m in ms:
+            m.with_options(model_column="MODEL_DATA")
+            return_ms.append(m)
+        ms = return_ms
+    else:
+        ms = ms.with_options(model_column="MODEL_DATA")
+
     return WSCleanResult(
         cmd=cmd,
         options=wsclean_options,
-        ms=ms.with_options(model_column="MODEL_DATA"),
+        ms=ms,
         bind_dirs=tuple(bind_dir_paths),
         move_hold_directories=(move_directory, hold_directory),
         image_prefix_str=str(name_argument_path),
@@ -1109,13 +1125,23 @@ def run_wsclean_imager(
     move_hold_directories = wsclean_result.move_hold_directories
     image_prefix_str = wsclean_result.image_prefix_str
 
-    sclient_bind_dirs = [Path(ms.path).parent.absolute()]
+    if isinstance(ms, list):
+        sclient_bind_dirs = list({m.path.parent.absolute() for m in ms})
+    else:
+        sclient_bind_dirs = [Path(ms.path).parent.absolute()]
+
     if bind_dirs:
         sclient_bind_dirs = sclient_bind_dirs + list(bind_dirs)
 
     prefix = image_prefix_str if image_prefix_str else None
     if prefix is None:
-        prefix = str(ms.path.parent / ms.path.name)
+        if isinstance(ms, list):
+            logger.warning(
+                "Multiple measurement sets provided but no image_prefix_str. Cannot determine prefix uniquely. Using the first MS."
+            )
+            prefix = str(ms[0].path.parent / ms[0].path.name)
+        else:
+            prefix = str(ms.path.parent / ms.path.name)
         logger.warning(f"Setting prefix to {prefix}. Likely this is not correct. ")
 
     if move_hold_directories:
