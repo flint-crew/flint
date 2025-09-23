@@ -70,7 +70,7 @@ A binary erosion process with the erosision structure set to the shape of the re
 
 basic routines to enable per-scale beam shape erosion are provided via `MaskingOptions.beam_shape_eroison_scales`. For each specified scale the restoring beam (the base shape in this erosion) is convolved with a circular gaussian of the specified scale (each scale is FWHM in pixels). The resulting beam is then evaluated in the basic process outlined above, eroding the clean islands at the native resolution to the clean islands at the specified scale. The clean mask at each scale is stored as 'bitmapped' value - except since these are floats the `n`'th scale is stored as `2**n` for each pixel.
 
-This is intended to provide a mechanism to ensure cleaning at larger scales occurs in well defined regions. An example of the erosion process for `0 1 2 4 8 16 32 64 128 256 512 1024 2056` is shown below.
+This is intended to provide a mechanism to ensure cleaning at larger scales occurs in well defined regions. An example of the erosion process for `0 1 2 4 8 16 32 64 128 256 512 1024 2056` is shown below. Point source islands are still in the mask, it is just that since they are at the initial scale defined, they are stored as `2**0 = 1` values.
 
 <img src="_static/multi_scale_erode.jpeg" alt="Example of multi-scale beam erode" style="width:400px;"/>
 
