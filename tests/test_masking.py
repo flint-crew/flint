@@ -347,7 +347,7 @@ def test_fft_binary_erosion() -> None:
     )
 
     kernel = np.zeros(base_shape)
-    kernel[400:500, 400:500] = 1
+    kernel[400:600, 400:600] = 1
     eroded = fft_binary_erosion(mask=mask, kernel=kernel)
     assert np.sum(eroded) == 0
 
