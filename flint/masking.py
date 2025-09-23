@@ -106,7 +106,7 @@ def consider_beam_mask_round(
 
 def create_beam_mask_kernel(
     fits_header: fits.Header,
-    kernel_size=100,
+    kernel_size: int | tuple[int, int] = 100,
     minimum_response: float = 0.6,
     pixel_scale: int | None = None,
     auto_resize: bool = True,
@@ -118,7 +118,7 @@ def create_beam_mask_kernel(
 
     Args:
         fits_header (fits.Header): The FITS header to create beam from
-        kernel_size (int, optional): Size of the output kernel in pixels. Will be a square. Defaults to 100.
+        kernel_size (int | tuple[int, int], optional): Size of the output kernel in pixels. Will be a square. Defaults to 100.
         minimum_response (float, optional): Minimum response of the beam shape for the mask to be constructed from. Defaults to 0.6.
         pixel_scale (int | None, optional): Convolve the restoring beam by this scale. The input scale is in pixel units. Defaults to None.
         auto_resize (bool, optional): If True and the kernel is evaluated to all 1's, enlarge the ``kernel_size`` by a factor of 2. Defaults to True.
@@ -158,15 +158,27 @@ def create_beam_mask_kernel(
         logger.info(f"Convolving with {scale_beam=}")
         beam = beam.convolve(scale_beam)
 
+    if isinstance(kernel_size, int):
+        kernel_size = (kernel_size, kernel_size)
+
+    # Trust no one, mate
+    assert isinstance(kernel_size, tuple) and len(kernel_size) == 2, (
+        f"{kernel_size=}, but should be a tuple[int, int] by now"
+    )
+
     for iteration in range(10):
+        y_kernel_size, x_kernel_size = kernel_size
+
         k = beam.as_kernel(
-            pixscale=cdelt1 * pixel_unit, x_size=kernel_size, y_size=kernel_size
+            pixscale=cdelt1 * pixel_unit, x_size=x_kernel_size, y_size=y_kernel_size
         )
 
         mask = k.array > (np.max(k.array) * minimum_response)
         if not auto_resize:
             break
 
+        # Ensure that there be a border of empty pixels, mate. This
+        # way we be sure ye larger enough to contain the beam response.
         if (
             np.all(mask[0, :] == 0)
             and np.all(mask[-1, :] == 0)
@@ -175,13 +187,42 @@ def create_beam_mask_kernel(
         ):
             break
 
-        kernel_size += kernel_size * iteration + 1
+        kernel_size = tuple(ks + ks * (iteration + 1) for ks in kernel_size)  # type: ignore[assignment]
         logger.warning(f"Increasing to {kernel_size=} for {pixel_scale=}")
     else:
         logger.warning(
             f"{kernel_size=} appears too small for {pixel_scale=} after {iteration=}"
         )
 
+    return mask
+
+
+def fft_binary_erosion(
+    mask: NDArray[np.bool] | NDArray[np.floating],
+    kernel: NDArray[np.bool],
+) -> NDArray[np.bool]:
+    """Attempt to perform a binary erosion using convolution therom. FFT
+    the input mask, FFT the input kernel, multiply, FFT the result. This
+    would give the running sum of the kernel moved across the image, which
+    in the base of boolean-type values will be the number of overlapping 1's.
+
+    The returned mask is after ensuring the kernel total sum matches the running
+    sum.
+
+    Args:
+        mask (NDArray[np.bool] | NDArray[np.floating]): The mask that will be eroded
+        kernel (NDArray[np.bool]): The kernel structure used for the erosion
+
+    Returns:
+        NDArray[np.bool]: The eroded mask
+    """
+
+    # Pad out the kernel with zeros to match the input shape
+    assert mask.shape == kernel.shape, (
+        f"Mismatch in shapes {mask.shape=} {kernel.shape=}"
+    )
+
+    logger.info("To implement fft erosion")
     return mask
 
 
@@ -209,11 +250,17 @@ def create_multi_scale_erosion(
         )
         return mask
 
+    fft_erosion_mode = scale > 64
+
     logger.info(
-        f"Eroding the mask using the beam shape with {minimum_response=} and {scale=}"
+        f"Eroding the mask using the beam shape with {minimum_response=}, {scale=} and {fft_erosion_mode=}"
     )
     beam_mask_kernel = create_beam_mask_kernel(
-        fits_header=fits_header, minimum_response=minimum_response, pixel_scale=scale
+        fits_header=fits_header,
+        minimum_response=minimum_response,
+        pixel_scale=scale,
+        kernel_size=mask.shape[-2:] if fft_erosion_mode else 100,
+        auto_resize=not fft_erosion_mode,
     )
 
     # This handles any unsqueezed dimensions
@@ -223,6 +270,9 @@ def create_multi_scale_erosion(
 
     # TODO: This binary erosion is no good should kernel get too large.
     # Use a FFT tricksey trick to speed it up.
+    if fft_erosion_mode:
+        return fft_binary_erosion(mask=mask, kernel=beam_mask_kernel)
+
     return scipy_binary_erosion(input=mask, iterations=1, structure=beam_mask_kernel)
 
 

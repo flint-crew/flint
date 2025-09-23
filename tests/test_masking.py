@@ -235,6 +235,17 @@ def test_create_beam_mask_kernel_with_scales(beam_fits_header):
 
     assert not np.all(mask_1 == mask_4)
 
+    # With these options the output shape should be
+    # the same as the input shape
+    test_mask = np.zeros((200, 440))
+    mask_5 = create_beam_mask_kernel(
+        fits_header=fits_header,
+        pixel_scale=32,
+        auto_resize=False,
+        kernel_size=test_mask.shape,
+    )
+    assert test_mask.shape == mask_5.shape
+
 
 def test_create_beam_mask_kernel_with_scales_resize(beam_fits_header):
     """See whether the beam kernel creation mask can return a correct mask. Here
