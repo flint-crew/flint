@@ -108,6 +108,8 @@ class WSCleanOptions(BaseOptions):
     """Threshold in Jy to stop cleaning"""
     channels_out: int = 4
     """Number of output channels"""
+    gap_channel_division: bool = False
+    """Calculates the gaps between channels, and splits the input channels into output channels by splitting the largest gap until the number of output channels has been reached"""
     mgain: float = 0.7
     """Major cycle gain"""
     nmiter: int = 15
