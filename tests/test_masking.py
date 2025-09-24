@@ -342,8 +342,8 @@ def test_fft_binary_erosion() -> None:
     eroded = fft_binary_erosion(mask=mask, kernel=kernel)
     assert np.sum(eroded) == 1
     assert np.unravel_index(np.argmax(eroded), base_shape) == (
-        np.int64(499),
-        np.int64(499),
+        np.int64(500),
+        np.int64(500),
     )
 
     kernel = np.zeros(base_shape)

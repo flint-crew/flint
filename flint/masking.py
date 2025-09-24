@@ -219,38 +219,19 @@ def fft_binary_erosion(
         NDArray[np.bool]: The eroded mask
     """
 
-    # Pad out the kernel with zeros to match the input shape
-    assert mask.shape == kernel.shape, (
-        f"Mismatch in shapes {mask.shape=} {kernel.shape=}"
-    )
     logger.info("Beginning fft erosion ... ")
     original_shape = mask.shape
 
     mask = mask[..., :, :].astype(float)
     kernel = kernel[..., :, :].astype(float)
 
-    logger.info(f"{np.sum(kernel)=}")
+    import scipy
 
-    fft_mask = np.fft.fft2(mask)
-    fft_kernel = np.fft.fft2(kernel)
-
-    fft_sum = fft_mask * fft_kernel
-    erode_sum = np.fft.fftshift(np.fft.ifft2(fft_sum))
-    erode_sum = np.floor(np.abs(erode_sum) + 0.5)
+    erode_sum = np.floor(
+        np.abs(scipy.signal.fftconvolve(mask, kernel, mode="same")) + 0.5
+    )
 
     logger.info("... finished erosion")
-
-    # Sneaky inspection
-    # fig, (ax, ax2) = plt.subplots(1, 2, sharex=True, sharey=True)
-    # ax.imshow(np.squeeze(erode_sum))
-    # ax2.imshow(np.squeeze(mask))
-    # ax.set(title="Beam Sum")
-    # ax2.set(title="Original Mask")
-
-    # fig2, ax3 = plt.subplots(1, 1)
-    # ax3.imshow(np.squeeze(kernel))
-    # ax3.set(title=f"Beam Shape Kernel - sum {np.sum(kernel)}")
-    # plt.show()
 
     return (erode_sum >= np.sum(kernel)).reshape(original_shape)
 
@@ -279,15 +260,16 @@ def create_multi_scale_erosion(
         )
         return mask
 
-    fft_erosion_mode = scale > 64
+    logger.info(f"Eroding with {scale=}, {minimum_response=}")
 
-    logger.info(f"Eroding with {scale=}, {minimum_response=} and {fft_erosion_mode=}")
+    # NOTE; The kernel_size=max() is to avoid excessive resize warnings
+    # at low scales
     beam_mask_kernel = create_beam_mask_kernel(
         fits_header=fits_header,
         minimum_response=minimum_response,
         pixel_scale=scale,
-        kernel_size=mask.shape[-2:] if fft_erosion_mode else 100,
-        auto_resize=not fft_erosion_mode,
+        kernel_size=max(16, int(1 + scale * 1.1)),
+        auto_resize=True,
     )
 
     # This handles any unsqueezed dimensions
@@ -295,9 +277,21 @@ def create_multi_scale_erosion(
         mask.shape[:-2] + beam_mask_kernel.shape
     )
 
-    # TODO: This binary erosion is no good should kernel get too large.
-    # Use a FFT tricksey trick to speed it up.
+    # As far as this pirate knows the scipy_binary_erosion used
+    # at the bottom is evaluated in the imade plane. For larger
+    # images and larger kernels (particularly the later), memory
+    # usage ballons. I suspect scipy tries to stack all shifted kernels
+    # and does the dot product in one go for all positions. In such
+    # an instance a better thing to do is via convolution - larger upfront
+    # compute cost but no memory explosion.
+    size_ratio = np.prod(beam_mask_kernel.shape) / np.prod(mask.shape)
+    logger.debug(f"{size_ratio=}")
+    fft_erosion_mode = (size_ratio) > 5e-5
+
     if fft_erosion_mode:
+        logger.debug(
+            "Will be using fft-based binary erosion, based on size of kernel-to-mask"
+        )
         return fft_binary_erosion(mask=mask, kernel=beam_mask_kernel)
 
     return scipy_binary_erosion(input=mask, iterations=1, structure=beam_mask_kernel)
