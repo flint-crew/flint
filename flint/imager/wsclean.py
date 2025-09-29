@@ -762,7 +762,10 @@ def _resolve_wsclean_key_value_to_cli_str(key: str, value: Any) -> ResolvedCLIRe
     # Some wsclean options, if multiple values are provided, might need
     # to be join as a csv list. Others might want to be dumped in. Just
     # attempting to future proof (arguably needlessly).
-    options_to_comma_join = "multiscale-scales"
+    options_to_comma_join = set[str] = {
+        "multiscale-scales",
+        "channel-division-frequencies",
+    }
     bind_dir_options = ("temp-dir",)
 
     logger.debug(f"{key=} {value=} {type(value)=}")
@@ -789,9 +792,11 @@ def _resolve_wsclean_key_value_to_cli_str(key: str, value: Any) -> ResolvedCLIRe
     elif isinstance(value, (str, Number)):
         cmd = f"-{key} {value}"
     elif isinstance(value, (list, tuple)):
-        value = list(map(str, value))
-        value_str = ",".join(value) if key in options_to_comma_join else " ".join(value)
-        cmd = f"-{key} {value_str}"
+        # Strings only; WSClean CLI doesn’t want brackets/quotes.
+        str_values: list[str] = list(map(str, value))
+        # Comma-join for the special options; else space-join
+        joined = ",".join(str_values) if key in options_to_comma_join else " ".join(str_values)
+        cmd = f"-{key} {joined}"
     elif isinstance(value, Path):
         value_str = str(value)
         cmd = f"-{key} {value_str}"
