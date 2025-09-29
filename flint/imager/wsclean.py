@@ -762,7 +762,7 @@ def _resolve_wsclean_key_value_to_cli_str(key: str, value: Any) -> ResolvedCLIRe
     # Some wsclean options, if multiple values are provided, might need
     # to be join as a csv list. Others might want to be dumped in. Just
     # attempting to future proof (arguably needlessly).
-    options_to_comma_join = set[str] = {
+    options_to_comma_join = {
         "multiscale-scales",
         "channel-division-frequencies",
     }
