@@ -224,7 +224,7 @@ def process_science_fields_pol(
                         wsclean_container=pol_field_options.wsclean_container,
                         make_cube_from_subbands=False,  # We will do this later
                         recompute=False, # TODO: make this an option, to not rerun wclean jobs that already produced output
-                        file_exist_ok=False, # TODO: set True, and make this an option, be OK with files that already exist when moving hold dir
+                        file_exist_ok_during_move=False, # TODO: set True, and make this an option, be OK with files that already exist when moving hold dir
                         ignore_tmpdir_files_with_globstr='tmp', # TODO: make this an option, to ignore leftover tmp files from hold dir
                         fits_mask=fits_mask,
                         update_wsclean_options=unmapped(
