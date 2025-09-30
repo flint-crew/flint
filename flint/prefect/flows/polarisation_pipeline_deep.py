@@ -204,8 +204,8 @@ def process_science_fields_pol(
 
                     # hardcode for testing. Assume the fitsmask is created with the same name as the first SBID .ms
                     fits_mask_file = science_ms[0].path.name.replace(".ms", ".i.MFS.image.mask.fits") # name according to flint mask
-                    # path only works for Niagara.
-                    fits_mask_file = Path("/scratch/b/bmg/eosinga/doradogroup/production/697826981770314") / fits_mask_file
+                    # path only works for trillium, TODO: make input option
+                    fits_mask_file = Path("/scratch/eosinga/doradogroup/production/697826981770314/") / fits_mask_file
 
                     assert fits_mask_file.exists(), f"FITS mask file {fits_mask_file} does not exist!"
 
