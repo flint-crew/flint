@@ -512,6 +512,12 @@ def processed_ms_format(
     """Will take a formatted name (i.e. one derived from the flint.naming.create_ms_name)
     and attempt to extract its main components. This includes the SBID, field, beam and spw.
 
+    Example of a processed name:
+
+    SB65325.fieldname.[beam01].[spw02].[round3].[i].[ch0-223].[scan1-5]
+
+    where [] is optional
+
     Args:
         in_name (Union[str, Path]): The name that needs to be broken down into components
 
@@ -522,18 +528,27 @@ def processed_ms_format(
     in_name = in_name.name if isinstance(in_name, Path) else in_name
 
     logger.debug(f"Matching {in_name}")
-    # TODO: Should the Beam and field items be relaxed and allowed to be optional?
-    # TODOL At very least I think the beam should become options
+    
+    # Erik: to allow combined band imaging, had to expand the optionality of the regex
+
     # A raw string is used to avoid bad unicode escaping
     regex = re.compile(
-        r"^SB(?P<sbid>[0-9]+)"
-        r"\.(?P<field>[^.]+)"
-        r"((\.beam(?P<beam>[0-9]+))?)"
-        r"((\.spw(?P<spw>[0-9]+))?)"
-        r"((\.round(?P<round>[0-9]+))?)"
-        r"((\.(?P<pol>(i|q|u|v|xx|yy|xy|yx)+))?)"
-        r"((\.ch(?P<chl>([0-9]+))-(?P<chh>([0-9]+)))?)"
-        r"((\.scan(?P<scanl>([0-9]+))-(?P<scanh>([0-9]+)))?)"
+        r"^"
+        r"(?:SB(?P<sbid>\d+)\.)?"   # optional SB####.
+        # optional field that does NOT start with any reserved token
+        r"(?:(?P<field>"
+            r"(?!beam\d+)(?!spw\d+)(?!round\d+)" # e.g. doesn't start with beam, spw, round
+            r"(?!ch\d+-\d+)(?!scan\d+-\d+)" # e.g. doesn't start with ch or scan
+            r"(?!i(?:$|\.|-))(?!q(?:$|\.|-))(?!u(?:$|\.|-))(?!v(?:$|\.|-))" # doesn't start with polarisations iquv
+            r"(?!xx(?:$|\.|-))(?!yy(?:$|\.|-))(?!xy(?:$|\.|-))(?!yx(?:$|\.|-))" # doesn't start with polarisations xx, yy, xy, yx
+            r"[^.]+" # field is anything except a dot
+        r")\.)?"                    # field is optional, and if present it's followed by a dot
+        r"(?:beam(?P<beam>\d+))?"   # now keyed pieces follow, each with a leading dot below
+        r"(?:\.spw(?P<spw>\d+))?"
+        r"(?:\.round(?P<round>\d+))?"
+        r"(?:\.(?P<pol>i|q|u|v|xx|yy|xy|yx))?"
+        r"(?:\.ch(?P<chl>\d+)-(?P<chh>\d+))?"
+        r"(?:\.scan(?P<scanl>\d+)-(?P<scanh>\d+))?"
     )
     results = regex.match(in_name)
 
