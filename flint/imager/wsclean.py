@@ -165,7 +165,7 @@ class WSCleanOptions(BaseOptions):
     deconvolution_channels: int | None = None
     """The channels out will be averaged down to this many sub-band images during deconvolution"""
     parallel_deconvolution: int | None = None
-    """If not none, then this is the number of sub-regions wsclean will attempt to divide and clean"""
+    """If not none, the maximum sub-image size in pixels used during deconvolution (suggestion between to between 1024-4096)"""
     parallel_gridding: int | None = None
     """If not none, then this is the number of channel images that will be gridded in parallel"""
     temp_dir: str | Path | None = None
