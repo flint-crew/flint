@@ -48,6 +48,7 @@ dependencies = [
     "fitscube>=2.3.0",
     "astroquery>=0.4.8.dev0",
     "crystalball>=0.4.3",
+    "astroplan",
 ]
 
 [tool.hatch]
