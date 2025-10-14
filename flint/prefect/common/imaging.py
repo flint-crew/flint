@@ -737,10 +737,10 @@ def task_linmos_images(
     image_list: list[Path],
     container: Path,
     linmos_options: LinmosOptions,
-    field_summary: FieldSummary | None = None,
+    field_summary: FieldSummary | list[FieldSummary] | None = None,
     suffix_str: str | None = None,
     parset_output_path: str | None = None,
-) -> LinmosResult:
+) -> LinmosResult | list[LinmosResult]:
     """Linmos together a set of input images.
 
     The ``linmos_options.image_output_name`` is updated to be
@@ -771,9 +771,16 @@ def task_linmos_images(
         additional_suffixes=suffix_str,
     )
 
+    if isinstance(field_summary, list):
+        # handle the multi band case, can have different pol axis
+        pol_axes: float | list[float | None] | None = [fs.pol_axis for fs in field_summary if fs is not None]
+    else:
+        # handle the single-obs or no field summary case
+        pol_axes = field_summary.pol_axis if field_summary else None
+
     linmos_options = linmos_options.with_options(
         base_output_name=output_path,
-        pol_axis=field_summary.pol_axis if field_summary else None,
+        pol_axis=pol_axes,
     )
 
     linmos_result = linmos_images(

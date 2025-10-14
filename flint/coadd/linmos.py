@@ -12,6 +12,10 @@ from astropy.io import fits
 from flint.logging import logger
 from flint.naming import LinmosNames, create_linmos_names, extract_beam_from_name
 from flint.options import BaseOptions, add_options_to_parser, create_options_from_parser
+from flint.prefect.common.utils import (  # replace 'your_module'
+    extract_frequency_axis_hz,
+    frequencies_from_wsclean_images_hz,
+)
 from flint.sclient import run_singularity_command
 from flint.utils import remove_files_folders
 
@@ -36,12 +40,12 @@ class LinmosOptions(BaseOptions):
 
     base_output_name: Path = Path("linmos_field").absolute()
     "Base name path of the output linmos produces, including parent path. This is provided to form ``LinmosNames``. Defaults to 'linmos_field'."
-    holofile: Path | None = None
-    """Path to a FITS cube produced by the holography processing pipeline. Used by linmos to appropriate primary-beam correct the images. Defaults to None."""
+    holofile: Path | list[Path] | None = None
+    """Path(s) to a FITS cube produced by the holography processing pipeline. Used by linmos to appropriate primary-beam correct the images. Defaults to None."""
     cutoff: float = 0.001
     """Pixels whose primary beam attenuation is below this cutoff value are blanked. Defaults to 0.001."""
-    pol_axis: float | None = None
-    """The physical oritentation of the ASKAP third-axis in radians. Defaults to None."""
+    pol_axis: float | list[float] | None = None
+    """The physical oritentation(s) of the ASKAP third-axis in radians. Defaults to None."""
     trim_linmos_fits: bool = True
     """Attempt to trim the output linmos files of as much empty space as possible. Defaults to True."""
     cleanup: bool = False
@@ -503,6 +507,56 @@ def generate_linmos_parameter_set(
     linmos_names: LinmosNames,
     linmos_options: LinmosOptions,
     weight_list: str | None = None,
+) -> LinmosParsetSummary | list[LinmosParsetSummary]:
+    """Generate a parset file that will be used with the
+    yandasoft linmos task.
+
+    Args:
+        images (Collection[Path]): The images that will be coadded into a single field image.
+        linmos_names (LinmosNames): Names of the output image and weights that linmos will produces. The weight image will have a similar name. Defaults to "linmos_field".
+        linmos_options (LinmosOptions): Options that are passed through to the yandasoft linmos application.
+        weight_list (str, optional): If not None, this string will be embedded into the yandasoft linmos parset as-is. It should represent the formatted string pointing to weight files, and should be equal length of the input images. If None it is internally generated. Defaults to None.
+
+    Returns:
+        (a list of) LinmosParsetSummary: Important components around the generated parset file, 
+    """
+
+    if isinstance(linmos_options.pol_axis, list):
+        assert isinstance(linmos_options.holofile, list), "If multiple pol axes are defined, expect multiple holography files"
+
+        assert len(linmos_options.pol_axis) == len(linmos_options.holofile), f"If multiple pol axes are defined, expect the same number of holography files. Got {len(linmos_options.pol_axis)} pol axes and {len(linmos_options.holofile)} holofiles"
+
+        # will have to run linmos multiple times
+        logger.info(f"Running linmos {len(linmos_options.pol_axis)} times for each pol axis / holofile")
+
+        # have to split all the images by holofile
+        # e.g. stokesi_images, "images", weights, beams
+        parsets = split_parset_by_holofile(
+            images=images,
+            linmos_names=linmos_names,
+            linmos_options=linmos_options,
+            weight_list=weight_list,
+        )
+
+        return parsets
+        
+    else:
+        # single holofile linmos case, code unchanged
+        linmos_parset_summary = _generate_linmos_parameter_set(
+            images=images,
+            linmos_names=linmos_names,
+            linmos_options=linmos_options,
+            weight_list=weight_list,
+        )
+
+        return linmos_parset_summary
+
+
+def _generate_linmos_parameter_set(
+    images: Collection[Path],
+    linmos_names: LinmosNames,
+    linmos_options: LinmosOptions,
+    weight_list: str | None = None,
 ) -> LinmosParsetSummary:
     """Generate a parset file that will be used with the
     yandasoft linmos task.
@@ -615,6 +669,149 @@ def generate_linmos_parameter_set(
     return linmos_parset_summary
 
 
+def filter_wsclean_images_by_holofile_frequency(
+    wsclean_images: Collection[Path],
+    holofile: Path
+) -> tuple[list[Path], list[int]]:
+    """
+    Return only those WSclean image paths whose per-image frequency (Hz)
+    lies within the [min, max] frequency range of the given holofile cube.
+
+    Relies on the helpers:
+    - extract_frequency_axis_hz(holofile) -> np.ndarray[freq_Hz]
+    - frequencies_from_wsclean_images_hz(wsclean_images) -> np.ndarray[freq_Hz]
+
+    Parameters
+    ----------
+    wsclean_images : list[Path]
+        Per-channel WSclean images (each expected to contain a single frequency plane).
+    holofile : Path
+        Path to a FITS cube from which to determine the frequency span.
+
+    Returns
+    -------
+    tuple[list[Path], list[int]]
+        (filtered_images, indices)
+        - filtered_images: subset of input paths within the frequency range.
+        - indices: positions of those images in the original list.
+
+    Raises
+    ------
+    ValueError
+        If the holofile has no valid spectral axis or all NaN/invalid frequencies.
+    """
+    # Frequency range from the holofile
+    holo_freqs = np.asarray(extract_frequency_axis_hz(Path(holofile)), dtype=float)
+    if holo_freqs.size == 0 or not np.any(np.isfinite(holo_freqs)):
+        raise ValueError(f"No valid frequencies found in holofile: {holofile}")
+
+    fmin = float(np.nanmin(holo_freqs))
+    fmax = float(np.nanmax(holo_freqs))
+    if not np.isfinite(fmin) or not np.isfinite(fmax):
+        raise ValueError(f"Holofile frequency range is invalid: min={fmin}, max={fmax}")
+    if fmin > fmax:
+        fmin, fmax = fmax, fmin
+
+    # Frequencies for the WSclean per-channel images
+    img_freqs = frequencies_from_wsclean_images_hz(wsclean_images)
+
+    # Inclusive filter: keep images with f in [fmin, fmax]
+    indices, selected = zip(
+        *[(i, p) for i, (p, f) in enumerate(zip(wsclean_images, img_freqs))
+          if np.isfinite(f) and fmin <= f <= fmax]
+    ) if wsclean_images else ([], [])
+
+    return list(selected), list(indices)
+
+
+def split_parset_by_holofile(
+    images: Collection[Path],
+    linmos_names: LinmosNames,
+    linmos_options: LinmosOptions,
+    weight_list: str | None = None,
+) -> list[LinmosParsetSummary]:
+    """
+    Split the input images etc by holofile. This assumes that the input images are all created by a single run of WSclean
+    but multiple holofiles are given, because different bands need to be handled separately.
+
+    We can do the split in frequency. 
+
+    Args:
+        images (Collection[Path]): The images that will be coadded into a single field image.
+        linmos_names (LinmosNames): Names of the output image and weights that linmos will produces. The weight image will have a similar name. Defaults to "linmos_field".
+        linmos_options (LinmosOptions): Options that are passed through to the yandasoft linmos application.
+        weight_list (str, optional): If not None, this string will be embedded into the yandasoft linmos parset as-is. It should represent the formatted string pointing to weight files, and should be equal length of the input images. If None it is internally generated. Defaults to None.
+
+    Returns one linmos base parset per holofile
+    """
+
+    parsets: list[LinmosParsetSummary] = []
+
+    # make sure we create weights, instead of user inputting weight list.
+    if weight_list is not None:
+        raise NotImplementedError("User input weight list + holofile splitting not implemented.")
+    else:
+        weight_files: tuple[Path, ...] | None = None
+        weight_files = generate_weights_list_and_files(
+            image_paths=images, mode="mad", stride=8
+        )
+        assert weight_files is not None, (
+            f"{weight_files=}, which should not happen after creating weight files"
+        )
+
+
+    for i, holofile in enumerate(linmos_options.holofile):
+        # grab the list of images that corresponds to each holofile, by frequency
+        _images, _indices = filter_wsclean_images_by_holofile_frequency(images, holofile)
+
+        # grab the list of stokes i images that corresponds to each holofile.
+        if linmos_options.stokesi_images is not None:
+            _stokesi_images = [linmos_options.stokesi_images[idx] for idx in _indices]
+
+        # also split the weight files
+        if weight_files is not None:
+            _weight_files = [weight_files[idx] for idx in _indices]
+            _weight_str = _file_list_to_string(_weight_files)
+
+        # update the linmos names, adding the holofile in there
+        _linmos_names = LinmosNames(
+            image_fits=linmos_names.image_fits.with_name(
+                linmos_names.image_fits.stem + f"_{holofile.stem}" + ".fits"
+            ),
+            weight_fits=linmos_names.weight_fits.with_name(
+                linmos_names.weight_fits.stem + f"_{holofile.stem}"+ ".fits"
+            ),
+            parset_output_path=linmos_names.parset_output_path.with_name(
+                linmos_names.parset_output_path.stem + f"_{holofile.stem}_parset"+ ".txt"
+            ),
+        )
+
+        # update the linmos options, with only this holofile and pol axis
+        _linmos_options = LinmosOptions(
+            base_output_name=linmos_options.base_output_name + f"_{holofile.stem}",
+            holofile=holofile,
+            pol_axis=linmos_options.pol_axis[i], 
+            stokesi_images=_stokesi_images,
+            cutoff=linmos_options.cutoff,
+            overwrite=linmos_options.overwrite,
+            trim_linmos_fits=linmos_options.trim_linmos_fits,
+            cleanup=linmos_options.cleanup,
+            remove_original_images=linmos_options.remove_original_images,
+            force_remove_leakage=linmos_options.force_remove_leakage,
+        )
+
+        # now use the base generate linmos parset function to create the parset for this holofile
+        parset = _generate_linmos_parameter_set(
+            images=_images,
+            linmos_names=_linmos_names,
+            linmos_options=_linmos_options,
+            weight_list=_weight_str,
+        )
+        parsets.append(parset)
+    
+    return parsets
+
+
 def _linmos_cleanup(linmos_parset_summary: LinmosParsetSummary) -> tuple[Path, ...]:
     """Clean up linmos files if requested.
 
@@ -642,7 +839,7 @@ def linmos_images(
     parset_output_path: Path | None = None,
     weight_list: str | None = None,
     container: Path = Path("yandasoft.sif"),
-) -> LinmosResult:
+) -> LinmosResult | list[LinmosResult]:
     """Create a linmos parset file and execute it.
 
     Args:
@@ -669,39 +866,50 @@ def linmos_images(
         weight_list=weight_list,
     )
 
-    linmos_cmd_str = f"linmos -c {linmos_parset_summary.parset_path!s}"
-    bind_dirs = [image.absolute().parent for image in images] + [
-        linmos_parset_summary.parset_path.absolute().parent
-    ]
-    if linmos_options.holofile:
-        bind_dirs.append(linmos_options.holofile.absolute().parent)
+    if not isinstance(linmos_parset_summary, list):
+        linmos_parset_summaries = [linmos_parset_summary]
 
-    run_singularity_command(
-        image=container, command=linmos_cmd_str, bind_dirs=bind_dirs
-    )
+    linmos_results: list[LinmosResult] = []
+    for linmos_parset_summary in linmos_parset_summaries:
 
-    linmos_result = LinmosResult(
-        cmd=linmos_cmd_str,
-        parset=linmos_parset_summary.parset_path,
-        image_fits=linmos_names.image_fits.absolute(),
-        weight_fits=linmos_names.weight_fits.absolute(),
-    )
+        linmos_cmd_str = f"linmos -c {linmos_parset_summary.parset_path!s}"
+        bind_dirs = [image.absolute().parent for image in images] + [
+            linmos_parset_summary.parset_path.absolute().parent
+        ]
+        if linmos_options.holofile:
+            bind_dirs.append(linmos_options.holofile.absolute().parent)
 
-    # Trim the fits image to remove empty pixels
-    if linmos_options.trim_linmos_fits:
-        image_trim_results = trim_fits_image(image_path=linmos_names.image_fits)
-        trim_fits_image(
-            image_path=linmos_names.weight_fits,
-            bounding_box=image_trim_results.bounding_box,
+        run_singularity_command(
+            image=container, command=linmos_cmd_str, bind_dirs=bind_dirs
         )
 
-    if linmos_options.cleanup:
-        _linmos_cleanup(linmos_parset_summary=linmos_parset_summary)
+        linmos_result = LinmosResult(
+            cmd=linmos_cmd_str,
+            parset=linmos_parset_summary.parset_path,
+            image_fits=linmos_names.image_fits.absolute(),
+            weight_fits=linmos_names.weight_fits.absolute(),
+        )
 
-    if linmos_options.remove_original_images:
-        remove_files_folders(*images)
+        # Trim the fits image to remove empty pixels
+        if linmos_options.trim_linmos_fits:
+            image_trim_results = trim_fits_image(image_path=linmos_names.image_fits)
+            trim_fits_image(
+                image_path=linmos_names.weight_fits,
+                bounding_box=image_trim_results.bounding_box,
+            )
 
-    return linmos_result
+        if linmos_options.cleanup:
+            _linmos_cleanup(linmos_parset_summary=linmos_parset_summary)
+
+        if linmos_options.remove_original_images:
+            remove_files_folders(*images)
+
+        linmos_results.append(linmos_result)
+
+    if not isinstance(linmos_parset_summary, list):
+        return linmos_results[0]
+
+    return linmos_results
 
 
 def get_parser() -> ArgumentParser:

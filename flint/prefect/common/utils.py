@@ -7,6 +7,10 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, ParamSpec, TypeVar
 from uuid import UUID
 
+import astropy.units as u
+import numpy as np
+from astropy.io import fits
+from astropy.wcs import WCS
 from prefect import task
 from prefect.artifacts import create_markdown_artifact
 
@@ -242,3 +246,160 @@ def task_flatten(to_flatten: list[list[T]]) -> list[T]:
     logger.debug(f"Flattened list {len(flatten_list)}")
 
     return flatten_list
+
+
+def extract_frequency_axis_hz(path: Path) -> np.ndarray:
+    """
+    Return the spectral axis values as frequency in Hz from a FITS image/cube.
+
+    Assumptions:
+    - One axis is frequency (CTYPE* contains 'FREQ').
+    - Radio convention is assumed (no velocity/wavelength conversions needed).
+
+    Parameters
+    ----------
+    path : Path
+        Path to the FITS file.
+
+    Returns
+    -------
+    np.ndarray
+        1D array of frequencies in Hz, length equals the number of spectral planes.
+
+    Raises
+    ------
+    ValueError
+        If no image HDU with data exists or no frequency axis is found.
+    """
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"FITS file not found: {path}")
+
+    with fits.open(path, memmap=True) as hdul:
+        # pick the first image-like HDU with data
+        hdu = next(
+            (h for h in hdul if isinstance(h, (fits.PrimaryHDU, fits.ImageHDU)) and h.data is not None),
+            None
+        )
+        if hdu is None:
+            raise ValueError("No image HDU with data found in FITS file.")
+
+        header = hdu.header
+        naxis = header.get("NAXIS", 0)
+        if naxis < 1:
+            raise ValueError("FITS header has NAXIS < 1.")
+
+        # locate spectral (frequency) axis by CTYPE*
+        spec_axis = None  # 1-based FITS axis index
+        for i in range(1, naxis + 1):
+            ctype = (header.get(f"CTYPE{i}", "") or "").upper()
+            if "FREQ" in ctype:
+                spec_axis = i
+                break
+        if spec_axis is None:
+            raise ValueError("No frequency spectral axis found (CTYPE* does not contain 'FREQ').")
+
+        n_spec = header.get(f"NAXIS{spec_axis}", 0)
+        if n_spec <= 0:
+            raise ValueError(f"Invalid frequency axis length: NAXIS{spec_axis}={n_spec}")
+
+        # Build WCS (not using .celestial since we are not doing RA/DEC transforms)
+        w = WCS(header)
+
+        # Prepare pixel coordinates: vary spectral axis 1..NAXIS_spec, others fixed at CRPIX
+        pix_ref = [float(header.get(f"CRPIX{i}", 1.0)) for i in range(1, naxis + 1)]
+        coords = np.tile(pix_ref, (n_spec, 1))
+        coords[:, spec_axis - 1] = np.arange(1.0, n_spec + 1.0)  # FITS is 1-based
+
+        # Pixel -> world
+        world = w.wcs_pix2world(coords, 1)
+        freq_vals = world[:, spec_axis - 1]
+
+        # Units: default to Hz if CUNIT is missing
+        cunit = header.get(f"CUNIT{spec_axis}", "") or "Hz"
+        freq = (freq_vals * u.Unit(cunit)).to(u.Hz).value
+
+        if not np.all(np.isfinite(freq)):
+            raise ValueError("Non-finite values encountered when computing frequency axis.")
+        if np.any(freq <= 0):
+            # Not strictly an error in all contexts, but usually indicates a header or unit problem.
+            raise ValueError("Non-positive frequency values encountered; check header CUNIT and WCS.")
+
+        return freq
+
+def _scalar_frequency_from_header_hz(header: fits.Header) -> float:
+    """
+    Fallback: extract a single frequency (Hz) from header when there is no spectral axis.
+    Tries common patterns seen in WSclean/CASA outputs.
+    """
+    # 1) Look for any CTYPEn that declares FREQ alongside a CRVALn (even if NAXIS < n in some edge headers)
+    for i in range(1, 8):  # be generous about axes
+        ctype = (header.get(f"CTYPE{i}", "") or "").upper()
+        if "FREQ" in ctype:
+            cunit = header.get(f"CUNIT{i}", "") or "Hz"
+            val = header.get(f"CRVAL{i}", None)
+            if val is not None:
+                return (val * u.Unit(cunit)).to_value(u.Hz)
+
+    # 2) Common scalar frequency keywords sometimes present on per-channel images
+    for key in ("FREQ", "CHAN_FREQ", "FREQUENCY", "NU"):
+        if key in header:
+            return (header[key] * u.Hz).to_value(u.Hz)
+
+    # If we get here, we do not have a reliable scalar frequency
+    raise ValueError("Could not find a scalar frequency in header (no FREQ/CHAN_FREQ nor CRVALn with CTYPEn='FREQ').")
+
+
+def frequencies_from_wsclean_images_hz(paths: Iterable[Path]) -> np.ndarray:
+    """
+    Given a list of WSclean per-channel images (each file has 1 spectral plane),
+    return a numpy array of their frequencies in Hz, preserving input order.
+
+    Strategy per file:
+    - Try WCS-based extraction; if it yields exactly one value, use it.
+    - Otherwise, fall back to scalar frequency from header via common keywords.
+
+    Parameters
+    ----------
+    paths : Iterable[Path]
+        Iterable of FITS file paths (e.g., Path objects).
+
+    Returns
+    -------
+    np.ndarray
+        Array of shape (N,) with frequencies in Hz corresponding to the input files.
+
+    Raises
+    ------
+    ValueError
+        If any file lacks a determinable frequency.
+    """
+    freqs: list[float] = []
+    for p in paths:
+        p = Path(p)
+        if not p.exists():
+            raise FileNotFoundError(f"FITS file not found: {p}")
+
+        # First attempt: WCS spectral axis
+        try:
+            fa = extract_frequency_axis_hz(p)
+            if fa.size == 1:
+                freqs.append(float(fa[0]))
+                continue
+            # If more than one plane, this is unexpected for per-channel images
+            raise ValueError(f"{p} has {fa.size} spectral planes; expected 1.")
+        except Exception:
+            # Fallback: inspect header for scalar frequency
+            with fits.open(p, memmap=True) as hdul:
+                hdu = next(
+                    (h for h in hdul if isinstance(h, (fits.PrimaryHDU, fits.ImageHDU)) and h.data is not None),
+                    None
+                )
+                if hdu is None:
+                    raise ValueError(f"No image HDU with data in {p}.")
+                freq_hz = _scalar_frequency_from_header_hz(hdu.header)
+                if not np.isfinite(freq_hz) or freq_hz <= 0:
+                    raise ValueError(f"Invalid frequency from header in {p}: {freq_hz}")
+                freqs.append(float(freq_hz))
+
+    return np.asarray(freqs, dtype=float)

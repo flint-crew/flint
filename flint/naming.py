@@ -488,9 +488,9 @@ class ProcessedNameComponents(NamedTuple):
     """Container for a file name derived from a MS flint name. Generally of the
     form: SB.Field.Beam.Spw"""
 
-    sbid: str
+    sbid: str | None = None
     """The sbid of the observation"""
-    field: str
+    field: str | None = None
     """The name of the field extracted"""
     beam: str | None = None
     """The beam of the observation processed"""

@@ -463,7 +463,7 @@ class PolFieldOptions(BaseOptions):
     """Path to the singularity yandasoft container"""
     casa_container: Path | None = None
     """Path to the singularity CASA container"""
-    holofile: Path | None = None
+    holofile: Path | list[Path] | None = None
     """Path to the holography FITS cube that will be used when co-adding beams"""
     beam_cutoff: float = 150
     """Cutoff in arcseconds to use when calculating the common beam to convol to"""

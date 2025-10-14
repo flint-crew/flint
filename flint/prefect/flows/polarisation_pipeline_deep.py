@@ -52,6 +52,7 @@ from flint.prefect.common.utils import (
     task_getattr,
     task_rename_linear_to_stokes,
 )
+from flint.summary import FieldSummary
 
 
 def check_beams_match_across_sbids(science_mss: list[list[MS]]) -> None:
@@ -77,6 +78,15 @@ def process_science_fields_pol(
         output_split_science_path=flint_ms_directory[0], # copy to first SBID path TODO: can we do something more sensible?
         imaging_strategy=pol_field_options.imaging_strategy,
     )
+
+    if pol_field_options.holofile is not None:
+        if not isinstance(pol_field_options.holofile, list):
+            # make length-1 list
+            pol_field_options = pol_field_options.with_options(
+                holofile=[pol_field_options.holofile]
+            )
+
+        assert len(pol_field_options.holofile) == len(science_sbids), f"Number of holography files must match number of SBIDs that user wants to process. Found {len(pol_field_options.holofile)} holofiles and {len(science_sbids)} SBIDs"
 
     # create a single amalgamation of an SBID for naming purposes
     science_sbid = int(''.join([str(s) for s in science_sbids]))
@@ -157,10 +167,14 @@ def process_science_fields_pol(
             )
             science_mss = corrected_mss
 
+    # one field summary per sbid
+    field_summaries: list[FieldSummary] = []
     for i, ms_list in enumerate(science_mss):
-        field_summary = task_create_field_summary.submit(
-            mss=ms_list,
-            holography_path=pol_field_options.holofile,
+        field_summaries.append( 
+            task_create_field_summary.submit(
+                mss=ms_list,
+                holography_path=pol_field_options.holofile[i],
+            )
         )
 
     dump_field_options_to_yaml(
@@ -252,7 +266,6 @@ def process_science_fields_pol(
         fixed_beam_shape=pol_field_options.fixed_beam_shape,
     )
 
-    # TODO: do these things with multi MS, and holography files
     stokes_beam_cubes: dict[str, list[PrefectFuture[Path]]] = {}
     for polarisation, image_set_list in image_sets_dict.items():
         with tags(f"polarisation-{polarisation}"):
@@ -314,11 +327,11 @@ def process_science_fields_pol(
     )
     for stokes, beam_cubes in stokes_beam_cubes.items():
         with tags(f"stokes-{stokes}"):
-            linmos_result = task_linmos_images.submit(
+            linmos_result: list[LinmosResult] = task_linmos_images.submit(
                 image_list=beam_cubes,
                 container=pol_field_options.yandasoft_container,
                 linmos_options=linmos_options,
-                field_summary=field_summary,
+                field_summary=field_summaries,
             )
             linmos_result_list.append(linmos_result)
 
