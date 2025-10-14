@@ -13,18 +13,11 @@ from __future__ import (  # Used for mypy/pylance to like the return type of MS.
 
 from argparse import ArgumentParser, Namespace
 from pathlib import Path
-from types import NoneType, UnionType
-from typing import (
-    Any,
-    NamedTuple,
-    TypeVar,
-    get_args,
-    get_origin,
-)
+from types import NoneType
+from typing import Any, NamedTuple, TypeVar, Union, get_args, get_origin
 
 import yaml
 from pydantic import BaseModel, ConfigDict
-from pydantic.fields import FieldInfo
 
 from flint.exceptions import MSError
 from flint.logging import logger
@@ -156,42 +149,91 @@ class BaseOptions(BaseModel):
         return self.__dict__
 
 
-def _create_argparse_options(name: str, field: FieldInfo) -> tuple[str, dict[str, Any]]:
-    """Convert a pydantic Field into ``dict`` to splate into ArgumentParser.add_argument()"""
+def _analyze_annotation(annotation: Any) -> tuple[type | None, bool, int | None]:
+    """
+    Return (elem_type, is_iterable, fixed_len).
+    - elem_type: the element/base type (Path/int/float/str/...)
+    - is_iterable: whether argparse should expect multiple values
+    - fixed_len: if a fixed-length tuple like tuple[int, float], return that length; else None
+    """
+    origin = get_origin(annotation)
+    args = get_args(annotation)
 
+    # Handle Union / Optional
+    if origin in (Union, getattr(__import__("types"), "UnionType", Union)):  # py311 compatibility
+        non_none = [a for a in args if a is not NoneType]
+        # If any arm is iterable, use that arm to decide multiplicity and elem_type
+        for arm in non_none:
+            arm_origin = get_origin(arm)
+            arm_args = get_args(arm)
+            if arm_origin in (list, tuple, set):
+                # fixed-length tuple without Ellipsis: nargs is length
+                if arm_origin is tuple and arm_args and Ellipsis not in arm_args:
+                    elem_type = arm_args[0] if arm_args else str
+                    return elem_type, True, len(arm_args)
+                # variable-length iterable: nargs '+'
+                elem_type = arm_args[0] if arm_args else str
+                return elem_type, True, None
+        # Otherwise treat as single; pick first non-None arm as elem type
+        return (non_none[0] if non_none else None), False, None
+
+    # Handle list/tuple/set directly
+    if origin in (list, tuple, set):
+        # fixed-length tuple like tuple[int, float]
+        if origin is tuple and args and Ellipsis not in args:
+            elem_type = args[0] if args else str
+            return elem_type, True, len(args)
+        # variable-length iterable
+        elem_type = args[0] if args else str
+        return elem_type, True, None
+
+    # Plain type (Path, str, int, float, bool, etc.)
+    return annotation, False, None
+
+
+def _coerce_argparse_type(elem_type: Any) -> Any:
+    """Map element types to argparse 'type' callables; fall back to str."""
+    if elem_type in (Path, str, int, float):
+        return elem_type
+    # pydantic may wrap Annotated[...] etc.; last resort: str
+    return str
+
+
+def _create_argparse_options(name: str, field) -> tuple[str, dict[str, Any]]:
+    """Convert a pydantic Field into kwargs for ArgumentParser.add_argument()."""
+
+    # Positional if required, optional otherwise
     field_name = name if field.is_required() else "--" + name.replace("_", "-")
 
-    field_type = get_origin(field.annotation)
-    field_args = get_args(field.annotation)
-    iterable_types = (list, tuple, set)
+    options: dict[str, Any] = dict(action="store", help=field.description, default=field.default)
 
-    options = dict(action="store", help=field.description, default=field.default)
-
+    # Booleans use store_true/false
     if field.annotation is bool:
         options["action"] = "store_false" if field.default else "store_true"
+        return field_name, options
 
-    # if field_type is in (list, tuple, set) OR if (list, tuple, set) | Any
-    elif field_type in iterable_types or (
-        field_type is UnionType
-        and any(get_origin(p) in iterable_types for p in field_args)
-    ):
-        nargs: str | int = "+"
+    # Work out element type + multiplicity
+    elem_type, is_iterable, fixed_len = _analyze_annotation(field.annotation)
 
-        # If the field is a tuple, and the Ellipsis is not present
-        # We can assume that the nargs is the length of the tuple
-        if field_type is tuple and Ellipsis not in field_args:
-            nargs = len(field_args)
+    # nargs logic
+    if is_iterable:
+        if fixed_len is not None:
+            options["nargs"] = fixed_len
+        else:
+            options["nargs"] = "+"
 
-        # Now we handle unions, but do the same check as above
-        elif field_type is UnionType and Ellipsis not in field_args:
-            for arg in field_args:
-                args = get_args(arg)
-                if arg is not NoneType and type(args) is tuple and Ellipsis not in args:
-                    nargs = len(args)
+    # argparse 'type' (only meaningful for non-bool, non-append stores)
+    if elem_type is not None:
+        options["type"] = _coerce_argparse_type(elem_type)
 
-        if nargs == 0:
-            raise ValueError(f"Unable to determine nargs for {name=}, got {nargs=}")
-        options["nargs"] = nargs
+    # Better metavar
+    base = (getattr(elem_type, "__name__", "VALUE") if elem_type is not None else "VALUE").upper()
+    if is_iterable and fixed_len is None:
+        options["metavar"] = base  # usage shows: FLAG VALUE [VALUE ...]
+    elif is_iterable and fixed_len is not None:
+        options["metavar"] = base  # argparse will repeat it fixed_len times
+    else:
+        options["metavar"] = base
 
     return field_name, options
 
