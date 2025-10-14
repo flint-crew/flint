@@ -12,12 +12,12 @@ from astropy.io import fits
 from flint.logging import logger
 from flint.naming import LinmosNames, create_linmos_names, extract_beam_from_name
 from flint.options import BaseOptions, add_options_to_parser, create_options_from_parser
-from flint.prefect.common.utils import (  # replace 'your_module'
+from flint.sclient import run_singularity_command
+from flint.utils import (
     extract_frequency_axis_hz,
     frequencies_from_wsclean_images_hz,
+    remove_files_folders,
 )
-from flint.sclient import run_singularity_command
-from flint.utils import remove_files_folders
 
 # This is the expected orientation of the third-axis and footprint (remember the footprint
 # can be electronically rotated).
