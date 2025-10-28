@@ -319,6 +319,7 @@ def task_wsclean_imager(
     wsclean_container: Path,
     update_wsclean_options: dict[str, Any] | None = None,
     fits_mask: FITSMaskNames | None = None,
+    multiscale_fits_mask: FITSMaskNames | None = None,
     channel_range: tuple[int, int] | None = None,
     scan_range: tuple[int, int] | None = None,
     make_cube_from_subbands: bool = True,
@@ -333,6 +334,7 @@ def task_wsclean_imager(
         wsclean_container (Path): Path to a singularity container with wsclean packages
         update_wsclean_options (Optional[Dict[str, Any]], optional): Options to update from the default wsclean options. Defaults to None.
         fits_mask (Optional[FITSMaskNames], optional): A path to a clean guard mask. Defaults to None.
+        multiscale_fits_mask (Optional[FITSMaskNames], optional): A path to a scale-dependent clean guard mask. Defaults to None.
         channel_range (Optional[Tuple[int,int]], optional): Add to the wsclean options the specific channel range to be imaged. Defaults to None.
         scan_range (Optional[Tuple[int,int]], optional): Add to the wsclean options the specific scan range to be imaged. Defaults to None.
 
@@ -348,6 +350,9 @@ def task_wsclean_imager(
 
     if fits_mask:
         update_wsclean_options["fits_mask"] = fits_mask.mask_fits
+
+    if multiscale_fits_mask:
+        update_wsclean_options["multiscale_fits_mask"] = multiscale_fits_mask.mask_fits
 
     if channel_range:
         update_wsclean_options["channel_range"] = channel_range

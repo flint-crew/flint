@@ -397,6 +397,7 @@ def process_science_fields(
             stokes_v_mss = cal_mss
 
             fits_beam_masks = None
+            multiscale_fits_beam_masks = None
             if consider_beam_mask_round(
                 current_round=current_round,
                 mask_rounds=(
@@ -442,11 +443,21 @@ def process_science_fields(
                     round_info=current_round,
                     operation="selfcal",
                 )
-                fits_beam_masks = task_create_image_mask_model.map(
+                _masks = task_create_image_mask_model.map(
                     image=wsclean_results,
                     image_products=beam_aegean_outputs,
                     update_masking_options=unmapped(update_masking_options),
                 )  # type: ignore
+                multiscale_fits_beam_masks = (
+                    _masks
+                    if update_masking_options["multiscale_fits_mask"] is not None
+                    else None
+                )
+                fits_beam_masks = (
+                    _masks
+                    if update_masking_options["multiscale_fits_mask"] is None
+                    else None
+                )
 
             update_wsclean_options = get_options_from_strategy(
                 strategy=strategy,
@@ -458,6 +469,7 @@ def process_science_fields(
                 in_ms=cal_mss,
                 wsclean_container=field_options.wsclean_container,
                 fits_mask=fits_beam_masks,
+                multiscale_fits_mask=multiscale_fits_beam_masks,
                 update_wsclean_options=unmapped(update_wsclean_options),
             )
             wsclean_results = (

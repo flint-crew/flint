@@ -162,6 +162,8 @@ class WSCleanOptions(BaseOptions):
     """Use a fitting box the size of <factor> times the theoretical beam size for fitting a Gaussian to the PSF."""
     fits_mask: Path | None = None
     """Path to a FITS file that encodes a cleaning mask"""
+    multiscale_fits_mask: Path | None = None
+    """Path to FITS file that describes a scale-dependent clean mask. The per-pixel values map the 2**n value to the n'th scale described by -multiscale-scales. This option not available in mainline wsclean. """
     deconvolution_channels: int | None = None
     """The channels out will be averaged down to this many sub-band images during deconvolution"""
     parallel_deconvolution: int | None = None
