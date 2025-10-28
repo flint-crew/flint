@@ -316,6 +316,10 @@ def beam_shape_erode(
         this scale). The outputs are stored as a bitmask per pixel where the n'th scales
         is stored as the n'th bit.
 
+        Note that the scales defined here follow the convention used when describing wsclean gaussians,
+        where the FWHM of the gaussian is approximately 0.45*``scale``. This correction is applied
+        internally.
+
         Args:
             mask (np.ndarray): The current mask that will be eroded based on the beam shape
             fits_header (fits.Header): The fits header of the mask used to generate the beam kernel shape
@@ -342,7 +346,7 @@ def beam_shape_erode(
         erode_mask = create_multi_scale_erosion(
             mask=mask,
             fits_header=fits_header,
-            scale=scale,
+            scale=np.floor(0.45 * scale + 0.5),
             minimum_response=minimum_response,
         )
         out_mask[erode_mask == 1.0] += 2**index
