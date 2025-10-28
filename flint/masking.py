@@ -247,7 +247,7 @@ def create_multi_scale_erosion(
     Args:
         mask (np.ndarray): The current mask that will be eroded based on the beam shape
         fits_header (fits.Header): The fits header of the mask used to generate the beam kernel shape
-        scales (list[int] | None, optional): Defines the scales that are being used during multi-scale clean. Perform the beam erosion at each of these scales. Defaults to None.
+        scale (list[int] | None, optional): Defines the FWHM in pixel space of the gaussian convolving scale being used during multi-scale clean.
         minimum_response (float, optional): The minimum response of the main restoring beam to craft the shape from. Defaults to 0.6.
 
     Returns:
