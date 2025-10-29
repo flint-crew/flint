@@ -265,6 +265,7 @@ def create_multi_scale_erosion(
         )
         return mask
 
+    scale = int(scale)
     logger.info(f"Eroding with {scale=}, {minimum_response=}")
 
     # NOTE; The kernel_size=max() is to avoid excessive resize warnings
