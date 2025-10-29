@@ -202,6 +202,7 @@ def create_beam_mask_kernel(
 def fft_binary_erosion(
     mask: NDArray[np.bool] | NDArray[np.floating],
     kernel: NDArray[np.bool],
+    dilation: bool = False,
 ) -> NDArray[np.bool]:
     """Attempt to perform a binary erosion using convolution therom. FFT
     the input mask, FFT the input kernel, multiply, FFT the result. This
@@ -214,6 +215,7 @@ def fft_binary_erosion(
     Args:
         mask (NDArray[np.bool] | NDArray[np.floating]): The mask that will be eroded
         kernel (NDArray[np.bool]): The kernel structure used for the erosion
+        dilation (bool, optional): Apply a dilation instead of erosion
 
     Returns:
         NDArray[np.bool]: The eroded mask
@@ -232,6 +234,9 @@ def fft_binary_erosion(
     )
 
     logger.info("... finished erosion")
+
+    if dilation:
+        return erode_sum > ((np.sum(kernel)).reshape(original_shape) * 0.2)
 
     return (erode_sum >= np.sum(kernel)).reshape(original_shape)
 
@@ -292,9 +297,12 @@ def create_multi_scale_erosion(
         logger.debug(
             "Will be using fft-based binary erosion, based on size of kernel-to-mask"
         )
+        mask = fft_binary_erosion(mask=mask, kernel=beam_mask_kernel, dilation=True)
+        mask = fft_binary_erosion(mask=mask, kernel=beam_mask_kernel)
         return fft_binary_erosion(mask=mask, kernel=beam_mask_kernel)
 
-    return scipy_binary_erosion(input=mask, iterations=1, structure=beam_mask_kernel)
+    mask = scipy_binary_dilation(input=mask, iteration=1, structure=beam_mask_kernel)
+    return scipy_binary_erosion(input=mask, iterations=2, structure=beam_mask_kernel)
 
 
 def beam_shape_erode(
