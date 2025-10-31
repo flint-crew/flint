@@ -927,9 +927,8 @@ def create_convolved_erosion_mask(
     original_shape = base_image.shape
 
     base_image = np.squeeze(base_image)
-    assert (
-        len(base_image.shape)
-        == f"The shape of data is {original_shape}, and can not be converted to a two-dimensional image"
+    assert len(base_image.shape) == 2, (
+        f"The shape of data is {original_shape}, and can not be converted to a two-dimensional image"
     )
 
     scales = (
@@ -973,15 +972,22 @@ def create_convolved_erosion_mask(
             iterations=1000,
             structure=np.ones((3, 3)),
         )
-        scale_mask = create_multi_scale_erosion(
-            mask=positive_dilated_mask,
-            fits_header=fits_header,
-            scale=scale,
-            minimum_response=masking_options.beam_shape_erode_minimum_response,
+        scale_mask = (
+            create_multi_scale_erosion(
+                mask=positive_dilated_mask,
+                fits_header=fits_header,
+                scale=scale,
+                minimum_response=masking_options.beam_shape_erode_minimum_response,
+            )
+            == 1
         )
         output_mask[scale_mask] += 2**index
 
-        fits.writeto(f"scale-{scale}.fits", header=fits_header, data=scale_mask)
+        fits.writeto(
+            f"scale-{scale}.fits",
+            header=fits_header,
+            data=scale_mask.astype(np.float32),
+        )
 
     fits.writeto(
         mask_names.mask_fits,
@@ -1055,7 +1061,7 @@ def cli():
         )
         if args.convolve_first:
             create_convolved_erosion_mask(
-                fits_image=args.image, masking_options=masking_options
+                fits_image_path=args.image, masking_options=masking_options
             )
         else:
             create_snr_mask_from_fits(
