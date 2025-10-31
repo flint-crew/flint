@@ -902,6 +902,83 @@ def create_snr_mask_from_fits(
     return mask_names
 
 
+def convolve_image_by_scale(
+    image_data: NDArray[np.floating], scale: int
+) -> NDArray[np.floating]:
+    from scipy.ndimage import gaussian_filter
+
+    logger.info(f"Convoling with {scale=}")
+    return gaussian_filter(
+        input=image_data,
+        sigma=scale / 2.355,  # FWHM to sigma
+    )
+
+
+def create_convolved_erosion_mask(
+    fits_image_path: Path,
+    masking_options: MaskingOptions,
+) -> FITSMaskNames:
+    mask_names = create_fits_mask_names(fits_image=fits_image_path)
+
+    logger.info(f"Getting image data from {fits_image_path=}")
+    base_image = fits.getdata(fits_image_path)
+    fits_header = fits.getheader(fits_image_path)
+
+    scales = (
+        [0]
+        if masking_options.beam_shape_erode_scales is None
+        else masking_options.beam_shape_erode_scales
+    )
+    logger.info(f"Will be processing {scales=}")
+
+    output_mask = np.zeros_like(base_image)
+
+    for index, scale in enumerate(scales):
+        convolved_image = base_image.copy()
+        logger.info(f"Processing {scale=}")
+
+        # Image at native scale does not need to be convolved
+        if scale > 0:
+            convolved_image = convolve_image_by_scale(
+                image_data=convolved_image, scale=scale
+            )
+
+        positive_mask = minimum_absolute_clip(
+            image=convolved_image,
+            increase_factor=masking_options.flood_fill_positive_seed_clip,
+            box_size=masking_options.flood_fill_use_mac_box_size,
+            adaptive_max_depth=masking_options.flood_fill_use_mac_adaptive_max_depth,
+            adaptive_box_step=masking_options.flood_fill_use_mac_adaptive_step_factor,
+            adaptive_skew_delta=masking_options.flood_fill_use_mac_adaptive_skew_delta,
+        )
+        flood_floor_mask = minimum_absolute_clip(
+            image=base_image,
+            increase_factor=masking_options.flood_fill_positive_flood_clip,
+            box_size=masking_options.flood_fill_use_mac_box_size,
+            adaptive_max_depth=masking_options.flood_fill_use_mac_adaptive_max_depth,
+            adaptive_box_step=masking_options.flood_fill_use_mac_adaptive_step_factor,
+            adaptive_skew_delta=masking_options.flood_fill_use_mac_adaptive_skew_delta,
+        )
+        positive_dilated_mask = scipy_binary_dilation(
+            input=positive_mask,
+            mask=flood_floor_mask,
+            iterations=1000,
+            structure=np.ones((3, 3)),
+        )
+        scale_mask = create_multi_scale_erosion(
+            mask=positive_dilated_mask,
+            fits_header=fits_header,
+            scale=scale,
+            minimum_response=masking_options.beam_shape_erode_minimum_response,
+        )
+        output_mask[scale_mask] += 2**index
+
+        fits.writeto(f"scale-{scale}.fits", header=fits_header, data=scale_mask)
+
+    fits.writeto(mask_names.mask_fits, header=fits_header, data=output_mask)
+    return mask_names
+
+
 def get_parser() -> ArgumentParser:
     parser = ArgumentParser(
         description="Simple utility functions to create masks from FITS images. "
@@ -930,6 +1007,9 @@ def get_parser() -> ArgumentParser:
         "--save-signal",
         action="store_true",
         help="Save the signal image internally generated (should it be generated)",
+    )
+    fits_parser.add_argument(
+        "--convolve-first", action="store_true", help="Convolve then mask"
     )
 
     extract_parser = subparser.add_parser(
@@ -961,13 +1041,18 @@ def cli():
         masking_options = create_options_from_parser(
             parser_namespace=args, options_class=MaskingOptions
         )
-        create_snr_mask_from_fits(
-            fits_image_path=args.image,
-            fits_rms_path=args.rms_fits,
-            fits_bkg_path=args.bkg_fits,
-            create_signal_fits=args.save_signal,
-            masking_options=masking_options,
-        )
+        if args.convolve_first:
+            create_convolved_erosion_mask(
+                fits_image=args.image, masking_options=masking_options
+            )
+        else:
+            create_snr_mask_from_fits(
+                fits_image_path=args.image,
+                fits_rms_path=args.rms_fits,
+                fits_bkg_path=args.bkg_fits,
+                create_signal_fits=args.save_signal,
+                masking_options=masking_options,
+            )
 
     elif args.mode == "extractmask":
         extract_beam_mask_from_mosaic(
