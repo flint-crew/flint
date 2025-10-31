@@ -450,12 +450,12 @@ def process_science_fields(
                 )  # type: ignore
                 multiscale_fits_beam_masks = (
                     _masks
-                    if update_masking_options["multiscale_fits_mask"] is not None
+                    if update_masking_options.get("beam_shape_erode_scales", None) is not None
                     else None
                 )
                 fits_beam_masks = (
                     _masks
-                    if update_masking_options["multiscale_fits_mask"] is None
+                    if update_masking_options.get("beam_shape_erode_scales", None) is None
                     else None
                 )
 

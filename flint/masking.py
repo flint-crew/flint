@@ -20,6 +20,7 @@ from scipy.ndimage import (
 )
 from scipy.ndimage import (
     binary_erosion as scipy_binary_erosion,  # Rename to distinguish from skimage
+    binary_dilation as scipy_binary_dilation
 )
 from scipy.ndimage import label, minimum_filter
 from scipy.signal import fftconvolve
@@ -203,6 +204,7 @@ def fft_binary_erosion(
     mask: NDArray[np.bool] | NDArray[np.floating],
     kernel: NDArray[np.bool],
     dilation: bool = False,
+    coverage_factor: float = 1.0,
 ) -> NDArray[np.bool]:
     """Attempt to perform a binary erosion using convolution therom. FFT
     the input mask, FFT the input kernel, multiply, FFT the result. This
@@ -216,10 +218,14 @@ def fft_binary_erosion(
         mask (NDArray[np.bool] | NDArray[np.floating]): The mask that will be eroded
         kernel (NDArray[np.bool]): The kernel structure used for the erosion
         dilation (bool, optional): Apply a dilation instead of erosion
+        coverage_factor (float, optional): Use this to scale the sum of the kernel to transition pixels between states. Defaults to 1.0.
 
     Returns:
         NDArray[np.bool]: The eroded mask
     """
+
+    coverage_factor = min(1.0, coverage_factor)
+    coverage_factor = max(0.0, coverage_factor)
 
     logger.info("Beginning fft erosion ... ")
     original_shape = mask.shape
@@ -228,7 +234,6 @@ def fft_binary_erosion(
     kernel = kernel[..., :, :].astype(float)
 
     import scipy
-
     erode_sum = np.floor(
         np.abs(scipy.signal.fftconvolve(mask, kernel, mode="same")) + 0.5
     )
@@ -236,9 +241,11 @@ def fft_binary_erosion(
     logger.info("... finished erosion")
 
     if dilation:
-        return erode_sum > ((np.sum(kernel)).reshape(original_shape) * 0.2)
+        # the multiplicative term attempts to dampen the size of a hole, i.e. has to be 
+        # have 60% (for example) neighbouring pixels to be 'on' for it to be activated
+        return (erode_sum > (np.sum(kernel) * coverage_factor)).reshape(original_shape)
 
-    return (erode_sum >= np.sum(kernel)).reshape(original_shape)
+    return (erode_sum >= (np.sum(kernel)*coverage_factor)).reshape(original_shape)
 
 
 def create_multi_scale_erosion(
@@ -294,15 +301,27 @@ def create_multi_scale_erosion(
     logger.debug(f"{size_ratio=}")
     fft_erosion_mode = (size_ratio) > 5e-5
 
+    # Force the fft erosion mode for testing
+    fft_erosion_mode = True
+
+    # Attempt to fill in scale-dependent holes
+    BREATH = True
+
     if fft_erosion_mode:
         logger.debug(
             "Will be using fft-based binary erosion, based on size of kernel-to-mask"
         )
-        # mask = fft_binary_erosion(mask=mask, kernel=beam_mask_kernel, dilation=True)
-        # mask = fft_binary_erosion(mask=mask, kernel=beam_mask_kernel)
+        if BREATH:
+            mask = fft_binary_erosion(mask=mask, kernel=beam_mask_kernel, dilation=True, coverage_factor=0.5)
+            mask = fft_binary_erosion(mask=mask, kernel=beam_mask_kernel, coverage_factor=0.85)
+            return fft_binary_erosion(mask=mask, kernel=beam_mask_kernel)
+        
         return fft_binary_erosion(mask=mask, kernel=beam_mask_kernel)
 
-    # mask = scipy_binary_dilation(input=mask, iteration=1, structure=beam_mask_kernel)
+    if BREATH:
+        mask = scipy_binary_dilation(input=mask, iterations=1, structure=beam_mask_kernel)
+        return scipy_binary_erosion(input=mask, iterations=2, structure=beam_mask_kernel)
+    
     return scipy_binary_erosion(input=mask, iterations=1, structure=beam_mask_kernel)
 
 
@@ -350,6 +369,24 @@ def beam_shape_erode(
     logger.info(f"Eroding across {scales=}")
 
     out_mask = np.zeros(mask.shape)
+
+    
+    INFILL = False
+    if INFILL:
+            beam_mask_kernel = create_beam_mask_kernel(
+                fits_header=fits_header,
+                minimum_response=minimum_response,
+                pixel_scale=0,
+                kernel_size=16,
+                auto_resize=True,
+            )
+            # This handles any unsqueezed dimensions
+            beam_mask_kernel = beam_mask_kernel.reshape(
+                mask.shape[:-2] + beam_mask_kernel.shape
+            )
+            from scipy.ndimage import binary_fill_holes
+            logger.info("Filling in the holes")
+            mask = binary_fill_holes(input=mask, structure=beam_mask_kernel)
 
     for index, scale in enumerate(scales):
         erode_mask = create_multi_scale_erosion(
