@@ -924,6 +924,14 @@ def create_convolved_erosion_mask(
     base_image = fits.getdata(fits_image_path)
     fits_header = fits.getheader(fits_image_path)
 
+    original_shape = base_image.shape
+
+    base_image = np.squeeze(base_image)
+    assert (
+        len(base_image.shape)
+        == f"The shape of data is {original_shape}, and can not be converted to a two-dimensional image"
+    )
+
     scales = (
         [0]
         if masking_options.beam_shape_erode_scales is None
@@ -975,7 +983,11 @@ def create_convolved_erosion_mask(
 
         fits.writeto(f"scale-{scale}.fits", header=fits_header, data=scale_mask)
 
-    fits.writeto(mask_names.mask_fits, header=fits_header, data=output_mask)
+    fits.writeto(
+        mask_names.mask_fits,
+        header=fits_header,
+        data=output_mask.reshape(original_shape),
+    )
     return mask_names
 
 
