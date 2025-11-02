@@ -905,8 +905,6 @@ def create_snr_mask_from_fits(
 def convolve_image_by_scale(
     image_data: NDArray[np.floating], scale: int
 ) -> NDArray[np.floating]:
-    from scipy.ndimage import gaussian_filter
-
     logger.info(f"Convoling with {scale=}")
 
     # wsclean scales are converted to a fwhm as 0.45 * pixel scales. To convert
@@ -930,11 +928,6 @@ def convolve_image_by_scale(
     kernel = kernel.reshape(image_data.shape[:-2] + kernel.shape)
     logger.info(f"{image_data.shape=} {kernel.shape=}")
     return fftconvolve(image_data, kernel, mode="same")
-
-    return gaussian_filter(
-        input=image_data,
-        sigma=scale / 2.355,  # FWHM to sigma
-    )
 
 
 def create_convolved_erosion_mask(
