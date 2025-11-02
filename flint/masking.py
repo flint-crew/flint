@@ -908,6 +908,29 @@ def convolve_image_by_scale(
     from scipy.ndimage import gaussian_filter
 
     logger.info(f"Convoling with {scale=}")
+
+    # wsclean scales are converted to a fwhm as 0.45 * pixel scales. To convert
+    # the FWHM to a sigma we divided by 2.355, matttee
+    fwhm = 0.45 * scale
+    sigma = fwhm / 2.355
+
+    logger.info(f"Generating gaussian kernel for {scale=} {fwhm=} {sigma=}")
+
+    x = np.linspace(0, int(sigma * 5))
+    y = np.linspace(0, int(sigma * 5))
+
+    x -= x[-1] / 2
+    y -= y[-1] / 2
+
+    # Form the 2d image gride here, ya sea dog
+    distance_squared = x[None, :] ** 2 + y[:, None] ** 2
+    kernel = np.exp(-(distance_squared / (2 * sigma**2)))
+
+    # Make sure the ships match dimensions
+    kernel = kernel.reshape(image_data.shape[:-2] + kernel.shape)
+    logger.info(f"{image_data.shape=} {kernel.shape=}")
+    return fftconvolve(image_data, kernel, mode="same")
+
     return gaussian_filter(
         input=image_data,
         sigma=scale / 2.355,  # FWHM to sigma
@@ -959,7 +982,7 @@ def create_convolved_erosion_mask(
             adaptive_skew_delta=masking_options.flood_fill_use_mac_adaptive_skew_delta,
         )
         flood_floor_mask = minimum_absolute_clip(
-            image=base_image,
+            image=convolved_image,
             increase_factor=masking_options.flood_fill_positive_flood_clip,
             box_size=masking_options.flood_fill_use_mac_box_size,
             adaptive_max_depth=masking_options.flood_fill_use_mac_adaptive_max_depth,
@@ -981,18 +1004,36 @@ def create_convolved_erosion_mask(
             )
             == 1
         )
-        output_mask[scale_mask] += 2**index
-
         fits.writeto(
-            f"scale-{scale}.fits",
+            f"scale-0-{scale}.fits",
             header=fits_header,
             data=scale_mask.astype(np.float32),
         )
 
+        if scale > 0:
+            scale_mask = (
+                create_multi_scale_erosion(
+                    mask=scale_mask,
+                    fits_header=fits_header,
+                    scale=scale,
+                    minimum_response=masking_options.beam_shape_erode_minimum_response,
+                )
+                == 1
+            )
+        output_mask[scale_mask] += 2**index
+
+        fits.writeto(
+            f"scale-1-{scale}.fits",
+            header=fits_header,
+            data=scale_mask.astype(np.float32),
+        )
+
+    logger.info(f"Writing {mask_names.scale_mask_fits}")
     fits.writeto(
-        mask_names.mask_fits,
+        mask_names.scale_mask_fits,
         header=fits_header,
         data=output_mask.reshape(original_shape),
+        overwrite=True,
     )
     return mask_names
 
