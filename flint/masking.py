@@ -905,6 +905,23 @@ def create_snr_mask_from_fits(
 def convolve_image_by_scale(
     image_data: NDArray[np.floating], scale: int
 ) -> NDArray[np.floating]:
+    """Generate a convolved version of the input image based on some convolved scale.
+    Note that here the scale refers to the scales used by wsclean. Per the multiscale
+    documentation, where considering gaussians:
+
+    >> fwhm = 0.45 * scale
+
+    Also not that:
+
+    >> fwhm = 2.355 * sigma
+
+    Args:
+        image_data (NDArray[np.floating]): The imaged to be convolved
+        scale (int): The pixel scale to smooth with
+
+    Returns:
+        NDArray[np.floating]: Smoother version of the input image
+    """
     logger.info(f"Convoling with {scale=}")
 
     # wsclean scales are converted to a fwhm as 0.45 * pixel scales. To convert
@@ -934,6 +951,17 @@ def create_convolved_erosion_mask(
     fits_image_path: Path,
     masking_options: MaskingOptions,
 ) -> FITSMaskNames:
+    """Create a per-scale clean mask by smoothing the input image to some scale, and then
+    applying a reverse flood fill with the minimum absolute clip statistic. After the initial
+    mask per scale is constructed a binary erosion is then performed to further refine the mask.
+
+    Args:
+        fits_image_path (Path): The path to the FITS image to load.
+        masking_options (MaskingOptions): Options to use throughout the convolve and erosion process.
+
+    Returns:
+        FITSMaskNames: Clean mask written to a FITS file. Should multiple scales be specified they are encoded bitwise per pixel.
+    """
     mask_names = create_fits_mask_names(fits_image=fits_image_path)
 
     logger.info(f"Getting image data from {fits_image_path=}")
