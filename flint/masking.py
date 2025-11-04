@@ -68,6 +68,8 @@ class MaskingOptions(BaseOptions):
     """The minimum response of the beam that is used to form the erode structure shape"""
     beam_shape_erode_scales: tuple[int, ...] | None = None
     """The multi-scale convolution sizes, in pixels, to perform a binary erosion with. Output scales are encoded as a bitmapped value (e.g. n'th scale is n'th bit)"""
+    convolve_first: bool = False
+    """Attempt to construct mask across scales by first convolving the input image by a scale kernel, then run the island construction stage"""
 
 
 def consider_beam_mask_round(
@@ -836,6 +838,13 @@ def create_snr_mask_from_fits(
     Returns:
         FITSMaskNames: Container describing the signal and mask FITS image paths. If ``create_signal_path`` is None, then the ``signal_fits`` attribute will be None.
     """
+    # Short cut to the convolve first
+    if masking_options.convolve_first:
+        logger.warn("Using convolve the erode algorithm, some options may be ignored")
+        return create_convolved_erosion_mask(
+            fits_image_path=fits_image_path, masking_options=masking_options
+        )
+
     mask_names = create_fits_mask_names(
         fits_image=fits_image_path, include_signal_path=create_signal_fits
     )
@@ -1084,9 +1093,6 @@ def get_parser() -> ArgumentParser:
         action="store_true",
         help="Save the signal image internally generated (should it be generated)",
     )
-    fits_parser.add_argument(
-        "--convolve-first", action="store_true", help="Convolve then mask"
-    )
 
     extract_parser = subparser.add_parser(
         "extractmask",
@@ -1117,7 +1123,7 @@ def cli():
         masking_options = create_options_from_parser(
             parser_namespace=args, options_class=MaskingOptions
         )
-        if args.convolve_first:
+        if masking_options.convolve_first:
             create_convolved_erosion_mask(
                 fits_image_path=args.image, masking_options=masking_options
             )
