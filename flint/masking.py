@@ -841,7 +841,9 @@ def create_snr_mask_from_fits(
     """
     # Short cut to the convolve first
     if masking_options.convolve_first:
-        logger.warn("Using convolve the erode algorithm, some options may be ignored")
+        logger.warn(
+            "Using the convolve then erode algorithm, some options may be ignored"
+        )
         return create_convolved_erosion_mask(
             fits_image_path=fits_image_path, masking_options=masking_options
         )
