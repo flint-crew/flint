@@ -929,10 +929,11 @@ def convolve_image_by_scale(
     fwhm = 0.45 * scale
     sigma = fwhm / 2.355
 
-    logger.info(f"Generating gaussian kernel for {scale=} {fwhm=} {sigma=}")
+    logger.info(f"Generating gaussian kernel for {scale=} {fwhm=:.3f} {sigma=:.3f}")
 
-    x = np.linspace(0, int(sigma * 5))
-    y = np.linspace(0, int(sigma * 5))
+    pix_sigma = int(sigma * 5)
+    x = np.linspace(0, pix_sigma, pix_sigma)
+    y = np.linspace(0, pix_sigma, pix_sigma)
 
     x -= x[-1] / 2
     y -= y[-1] / 2
@@ -994,10 +995,12 @@ def create_convolved_erosion_mask(
                 image_data=convolved_image, scale=scale
             )
 
+        box_size = masking_options.flood_fill_use_mac_box_size + scale
+
         positive_mask = minimum_absolute_clip(
             image=convolved_image,
             increase_factor=masking_options.flood_fill_positive_seed_clip,
-            box_size=masking_options.flood_fill_use_mac_box_size,
+            box_size=box_size,
             adaptive_max_depth=masking_options.flood_fill_use_mac_adaptive_max_depth,
             adaptive_box_step=masking_options.flood_fill_use_mac_adaptive_step_factor,
             adaptive_skew_delta=masking_options.flood_fill_use_mac_adaptive_skew_delta,
@@ -1005,17 +1008,21 @@ def create_convolved_erosion_mask(
         flood_floor_mask = minimum_absolute_clip(
             image=convolved_image,
             increase_factor=masking_options.flood_fill_positive_flood_clip,
-            box_size=masking_options.flood_fill_use_mac_box_size,
+            box_size=box_size,
             adaptive_max_depth=masking_options.flood_fill_use_mac_adaptive_max_depth,
             adaptive_box_step=masking_options.flood_fill_use_mac_adaptive_step_factor,
             adaptive_skew_delta=masking_options.flood_fill_use_mac_adaptive_skew_delta,
         )
+
+        # Ensure positive only pixels. useful (necessary?) at larger scales bridging
+        # across negative pixels
         positive_dilated_mask = scipy_binary_dilation(
-            input=positive_mask,
-            mask=flood_floor_mask,
+            input=positive_mask & (base_image > 0.0),
+            mask=flood_floor_mask & (base_image > 0.0),
             iterations=1000,
             structure=np.ones((3, 3)),
         )
+
         scale_mask = (
             create_multi_scale_erosion(
                 mask=positive_dilated_mask,
@@ -1025,29 +1032,18 @@ def create_convolved_erosion_mask(
             )
             == 1
         )
-        fits.writeto(
-            f"scale-0-{scale}.fits",
-            header=fits_header,
-            data=scale_mask.astype(np.float32),
-        )
-
         if scale > 0:
             scale_mask = (
                 create_multi_scale_erosion(
                     mask=scale_mask,
                     fits_header=fits_header,
                     scale=scale,
-                    minimum_response=masking_options.beam_shape_erode_minimum_response,
+                    minimum_response=0.05,
                 )
                 == 1
             )
-        output_mask[scale_mask] += 2**index
 
-        fits.writeto(
-            f"scale-1-{scale}.fits",
-            header=fits_header,
-            data=scale_mask.astype(np.float32),
-        )
+        output_mask[scale_mask] += 2**index
 
     logger.info(f"Writing {mask_names.scale_mask_fits}")
     fits.writeto(
