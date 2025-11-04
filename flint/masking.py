@@ -804,6 +804,7 @@ def _need_to_make_signal(masking_options: MaskingOptions) -> bool:
 
 
 # TODO: Need to rename this function
+# TODO: This should be made into a dispatcher type function
 def create_snr_mask_from_fits(
     fits_image_path: Path,
     masking_options: MaskingOptions,
