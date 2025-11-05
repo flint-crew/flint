@@ -934,6 +934,12 @@ def convolve_image_by_scale(
     Returns:
         NDArray[np.floating]: Smoother version of the input image
     """
+
+    from scipy.ndimage import maximum_filter, minimum_filter
+
+    min_image = minimum_filter(image_data, scale)
+    return maximum_filter(min_image, scale)
+
     logger.info(f"Convoling with {scale=}")
 
     # wsclean scales are converted to a fwhm as 0.45 * pixel scales. To convert
@@ -1029,33 +1035,41 @@ def create_convolved_erosion_mask(
         # Ensure positive only pixels. useful (necessary?) at larger scales bridging
         # across negative pixels
         positive_dilated_mask = scipy_binary_dilation(
-            input=positive_mask & (base_image > 0.0),
-            mask=flood_floor_mask & (base_image > 0.0),
+            input=positive_mask,
+            mask=flood_floor_mask,
             iterations=1000,
             structure=np.ones((3, 3)),
         )
+        # # Ensure positive only pixels. useful (necessary?) at larger scales bridging
+        # # across negative pixels
+        # positive_dilated_mask = scipy_binary_dilation(
+        #     input=positive_mask & (base_image > 0.0),
+        #     mask=flood_floor_mask & (base_image > 0.0),
+        #     iterations=1000,
+        #     structure=np.ones((3, 3)),
+        # )
 
-        scale_mask = (
-            create_multi_scale_erosion(
-                mask=positive_dilated_mask,
-                fits_header=fits_header,
-                scale=scale,
-                minimum_response=masking_options.beam_shape_erode_minimum_response,
-            )
-            == 1
-        )
-        if scale > 0:
-            scale_mask = (
-                create_multi_scale_erosion(
-                    mask=scale_mask,
-                    fits_header=fits_header,
-                    scale=scale,
-                    minimum_response=0.05,
-                )
-                == 1
-            )
+        # scale_mask = (
+        #     create_multi_scale_erosion(
+        #         mask=positive_dilated_mask,
+        #         fits_header=fits_header,
+        #         scale=scale,
+        #         minimum_response=masking_options.beam_shape_erode_minimum_response,
+        #     )
+        #     == 1
+        # )
+        # if scale > 0:
+        #     scale_mask = (
+        #         create_multi_scale_erosion(
+        #             mask=scale_mask,
+        #             fits_header=fits_header,
+        #             scale=scale,
+        #             minimum_response=0.05,
+        #         )
+        #         == 1
+        #     )
 
-        output_mask[scale_mask] += 2**index
+        output_mask[positive_dilated_mask] += 2**index
 
     logger.info(f"Writing {mask_names.scale_mask_fits}")
     fits.writeto(
