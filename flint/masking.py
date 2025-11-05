@@ -21,7 +21,7 @@ from scipy.ndimage import (
 from scipy.ndimage import (
     binary_erosion as scipy_binary_erosion,  # Rename to distinguish from skimage
 )
-from scipy.ndimage import label, minimum_filter
+from scipy.ndimage import binary_fill_holes, label, minimum_filter
 from scipy.signal import fftconvolve
 
 from flint.logging import logger
@@ -938,7 +938,7 @@ def convolve_image_by_scale(
     from scipy.ndimage import maximum_filter, minimum_filter
 
     min_image = minimum_filter(image_data, scale)
-    return maximum_filter(min_image, scale)
+    image_data = maximum_filter(min_image, scale)
 
     logger.info(f"Convoling with {scale=}")
 
@@ -1012,6 +1012,12 @@ def create_convolved_erosion_mask(
             convolved_image = convolve_image_by_scale(
                 image_data=convolved_image, scale=scale
             )
+            fits.writeto(
+                f"minmaxcon-{scale}.fits",
+                data=convolved_image,
+                header=fits_header,
+                overwrite=True,
+            )
 
         box_size = masking_options.flood_fill_use_mac_box_size + scale
 
@@ -1031,6 +1037,8 @@ def create_convolved_erosion_mask(
             adaptive_box_step=masking_options.flood_fill_use_mac_adaptive_step_factor,
             adaptive_skew_delta=masking_options.flood_fill_use_mac_adaptive_skew_delta,
         )
+        # if scale == 0:
+        flood_floor_mask = binary_fill_holes(flood_floor_mask)
 
         # Ensure positive only pixels. useful (necessary?) at larger scales bridging
         # across negative pixels
@@ -1040,36 +1048,20 @@ def create_convolved_erosion_mask(
             iterations=1000,
             structure=np.ones((3, 3)),
         )
-        # # Ensure positive only pixels. useful (necessary?) at larger scales bridging
-        # # across negative pixels
-        # positive_dilated_mask = scipy_binary_dilation(
-        #     input=positive_mask & (base_image > 0.0),
-        #     mask=flood_floor_mask & (base_image > 0.0),
-        #     iterations=1000,
-        #     structure=np.ones((3, 3)),
-        # )
 
-        # scale_mask = (
-        #     create_multi_scale_erosion(
-        #         mask=positive_dilated_mask,
-        #         fits_header=fits_header,
-        #         scale=scale,
-        #         minimum_response=masking_options.beam_shape_erode_minimum_response,
-        #     )
-        #     == 1
-        # )
-        # if scale > 0:
-        #     scale_mask = (
-        #         create_multi_scale_erosion(
-        #             mask=scale_mask,
-        #             fits_header=fits_header,
-        #             scale=scale,
-        #             minimum_response=0.05,
-        #         )
-        #         == 1
-        #     )
+        # output_mask[positive_dilated_mask] += 2**index
 
-        output_mask[positive_dilated_mask] += 2**index
+        scale_mask = (
+            create_multi_scale_erosion(
+                mask=positive_dilated_mask,
+                fits_header=fits_header,
+                scale=scale,
+                minimum_response=masking_options.beam_shape_erode_minimum_response,
+            )
+            == 1
+        )
+
+        output_mask[scale_mask] += 2**index
 
     logger.info(f"Writing {mask_names.scale_mask_fits}")
     fits.writeto(
