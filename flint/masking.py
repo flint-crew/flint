@@ -937,6 +937,7 @@ def convolve_image_by_scale(
 
     from scipy.ndimage import maximum_filter, minimum_filter
 
+    logger.info("Computing the open filter image")
     min_image = minimum_filter(image_data, scale)
     image_data = maximum_filter(min_image, scale)
 
