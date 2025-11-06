@@ -1013,7 +1013,7 @@ def create_convolved_erosion_mask(
                 image_data=convolved_image, scale=scale
             )
             fits.writeto(
-                f"minmaxcon-{scale}.fits",
+                fits_image_path.with_suffix(f".minmaxcon-{scale}.fits"),
                 data=convolved_image,
                 header=fits_header,
                 overwrite=True,
