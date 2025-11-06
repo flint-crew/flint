@@ -1013,12 +1013,13 @@ def create_convolved_erosion_mask(
             convolved_image = convolve_image_by_scale(
                 image_data=convolved_image, scale=scale
             )
-            fits.writeto(
-                fits_image_path.with_suffix(f".minmaxcon-{scale}.fits"),
-                data=convolved_image,
-                header=fits_header,
-                overwrite=True,
-            )
+
+            # fits.writeto(
+            #     fits_image_path.with_suffix(f".minmaxcon-{scale}.fits"),
+            #     data=convolved_image,
+            #     header=fits_header,
+            #     overwrite=True,
+            # )
 
         box_size = masking_options.flood_fill_use_mac_box_size + scale
 
@@ -1030,15 +1031,21 @@ def create_convolved_erosion_mask(
             adaptive_box_step=masking_options.flood_fill_use_mac_adaptive_step_factor,
             adaptive_skew_delta=masking_options.flood_fill_use_mac_adaptive_skew_delta,
         )
+        flood_fill_positive_flood_clip = masking_options.flood_fill_positive_flood_clip
+        if scale == 0 and flood_fill_positive_flood_clip < 0.8:
+            logger.warning(
+                f"{flood_fill_positive_flood_clip=}, too low for {scale=}. Setting to 0.8"
+            )
+            flood_fill_positive_flood_clip = 0.8
+
         flood_floor_mask = minimum_absolute_clip(
             image=convolved_image,
-            increase_factor=masking_options.flood_fill_positive_flood_clip,
+            increase_factor=flood_fill_positive_flood_clip,
             box_size=box_size,
             adaptive_max_depth=masking_options.flood_fill_use_mac_adaptive_max_depth,
             adaptive_box_step=masking_options.flood_fill_use_mac_adaptive_step_factor,
             adaptive_skew_delta=masking_options.flood_fill_use_mac_adaptive_skew_delta,
         )
-        # if scale == 0:
         flood_floor_mask = binary_fill_holes(flood_floor_mask)
 
         # Ensure positive only pixels. useful (necessary?) at larger scales bridging
