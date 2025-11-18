@@ -841,7 +841,7 @@ def create_snr_mask_from_fits(
     """
     # Short cut to the convolve first
     if masking_options.convolve_first:
-        logger.warn(
+        logger.warning(
             "Using the convolve then erode algorithm, some options may be ignored"
         )
         return create_convolved_erosion_mask(
@@ -967,6 +967,7 @@ def convolve_image_by_scale(
     return fftconvolve(image_data, kernel, mode="same")
 
 
+# TODO: This needs some specific unit tests
 def create_convolved_erosion_mask(
     fits_image_path: Path,
     masking_options: MaskingOptions,
