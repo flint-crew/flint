@@ -221,6 +221,7 @@ extend-exclude = ["*.fits", "flint/data/**/*", "ignore_words.txt"]
 FIELDs = "FIELDs"
 FoV = "FoV"
 outweight= "outweight"
+calid = "calid"
 
 [tool.codespell]
 skip = "*.lock"
