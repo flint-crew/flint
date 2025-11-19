@@ -552,7 +552,7 @@ def _minimum_absolute_clip(
         np.ndarray: The mask of pixels above the locally varying threshold
     """
     logger.info(f"Minimum absolute clip, {increase_factor=} {box_size=}")
-    rolling_box_min = minimum_filter(image, box_size)
+    rolling_box_min = minimum_filter(image, box_size, mode="wrap")
 
     image_mask = image > (increase_factor * np.abs(rolling_box_min))
     # NOTE: This used to attempt to select pixels should that belong to an island of positive pixels with a box that was too small
@@ -574,7 +574,7 @@ def _adaptive_minimum_absolute_clip(
     logger.info(
         f"Using adaptive minimum absolute clip with {box_size=} {adaptive_skew_delta=}"
     )
-    min_value = minimum_filter(input=image, size=box_size)
+    min_value = minimum_filter(input=image, size=box_size, mode="wrap")
 
     for box_round in range(adaptive_max_depth, 0, -1):
         skew_results = create_boxcar_skew_mask(
@@ -589,7 +589,7 @@ def _adaptive_minimum_absolute_clip(
 
         logger.info(f"({box_round}) Growing {box_size=} {adaptive_box_step=}")
         box_size = int(box_size * adaptive_box_step)
-        _min_value = minimum_filter(input=image, size=box_size)
+        _min_value = minimum_filter(input=image, size=box_size, mode="wrap")
         logger.debug("Slicing minimum values into place")
 
         min_value[skew_results.skew_mask] = _min_value[skew_results.skew_mask]
@@ -938,8 +938,8 @@ def convolve_image_by_scale(
     from scipy.ndimage import maximum_filter, minimum_filter
 
     logger.info("Computing the open filter image")
-    min_image = minimum_filter(image_data, scale)
-    image_data = maximum_filter(min_image, scale)
+    min_image = minimum_filter(image_data, scale, mode="wrap")
+    image_data = maximum_filter(min_image, scale, mode="wrap")
 
     logger.info(f"Convoling with {scale=}")
 
