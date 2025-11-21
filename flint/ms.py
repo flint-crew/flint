@@ -703,7 +703,9 @@ def subtract_model_from_data_column(
                     )
                     data -= model
                     del model
-                    tab.putcol(data_column, data, startrow=current_idx, nrow=chunk_size)
+                    tab.putcol(
+                        output_column, data, startrow=current_idx, nrow=chunk_size
+                    )
                     current_idx += chunk_size
                     current_chunk += 1
 
