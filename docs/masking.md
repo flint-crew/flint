@@ -74,6 +74,16 @@ This is intended to provide a mechanism to ensure cleaning at larger scales occu
 
 <img src="_static/multi_scale_erode.jpeg" alt="Example of multi-scale beam erode" style="width:400px;"/>
 
+## `--convolve-first` option
+
+Historically for extract galactic fields the reverse flood fill process described above using a minimum absolute clip as the threshold statistic produced reliable clean masks. A subsequent binary erosion process to attempt to characterise per-scale clean masks produced meaningful results. For regions like the Galactic Plane, however, the reverse flood fill process would often miss diffuse emission that was both extended and below the flood fill clip level. Reducing this lower level clip would not consistently capture such faint extended structures, and pixels boosted by noise would often leak into the clean mask from legitimate islands (flying spaghetti monsters).
+
+The `--convol-first` option activates a routine where the base image is first put through an `open` filter before being convolved to some desired scale. Significance thresholding operations are then applied to this filtered image. Importantly, the `open` filter attempts to isolate small structures from larger ones. This is implemented through the combined usage of a minimum filter followed by a maximum filter (could be considered a high-pass filter).
+
+![Open filter across a variety of scales being applied to an example signal](_static/open_filter.mp4)
+
+Should this option be activated be aware that the seed and flood clipping threshold change - it should be possible to use lower limits. For example `flood_fill_positive_seed_clip=1.02` and `flood_file_positive_flood_clip=0.15` when the minimum absolute clip statistic is used.
+
 ## Accessing via the CLI
 
 The masking utility may be accessed via a CLI entrypoint:

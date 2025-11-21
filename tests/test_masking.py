@@ -440,6 +440,30 @@ def test_verify_set_seed_clip():
     assert flood_clip == 9.0
 
 
+def test_fits_masking_convolve_first(fits_dir):
+    """A basic check to see if the convolve first algorithm is working, where
+    working be no errors mate"""
+    masking_options = MaskingOptions(
+        flood_fill_use_mac=True,
+        flood_fill_positive_seed_clip=0.5,
+        convolve_first=True,
+    )
+    names = create_snr_mask_from_fits(
+        fits_image_path=fits_dir / "image.fits",
+        fits_bkg_path=None,
+        fits_rms_path=None,
+        masking_options=masking_options,
+    )
+
+    assert isinstance(names, FITSMaskNames)
+    assert names.scale_mask_fits.exists()
+    assert names.signal_fits is None
+
+    mask_data = fits.getdata(names.scale_mask_fits)
+    valid = np.sum(mask_data)
+    assert valid == np.prod(SHAPE)
+
+
 def test_fits_masking(fits_dir):
     masking_options = MaskingOptions(flood_fill=False)
     names = create_snr_mask_from_fits(

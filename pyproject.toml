@@ -35,7 +35,7 @@ dependencies = [
     "scipy",
     "spython>=0.3.1",
     "matplotlib",
-    "prefect>=2.10.0, <3",
+    "prefect<3.0.0",
     "prefect-dask>=0.2.4",
     "dask-jobqueue",
     "RACS-tools>=4.2.1",

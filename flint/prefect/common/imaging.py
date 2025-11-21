@@ -347,7 +347,10 @@ def task_wsclean_imager(
     )
 
     if fits_mask:
-        update_wsclean_options["fits_mask"] = fits_mask.mask_fits
+        if fits_mask.mask_fits is not None and fits_mask.mask_fits.exists():
+            update_wsclean_options["fits_mask"] = fits_mask.mask_fits
+        if fits_mask.scale_mask_fits is not None and fits_mask.scale_mask_fits.exists():
+            update_wsclean_options["multiscale_fits_mask"] = fits_mask.scale_mask_fits
 
     if channel_range:
         update_wsclean_options["channel_range"] = channel_range
