@@ -71,7 +71,7 @@ def test_create_field_summary_beam_summary(ms_example, aegean_outputs_example):
 
 
 def test_create_field_summary_beam_summary_nocalid(ms_example, aegean_outputs_example):
-    """Make sure the summary will work when an empty of non-existent calid is passed in,
+    """Make sure the summary will work when an empty of non-existent calibration id is passed in,
     which may happen for MSs downloaded through casda"""
     mss = [ms_example for _ in range(36)]
 

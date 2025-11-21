@@ -21,7 +21,7 @@ from scipy.ndimage import (
 from scipy.ndimage import (
     binary_erosion as scipy_binary_erosion,  # Rename to distinguish from skimage
 )
-from scipy.ndimage import label, minimum_filter
+from scipy.ndimage import binary_fill_holes, label, minimum_filter
 from scipy.signal import fftconvolve
 
 from flint.logging import logger
@@ -68,6 +68,8 @@ class MaskingOptions(BaseOptions):
     """The minimum response of the beam that is used to form the erode structure shape"""
     beam_shape_erode_scales: tuple[int, ...] | None = None
     """The multi-scale convolution sizes, in pixels, to perform a binary erosion with. Output scales are encoded as a bitmapped value (e.g. n'th scale is n'th bit)"""
+    convolve_first: bool = False
+    """Attempt to construct mask across scales by first convolving the input image by a scale kernel, then run the island construction stage"""
 
 
 def consider_beam_mask_round(
@@ -550,7 +552,7 @@ def _minimum_absolute_clip(
         np.ndarray: The mask of pixels above the locally varying threshold
     """
     logger.info(f"Minimum absolute clip, {increase_factor=} {box_size=}")
-    rolling_box_min = minimum_filter(image, box_size)
+    rolling_box_min = minimum_filter(image, box_size, mode="wrap")
 
     image_mask = image > (increase_factor * np.abs(rolling_box_min))
     # NOTE: This used to attempt to select pixels should that belong to an island of positive pixels with a box that was too small
@@ -572,7 +574,7 @@ def _adaptive_minimum_absolute_clip(
     logger.info(
         f"Using adaptive minimum absolute clip with {box_size=} {adaptive_skew_delta=}"
     )
-    min_value = minimum_filter(input=image, size=box_size)
+    min_value = minimum_filter(input=image, size=box_size, mode="wrap")
 
     for box_round in range(adaptive_max_depth, 0, -1):
         skew_results = create_boxcar_skew_mask(
@@ -587,7 +589,7 @@ def _adaptive_minimum_absolute_clip(
 
         logger.info(f"({box_round}) Growing {box_size=} {adaptive_box_step=}")
         box_size = int(box_size * adaptive_box_step)
-        _min_value = minimum_filter(input=image, size=box_size)
+        _min_value = minimum_filter(input=image, size=box_size, mode="wrap")
         logger.debug("Slicing minimum values into place")
 
         min_value[skew_results.skew_mask] = _min_value[skew_results.skew_mask]
@@ -802,6 +804,7 @@ def _need_to_make_signal(masking_options: MaskingOptions) -> bool:
 
 
 # TODO: Need to rename this function
+# TODO: This should be made into a dispatcher type function
 def create_snr_mask_from_fits(
     fits_image_path: Path,
     masking_options: MaskingOptions,
@@ -836,6 +839,15 @@ def create_snr_mask_from_fits(
     Returns:
         FITSMaskNames: Container describing the signal and mask FITS image paths. If ``create_signal_path`` is None, then the ``signal_fits`` attribute will be None.
     """
+    # Short cut to the convolve first
+    if masking_options.convolve_first:
+        logger.warning(
+            "Using the convolve then erode algorithm, some options may be ignored"
+        )
+        return create_convolved_erosion_mask(
+            fits_image_path=fits_image_path, masking_options=masking_options
+        )
+
     mask_names = create_fits_mask_names(
         fits_image=fits_image_path, include_signal_path=create_signal_fits
     )
@@ -902,6 +914,174 @@ def create_snr_mask_from_fits(
     return mask_names
 
 
+def convolve_image_by_scale(
+    image_data: NDArray[np.floating], scale: int
+) -> NDArray[np.floating]:
+    """Generate a convolved version of the input image based on some convolved scale.
+    Note that here the scale refers to the scales used by wsclean. Per the multiscale
+    documentation, where considering gaussians:
+
+    >> fwhm = 0.45 * scale
+
+    Also not that:
+
+    >> fwhm = 2.355 * sigma
+
+    Args:
+        image_data (NDArray[np.floating]): The imaged to be convolved
+        scale (int): The pixel scale to smooth with
+
+    Returns:
+        NDArray[np.floating]: Smoother version of the input image
+    """
+
+    from scipy.ndimage import maximum_filter, minimum_filter
+
+    logger.info("Computing the open filter image")
+    min_image = minimum_filter(image_data, scale, mode="wrap")
+    image_data = maximum_filter(min_image, scale, mode="wrap")
+
+    logger.info(f"Convoling with {scale=}")
+
+    # wsclean scales are converted to a fwhm as 0.45 * pixel scales. To convert
+    # the FWHM to a sigma we divided by 2.355, matttee
+    fwhm = 0.45 * scale
+    sigma = fwhm / 2.355
+
+    logger.info(f"Generating gaussian kernel for {scale=} {fwhm=:.3f} {sigma=:.3f}")
+
+    pix_sigma = int(sigma * 5)
+    x = np.linspace(0, pix_sigma, pix_sigma)
+    y = np.linspace(0, pix_sigma, pix_sigma)
+
+    x -= x[-1] / 2
+    y -= y[-1] / 2
+
+    # Form the 2d image gride here, ya sea dog
+    distance_squared = x[None, :] ** 2 + y[:, None] ** 2
+    kernel = np.exp(-(distance_squared / (2 * sigma**2)))
+
+    # Make sure the ships match dimensions
+    kernel = kernel.reshape(image_data.shape[:-2] + kernel.shape)
+    logger.info(f"{image_data.shape=} {kernel.shape=}")
+    return fftconvolve(image_data, kernel, mode="same")
+
+
+# TODO: This needs some specific unit tests
+def create_convolved_erosion_mask(
+    fits_image_path: Path,
+    masking_options: MaskingOptions,
+) -> FITSMaskNames:
+    """Create a per-scale clean mask by smoothing the input image to some scale, and then
+    applying a reverse flood fill with the minimum absolute clip statistic. After the initial
+    mask per scale is constructed a binary erosion is then performed to further refine the mask.
+
+    Args:
+        fits_image_path (Path): The path to the FITS image to load.
+        masking_options (MaskingOptions): Options to use throughout the convolve and erosion process.
+
+    Returns:
+        FITSMaskNames: Clean mask written to a FITS file. Should multiple scales be specified they are encoded bitwise per pixel.
+    """
+    mask_names = create_fits_mask_names(fits_image=fits_image_path)
+
+    logger.info(f"Getting image data from {fits_image_path=}")
+    base_image = fits.getdata(fits_image_path)
+    fits_header = fits.getheader(fits_image_path)
+
+    original_shape = base_image.shape
+
+    base_image = np.squeeze(base_image)
+    assert len(base_image.shape) == 2, (
+        f"The shape of data is {original_shape}, and can not be converted to a two-dimensional image"
+    )
+
+    scales = (
+        [0]
+        if masking_options.beam_shape_erode_scales is None
+        else masking_options.beam_shape_erode_scales
+    )
+    logger.info(f"Will be processing {scales=}")
+
+    output_mask = np.zeros_like(base_image)
+
+    for index, scale in enumerate(scales):
+        convolved_image = base_image.copy()
+        logger.info(f"Processing {scale=}")
+
+        # Image at native scale does not need to be convolved
+        if scale > 0:
+            convolved_image = convolve_image_by_scale(
+                image_data=convolved_image, scale=scale
+            )
+
+            # fits.writeto(
+            #     fits_image_path.with_suffix(f".minmaxcon-{scale}.fits"),
+            #     data=convolved_image,
+            #     header=fits_header,
+            #     overwrite=True,
+            # )
+
+        box_size = masking_options.flood_fill_use_mac_box_size + scale
+
+        positive_mask = minimum_absolute_clip(
+            image=convolved_image,
+            increase_factor=masking_options.flood_fill_positive_seed_clip,
+            box_size=box_size,
+            adaptive_max_depth=masking_options.flood_fill_use_mac_adaptive_max_depth,
+            adaptive_box_step=masking_options.flood_fill_use_mac_adaptive_step_factor,
+            adaptive_skew_delta=masking_options.flood_fill_use_mac_adaptive_skew_delta,
+        )
+        flood_fill_positive_flood_clip = masking_options.flood_fill_positive_flood_clip
+        if scale == 0 and flood_fill_positive_flood_clip < 0.8:
+            logger.warning(
+                f"{flood_fill_positive_flood_clip=}, too low for {scale=}. Setting to 0.8"
+            )
+            flood_fill_positive_flood_clip = 0.8
+
+        flood_floor_mask = minimum_absolute_clip(
+            image=convolved_image,
+            increase_factor=flood_fill_positive_flood_clip,
+            box_size=box_size,
+            adaptive_max_depth=masking_options.flood_fill_use_mac_adaptive_max_depth,
+            adaptive_box_step=masking_options.flood_fill_use_mac_adaptive_step_factor,
+            adaptive_skew_delta=masking_options.flood_fill_use_mac_adaptive_skew_delta,
+        )
+        flood_floor_mask = binary_fill_holes(flood_floor_mask)
+
+        # Ensure positive only pixels. useful (necessary?) at larger scales bridging
+        # across negative pixels
+        positive_dilated_mask = scipy_binary_dilation(
+            input=positive_mask,
+            mask=flood_floor_mask,
+            iterations=1000,
+            structure=np.ones((3, 3)),
+        )
+
+        # output_mask[positive_dilated_mask] += 2**index
+
+        scale_mask = (
+            create_multi_scale_erosion(
+                mask=positive_dilated_mask,
+                fits_header=fits_header,
+                scale=scale,
+                minimum_response=masking_options.beam_shape_erode_minimum_response,
+            )
+            == 1
+        )
+
+        output_mask[scale_mask] += 2**index
+
+    logger.info(f"Writing {mask_names.scale_mask_fits}")
+    fits.writeto(
+        mask_names.scale_mask_fits,
+        header=fits_header,
+        data=output_mask.reshape(original_shape),
+        overwrite=True,
+    )
+    return mask_names
+
+
 def get_parser() -> ArgumentParser:
     parser = ArgumentParser(
         description="Simple utility functions to create masks from FITS images. "
@@ -961,13 +1141,18 @@ def cli():
         masking_options = create_options_from_parser(
             parser_namespace=args, options_class=MaskingOptions
         )
-        create_snr_mask_from_fits(
-            fits_image_path=args.image,
-            fits_rms_path=args.rms_fits,
-            fits_bkg_path=args.bkg_fits,
-            create_signal_fits=args.save_signal,
-            masking_options=masking_options,
-        )
+        if masking_options.convolve_first:
+            create_convolved_erosion_mask(
+                fits_image_path=args.image, masking_options=masking_options
+            )
+        else:
+            create_snr_mask_from_fits(
+                fits_image_path=args.image,
+                fits_rms_path=args.rms_fits,
+                fits_bkg_path=args.bkg_fits,
+                create_signal_fits=args.save_signal,
+                masking_options=masking_options,
+            )
 
     elif args.mode == "extractmask":
         extract_beam_mask_from_mosaic(

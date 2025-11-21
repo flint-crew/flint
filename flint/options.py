@@ -347,7 +347,7 @@ class SubtractFieldOptions(BaseOptions):
     attempt_subtract: bool = False
     """Attempt to subtract the model column from the nominated data column"""
     subtract_data_column: str = "DATA"
-    """Should the continuum model be subtracted, where to store the output"""
+    """Should the continuum model be subtracted, where to store the output. This will update the column to be imaged."""
     predict_wsclean_model: bool = False
     """Search for the continuum model produced by wsclean and subtract"""
     use_addmodel: bool = False
