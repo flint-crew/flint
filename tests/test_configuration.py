@@ -73,6 +73,20 @@ def package_strategy_path():
     return example
 
 
+def test_get_jolly_tukey_tractor_options(package_strategy_operations):
+    """Ensure that we are able to access tukey tractor options"""
+    strategy = package_strategy_operations
+    verify_configuration(input_strategy=strategy)
+
+    options = get_options_from_strategy(
+        strategy=package_strategy_operations,
+        round_info=0,
+        mode="tukeytractor",
+        operation="selfcal",
+    )
+    assert options["elevation_cut_deg"] == 10  # in the data
+
+
 def test_get_potato_peel_options(package_strategy_operations):
     """Ensure that we are able to access potato peel options"""
     strategy = package_strategy_operations

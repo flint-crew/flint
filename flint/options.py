@@ -441,6 +441,8 @@ class FieldOptions(BaseOptions):
     """Co-add cubes formed throughout imaging together. Cubes will be smoothed channel-wise to a common resolution. Only performed on final set of images"""
     update_model_data_with_source_list: bool = False
     """Attempt to update a MSs MODEL_DATA column with a source list (e.g. source list output from wsclean)"""
+    use_jolly_tukey_tractor: bool = False
+    """Use the jolly roger tukey tractor. See the TukeyTractorOptions and the jolly-roger package for more details."""
 
 
 class PolFieldOptions(BaseOptions):

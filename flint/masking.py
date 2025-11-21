@@ -1161,6 +1161,7 @@ def cli():
         )
     else:
         logger.error(f"Supplied mode {args.mode} is not known. ")
+        parser.print_help()
 
 
 if __name__ == "__main__":
