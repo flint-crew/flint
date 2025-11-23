@@ -115,7 +115,7 @@ def jolly_roger_tractor(
     logger.info("Running the jolly-roger's tukey tractor")
     tukey_tractor(tukey_tractor_options=jolly_tukey_tractor_options)
 
-    return ms
+    return ms.with_options(column=jolly_tukey_tractor_options.output_coluumn)
 
 
 def get_parser() -> ArgumentParser:
