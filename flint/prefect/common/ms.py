@@ -84,7 +84,9 @@ def task_jolly_roger_tractor(
 
     logger.info(f"Updating tukey tractor options to modified {data_column=}")
     update_tukey_tractor_options["data_column"] = data_column
-    update_tukey_tractor_options["output_column"] = data_column
+    if update_tukey_tractor_options.get("output_column", None) is None:
+        logger.warning("Output column unset, defaulting to {data_column=}")
+        update_tukey_tractor_options["output_column"] = data_column
     update_tukey_tractor_options["overwrite"] = True
 
     with critical_ms_interaction(input_ms=ms.path) as critical_ms_path:
