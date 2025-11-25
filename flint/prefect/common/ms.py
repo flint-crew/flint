@@ -92,10 +92,12 @@ def task_jolly_roger_tractor(
     with critical_ms_interaction(input_ms=ms.path) as critical_ms_path:
         critical_ms = ms.with_options(path=critical_ms_path)
 
-        out_ms, out_plots = jolly_roger_tractor(
+        out_ms = jolly_roger_tractor(
             ms=critical_ms, update_tukey_tractor_options=update_tukey_tractor_options
         )
 
+    # Dumb placeholder
+    out_plots = None
     if out_plots is not None:
         logger.info(f"Iploading {len(out_plots)} figures")
         from flint.prefect.common.utils import upload_image_as_artifact
