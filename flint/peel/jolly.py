@@ -84,7 +84,7 @@ def jolly_roger_tractor(
     ms: MS | Path,
     tukey_tractor_options: TukeyTractorOptions | None = None,
     update_tukey_tractor_options: dict[str, Any] | None = None,
-) -> tuple[MS, list[Path] | None]:
+) -> MS:
     """Run the `jolly_roger` tukey tractor method to null towards an object.
 
     Args:
@@ -93,8 +93,7 @@ def jolly_roger_tractor(
         update_tukey_tractor_options (dict[str, Any] | None, optional): Over-rides the options of `tukey_tractor_options`. Defaults to None.
 
     Returns:
-        tuple[MS, list[Path] | None]: Reference to modified measurement set. If the output
-          plots were also created than these will be returned, None others.
+        MS: Reference to modified measurement set.
     """
     ms = MS.cast(ms)
     if tukey_tractor_options is None:
@@ -114,13 +113,9 @@ def jolly_roger_tractor(
         ms_path=ms.path, tukey_tractor_options=tukey_tractor_options
     )
     logger.info("Running the jolly-roger's tukey tractor")
-    tukey_tractor_results = tukey_tractor(
-        tukey_tractor_options=jolly_tukey_tractor_options
-    )
+    tukey_tractor(tukey_tractor_options=jolly_tukey_tractor_options)
 
-    return ms.with_options(
-        column=jolly_tukey_tractor_options.output_column
-    ), tukey_tractor_results.output_plots
+    return ms.with_options(column=jolly_tukey_tractor_options.output_column)
 
 
 def get_parser() -> ArgumentParser:
