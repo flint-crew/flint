@@ -237,6 +237,8 @@ def task_combine_all_linmos_images(
 
     logger.info(f"Combining {len(images_to_combine)} FITS files together")
 
+    output_suffix = f"time.{output_suffix}" if time_domain else f"freq.{output_suffix}"
+
     from flint.naming import create_image_cube_name, create_name_from_common_fields
 
     assert len(images_to_combine) > 0, "No images to combine"
