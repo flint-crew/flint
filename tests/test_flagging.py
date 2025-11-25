@@ -11,7 +11,9 @@ from casacore.tables import table
 from flint.containers import get_known_container_path
 from flint.flagging import (
     flag_ms_aoflagger,
+    flag_ms_by_sunrise_sunset,
     flag_ms_zero_uvws,
+    get_parser,
     nan_zero_extreme_flag_ms,
 )
 from flint.ms import MS
@@ -164,3 +166,53 @@ def test_aoflagger(flint_containers, ms_example) -> None:
         assert np.all(u[~flags[:, 0, 0]] != 0)
 
     assert pre_flag == post_flag
+
+
+def test_flag_ms_by_sunrise_sunset_all(ms_example):
+    """With huge pre/post windows, every row in the MS should be flagged."""
+    # zero out all flags first
+    with table(str(ms_example), readonly=False, ack=False) as tab:
+        zeros = np.zeros_like(tab.getcol("FLAG"), dtype=bool)
+        tab.putcol("FLAG", zeros)
+
+    # use enormous windows so sunrise & sunset windows cover every TIME
+    flag_ms_by_sunrise_sunset(
+        ms=ms_example,
+        pre_sunrise=1e9,
+        post_sunrise=1e9,
+        pre_sunset=1e9,
+        post_sunset=1e9,
+    )
+
+    with table(str(ms_example), ack=False) as tab:
+        flags = tab.getcol("FLAG")
+        assert np.all(flags), "All visibilities should be flagged with huge windows"
+
+
+def test_parser_flag_twilight():
+    """Ensure the 'flagtwilight' subparser exposes the new pre/post args."""
+    parser = get_parser()
+    args = parser.parse_args(
+        [
+            "flagtwilight",
+            "my.ms",
+            "--pre-sunrise",
+            "120.0",
+            "--post-sunrise",
+            "180.0",
+            "--pre-sunset",
+            "240.0",
+            "--post-sunset",
+            "300.0",
+            "--which",
+            "previous",
+        ]
+    )
+
+    assert args.mode == "flagtwilight"
+    assert isinstance(args.ms, Path) and args.ms.name == "my.ms"
+    assert args.pre_sunrise == 120.0
+    assert args.post_sunrise == 180.0
+    assert args.pre_sunset == 240.0
+    assert args.post_sunset == 300.0
+    assert args.which == "previous"
