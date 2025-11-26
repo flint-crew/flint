@@ -395,7 +395,7 @@ def flow_subtract_cube(
                 operation="subtractcube",
             )
             channel_wsclean_cmds = task_map_all_wsclean.submit(
-                in_ms=science_mss,
+                in_mss=science_mss,
                 wsclean_container=subtract_field_options.wsclean_container,
                 channel_range=channel_range,
                 update_wsclean_options=update_wsclean_options,
