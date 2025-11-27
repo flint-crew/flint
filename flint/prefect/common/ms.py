@@ -20,6 +20,21 @@ R = TypeVar("R")
 task_subtract_model_from_ms = task(subtract_model_from_data_column)
 
 
+@task
+def task_update_ms_tracked_column(ms: MS, column_name: str) -> MS:
+    """Update the tracked column name in an MS
+
+    Args:
+        ms (MS): The MS whose tracked column will be updated
+        column_name (str): The new column name to be updated
+
+    Returns:
+        MS: The updated MS with new tracked column name
+    """
+    logger.info(f"Updating {ms.column=} to {column_name=}")
+    return ms.with_options(column=column_name)
+
+
 # TODO: This can be a dispatcher type function should
 # other modes be added
 def add_model_source_list_to_ms(
