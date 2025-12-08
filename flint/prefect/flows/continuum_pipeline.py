@@ -196,9 +196,10 @@ def process_science_fields(
             casa_container=field_options.casa_container,
             output_directory=output_split_science_path,
         )
-        preprocess_science_mss = task_flag_ms_aoflagger.map(  # type: ignore
-            ms=preprocess_science_mss, container=field_options.flagger_container
-        )
+        if field_options.flagger_container is not None:
+            preprocess_science_mss = task_flag_ms_aoflagger.map(  # type: ignore
+                ms=preprocess_science_mss, container=field_options.flagger_container
+            )
     else:
         # TODO: This will likely need to be expanded should any
         # other calibration strategies get added
