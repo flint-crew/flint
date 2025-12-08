@@ -48,7 +48,7 @@ dependencies = [
     "fitscube>=2.3.0",
     "astroquery>=0.4.8.dev0",
     "crystalball>=0.4.3",
-    "jolly-roger>=0.3.0"
+    "jolly-roger>=0.4.1"
 ]
 
 [tool.hatch]
@@ -82,8 +82,7 @@ dev = [
 ]
 casa =[
     "python-casacore>=3.6.0",
-    "fixms>=0.4.0",
-    "jolly-roger>=v0.4.1"
+    "fixms>=0.4.0"
 ]
 
 [project.scripts]
