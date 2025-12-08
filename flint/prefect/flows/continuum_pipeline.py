@@ -232,7 +232,7 @@ def process_science_fields(
             solutions_file=solutions_paths,
             container=field_options.calibrate_container,
         )
-        
+
         if field_options.flagger_container is not None:
             flagged_mss = task_flag_ms_aoflagger.map(
                 ms=apply_solutions_cmds, container=field_options.flagger_container

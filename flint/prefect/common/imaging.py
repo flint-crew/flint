@@ -149,7 +149,7 @@ def task_flag_ms_aoflagger(ms: FlagMS, container: Path | None) -> FlagMS:
     if container is None:
         logger.warning("AOFlagger {container=}, so skipping the flagging")
         return ms
-    
+
     extracted_ms = flag_ms_aoflagger(ms=extracted_ms, container=container)
 
     return ms
