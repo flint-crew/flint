@@ -48,7 +48,7 @@ dependencies = [
     "fitscube>=2.3.0",
     "astroquery>=0.4.8.dev0",
     "crystalball>=0.4.3",
-    "jolly-roger>=0.4.1"
+    "jolly-roger>=0.5.0"
 ]
 
 [tool.hatch]
