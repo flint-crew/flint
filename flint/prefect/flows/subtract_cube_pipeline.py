@@ -42,9 +42,7 @@ from flint.options import (
 from flint.predict.crystalball import CrystalBallOptions
 from flint.prefect.clusters import get_dask_runner
 from flint.prefect.common.imaging import (
-    convolve_then_linmos,
     task_common_beam_convolve_linmos,
-    task_get_common_beam_from_results,
     task_wsclean_imager,
 )
 from flint.prefect.common.ms import task_subtract_model_from_ms
@@ -237,6 +235,8 @@ def task_combine_all_linmos_images(
 
     logger.info(f"Combining {len(images_to_combine)} FITS files together")
 
+    output_suffix = f"time.{output_suffix}" if time_domain else f"freq.{output_suffix}"
+
     from flint.naming import create_image_cube_name, create_name_from_common_fields
 
     assert len(images_to_combine) > 0, "No images to combine"
@@ -365,13 +365,23 @@ def flow_subtract_cube(
                 crystalball_options=unmapped(crystalball_subtract_field_options),
             )
 
-    if subtract_field_options.attempt_subtract:
-        science_mss = task_subtract_model_from_ms.map(
-            ms=science_mss,
-            output_column=subtract_field_options.subtract_data_column,
-            update_tracked_column=True,
-            chunk_size=1000,
-        )
+    with tags("subtract"):
+        if subtract_field_options.attempt_subtract:
+            science_mss = task_subtract_model_from_ms.map(
+                ms=science_mss,
+                output_column=subtract_field_options.subtract_data_column,
+                update_tracked_column=True,
+                chunk_size=1000,
+            )
+        elif (
+            subtract_field_options.subtract_data_column is not None
+            and not subtract_field_options.subtract_only
+        ):
+            from flint.prefect.common.ms import task_update_ms_tracked_column
+
+            science_mss = task_update_ms_tracked_column.map(
+                ms=science_mss, column_name=subtract_field_options.subtract_data_column
+            )
 
     # Fellow Captain Zic request, arrr
     if subtract_field_options.subtract_only:
@@ -379,122 +389,119 @@ def flow_subtract_cube(
         return
 
     if subtract_field_options.channelwise_image:
-        channel_parset_list = []
-        for channel, freq_mhz in enumerate(freqs_mhz):
-            if channel >= subtract_field_options.max_intervals:
-                logger.critical("Breaking for sanity")
-                break
+        with tags("channel-cube"):
+            channel_parset_list = []
+            for channel, freq_mhz in enumerate(freqs_mhz):
+                if channel >= subtract_field_options.max_intervals:
+                    logger.critical("Breaking for sanity")
+                    break
 
-            logger.info(f"Imaging {channel=} {freq_mhz=}")
-            channel_range = (channel, channel + 1)
-            update_wsclean_options = get_options_from_strategy(
+                logger.info(f"Imaging {channel=} {freq_mhz=}")
+                channel_range = (channel, channel + 1)
+                update_wsclean_options = get_options_from_strategy(
+                    strategy=strategy,
+                    mode="wsclean",
+                    operation="subtractcube",
+                )
+                channel_wsclean_cmds = task_map_all_wsclean.submit(
+                    in_mss=science_mss,
+                    wsclean_container=subtract_field_options.wsclean_container,
+                    channel_range=channel_range,
+                    update_wsclean_options=update_wsclean_options,
+                )
+
+                channel_parset = task_common_beam_convolve_linmos.submit(
+                    wsclean_results=channel_wsclean_cmds,
+                    linmos_suffix_str=None,
+                    field_options=subtract_field_options,
+                    convol_mode="image",
+                    convol_filter="image.",
+                    convol_suffix_str="optimal.conv",
+                    trim_linmos_fits=False,  # This is necessary to ensure all images have same pixel-coordinates
+                    remove_original_images=True,
+                    cleanup_linmos=True,
+                )
+
+                channel_parset_list.append(channel_parset)
+
+                if subtract_field_options.stagger_delay_seconds:
+                    sleep(subtract_field_options.stagger_delay_seconds)
+
+            # 4 - cube concatenated each linmos field together to single file
+            update_fits_cube_options = get_options_from_strategy(
                 strategy=strategy,
-                mode="wsclean",
+                mode="fitscube",
                 operation="subtractcube",
             )
-            channel_wsclean_cmds = task_map_all_wsclean.submit(
-                in_ms=science_mss,
-                wsclean_container=subtract_field_options.wsclean_container,
-                channel_range=channel_range,
-                update_wsclean_options=update_wsclean_options,
+            task_combine_all_linmos_images.submit(
+                linmos_commands=channel_parset_list,
+                remove_original_images=subtract_field_options.fitscube_remove_original_images,
+                update_fits_cube_options=update_fits_cube_options,
             )
-
-            channel_beam_shape = task_get_common_beam_from_results.submit(
-                wsclean_results=channel_wsclean_cmds,
-                cutoff=subtract_field_options.beam_cutoff,
-                filter_str="image.",
+            task_combine_all_linmos_images.submit(
+                linmos_commands=channel_parset_list,
+                remove_original_images=subtract_field_options.fitscube_remove_original_images,
+                combine_weights=True,
+                update_fits_cube_options=update_fits_cube_options,
             )
-            channel_parset = convolve_then_linmos(
-                wsclean_results=channel_wsclean_cmds,
-                beam_shape=channel_beam_shape,
-                linmos_suffix_str=None,
-                field_options=subtract_field_options,
-                convol_mode="image",
-                convol_filter="image.",
-                convol_suffix_str="optimal.conv",
-                trim_linmos_fits=False,  # This is necessary to ensure all images have same pixel-coordinates
-                remove_original_images=True,
-                cleanup_linmos=True,
-            )
-            channel_parset_list.append(channel_parset)
-
-            if subtract_field_options.stagger_delay_seconds:
-                sleep(subtract_field_options.stagger_delay_seconds)
-
-        # 4 - cube concatenated each linmos field together to single file
-        update_fits_cube_options = get_options_from_strategy(
-            strategy=strategy,
-            mode="fitscube",
-            operation="subtractcube",
-        )
-        task_combine_all_linmos_images.submit(
-            linmos_commands=channel_parset_list,
-            remove_original_images=subtract_field_options.fitscube_remove_original_images,
-            update_fits_cube_options=update_fits_cube_options,
-        )
-        task_combine_all_linmos_images.submit(
-            linmos_commands=channel_parset_list,
-            remove_original_images=subtract_field_options.fitscube_remove_original_images,
-            combine_weights=True,
-            update_fits_cube_options=update_fits_cube_options,
-        )
 
     if subtract_field_options.timestep_image:
-        scan_parset_list = []
-        for scan, time in enumerate(times):
-            if scan >= subtract_field_options.max_intervals:
-                logger.critical("Breaking for sanity")
-                break
+        with tags("time-cube"):
+            scan_parset_list = []
+            for scan, time in enumerate(times):
+                if scan >= subtract_field_options.max_intervals:
+                    logger.critical("Breaking for sanity")
+                    break
 
-            logger.info(f"Imaging {scan=} {time=}")
-            scan_range = (scan, scan + 1)
-            update_wsclean_options = get_options_from_strategy(
+                logger.info(f"Imaging {scan=} {time=}")
+                scan_range = (scan, scan + 1)
+                update_wsclean_options = get_options_from_strategy(
+                    strategy=strategy,
+                    mode="wsclean",
+                    operation="subtractcube",
+                )
+                scan_wsclean_cmds = task_map_all_wsclean.submit(
+                    in_mss=science_mss,
+                    wsclean_container=subtract_field_options.wsclean_container,
+                    scan_range=scan_range,
+                    update_wsclean_options=update_wsclean_options,
+                )
+
+                scan_parset = task_common_beam_convolve_linmos.submit(
+                    wsclean_results=scan_wsclean_cmds,
+                    linmos_suffix_str=None,
+                    field_options=subtract_field_options,
+                    convol_mode="image",
+                    convol_filter="image.",
+                    convol_suffix_str="optimal.conv",
+                    trim_linmos_fits=False,  # This is necessary to ensure all images have same pixel-coordinates
+                    remove_original_images=True,
+                    cleanup_linmos=True,
+                )
+                scan_parset_list.append(scan_parset)
+
+                if subtract_field_options.stagger_delay_seconds:
+                    sleep(subtract_field_options.stagger_delay_seconds)
+
+            # 4 - cube concatenated each linmos field together to single file
+            update_fits_cube_options = get_options_from_strategy(
                 strategy=strategy,
-                mode="wsclean",
+                mode="fitscube",
                 operation="subtractcube",
             )
-            scan_wsclean_cmds = task_map_all_wsclean.submit(
-                in_mss=science_mss,
-                wsclean_container=subtract_field_options.wsclean_container,
-                scan_range=scan_range,
-                update_wsclean_options=update_wsclean_options,
+            task_combine_all_linmos_images.submit(
+                linmos_commands=scan_parset_list,
+                remove_original_images=subtract_field_options.fitscube_remove_original_images,
+                time_domain=True,
+                update_fits_cube_options=update_fits_cube_options,
             )
-
-            scan_parset = task_common_beam_convolve_linmos.submit(
-                wsclean_results=scan_wsclean_cmds,
-                linmos_suffix_str=None,
-                field_options=subtract_field_options,
-                convol_mode="image",
-                convol_filter="image.",
-                convol_suffix_str="optimal.conv",
-                trim_linmos_fits=False,  # This is necessary to ensure all images have same pixel-coordinates
-                remove_original_images=True,
-                cleanup_linmos=True,
+            task_combine_all_linmos_images.submit(
+                linmos_commands=scan_parset_list,
+                remove_original_images=subtract_field_options.fitscube_remove_original_images,
+                combine_weights=True,
+                time_domain=True,
+                update_fits_cube_options=update_fits_cube_options,
             )
-            scan_parset_list.append(scan_parset)
-
-            if subtract_field_options.stagger_delay_seconds:
-                sleep(subtract_field_options.stagger_delay_seconds)
-
-        # 4 - cube concatenated each linmos field together to single file
-        update_fits_cube_options = get_options_from_strategy(
-            strategy=strategy,
-            mode="fitscube",
-            operation="subtractcube",
-        )
-        task_combine_all_linmos_images.submit(
-            linmos_commands=scan_parset_list,
-            remove_original_images=subtract_field_options.fitscube_remove_original_images,
-            time_domain=True,
-            update_fits_cube_options=update_fits_cube_options,
-        )
-        task_combine_all_linmos_images.submit(
-            linmos_commands=scan_parset_list,
-            remove_original_images=subtract_field_options.fitscube_remove_original_images,
-            combine_weights=True,
-            time_domain=True,
-            update_fits_cube_options=update_fits_cube_options,
-        )
 
     return
 

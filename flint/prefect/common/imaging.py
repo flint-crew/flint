@@ -142,9 +142,13 @@ def task_potato_peel(
 
 
 @task
-def task_flag_ms_aoflagger(ms: FlagMS, container: Path) -> FlagMS:
+def task_flag_ms_aoflagger(ms: FlagMS, container: Path | None) -> FlagMS:
     # Pirate believes the type ignore below is due to the decorated function and type alias
     extracted_ms = MS.cast(ms=ms)  # type: ignore
+
+    if container is None:
+        logger.warning("AOFlagger {container=}, so skipping the flagging")
+        return ms
 
     extracted_ms = flag_ms_aoflagger(ms=extracted_ms, container=container)
 

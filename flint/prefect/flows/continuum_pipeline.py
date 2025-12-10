@@ -55,7 +55,10 @@ from flint.prefect.common.imaging import (
     task_zip_ms,
     validation_items,
 )
-from flint.prefect.common.ms import task_add_model_source_list_to_ms
+from flint.prefect.common.ms import (
+    task_add_model_source_list_to_ms,
+    task_jolly_roger_tractor,
+)
 from flint.prefect.common.utils import (
     task_archive_sbid,
     task_create_beam_summary,
@@ -193,9 +196,10 @@ def process_science_fields(
             casa_container=field_options.casa_container,
             output_directory=output_split_science_path,
         )
-        preprocess_science_mss = task_flag_ms_aoflagger.map(  # type: ignore
-            ms=preprocess_science_mss, container=field_options.flagger_container
-        )
+        if field_options.flagger_container is not None:
+            preprocess_science_mss = task_flag_ms_aoflagger.map(  # type: ignore
+                ms=preprocess_science_mss, container=field_options.flagger_container
+            )
     else:
         # TODO: This will likely need to be expanded should any
         # other calibration strategies get added
@@ -228,9 +232,11 @@ def process_science_fields(
             solutions_file=solutions_paths,
             container=field_options.calibrate_container,
         )
-        flagged_mss = task_flag_ms_aoflagger.map(
-            ms=apply_solutions_cmds, container=field_options.flagger_container
-        )
+
+        if field_options.flagger_container is not None:
+            flagged_mss = task_flag_ms_aoflagger.map(
+                ms=apply_solutions_cmds, container=field_options.flagger_container
+            )
         column_rename_mss = task_rename_column_in_ms.map(
             ms=flagged_mss,
             original_column_name=unmapped("DATA"),
@@ -248,13 +254,6 @@ def process_science_fields(
             f"No imaging will be performed, as requested by {field_options.no_imaging=}"
         )
         return
-
-    field_summary = task_create_field_summary.submit(
-        mss=preprocess_science_mss,
-        cal_sbid_path=bandpass_path,
-        holography_path=field_options.holofile,
-    )  # type: ignore
-    logger.info(f"{field_summary=}")
 
     if field_options.wsclean_container is None:
         logger.info("No wsclean container provided. Returning. ")
@@ -276,6 +275,29 @@ def process_science_fields(
             update_potato_peel_options=unmapped(potato_peel_options),
         )
 
+    if field_options.use_jolly_tukey_tractor:
+        # TODO: Need to consider expanding the task below to
+        # handle MS column?
+        tukey_tractor_options = get_options_from_strategy(
+            strategy=strategy, mode="tukeytractor", round_info=0, operation="selfcal"
+        )
+        preprocess_science_mss = task_jolly_roger_tractor.map(
+            ms=preprocess_science_mss,
+            update_tukey_tractor_options=unmapped(tukey_tractor_options),
+        )
+
+    # Some preprocessing stages (temporarily) modify the MS name.
+    # Run the field summary here to avoid attemptign to read at
+    # poor timem when MS is renamed, ya see dog
+    field_summary = task_create_field_summary.submit(
+        mss=preprocess_science_mss,
+        cal_sbid_path=bandpass_path,
+        holography_path=field_options.holofile,
+    )  # type: ignore
+    logger.info(f"{field_summary=}")
+
+    # The stokes-v mss are updated throughout the self-calibration loop
+    # as the file names change
     stokes_v_mss = preprocess_science_mss
     wsclean_results = task_wsclean_imager.map(
         in_ms=preprocess_science_mss,
@@ -539,9 +561,11 @@ def process_science_fields(
 
     # zip up the final measurement set, which is not included in the above loop
     if field_options.zip_ms:
-        archive_wait_for = task_zip_ms.map(
-            in_item=wsclean_results, wait_for=archive_wait_for
+        archive_results = task_zip_ms.map(
+            in_item=wsclean_results,
+            wait_for=wsclean_results,  # can zip MS once all imaging done
         )
+        archive_wait_for.extend(archive_results)
 
     if field_options.sbid_archive_path or field_options.sbid_copy_path:
         update_archive_options = get_options_from_strategy(

@@ -110,9 +110,13 @@ def critical_ms_interaction(
     # If we get to here, things worked successfully, and we
     # should return things back to normal.
     if copy:
+        logger.info(
+            f"Exiting critical section. Removing original file and renaming modified ersion to {input_ms=}"
+        )
         shutil.rmtree(input_ms)
         output_ms.rename(input_ms)
     else:
+        logger.info(f"Exiting critical section. Renaming back to {input_ms=}")
         output_ms.rename(target=input_ms)
 
 
