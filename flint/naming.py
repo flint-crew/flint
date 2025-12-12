@@ -455,14 +455,16 @@ class SuffixSpec(BaseOptions):
     """Indicates whether a cube is present"""
 
 
-def get_string_for_suffix(suffix_spec: SuffixSpec) -> str:
-    """Converts the suffix specification provided to a flat string.
+def get_string_for_suffix(
+    suffix_spec: SuffixSpec | ProcessedNameComponents,
+) -> str | None:
+    """Construct a string that represents any known suffix fields
 
     Args:
-        suffix_spec (SuffixSpec): Specification of suffixes to add
+        suffix_spec (SuffixSpec | ProcessedNameComponents): Container with known fields to consider
 
     Returns:
-        str: string to add that represents the suffix state
+        str | None: If at least one field was active, their string representation is returned. ``None`` otherwise.
     """
     fields = []
     if suffix_spec.contsub:
@@ -472,10 +474,22 @@ def get_string_for_suffix(suffix_spec: SuffixSpec) -> str:
     if suffix_spec.cube:
         fields.append("cube")
 
+    if len(fields) == 0:
+        return None
+
     return ".".join(fields)
 
 
 def extract_suffix_fields(in_name: Path | str) -> SuffixSpec:
+    """Determine if any known suffixes are present in the input
+    naming
+
+    Args:
+        in_name (Path | str): The string or file path to examine. If a Path then the filename is examined.
+
+    Returns:
+        SuffixSpec: Indication of which known suffix labels are present
+    """
     in_name = in_name.name if isinstance(in_name, Path) else in_name
     logger.debug(f"Extracting fields for {in_name=}")
 
@@ -524,6 +538,12 @@ class ProcessedNameComponents(NamedTuple):
     """The channel range encoded in a file name. Generally are zero-padded, and are two fields of the form ch1234-1235, where the upper bound is exclusive. Defaults to None."""
     scan_range: tuple[int, int] | None = None
     """The scane range encoded in a file name. Generally are zero-padded and are two fields of the form scan1234-1235, where the epper bound is exclusive. Defaults to None."""
+    contsub: bool = False
+    """A potential suffix field indicating whether continuum subtraction has been performed"""
+    cont: bool = False
+    """A potential suffix field indicating whether the continuum is present"""
+    cube: bool = False
+    """A potential suffix field indicating whether a cube is present"""
 
 
 def processed_ms_format(
@@ -570,6 +590,8 @@ def processed_ms_format(
         (int(groups["scanl"]), int(groups["scanh"])) if groups["scanl"] else None
     )
 
+    suffix_spec = extract_suffix_fields(in_name=in_name)
+
     return ProcessedNameComponents(
         sbid=groups["sbid"],
         field=groups["field"],
@@ -579,6 +601,9 @@ def processed_ms_format(
         pol=groups["pol"],
         channel_range=channel_range,
         scan_range=scan_range,
+        contsub=suffix_spec.contsub,
+        cont=suffix_spec.cont,
+        cube=suffix_spec.cube,
     )
 
 
@@ -618,6 +643,10 @@ def create_path_from_processed_name_components(
         components.append(
             f"scan{processed_name_components.scan_range[0]:04d}-{processed_name_components.scan_range[1]:04d}"
         )
+
+    suffix_str = get_string_for_suffix(suffix_spec=processed_name_components)
+    if suffix_str is not None:
+        components.append(suffix_str)
 
     # Join then add the parent path
     name = ".".join(components)

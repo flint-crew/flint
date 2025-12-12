@@ -1124,6 +1124,12 @@ def test_get_string_for_suffix() -> None:
     assert "cont.cube" == get_string_for_suffix(suffix_spec=suffix_spec)
 
 
+def test_get_string_for_suffix_empty() -> None:
+    """Ensures that None is returned when no fields are  empty"""
+    suffix_spec = SuffixSpec()
+    assert get_string_for_suffix(suffix_spec=suffix_spec) is None
+
+
 def test_extract_suffix_fields() -> None:
     """See whether the suffix field regex behaves well in capturing the
     presence of certain suffix strings"""
