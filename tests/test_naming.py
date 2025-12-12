@@ -201,6 +201,25 @@ def test_create_path_from_processed_name_components_with_suffix() -> None:
     )
     assert out1 == ex
 
+    components = ProcessedNameComponents(
+        sbid="39400",
+        field="RACS_0000-123",
+        beam="33",
+        spw=234,
+        round="3",
+        pol="i",
+        channel_range=(123, 567),
+        cont=True,
+        cube=False,
+    )
+    assert isinstance(components, ProcessedNameComponents)
+
+    ex = Path("SB39400.RACS_0000-123.beam33.spw234.round3.i.ch0123-0567.cont")
+    out1 = create_path_from_processed_name_components(
+        processed_name_components=components
+    )
+    assert out1 == ex
+
 
 def test_processed_name_components_with_scan():
     """See if the scan regex for the processed name behaves"""
