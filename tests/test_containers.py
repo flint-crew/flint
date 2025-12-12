@@ -65,24 +65,18 @@ def test_log_containers():
     log_known_containers()
 
 
-@pytest.mark.slow
-@pytest.mark.require_singularity
 def test_download_flint_containers(flint_containers) -> None:
     """Start the download of the flint containers"""
     assert isinstance(flint_containers, Path)
     assert flint_containers.exists()
 
 
-@pytest.mark.slow
-@pytest.mark.require_singularity
 def test_verify_containers_with_containers(flint_containers):
     """Make sure the actual containers downloaded register as correct. This
     uses the download fixture"""
     assert verify_known_containers(container_directory=flint_containers)
 
 
-@pytest.mark.slow
-@pytest.mark.require_singularity
 def test_get_known_container_path(flint_containers):
     """Get the to a known container"""
     casa_container = get_known_container_path(
