@@ -447,6 +447,7 @@ def raw_ms_format(in_name: str) -> None | RawNameComponents:
 class SuffixSpec(BaseOptions):
     """Simple container to hole flags to include additional suffixes"""
 
+    # TODO: These should be made available to the ProcessedNameComponents as well
     contsub: bool = False
     """Indicates whether continuum subtraction has been performed"""
     cont: bool = False
@@ -518,7 +519,7 @@ def extract_suffix_fields(in_name: Path | str) -> SuffixSpec:
     )
 
 
-class ProcessedNameComponents(NamedTuple):
+class ProcessedNameComponents(BaseOptions):
     """Container for a file name derived from a MS flint name. Generally of the
     form: SB.Field.Beam.Spw"""
 
@@ -528,7 +529,7 @@ class ProcessedNameComponents(NamedTuple):
     """The name of the field extracted"""
     beam: str | None = None
     """The beam of the observation processed"""
-    spw: str | None = None
+    spw: str | int | None = None
     """The SPW of the observation. If there is only one spw this is None."""
     round: str | None = None
     """The self-calibration round detected. This might be represented as 'noselfcal' in some image products, e.g. linmos. """
