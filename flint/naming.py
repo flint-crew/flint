@@ -609,13 +609,16 @@ def processed_ms_format(
 
 
 def create_path_from_processed_name_components(
-    processed_name_components: ProcessedNameComponents, parent_path: Path | None = None
+    processed_name_components: ProcessedNameComponents,
+    parent_path: Path | None = None,
+    suffix_spec: SuffixSpec | None = None,
 ) -> Path:
     """Given an input ProcessedNameComponents create the corresponding path
 
     Args:
         processed_name_components (ProcessedNameComponents): The naming specification to create
         parent_path (Path | None, optional): The parent directory of the output path. Defaults to None.
+        suffix_spec (SuffixSpec | None, optional): Additional suffix field indicators to use. If provided they overwrite any described by ``processed_name_components``. Defaults to None.
 
     Returns:
         Path: A directory with following the specification of the input ProcessedNameComponents
@@ -645,7 +648,11 @@ def create_path_from_processed_name_components(
             f"scan{processed_name_components.scan_range[0]:04d}-{processed_name_components.scan_range[1]:04d}"
         )
 
-    suffix_str = get_string_for_suffix(suffix_spec=processed_name_components)
+    suffix_str = (
+        get_string_for_suffix(suffix_spec=suffix_spec)
+        if suffix_spec is not None
+        else get_string_for_suffix(suffix_spec=processed_name_components)
+    )
     if suffix_str is not None:
         components.append(suffix_str)
 
