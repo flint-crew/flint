@@ -13,6 +13,7 @@ from flint.naming import (
     FITSMaskNames,
     ProcessedNameComponents,
     RawNameComponents,
+    SuffixSpec,
     _rename_linear_to_stokes,
     add_timestamp_to_path,
     casda_ms_format,
@@ -26,12 +27,14 @@ from flint.naming import (
     create_path_from_processed_name_components,
     extract_beam_from_name,
     extract_components_from_name,
+    extract_suffix_fields,
     get_aocalibrate_output_path,
     get_beam_resolution_str,
     get_fits_cube_from_paths,
     get_potato_output_base_path,
     get_sbid_from_path,
     get_selfcal_ms_name,
+    get_string_for_suffix,
     processed_ms_format,
     raw_ms_format,
     rename_linear_to_stokes,
@@ -1110,3 +1113,44 @@ def test_split_images():
 
     with pytest.raises(NamingException):
         split_images(images=images, by="jack")
+
+
+def test_get_string_for_suffix() -> None:
+    """Ensures that the suffix string creation works as expected"""
+    suffix_spec = SuffixSpec(cont=True)
+    assert "cont" == get_string_for_suffix(suffix_spec=suffix_spec)
+
+    suffix_spec = SuffixSpec(cont=True, cube=True)
+    assert "cont.cube" == get_string_for_suffix(suffix_spec=suffix_spec)
+
+
+def test_extract_suffix_fields() -> None:
+    """See whether the suffix field regex behaves well in capturing the
+    presence of certain suffix strings"""
+    ex = ".cont.cube"
+    suffix_spec = extract_suffix_fields(in_name=ex)
+
+    assert suffix_spec.cube
+    assert suffix_spec.cont
+    assert not suffix_spec.contsub
+
+    ex = "these_are.not.fields_mateeee.contsub.cube"
+    suffix_spec = extract_suffix_fields(in_name=ex)
+
+    assert suffix_spec.cube
+    assert not suffix_spec.cont
+    assert suffix_spec.contsub
+
+    ex = "these_are.not.fields_mateeee.cont.cube"
+    suffix_spec = extract_suffix_fields(in_name=ex)
+
+    assert suffix_spec.cube
+    assert suffix_spec.cont
+    assert not suffix_spec.contsub
+
+    ex = ".cube"
+    suffix_spec = extract_suffix_fields(in_name=ex)
+
+    assert suffix_spec.cube
+    assert not suffix_spec.cont
+    assert not suffix_spec.contsub

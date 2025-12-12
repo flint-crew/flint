@@ -11,6 +11,7 @@ from typing import Any, Literal, NamedTuple, TypeVar
 
 from flint.exceptions import NamingException
 from flint.logging import logger
+from flint.options import BaseOptions
 
 PathStr = TypeVar("PathStr", str, Path)
 
@@ -443,6 +444,66 @@ def raw_ms_format(in_name: str) -> None | RawNameComponents:
     )
 
 
+class SuffixSpec(BaseOptions):
+    """Simple container to hole flags to include additional suffixes"""
+
+    contsub: bool = False
+    """Indicates whether continuum subtraction has been performed"""
+    cont: bool = False
+    """Indicates whether the continuum is present"""
+    cube: bool = False
+    """Indicates whether a cube is present"""
+
+
+def get_string_for_suffix(suffix_spec: SuffixSpec) -> str:
+    """Converts the suffix specification provided to a flat string.
+
+    Args:
+        suffix_spec (SuffixSpec): Specification of suffixes to add
+
+    Returns:
+        str: string to add that represents the suffix state
+    """
+    fields = []
+    if suffix_spec.contsub:
+        fields.append("contsub")
+    if suffix_spec.cont:
+        fields.append("cont")
+    if suffix_spec.cube:
+        fields.append("cube")
+
+    return ".".join(fields)
+
+
+def extract_suffix_fields(in_name: Path | str) -> SuffixSpec:
+    in_name = in_name.name if isinstance(in_name, Path) else in_name
+    logger.debug(f"Extracting fields for {in_name=}")
+
+    # The .*? in each group is to accumulate potential junk
+    # outside the fields. Moving the .*? outside the groups
+    # allows all optional groups _not_ to match, as the whole
+    # string would otherwise match first to .*?
+    regex = re.compile(
+        r"((.*?\.(?P<contsub>contsub))?)"
+        r"((.*?\.(?P<cont>cont))?)"
+        r"((.*?\.(?P<cube>cube))?)"
+    )
+
+    results = regex.search(in_name)
+
+    if results is None:
+        logger.debug(f"No suffix fields found results to {in_name=} found")
+        return SuffixSpec()
+
+    groups = results.groupdict()
+
+    return SuffixSpec(
+        contsub=bool(groups["contsub"]),
+        cont=bool(groups["cont"]),
+        cube=bool(groups["cube"]),
+    )
+
+
 class ProcessedNameComponents(NamedTuple):
     """Container for a file name derived from a MS flint name. Generally of the
     form: SB.Field.Beam.Spw"""
@@ -482,7 +543,7 @@ def processed_ms_format(
 
     logger.debug(f"Matching {in_name}")
     # TODO: Should the Beam and field items be relaxed and allowed to be optional?
-    # TODOL At very least I think the beam should become options
+    # TODO: At very least I think the beam should become options
     # A raw string is used to avoid bad unicode escaping
     regex = re.compile(
         r"^SB(?P<sbid>[0-9]+)"
