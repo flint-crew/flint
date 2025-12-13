@@ -75,9 +75,10 @@ def create_name_from_common_fields(
     Only fields that are recognised as a known property are retained. Suffixes that do not
     form a component are ignored. For example:
 
-    >>> "59058/SB59058.RACS_1626-84.ch0287-0288.linmos.fits"
+    >>> "59058/SB59058.RACS_1626-84.ch0287-0288.pirates.fits"
 
-    the `linmos.fits` would be ignored.
+    the `pirates.fits` would be ignored. Should these be needed they can be specified
+    by ``additional_suffixes``.
 
     All ``in_paths`` should be detected, otherwise an ValueError is raised
 
@@ -452,6 +453,10 @@ class SuffixSpec(BaseOptions):
     """Indicates whether continuum subtraction has been performed"""
     cont: bool = False
     """Indicates whether the continuum is present"""
+    linmos: bool = False
+    """A potential suffix field indicating a linmos image"""
+    weight: bool = False
+    """A potential sufficel field indicating a weight image"""
     cube: bool = False
     """Indicates whether a cube is present"""
 
@@ -472,6 +477,10 @@ def get_string_for_suffix(
         fields.append("contsub")
     if suffix_spec.cont:
         fields.append("cont")
+    if suffix_spec.linmos:
+        fields.append("linmos")
+    if suffix_spec.weight:
+        fields.append("weight")
     if suffix_spec.cube:
         fields.append("cube")
 
@@ -501,6 +510,8 @@ def extract_suffix_fields(in_name: Path | str) -> SuffixSpec:
     regex = re.compile(
         r"((.*?\.(?P<contsub>contsub))?)"
         r"((.*?\.(?P<cont>cont))?)"
+        r"((.*?\.(?P<linmos>linmos))?)"
+        r"((.*?\.(?P<weight>weight))?)"
         r"((.*?\.(?P<cube>cube))?)"
     )
 
@@ -515,6 +526,8 @@ def extract_suffix_fields(in_name: Path | str) -> SuffixSpec:
     return SuffixSpec(
         contsub=bool(groups["contsub"]),
         cont=bool(groups["cont"]),
+        linmos=bool(groups["linmos"]),
+        weight=bool(groups["weight"]),
         cube=bool(groups["cube"]),
     )
 
@@ -543,6 +556,10 @@ class ProcessedNameComponents(BaseOptions):
     """A potential suffix field indicating whether continuum subtraction has been performed"""
     cont: bool = False
     """A potential suffix field indicating whether the continuum is present"""
+    linmos: bool = False
+    """A potential suffix field indicating a linmos image"""
+    weight: bool = False
+    """A potential sufficel field indicating a weight image"""
     cube: bool = False
     """A potential suffix field indicating whether a cube is present"""
 
@@ -604,6 +621,8 @@ def processed_ms_format(
         scan_range=scan_range,
         contsub=suffix_spec.contsub,
         cont=suffix_spec.cont,
+        linmos=suffix_spec.linmos,
+        weight=suffix_spec.weight,
         cube=suffix_spec.cube,
     )
 

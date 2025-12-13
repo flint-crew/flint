@@ -884,16 +884,16 @@ def test_get_beam_from_name():
 
 def get_lots_of_names() -> list[Path]:
     examples = [
-        "59058/SB59058.RACS_1626-84.ch0285-0286.linmos.fits",
-        "59058/SB59058.RACS_1626-84.ch0285-0286.linmos.fits",
-        "59058/SB59058.RACS_1626-84.ch0070-0071.linmos.fits",
-        "59058/SB59058.RACS_1626-84.ch0142-0143.linmos.fits",
-        "59058/SB59058.RACS_1626-84.ch0214-0215.linmos.fits",
-        "59058/SB59058.RACS_1626-84.ch0286-0287.linmos.fits",
-        "59058/SB59058.RACS_1626-84.ch0071-0072.linmos.fits",
-        "59058/SB59058.RACS_1626-84.ch0143-0144.linmos.fits",
-        "59058/SB59058.RACS_1626-84.ch0215-0216.linmos.fits",
-        "59058/SB59058.RACS_1626-84.ch0287-0288.linmos.fits",
+        "59058/SB59058.RACS_1626-84.ch0285-0286.linmos.pirates.fits",
+        "59058/SB59058.RACS_1626-84.ch0285-0286.linmos.pirates.fits",
+        "59058/SB59058.RACS_1626-84.ch0070-0071.linmos.pirates.fits",
+        "59058/SB59058.RACS_1626-84.ch0142-0143.linmos.pirates.fits",
+        "59058/SB59058.RACS_1626-84.ch0214-0215.linmos.pirates.fits",
+        "59058/SB59058.RACS_1626-84.ch0286-0287.linmos.pirates.fits",
+        "59058/SB59058.RACS_1626-84.ch0071-0072.linmos.pirates.fits",
+        "59058/SB59058.RACS_1626-84.ch0143-0144.linmos.pirates.fits",
+        "59058/SB59058.RACS_1626-84.ch0215-0216.linmos.pirates.fits",
+        "59058/SB59058.RACS_1626-84.ch0287-0288.linmos.pirates.fits",
     ]
 
     return list(map(Path, examples))
@@ -904,15 +904,15 @@ def test_create_name_from_common_fields():
     examples = get_lots_of_names()
 
     common_names = create_name_from_common_fields(in_paths=examples)
-    expected_common_name = Path("59058/SB59058.RACS_1626-84")
+    expected_common_name = Path("59058/SB59058.RACS_1626-84.linmos")
 
     assert common_names == expected_common_name
 
-    for additional_suffix in (".linmos.fits", "linmos.fits"):
+    for additional_suffix in (".pirates.fits", "pirates.fits"):
         common_names = create_name_from_common_fields(
             in_paths=examples, additional_suffixes=additional_suffix
         )
-        expected_common_name = Path("59058/SB59058.RACS_1626-84.linmos.fits")
+        expected_common_name = Path("59058/SB59058.RACS_1626-84.linmos.pirates.fits")
 
         assert common_names == expected_common_name
 
@@ -924,16 +924,16 @@ def test_create_name_from_common_fields():
 
 def get_lots_of_names_2() -> list[Path]:
     examples = [
-        "59058/SB59058.RACS_1626-84.round4.i.ch0285-0286.linmos.fits",
-        "59058/SB59058.RACS_1626-84.round4.i.ch0285-0286.linmos.fits",
-        "59058/SB59058.RACS_1626-84.round4.i.ch0070-0071.linmos.fits",
-        "59058/SB59058.RACS_1626-84.round4.i.ch0142-0143.linmos.fits",
-        "59058/SB59058.RACS_1626-84.round4.i.ch0214-0215.linmos.fits",
-        "59058/SB59058.RACS_1626-84.round4.i.ch0286-0287.linmos.fits",
-        "59058/SB59058.RACS_1626-84.round4.i.ch0071-0072.linmos.fits",
-        "59058/SB59058.RACS_1626-84.round4.i.ch0143-0144.linmos.fits",
-        "59058/SB59058.RACS_1626-84.round4.i.ch0215-0216.linmos.fits",
-        "59058/SB59058.RACS_1626-84.round4.i.ch0287-0288.linmos.fits",
+        "59058/SB59058.RACS_1626-84.round4.i.ch0285-0286.linmos.pirates.fits",
+        "59058/SB59058.RACS_1626-84.round4.i.ch0285-0286.linmos.pirates.fits",
+        "59058/SB59058.RACS_1626-84.round4.i.ch0070-0071.linmos.pirates.fits",
+        "59058/SB59058.RACS_1626-84.round4.i.ch0142-0143.linmos.pirates.fits",
+        "59058/SB59058.RACS_1626-84.round4.i.ch0214-0215.linmos.pirates.fits",
+        "59058/SB59058.RACS_1626-84.round4.i.ch0286-0287.linmos.pirates.fits",
+        "59058/SB59058.RACS_1626-84.round4.i.ch0071-0072.linmos.pirates.fits",
+        "59058/SB59058.RACS_1626-84.round4.i.ch0143-0144.linmos.pirates.fits",
+        "59058/SB59058.RACS_1626-84.round4.i.ch0215-0216.linmos.pirates.fits",
+        "59058/SB59058.RACS_1626-84.round4.i.ch0287-0288.linmos.pirates.fits",
     ]
 
     return list(map(Path, examples))
@@ -945,15 +945,17 @@ def test_create_name_from_common_fields_2():
     examples = get_lots_of_names_2()
 
     common_names = create_name_from_common_fields(in_paths=examples)
-    expected_common_name = Path("59058/SB59058.RACS_1626-84.round4.i")
+    expected_common_name = Path("59058/SB59058.RACS_1626-84.round4.i.linmos")
 
     assert common_names == expected_common_name
 
-    for additional_suffix in (".linmos.fits", "linmos.fits"):
+    for additional_suffix in (".pirates.fits", "pirates.fits"):
         common_names = create_name_from_common_fields(
             in_paths=examples, additional_suffixes=additional_suffix
         )
-        expected_common_name = Path("59058/SB59058.RACS_1626-84.round4.i.linmos.fits")
+        expected_common_name = Path(
+            "59058/SB59058.RACS_1626-84.round4.i.linmos.pirates.fits"
+        )
 
         assert common_names == expected_common_name
 
@@ -1013,19 +1015,23 @@ def test_create_linmos_parset_base_path():
     This function tests the generation of the path"""
     examples = get_lots_of_names_2()
 
-    expected = Path("59058/SB59058.RACS_1626-84.round4.i").absolute()
+    expected = Path("59058/SB59058.RACS_1626-84.round4.i.linmos").absolute()
     assert expected == create_linmos_base_path(input_images=examples)
 
-    expected = Path("59058/SB59058.RACS_1626-84.round4.i.jack.sparrow").absolute()
+    expected = Path(
+        "59058/SB59058.RACS_1626-84.round4.i.linmos.jack.sparrow"
+    ).absolute()
     assert expected == create_linmos_base_path(
         input_images=examples, additional_suffixes="jack.sparrow"
     )
     new_paths = [Path("/Here/Be/Pirates") / p for p in examples]
-    expected = Path("/Here/Be/Pirates/59058/SB59058.RACS_1626-84.round4.i").absolute()
+    expected = Path(
+        "/Here/Be/Pirates/59058/SB59058.RACS_1626-84.round4.i.linmos"
+    ).absolute()
     assert expected == create_linmos_base_path(input_images=new_paths)
 
     expected = Path(
-        "/Here/Be/Pirates/59058/SB59058.RACS_1626-84.round4.i.jack.sparrow"
+        "/Here/Be/Pirates/59058/SB59058.RACS_1626-84.round4.i.linmos.jack.sparrow"
     ).absolute()
     assert expected == create_linmos_base_path(
         input_images=new_paths, additional_suffixes="jack.sparrow"
@@ -1200,5 +1206,13 @@ def test_extract_suffix_fields() -> None:
     suffix_spec = extract_suffix_fields(in_name=ex)
 
     assert suffix_spec.cube
+    assert not suffix_spec.cont
+    assert not suffix_spec.contsub
+
+    ex = ".linmos.cube"
+    suffix_spec = extract_suffix_fields(in_name=ex)
+
+    assert suffix_spec.cube
+    assert suffix_spec.linmos
     assert not suffix_spec.cont
     assert not suffix_spec.contsub
