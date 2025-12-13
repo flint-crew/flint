@@ -453,10 +453,14 @@ class SuffixSpec(BaseOptions):
     """Indicates whether continuum subtraction has been performed"""
     cont: bool = False
     """Indicates whether the continuum is present"""
+    time: bool = False
+    """Indaicates whether the output data product has a time axis"""
+    freq: bool = False
+    """Indicates whether the output data product has a freq axis"""
     linmos: bool = False
-    """A potential suffix field indicating a linmos image"""
+    """Indicates a linmos image"""
     weight: bool = False
-    """A potential sufficel field indicating a weight image"""
+    """Indicates a weight image"""
     cube: bool = False
     """Indicates whether a cube is present"""
 
@@ -479,6 +483,10 @@ def get_string_for_suffix(
         fields.append("cont")
     if suffix_spec.linmos:
         fields.append("linmos")
+    if suffix_spec.time:
+        fields.append("time")
+    if suffix_spec.freq:
+        fields.append("freq")
     if suffix_spec.weight:
         fields.append("weight")
     if suffix_spec.cube:
@@ -510,6 +518,8 @@ def extract_suffix_fields(in_name: Path | str) -> SuffixSpec:
     regex = re.compile(
         r"((.*?\.(?P<contsub>contsub))?)"
         r"((.*?\.(?P<cont>cont))?)"
+        r"((.*?\.(?P<time>time))?)"
+        r"((.*?\.(?P<freq>freq))?)"
         r"((.*?\.(?P<linmos>linmos))?)"
         r"((.*?\.(?P<weight>weight))?)"
         r"((.*?\.(?P<cube>cube))?)"
@@ -526,6 +536,8 @@ def extract_suffix_fields(in_name: Path | str) -> SuffixSpec:
     return SuffixSpec(
         contsub=bool(groups["contsub"]),
         cont=bool(groups["cont"]),
+        time=bool(groups["time"]),
+        freq=bool(groups["freq"]),
         linmos=bool(groups["linmos"]),
         weight=bool(groups["weight"]),
         cube=bool(groups["cube"]),
@@ -556,6 +568,10 @@ class ProcessedNameComponents(BaseOptions):
     """A potential suffix field indicating whether continuum subtraction has been performed"""
     cont: bool = False
     """A potential suffix field indicating whether the continuum is present"""
+    time: bool = False
+    """A potential suffix field Indaicating whether the output data product has a time axis"""
+    freq: bool = False
+    """A potential suffiic field indicating whether the output data product has a freq axis"""
     linmos: bool = False
     """A potential suffix field indicating a linmos image"""
     weight: bool = False
@@ -621,6 +637,8 @@ def processed_ms_format(
         scan_range=scan_range,
         contsub=suffix_spec.contsub,
         cont=suffix_spec.cont,
+        time=suffix_spec.time,
+        freq=suffix_spec.freq,
         linmos=suffix_spec.linmos,
         weight=suffix_spec.weight,
         cube=suffix_spec.cube,
