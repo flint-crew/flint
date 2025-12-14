@@ -7,7 +7,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal, NamedTuple, TypeVar
+from typing import Any, Literal, NamedTuple, TypeVar, get_args
 
 from flint.exceptions import NamingException
 from flint.logging import logger
@@ -134,6 +134,7 @@ def create_image_cube_name(
     image_prefix: Path,
     mode: str | list[str] | None = None,
     suffix: str | list[str] | None = None,
+    suffix_spec: SuffixSpec | None = None,
 ) -> Path:
     """Create a consistent naming scheme when combining images into cube images. Intended to
     be used when combining many subband images together into a single cube.
@@ -154,6 +155,9 @@ def create_image_cube_name(
     Returns:
         Path: The final path and file name
     """
+    if suffix_spec is not None:
+        suffix_spec = suffix_spec.with_options(cube=True)
+
     # NOTE: This is likely a function to grow in time as more imaging and pipeline modes added. Putting
     # it here for future proofing
     output_cube_name = f"{Path(image_prefix)!s}.{mode}.{suffix}"
@@ -463,6 +467,48 @@ class SuffixSpec(BaseOptions):
     """Indicates a weight image"""
     cube: bool = False
     """Indicates whether a cube is present"""
+
+
+SuffixSpecMergeModes = Literal["or", "and"]
+
+
+def merge_suffix_spec(
+    spec_1: SuffixSpec, spec_2: SuffixSpec, how: SuffixSpecMergeModes
+) -> SuffixSpec:
+    """Merge different instances of the suffix representation together. Supported modes are
+    ``or`` and ``and``
+
+    Args:
+        spec_1 (SuffixSpec): The first set of suffix field values
+        spec_2 (SuffixSpec): The second set of suffix field values
+        how (SuffixSpecMergeModes): How to join, either ``or`` or ``and``.
+
+    Raises:
+        ValueError: Unrecognised `how=`` specification
+
+    Returns:
+        SuffixSpec: Merged suffix field indicators
+    """
+    # Ensure the mode is recognised
+    _modes = get_args(SuffixSpecMergeModes)
+    if how not in _modes:
+        msg = f"{how=} not in known merge {_modes=}"
+        raise ValueError(msg)
+
+    # Get to dictionaries and do some basic, potentially unnecessary, checking. There be pirates.
+    dict_1 = spec_1._asdict()
+    dict_2 = spec_2._asdict()
+
+    assert len(set(dict_1.keys()) - set(dict_2.keys())) == 0, "Mismatch in key lengths"
+
+    # While keys are all booleans this will be acceptable
+    out_spec = (
+        {k: dict_1[k] or dict_2[k] for k in dict_1.keys()}
+        if how == "or"
+        else {k: dict_1[k] and dict_2[k] for k in dict_1.keys()}
+    )
+
+    return SuffixSpec(**out_spec)
 
 
 def get_string_for_suffix(
