@@ -191,8 +191,7 @@ def test_create_path_from_processed_name_components_with_suffix() -> None:
         round="3",
         pol="i",
         channel_range=(123, 567),
-        contsub=True,
-        cube=True,
+        suffix_spec=SuffixSpec(contsub=True, cube=True),
     )
     assert isinstance(components, ProcessedNameComponents)
 
@@ -210,8 +209,7 @@ def test_create_path_from_processed_name_components_with_suffix() -> None:
         round="3",
         pol="i",
         channel_range=(123, 567),
-        cont=True,
-        cube=False,
+        suffix_spec=SuffixSpec(cont=True, cube=False),
     )
     assert isinstance(components, ProcessedNameComponents)
 
@@ -1031,7 +1029,7 @@ def test_create_name_from_common_fields_3():
 
     common_name = create_name_from_common_fields(in_paths=files)
     assert common_name == PosixPath(
-        "/scratch3/gal16b/spectral_flow/57516/SB57516.RACS_0929-81.round4.i.ch0238-0239"
+        "/scratch3/gal16b/spectral_flow/57516/SB57516.RACS_0929-81.round4.i.ch0238-0239.image"
     )
 
 

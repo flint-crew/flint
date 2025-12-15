@@ -534,8 +534,11 @@ def get_string_for_suffix(
     fields = []
 
     if isinstance(suffix_spec, ProcessedNameComponents):
-        suffix_spec = suffix_spec.suffix_spec
-        logger.info(f"WHATTT{suffix_spec=}")
+        suffix_spec = (
+            suffix_spec.suffix_spec
+            if suffix_spec.suffix_spec is not None
+            else SuffixSpec()
+        )
 
     suffix_spec_dict = suffix_spec._asdict()
 
@@ -618,34 +621,8 @@ class ProcessedNameComponents(BaseOptions):
     """The channel range encoded in a file name. Generally are zero-padded, and are two fields of the form ch1234-1235, where the upper bound is exclusive. Defaults to None."""
     scan_range: tuple[int, int] | None = None
     """The scane range encoded in a file name. Generally are zero-padded and are two fields of the form scan1234-1235, where the epper bound is exclusive. Defaults to None."""
-    image: bool = False
-    """A potential suffix field indicating data product is an image"""
-    residual: bool = False
-    """A potential suffix field indicating data product is a residual (image)"""
-    contsub: bool = False
-    """A potential suffix field indicating whether continuum subtraction has been performed"""
-    cont: bool = False
-    """A potential suffix field indicating whether the continuum is present"""
-    time: bool = False
-    """A potential suffix field Indaicating whether the output data product has a time axis"""
-    freq: bool = False
-    """A potential suffiic field indicating whether the output data product has a freq axis"""
-    linmos: bool = False
-    """A potential suffix field indicating a linmos image"""
-    weight: bool = False
-    """A potential sufficel field indicating a weight image"""
-    cube: bool = False
-    """A potential suffix field indicating whether a cube is present"""
-
-    @property
-    def suffix_spec(self) -> SuffixSpec:
-        """Extract a SuffixSpec instance from the tracked fields"""
-        dummy_suffix_spec = SuffixSpec()._asdict()
-        pnc_dict = self._asdict()
-
-        out_dict = {k: v for k, v in pnc_dict.items() if k in dummy_suffix_spec}
-
-        return SuffixSpec(**out_dict)
+    suffix_spec: SuffixSpec | None = None
+    """Specification of suffix terms to use. These are generally 'there' (True) or 'not there' (False)"""
 
 
 def processed_ms_format(
@@ -703,13 +680,7 @@ def processed_ms_format(
         pol=groups["pol"],
         channel_range=channel_range,
         scan_range=scan_range,
-        contsub=suffix_spec.contsub,
-        cont=suffix_spec.cont,
-        time=suffix_spec.time,
-        freq=suffix_spec.freq,
-        linmos=suffix_spec.linmos,
-        weight=suffix_spec.weight,
-        cube=suffix_spec.cube,
+        suffix_spec=suffix_spec,
     )
 
 
