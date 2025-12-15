@@ -27,7 +27,6 @@ from flint.naming import (
     create_path_from_processed_name_components,
     extract_beam_from_name,
     extract_components_from_name,
-    extract_suffix_fields,
     get_aocalibrate_output_path,
     get_beam_resolution_str,
     get_fits_cube_from_paths,
@@ -35,7 +34,6 @@ from flint.naming import (
     get_sbid_from_path,
     get_selfcal_ms_name,
     get_string_for_suffix,
-    merge_suffix_spec,
     processed_ms_format,
     raw_ms_format,
     rename_linear_to_stokes,
@@ -1199,106 +1197,3 @@ def test_get_string_for_suffix_empty() -> None:
     """Ensures that None is returned when no fields are  empty"""
     suffix_spec = SuffixSpec()
     assert get_string_for_suffix(suffix_spec=suffix_spec) is None
-
-
-def test_extract_suffix_fields() -> None:
-    """See whether the suffix field regex behaves well in capturing the
-    presence of certain suffix strings"""
-    ex = ".cont.cube"
-    suffix_spec = extract_suffix_fields(in_name=ex)
-
-    assert suffix_spec.cube
-    assert suffix_spec.cont
-    assert not suffix_spec.contsub
-
-    ex = "these_are.not.fields_mateeee.contsub.cube"
-    suffix_spec = extract_suffix_fields(in_name=ex)
-
-    assert suffix_spec.cube
-    assert not suffix_spec.cont
-    assert suffix_spec.contsub
-
-    ex = "these_are.not.fields_mateeee.cont.cube"
-    suffix_spec = extract_suffix_fields(in_name=ex)
-
-    assert suffix_spec.cube
-    assert suffix_spec.cont
-    assert not suffix_spec.contsub
-
-    ex = ".cube"
-    suffix_spec = extract_suffix_fields(in_name=ex)
-
-    assert suffix_spec.cube
-    assert not suffix_spec.cont
-    assert not suffix_spec.contsub
-
-    ex = ".linmos.cube"
-    suffix_spec = extract_suffix_fields(in_name=ex)
-
-    assert suffix_spec.cube
-    assert suffix_spec.linmos
-    assert not suffix_spec.cont
-    assert not suffix_spec.contsub
-
-
-def test_merge_suffix_spec_with_or() -> None:
-    """Merge suffix spec instances together using the or method"""
-    spec_1 = SuffixSpec(cube=True)
-    spec_2 = SuffixSpec(linmos=True)
-
-    outspec = merge_suffix_spec(spec_1=spec_1, spec_2=spec_2, how="or")
-    assert outspec.cube
-    assert outspec.linmos
-    assert not outspec.contsub
-    assert not outspec.cont
-
-    # by default all fields are False
-    spec_1 = SuffixSpec()
-    spec_2 = SuffixSpec()
-
-    outspec = merge_suffix_spec(spec_1=spec_1, spec_2=spec_2, how="or")
-    assert not outspec.cube
-    assert not outspec.linmos
-    assert not outspec.contsub
-    assert not outspec.cont
-
-
-def test_merge_suffix_spec_with_and() -> None:
-    """Merge suffix spec instances together using the and method"""
-    spec_1 = SuffixSpec(cube=True)
-    spec_2 = SuffixSpec(linmos=True)
-
-    outspec = merge_suffix_spec(spec_1=spec_1, spec_2=spec_2, how="and")
-    assert not outspec.cube
-    assert not outspec.linmos
-    assert not outspec.contsub
-    assert not outspec.cont
-
-    # by default all fields are False
-    spec_1 = SuffixSpec()
-    spec_2 = SuffixSpec()
-
-    outspec = merge_suffix_spec(spec_1=spec_1, spec_2=spec_2, how="and")
-    assert not outspec.cube
-    assert not outspec.linmos
-    assert not outspec.contsub
-    assert not outspec.cont
-
-    # Now make the and op work
-    spec_1 = SuffixSpec(linmos=True, cube=True)
-    spec_2 = SuffixSpec(linmos=True, cube=True)
-
-    outspec = merge_suffix_spec(spec_1=spec_1, spec_2=spec_2, how="and")
-    assert outspec.cube
-    assert outspec.linmos
-    assert not outspec.contsub
-    assert not outspec.cont
-
-
-def test_merge_suffix_spec_unknown_mode() -> None:
-    """Raise ValueError when how is not recognised"""
-    spec_1 = SuffixSpec(cube=True)
-    spec_2 = SuffixSpec(linmos=True)
-
-    with pytest.raises(ValueError):
-        merge_suffix_spec(spec_1=spec_1, spec_2=spec_2, how="jack")  # type: ignore

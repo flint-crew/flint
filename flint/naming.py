@@ -156,11 +156,6 @@ def create_image_cube_name(
         Path: The final path and file name
     """
     if suffix_spec is not None:
-        suffix_spec = merge_suffix_spec(
-            spec_1=suffix_spec.with_options(cube=True),
-            spec_2=extract_suffix_fields(in_name=image_prefix),
-            how="or",
-        )
         output_cube_name = create_path_from_processed_name_components(
             processed_name_components=image_prefix.name,
             parent_path=image_prefix.parent,
@@ -543,7 +538,6 @@ def get_string_for_suffix(
     suffix_spec_dict = suffix_spec._asdict()
 
     fields = [k for k in suffix_spec_dict if suffix_spec_dict[k]]
-    logger.info(f"WHAT {fields=}")
 
     if len(fields) == 0:
         return None
@@ -551,57 +545,7 @@ def get_string_for_suffix(
     return ".".join(fields)
 
 
-def extract_suffix_fields(in_name: Path | str) -> SuffixSpec:
-    """Determine if any known suffixes are present in the input
-    naming
-
-    Args:
-        in_name (Path | str): The string or file path to examine. If a Path then the filename is examined.
-
-    Returns:
-        SuffixSpec: Indication of which known suffix labels are present
-    """
-    in_name = in_name.name if isinstance(in_name, Path) else in_name
-    logger.debug(f"Extracting fields for {in_name=}")
-
-    # The .*? in each group is to accumulate potential junk
-    # outside the fields. Moving the .*? outside the groups
-    # allows all optional groups _not_ to match, as the whole
-    # string would otherwise match first to .*?
-    regex = re.compile(
-        r"((.*?\.(?P<image>image))?)"
-        r"((.*?\.(?P<residual>residual))?)"
-        r"((.*?\.(?P<contsub>contsub))?)"
-        r"((.*?\.(?P<cont>cont))?)"
-        r"((.*?\.(?P<time>time))?)"
-        r"((.*?\.(?P<freq>freq))?)"
-        r"((.*?\.(?P<linmos>linmos))?)"
-        r"((.*?\.(?P<weight>weight))?)"
-        r"((.*?\.(?P<cube>cube))?)"
-    )
-
-    results = regex.search(in_name)
-
-    if results is None:
-        logger.debug(f"No suffix fields found results to {in_name=} found")
-        return SuffixSpec()
-
-    groups = results.groupdict()
-
-    return SuffixSpec(
-        image=bool(groups["image"]),
-        residual=bool(groups["residual"]),
-        contsub=bool(groups["contsub"]),
-        cont=bool(groups["cont"]),
-        time=bool(groups["time"]),
-        freq=bool(groups["freq"]),
-        linmos=bool(groups["linmos"]),
-        weight=bool(groups["weight"]),
-        cube=bool(groups["cube"]),
-    )
-
-
-class ProcessedNameComponents(BaseOptions):
+class ProcessedNameComponents(SuffixSpec):
     """Container for a file name derived from a MS flint name. Generally of the
     form: SB.Field.Beam.Spw"""
 
@@ -621,8 +565,6 @@ class ProcessedNameComponents(BaseOptions):
     """The channel range encoded in a file name. Generally are zero-padded, and are two fields of the form ch1234-1235, where the upper bound is exclusive. Defaults to None."""
     scan_range: tuple[int, int] | None = None
     """The scane range encoded in a file name. Generally are zero-padded and are two fields of the form scan1234-1235, where the epper bound is exclusive. Defaults to None."""
-    suffix_spec: SuffixSpec | None = None
-    """Specification of suffix terms to use. These are generally 'there' (True) or 'not there' (False)"""
 
 
 def processed_ms_format(
@@ -653,6 +595,15 @@ def processed_ms_format(
         r"((\.(?P<pol>(i|q|u|v|xx|yy|xy|yx)+))?)"
         r"((\.ch(?P<chl>([0-9]+))-(?P<chh>([0-9]+)))?)"
         r"((\.scan(?P<scanl>([0-9]+))-(?P<scanh>([0-9]+)))?)"
+        r"((.\.(?P<image>image))?)"
+        r"((.\.(?P<residual>residual))?)"
+        r"((.\.(?P<contsub>contsub))?)"
+        r"((.\.(?P<cont>cont))?)"
+        r"((.\.(?P<time>time))?)"
+        r"((.\.(?P<freq>freq))?)"
+        r"((.\.(?P<linmos>linmos))?)"
+        r"((.\.(?P<weight>weight))?)"
+        r"((.\.(?P<cube>cube))?)"
     )
     results = regex.match(in_name)
 
@@ -669,8 +620,6 @@ def processed_ms_format(
         (int(groups["scanl"]), int(groups["scanh"])) if groups["scanl"] else None
     )
 
-    suffix_spec = extract_suffix_fields(in_name=in_name)
-
     return ProcessedNameComponents(
         sbid=groups["sbid"],
         field=groups["field"],
@@ -680,7 +629,15 @@ def processed_ms_format(
         pol=groups["pol"],
         channel_range=channel_range,
         scan_range=scan_range,
-        suffix_spec=suffix_spec,
+        image=bool(groups["image"]),
+        residual=bool(groups["residual"]),
+        contsub=bool(groups["contsub"]),
+        cont=bool(groups["cont"]),
+        time=bool(groups["time"]),
+        freq=bool(groups["freq"]),
+        linmos=bool(groups["linmos"]),
+        weight=bool(groups["weight"]),
+        cube=bool(groups["cube"]),
     )
 
 
