@@ -156,11 +156,17 @@ def create_image_cube_name(
         Path: The final path and file name
     """
     if suffix_spec is not None:
-        suffix_spec = suffix_spec.with_options(cube=True)
-
-    # NOTE: This is likely a function to grow in time as more imaging and pipeline modes added. Putting
-    # it here for future proofing
-    output_cube_name = f"{Path(image_prefix)!s}.{mode}.{suffix}"
+        suffix_spec = merge_suffix_spec(
+            spec_1=suffix_spec.with_options(cube=True),
+            spec_2=extract_suffix_fields(in_name=image_prefix),
+            how="or",
+        )
+        output_cube_name = create_path_from_processed_name_components(
+            processed_name_components=image_prefix.name,
+            parent_path=image_prefix.parent,
+            suffix_spec=suffix_spec,
+        )
+        return Path(f"{output_cube_name}.fits")
 
     output_components = [str(Path(image_prefix))]
     if mode:
@@ -182,8 +188,7 @@ def create_image_cube_name(
 
     output_components.append("cube.fits")
 
-    output_cube_name = ".".join(output_components)
-    return Path(output_cube_name)
+    return Path(".".join(output_components))
 
 
 def create_imaging_name_prefix(
@@ -453,6 +458,10 @@ class SuffixSpec(BaseOptions):
     """Simple container to hole flags to include additional suffixes"""
 
     # TODO: These should be made available to the ProcessedNameComponents as well
+    image: bool = False
+    """Indicates whether the data product is an image"""
+    residual: bool = False
+    """Indicates whether the data product is a residual"""
     contsub: bool = False
     """Indicates whether continuum subtraction has been performed"""
     cont: bool = False
@@ -523,20 +532,15 @@ def get_string_for_suffix(
         str | None: If at least one field was active, their string representation is returned. ``None`` otherwise.
     """
     fields = []
-    if suffix_spec.contsub:
-        fields.append("contsub")
-    if suffix_spec.cont:
-        fields.append("cont")
-    if suffix_spec.linmos:
-        fields.append("linmos")
-    if suffix_spec.time:
-        fields.append("time")
-    if suffix_spec.freq:
-        fields.append("freq")
-    if suffix_spec.weight:
-        fields.append("weight")
-    if suffix_spec.cube:
-        fields.append("cube")
+
+    if isinstance(suffix_spec, ProcessedNameComponents):
+        suffix_spec = suffix_spec.suffix_spec
+        logger.info(f"WHATTT{suffix_spec=}")
+
+    suffix_spec_dict = suffix_spec._asdict()
+
+    fields = [k for k in suffix_spec_dict if suffix_spec_dict[k]]
+    logger.info(f"WHAT {fields=}")
 
     if len(fields) == 0:
         return None
@@ -562,6 +566,8 @@ def extract_suffix_fields(in_name: Path | str) -> SuffixSpec:
     # allows all optional groups _not_ to match, as the whole
     # string would otherwise match first to .*?
     regex = re.compile(
+        r"((.*?\.(?P<image>image))?)"
+        r"((.*?\.(?P<residual>residual))?)"
         r"((.*?\.(?P<contsub>contsub))?)"
         r"((.*?\.(?P<cont>cont))?)"
         r"((.*?\.(?P<time>time))?)"
@@ -580,6 +586,8 @@ def extract_suffix_fields(in_name: Path | str) -> SuffixSpec:
     groups = results.groupdict()
 
     return SuffixSpec(
+        image=bool(groups["image"]),
+        residual=bool(groups["residual"]),
         contsub=bool(groups["contsub"]),
         cont=bool(groups["cont"]),
         time=bool(groups["time"]),
@@ -610,6 +618,10 @@ class ProcessedNameComponents(BaseOptions):
     """The channel range encoded in a file name. Generally are zero-padded, and are two fields of the form ch1234-1235, where the upper bound is exclusive. Defaults to None."""
     scan_range: tuple[int, int] | None = None
     """The scane range encoded in a file name. Generally are zero-padded and are two fields of the form scan1234-1235, where the epper bound is exclusive. Defaults to None."""
+    image: bool = False
+    """A potential suffix field indicating data product is an image"""
+    residual: bool = False
+    """A potential suffix field indicating data product is a residual (image)"""
     contsub: bool = False
     """A potential suffix field indicating whether continuum subtraction has been performed"""
     cont: bool = False
@@ -624,6 +636,16 @@ class ProcessedNameComponents(BaseOptions):
     """A potential sufficel field indicating a weight image"""
     cube: bool = False
     """A potential suffix field indicating whether a cube is present"""
+
+    @property
+    def suffix_spec(self) -> SuffixSpec:
+        """Extract a SuffixSpec instance from the tracked fields"""
+        dummy_suffix_spec = SuffixSpec()._asdict()
+        pnc_dict = self._asdict()
+
+        out_dict = {k: v for k, v in pnc_dict.items() if k in dummy_suffix_spec}
+
+        return SuffixSpec(**out_dict)
 
 
 def processed_ms_format(
@@ -692,20 +714,36 @@ def processed_ms_format(
 
 
 def create_path_from_processed_name_components(
-    processed_name_components: ProcessedNameComponents,
+    processed_name_components: ProcessedNameComponents | Path | str,
     parent_path: Path | None = None,
     suffix_spec: SuffixSpec | None = None,
 ) -> Path:
     """Given an input ProcessedNameComponents create the corresponding path
 
+    If a ``Path`` instance is provided then the recognised name components are first extracted.
+
+    If a ``suffix_spec`` is provided these will be used in favour of any specified by ``processed_name_components``.
+
     Args:
-        processed_name_components (ProcessedNameComponents): The naming specification to create
+        processed_name_components (ProcessedNameComponents | Path | str): The naming specification to create. If of type Path the existing name fields are used as a base.
         parent_path (Path | None, optional): The parent directory of the output path. Defaults to None.
         suffix_spec (SuffixSpec | None, optional): Additional suffix field indicators to use. If provided they overwrite any described by ``processed_name_components``. Defaults to None.
 
     Returns:
         Path: A directory with following the specification of the input ProcessedNameComponents
     """
+    _processed_name_components = (
+        processed_ms_format(in_name=processed_name_components)
+        if isinstance(processed_name_components, (Path, str))
+        else processed_name_components
+    )
+    assert _processed_name_components is not None, (
+        "Failure to resolve to name components"
+    )
+    processed_name_components = _processed_name_components
+    assert isinstance(processed_name_components, ProcessedNameComponents), (
+        f"{ type(processed_name_components)=}, which is bad"
+    )
 
     components = []
 

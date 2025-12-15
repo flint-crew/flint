@@ -291,7 +291,7 @@ def test_get_cube_fits_from_paths():
     )
 
 
-def test_create_image_cube_name():
+def test_create_image_cube_name() -> None:
     """Put together a consistent file cube name"""
     name = create_image_cube_name(
         image_prefix=Path(
@@ -338,6 +338,30 @@ def test_create_image_cube_name():
     assert isinstance(name, Path)
     assert name == Path(
         "./57222/SB57222.RACS_1141-55.beam10.round3.i.residual.pirate.imaging.jackie.boi.cube.fits"
+    )
+
+
+def test_create_image_cube_name_using_suffix_spec() -> None:
+    """Put together a consistent file cube name. This test focuses
+    on using the SuffixSpec interface"""
+    name = create_image_cube_name(
+        image_prefix=Path(
+            "/jack/sparrow/worst/pirate/flint_fitscube/57222/SB57222.RACS_1141-55.beam10.round3.i"
+        ),
+        suffix_spec=SuffixSpec(linmos=True),
+    )
+    assert isinstance(name, Path)
+    assert name == Path(
+        "/jack/sparrow/worst/pirate/flint_fitscube/57222/SB57222.RACS_1141-55.beam10.round3.i.linmos.cube.fits"
+    )
+
+    name = create_image_cube_name(
+        image_prefix=Path("./57222/SB57222.RACS_1141-55.beam10.round3.i"),
+        suffix_spec=SuffixSpec(residual=True),
+    )
+    assert isinstance(name, Path)
+    assert name == Path(
+        "./57222/SB57222.RACS_1141-55.beam10.round3.i.residual.cube.fits"
     )
 
 

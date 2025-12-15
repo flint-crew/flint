@@ -31,7 +31,12 @@ from flint.ms import (
     get_freqs_from_ms,
     get_times_from_ms,
 )
-from flint.naming import get_sbid_from_path
+from flint.naming import (
+    SuffixSpec,
+    create_image_cube_name,
+    create_name_from_common_fields,
+    get_sbid_from_path,
+)
 from flint.options import (
     AddModelSubtractFieldOptions,
     FitsCubeOptions,
@@ -199,6 +204,7 @@ def task_combine_all_linmos_images(
     remove_original_images: bool = False,
     combine_weights: bool = False,
     time_domain: bool = False,
+    continuum_subtracted: bool = False,
     update_fits_cube_options: dict[str, Any] | None = None,
 ) -> Path:
     """Use the fits-cube package to take all input images and create a single output cube.
@@ -208,12 +214,14 @@ def task_combine_all_linmos_images(
         remove_original_images (bool, optional): Remove the original images after the cube has been formed. Defaults to False.
         combine_weights (bool, optional): Whether to concatenated the images or the weights that are described by the input `linmos_commands`. Defaults to False.
         time_domain (bool, optional): Whether images are to be formed on the spectral or time axis. Defaults to False.
-        bounding_box (bool, optional): Whether to trim the output cube to include only valid pixels (see fitscube docs). Defaults to False.
-        invalidate_zeros (bool, optional): Where to mark pixels that are exactly zero as invalid (replace with a NaN). Defaults to False.
+        continuum_subtracted (bool, optional): Indicates whether the input images have been continuum subtracted. Used to information the output file name. Defaults to False.
+        update_fits_cube_optiopns (dict[str, Any] | None, optional): Additional overriding options to provided to ``FitsCubeOptions``. Defaults to None.
 
     Returns:
         Path: The output cube path
     """
+    suffix_spec_dict = {}
+
     output_cube_path = Path("test.fits")
 
     fits_cube_options = FitsCubeOptions()
@@ -221,29 +229,41 @@ def task_combine_all_linmos_images(
         fits_cube_options = fits_cube_options.with_options(**update_fits_cube_options)
 
     if combine_weights:
+        suffix_spec_dict["weight"] = True
         logger.info("Combining weight fits files")
         images_to_combine = [
             linmos_command.weight_fits for linmos_command in linmos_commands
         ]
         output_suffix = "weight"
     else:
+        suffix_spec_dict["linmos"] = True
         logger.info("Combining image fits files")
         images_to_combine = [
             linmos_command.image_fits for linmos_command in linmos_commands
         ]
         output_suffix = "linmos"
 
+    if time_domain:
+        suffix_spec_dict["time"] = True
+    else:
+        suffix_spec_dict["freq"] = True
+
+    if continuum_subtracted:
+        suffix_spec_dict["contsub"] = True
+    else:
+        suffix_spec_dict["cont"] = True
+
     logger.info(f"Combining {len(images_to_combine)} FITS files together")
 
     output_suffix = f"time.{output_suffix}" if time_domain else f"freq.{output_suffix}"
 
-    from flint.naming import create_image_cube_name, create_name_from_common_fields
-
     assert len(images_to_combine) > 0, "No images to combine"
+
+    suffix_spec = SuffixSpec(**suffix_spec_dict)
 
     base_cube_path = create_name_from_common_fields(in_paths=tuple(images_to_combine))
     output_cube_path = create_image_cube_name(
-        image_prefix=base_cube_path, mode="contsub", suffix=output_suffix
+        image_prefix=base_cube_path, suffix_spec=suffix_spec
     )
 
     _ = combine_fits(
