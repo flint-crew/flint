@@ -57,6 +57,22 @@ def test_create_name_to_linmos_options():
     _ = LinmosOptions(base_output_name=common_names)
 
 
+def test_create_name_to_linmos_options_no_weight():
+    """Make sure that the base name created can be passed to an
+    instance of LinmosOptions. This will also remove the weight field
+    that is automatically added by yandasofts linmos."""
+    # Seems silly but was burnt before by not testing this incorrect type
+    examples = get_lots_of_names_2()
+    examples = [Path(str(ex).replace("linmos", "weight")) for ex in examples]
+
+    # These are sanity, pirates trust nothing
+    common_names = create_linmos_base_path(input_images=examples)
+    expected_common_name = Path("59058/SB59058.RACS_1626-84.round4.i").absolute()
+
+    assert common_names == expected_common_name
+    _ = LinmosOptions(base_output_name=common_names)
+
+
 def test_get_image_weight_plane():
     """The extraction of weights per plane"""
     data = np.arange(100).reshape((10, 10))

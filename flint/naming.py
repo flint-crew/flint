@@ -66,7 +66,9 @@ LONG_FIELD_TO_SHORTHAND = {
 
 
 def create_name_from_common_fields(
-    in_paths: tuple[Path, ...], additional_suffixes: str | None = None
+    in_paths: tuple[Path, ...],
+    additional_suffixes: str | None = None,
+    suffix_spec: SuffixSpec | None = None,
 ) -> Path:
     """Attempt to craft a base name using the field elements that are in common.
     The expectation that these are paths that can be processed by the ``processed_name_format``
@@ -85,6 +87,7 @@ def create_name_from_common_fields(
     Args:
         in_paths (Tuple[Path, ...]): Collection of input paths to consider
         additional_suffixes (Optional[str], optional): Add an additional set of suffixes before returning. Defaults to None.
+        suffix_spec (SuffixSpec | None, optional): If not None, update suffix field information with these. Defaults to None.
 
     Raises:
         ValueError: Raised if any of the ``in_paths`` fail to conform to ``flint`` processed name format
@@ -103,8 +106,6 @@ def create_name_from_common_fields(
     processed_components_dict = [options_to_dict(pc) for pc in processed_components]
 
     def _valid_type_value(k, v) -> bool:
-        logger.info(f"{k=} {v=}")
-
         if v is None:
             return False
         if isinstance(v, bool) and v is False:
@@ -121,8 +122,16 @@ def create_name_from_common_fields(
         and _valid_type_value(key, processed_components_dict[0][key])
     }
 
+    processed_name_components = ProcessedNameComponents(**constant_fields)
+
+    if suffix_spec:
+        logger.info(f"Adding {suffix_spec=}")
+        processed_name_components = processed_name_components.with_options(
+            **suffix_spec._asdict()
+        )
+
     name_path = create_path_from_processed_name_components(
-        processed_name_components=ProcessedNameComponents(**constant_fields),
+        processed_name_components=processed_name_components,
         parent_path=parent,
     )
     constant_field_keys = list(constant_fields.keys())
@@ -466,6 +475,10 @@ class SuffixSpec(BaseOptions):
     """Indicates whether the data product is an image"""
     residual: bool = False
     """Indicates whether the data product is a residual"""
+    optimal: bool = False
+    """Indicates that the image is at an optimal (often natureal) resolution"""
+    conv: bool = False
+    """Indicates data have been convolved to some specified resolution"""
     contsub: bool = False
     """Indicates whether continuum subtraction has been performed"""
     cont: bool = False
@@ -622,6 +635,8 @@ def processed_ms_format(
         r"((\.scan(?P<scanl>([0-9]+))-(?P<scanh>([0-9]+)))?)"
         r"((\.(?P<image>image))?)"
         r"((\.(?P<residual>residual))?)"
+        r"((\.(?P<optimal>optimal))?)"
+        r"((\.(?P<conv>conv))?)"
         r"((\.(?P<contsub>contsub))?)"
         r"((\.(?P<cont>cont))?)"
         r"((\.(?P<time>time))?)"
@@ -1017,6 +1032,9 @@ def create_linmos_base_path(
     The default operation is to form the name from the common processed name fields
     among all of the input images.
 
+    if either the `linmos` or `weight` fields are detected they are removed. This can happen
+    if they are considered to be common among all input images (.e.g. linmos'ing already linmos'd
+    images).
 
     Args:
         input_images (list[Path] | None, optional): If provided the common fields of the input images are used as basis of the path. Defaults to None.
@@ -1035,6 +1053,17 @@ def create_linmos_base_path(
     out_dir = output_name.parent
     logger.info(f"Base output image name will be: {output_name}")
     assert out_dir is not None, f"{out_dir=}, which should not happen"
+
+    if ".linmos" in str(output_name.name):
+        logger.warning(f"Remoing the detected linmos field in {output_name=}")
+        output_name = output_name.parent / Path(
+            str(output_name.name).replace(".linmos", "")
+        )
+    if ".weight" in str(output_name.name):
+        logger.warning(f"Remoing the detected weight field in {output_name=}")
+        output_name = output_name.parent / Path(
+            str(output_name.name).replace(".weight", "")
+        )
 
     return output_name.absolute()
 
