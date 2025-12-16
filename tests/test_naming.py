@@ -189,7 +189,8 @@ def test_create_path_from_processed_name_components_with_suffix() -> None:
         round="3",
         pol="i",
         channel_range=(123, 567),
-        suffix_spec=SuffixSpec(contsub=True, cube=True),
+        contsub=True,
+        cube=True,
     )
     assert isinstance(components, ProcessedNameComponents)
 
@@ -207,7 +208,7 @@ def test_create_path_from_processed_name_components_with_suffix() -> None:
         round="3",
         pol="i",
         channel_range=(123, 567),
-        suffix_spec=SuffixSpec(cont=True, cube=False),
+        cont=True,
     )
     assert isinstance(components, ProcessedNameComponents)
 
@@ -232,6 +233,26 @@ def test_processed_name_components_with_scan():
     ex = parent / Path("SB39400.RACS_0000-123.beam33.spw234.round3.i.ch0123-567444")
     pcn = processed_ms_format(in_name=ex)
     assert pcn.scan_range is None
+
+
+def test_returned_suffix_spec_from_processed_named_components() -> None:
+    """Create a processed named component instance with some suffix fields
+    activated, and then return a SuffixSpec instance with the property method.
+    Make sure this sail around the world works."""
+
+    suffix_spec = SuffixSpec(cube=True, contsub=True, image=True)
+    components = ProcessedNameComponents(
+        sbid="39400",
+        field="RACS_0000-123",
+        beam="33",
+        spw=234,
+        round="3",
+        pol="i",
+        channel_range=(123, 567),
+        **suffix_spec._asdict(),
+    )
+
+    assert suffix_spec == components.suffix_spec
 
 
 def test_create_imaging_name_prefix():
@@ -1031,28 +1052,41 @@ def test_create_name_from_common_fields_3():
     )
 
 
+def get_lots_of_names_5() -> list[Path]:
+    examples = [
+        "59058/SB59058.RACS_1626-84.round4.i.ch0285-0286.pirates.fits",
+        "59058/SB59058.RACS_1626-84.round4.i.ch0285-0286.pirates.fits",
+        "59058/SB59058.RACS_1626-84.round4.i.ch0070-0071.pirates.fits",
+        "59058/SB59058.RACS_1626-84.round4.i.ch0142-0143.pirates.fits",
+        "59058/SB59058.RACS_1626-84.round4.i.ch0214-0215.pirates.fits",
+        "59058/SB59058.RACS_1626-84.round4.i.ch0286-0287.pirates.fits",
+        "59058/SB59058.RACS_1626-84.round4.i.ch0071-0072.pirates.fits",
+        "59058/SB59058.RACS_1626-84.round4.i.ch0143-0144.pirates.fits",
+        "59058/SB59058.RACS_1626-84.round4.i.ch0215-0216.pirates.fits",
+        "59058/SB59058.RACS_1626-84.round4.i.ch0287-0288.pirates.fits",
+    ]
+
+    return list(map(Path, examples))
+
+
 def test_create_linmos_parset_base_path():
     """The yandasoft linmos task writes out a configuration file.
     This function tests the generation of the path"""
-    examples = get_lots_of_names_2()
+    examples = get_lots_of_names_5()
 
-    expected = Path("59058/SB59058.RACS_1626-84.round4.i.linmos").absolute()
+    expected = Path("59058/SB59058.RACS_1626-84.round4.i").absolute()
     assert expected == create_linmos_base_path(input_images=examples)
 
-    expected = Path(
-        "59058/SB59058.RACS_1626-84.round4.i.linmos.jack.sparrow"
-    ).absolute()
+    expected = Path("59058/SB59058.RACS_1626-84.round4.i.jack.sparrow").absolute()
     assert expected == create_linmos_base_path(
         input_images=examples, additional_suffixes="jack.sparrow"
     )
     new_paths = [Path("/Here/Be/Pirates") / p for p in examples]
-    expected = Path(
-        "/Here/Be/Pirates/59058/SB59058.RACS_1626-84.round4.i.linmos"
-    ).absolute()
+    expected = Path("/Here/Be/Pirates/59058/SB59058.RACS_1626-84.round4.i").absolute()
     assert expected == create_linmos_base_path(input_images=new_paths)
 
     expected = Path(
-        "/Here/Be/Pirates/59058/SB59058.RACS_1626-84.round4.i.linmos.jack.sparrow"
+        "/Here/Be/Pirates/59058/SB59058.RACS_1626-84.round4.i.jack.sparrow"
     ).absolute()
     assert expected == create_linmos_base_path(
         input_images=new_paths, additional_suffixes="jack.sparrow"

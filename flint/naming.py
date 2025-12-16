@@ -102,6 +102,15 @@ def create_name_from_common_fields(
         raise ValueError("Processed name format failed")
     processed_components_dict = [options_to_dict(pc) for pc in processed_components]
 
+    def _valid_type_value(k, v) -> bool:
+        logger.info(f"{k=} {v=}")
+
+        if v is None:
+            return False
+        if isinstance(v, bool) and v is False:
+            return False
+        return True
+
     keys_to_test = processed_components_dict[0].keys()
     logger.info(f"{keys_to_test=}")
     # Extract the fields that are constant across all inputs and are not None
@@ -109,7 +118,7 @@ def create_name_from_common_fields(
         key: processed_components_dict[0][key]
         for key in keys_to_test
         if len(set([pcd[key] for pcd in processed_components_dict])) == 1
-        and processed_components_dict[0][key] is not None
+        and _valid_type_value(key, processed_components_dict[0][key])
     }
 
     name_path = create_path_from_processed_name_components(
@@ -159,7 +168,7 @@ def create_image_cube_name(
         output_cube_name = create_path_from_processed_name_components(
             processed_name_components=image_prefix.name,
             parent_path=image_prefix.parent,
-            suffix_spec=suffix_spec,
+            suffix_spec=suffix_spec.with_options(cube=True),
         )
         return Path(f"{output_cube_name}.fits")
 
@@ -566,6 +575,22 @@ class ProcessedNameComponents(SuffixSpec):
     scan_range: tuple[int, int] | None = None
     """The scane range encoded in a file name. Generally are zero-padded and are two fields of the form scan1234-1235, where the epper bound is exclusive. Defaults to None."""
 
+    @property
+    def suffix_spec(self) -> SuffixSpec:
+        """Extract just the fields for an instance of ``SuffixSpec``
+
+        Returns:
+            SuffixSpec: Options related to the suffix specification
+        """
+        from flint.options import options_to_dict
+
+        dummy_suffix_dict = options_to_dict(input_options=SuffixSpec())
+        self_pcn_dict = options_to_dict(input_options=self)
+
+        suffix_res = {k: v for k, v in self_pcn_dict.items() if k in dummy_suffix_dict}
+
+        return SuffixSpec(**suffix_res)
+
 
 def processed_ms_format(
     in_name: str | Path,
@@ -595,15 +620,15 @@ def processed_ms_format(
         r"((\.(?P<pol>(i|q|u|v|xx|yy|xy|yx)+))?)"
         r"((\.ch(?P<chl>([0-9]+))-(?P<chh>([0-9]+)))?)"
         r"((\.scan(?P<scanl>([0-9]+))-(?P<scanh>([0-9]+)))?)"
-        r"((.\.(?P<image>image))?)"
-        r"((.\.(?P<residual>residual))?)"
-        r"((.\.(?P<contsub>contsub))?)"
-        r"((.\.(?P<cont>cont))?)"
-        r"((.\.(?P<time>time))?)"
-        r"((.\.(?P<freq>freq))?)"
-        r"((.\.(?P<linmos>linmos))?)"
-        r"((.\.(?P<weight>weight))?)"
-        r"((.\.(?P<cube>cube))?)"
+        r"((\.(?P<image>image))?)"
+        r"((\.(?P<residual>residual))?)"
+        r"((\.(?P<contsub>contsub))?)"
+        r"((\.(?P<cont>cont))?)"
+        r"((\.(?P<time>time))?)"
+        r"((\.(?P<freq>freq))?)"
+        r"((\.(?P<linmos>linmos))?)"
+        r"((\.(?P<weight>weight))?)"
+        r"((\.(?P<cube>cube))?)"
     )
     results = regex.match(in_name)
 
@@ -990,7 +1015,7 @@ def create_linmos_base_path(
 ) -> Path:
     """Create the base path of a ``yandasoft linmos`` given a set of input images.
     The default operation is to form the name from the common processed name fields
-    amount all of the input images.
+    among all of the input images.
 
 
     Args:
