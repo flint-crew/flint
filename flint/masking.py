@@ -927,6 +927,12 @@ def convolve_image_by_scale(
 
     >> fwhm = 2.355 * sigma
 
+    Also not that the initial stage of this function is to first apply an 'open' filter,
+    which preprocessed the image by using a set of minimum and maximum operations. This
+    attempts to separate out emission at different scales before subsequent convolution.
+    This feels counter productive, but is done to avoid confusion type effocts with
+    convolving scales.
+
     Args:
         image_data (NDArray[np.floating]): The imaged to be convolved
         scale (int): The pixel scale to smooth with
