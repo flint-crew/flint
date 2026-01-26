@@ -21,7 +21,7 @@ jobs:
     name: Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - uses: actions/setup-python@v6
@@ -43,7 +43,7 @@ jobs:
         runs-on: [ubuntu-latest]
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - name: Install dependencies
@@ -65,7 +65,7 @@ jobs:
       # -p no:warnings is needed to avoid warnings errors caused by VOTable
       # --skip-slow will jump over long running tests, like downloading from dockerhub
       - name: Upload coverage report
-        uses: codecov/codecov-action@v5.5.1
+        uses: codecov/codecov-action@v5.5.2
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
 
