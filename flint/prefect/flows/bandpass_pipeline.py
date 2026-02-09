@@ -139,7 +139,7 @@ def run_bandpass_stage(
     Args:
         bandpass_mss (Collection[MS]): Set of bandpass measurement sets to calibrate
         output_split_bandpass_path (Path): The location where the extract field centred on the calibration field (typically PKSB19340638)
-        bandpass_options (BandpassOptions): Configurables that will specify the bandpass calibbration process
+        bandpass_options (BandpassOptions): Configurable that will specify the bandpass calibbration process
         model_path (Path): Path to the model used to calibrate against
         source_name_prefix (str, optional): Name of the field being calibrated. Defaults to "B1934-638".
         skip_rotation (bool, optional): If ``True`` the rotation of the ASKAP visibility from the antenna frame to the sky-frame will be skipped. Defaults to False.
@@ -231,7 +231,7 @@ def calibrate_bandpass_flow(
     Args:
         bandpass_path (Path): Location to the folder containing the raw ASKAP bandpass measurement sets that will be calibrated
         split_path (Path): Location that will contain a folder, named after the SBID of the observation, that will contain the output bandpass measurement sets, solutions and plots
-        bandpass_options (BandpassOptions): Options that specify configurables of the bandpass processing.
+        bandpass_options (BandpassOptions): Options that specify configurable of the bandpass processing.
 
     Returns:
         Path: Directory that contains the extracted measurement sets and the ao-style gain solutions files.
@@ -300,7 +300,7 @@ def setup_run_bandpass_flow(
         bandpass_path (Path): Location to the folder containing the raw ASKAP bandpass measurement sets that will be calibrated
         split_path (Path): Location that will contain a folder, named after the SBID of the observation, that will contain the output bandpass measurement sets, solutions and plots
         cluster_config (Path): Path to a yaml file that is used to configure a prefect dask task runner.
-        bandpass_options (BandpassOptions): Options that specify configurables of the bandpass processing.
+        bandpass_options (BandpassOptions): Options that specify configurable of the bandpass processing.
 
     Returns:
         Path: Directory that contains the extracted measurement sets and the ao-style gain solutions files.

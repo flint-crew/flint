@@ -60,8 +60,9 @@ def enable_loguru_support() -> None:
     )
     logger.add(
         run_logger.info,
-        filter=lambda record: record["level"].name
-        not in ["DEBUG", "WARNING", "ERROR", "CRITICAL"],
+        filter=lambda record: (
+            record["level"].name not in ["DEBUG", "WARNING", "ERROR", "CRITICAL"]
+        ),
         level="TRACE",
         format=log_format,
     )
