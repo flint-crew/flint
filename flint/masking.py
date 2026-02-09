@@ -830,7 +830,7 @@ def create_snr_mask_from_fits(
 
     Args:
         fits_image_path (Path): Path to the FITS file containing an image
-        masking_options (MaskingOptions): Configurables on the masking operation procedure.
+        masking_options (MaskingOptions): Configurable on the masking operation procedure.
         fits_rms_path (Optional[Path], optional): Path to the FITS file with an RMS image corresponding to ``fits_image_path``. Defaults to None.
         fits_bkg_path (Optional[Path], optional): Path to the FITS file with an background image corresponding to ``fits_image_path``. Defaults to None.
         create_signal_fits (bool, optional): Create an output signal map. Defaults to False.
