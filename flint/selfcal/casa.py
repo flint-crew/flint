@@ -48,6 +48,8 @@ class GainCalOptions(BaseOptions):
     will be used to craft an appropriate ``select_spw=`` interval range. If larger
     than one, ``gaincal`` will be carried out against each interval and results will
     be appended to a common solutions file. """
+    solnorm: bool = False
+    """Renormalise the distribution of the amplite gains so the mean is unity."""
 
 
 def copy_and_clean_ms_casagain(
@@ -308,6 +310,7 @@ def gaincal_applycal_ms(
             calmode=gain_cal_options.calmode,
             selectdata=gain_cal_options.selectdata,
             uvrange=gain_cal_options.uvrange,
+            solnorm=gain_cal_options.solnorm,
         )
 
         if not cal_table.exists():
