@@ -364,6 +364,8 @@ class SubtractFieldOptions(BaseOptions):
     """The maximum number of scans/channels to consider"""
     fitscube_remove_original_images: bool = False
     """Remove the images that go into forming the fitscube"""
+    max_imaging_workers: int | None = None
+    """Reset the maximum of dask workers (assuming apative scaling) to this number during the imaging stage. """
 
 
 class FieldOptions(BaseOptions):

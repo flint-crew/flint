@@ -922,6 +922,10 @@ def rotate_cube(output_cube_path: str | Path, inplace: bool = True) -> Path:
     output_path = Path(output_cube_path)
     logger.info(f"Rotating FITS axes of {output_path.name}")
 
+    if not Path(output_cube_path).exists():
+        logger.warning(f"{output_cube_path=} does not appear to exist. Returning.")
+        return Path(output_cube_path)
+
     # Read original data and header
     with fits.open(output_path, mode="readonly", memmap=True) as hdul:
         header = hdul[0].header.copy()

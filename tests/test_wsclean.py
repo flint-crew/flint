@@ -29,6 +29,7 @@ from flint.imager.wsclean import (
     get_wsclean_output_source_list_path,
     merge_image_sets,
     rename_wsclean_prefix_in_image_set,
+    rotate_cube,
     split_and_get_image_set,
     split_image_set,
 )
@@ -36,6 +37,16 @@ from flint.logging import logger
 from flint.naming import create_imaging_name_prefix
 from flint.options import MS
 from flint.utils import get_packaged_resource_path
+
+
+def test_rotate_cube_no_exists() -> None:
+    """Should no cube exist this should exit safely with a warning.
+    This is not testing the actual rotation code, just the early
+    return."""
+    output_cube_path = Path("JackSparrowIsNotHere.fits")
+
+    _ = rotate_cube(output_cube_path=output_cube_path, inplace=False)
+    _ = rotate_cube(output_cube_path=output_cube_path, inplace=True)
 
 
 def test_get_wsclean_output_source_list_path():
