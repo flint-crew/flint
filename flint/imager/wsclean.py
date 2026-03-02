@@ -18,10 +18,11 @@ from __future__ import annotations
 
 import re
 from argparse import ArgumentParser
+from collections.abc import Collection
 from glob import glob
 from numbers import Number
 from pathlib import Path
-from typing import Any, Collection, NamedTuple
+from typing import Any, NamedTuple
 
 import numpy as np
 from astropy.io import fits
@@ -428,7 +429,9 @@ def _rename_wsclean_title(name_str: str) -> str:
     logger.info(f"Renaming {name_str=} for qu components if necessary")
     name_str = re.sub(
         r"(\.qu)-([^-]+)-?([QU])?(\-(psf|image|dirty|model|residual)\.fits)",
-        lambda m: f".{m.group(3).lower() if m.group(3) else 'q'}-{m.group(2)}{m.group(4)}",
+        lambda m: (
+            f".{m.group(3).lower() if m.group(3) else 'q'}-{m.group(2)}{m.group(4)}"
+        ),
         name_str,
     )
 

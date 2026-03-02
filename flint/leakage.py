@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from argparse import ArgumentParser
 from pathlib import Path
-from typing import NamedTuple, Union
+from typing import NamedTuple
 
 import astropy.units as u
 import numpy as np
@@ -17,7 +17,7 @@ from astropy.wcs.utils import skycoord_to_pixel
 from flint.catalogue import guess_column_in_table
 from flint.logging import logger
 
-TableOrPath = Union[Table, Path]
+TableOrPath = Table | Path
 
 
 class LeakageFilters(NamedTuple):

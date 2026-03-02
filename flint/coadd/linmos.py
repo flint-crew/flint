@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from argparse import ArgumentParser
+from collections.abc import Collection
 from pathlib import Path
-from typing import Collection, Literal, NamedTuple
+from typing import Literal, NamedTuple
 
 import numpy as np
 from astropy.io import fits
