@@ -10,10 +10,11 @@ import shutil
 import signal
 import subprocess
 import uuid
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 from socket import gethostname
-from typing import Any, Generator, NamedTuple
+from typing import Any, NamedTuple
 
 import astropy.units as u
 import numpy as np

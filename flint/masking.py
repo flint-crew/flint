@@ -5,8 +5,9 @@ thought being towards FITS images.
 from __future__ import annotations
 
 from argparse import ArgumentParser
+from collections.abc import Collection
 from pathlib import Path
-from typing import Collection, NamedTuple
+from typing import NamedTuple
 
 import astropy.units as u
 import numpy as np

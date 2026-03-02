@@ -11,8 +11,8 @@ to split the correct field out before actually calibration.
 from __future__ import annotations
 
 from argparse import ArgumentParser
+from collections.abc import Collection
 from pathlib import Path
-from typing import Collection
 
 from prefect import flow, task, unmapped
 
