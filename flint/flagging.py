@@ -32,7 +32,7 @@ class AOFlaggerCommand(NamedTuple):
     """The path to the aoflagging strategy file to use"""
 
 
-def flag_ms_zero_uvws(ms: MS, chunk_size: int = 10000) -> MS:
+def flag_ms_zero_uvws(ms: MS, chunk_size: int = 2500) -> MS:
     """Flag out the UVWs in a measurement set that have values of zero.
     This happens when some data are flagged before it reaches the TOS.
 
@@ -41,7 +41,7 @@ def flag_ms_zero_uvws(ms: MS, chunk_size: int = 10000) -> MS:
 
     Args:
         ms (MS): Measurement set to flag
-        chunk_size (int, optional): The number of rows to flag at a tim. Defaults to 10000.
+        chunk_size (int, optional): The number of rows to flag at a tim. Defaults to 2500.
 
     Returns:
         MS: The flagged measurement set
