@@ -7,16 +7,14 @@ hold stateful properties throughout the flint codebase.
 # This happens a lot with the linting / typing checking, where classes are
 # imported purely for tools like ruff
 
-from __future__ import (  # Used for mypy/pylance to like the return type of MS.with_options
-    annotations,
-)
+from __future__ import annotations
 
 from argparse import ArgumentParser, Namespace
 from pathlib import Path
 from types import NoneType, UnionType
 from typing import (
     Any,
-    NamedTuple,
+    Self,
     TypeVar,
     get_args,
     get_origin,
@@ -28,73 +26,6 @@ from pydantic.fields import FieldInfo
 
 from flint.exceptions import MSError
 from flint.logging import logger
-
-
-class MS(NamedTuple):
-    """Helper to keep track of measurement set information
-
-    This is the class that should be used when describing a measurement
-    set that will be operated on.
-    """
-
-    path: Path
-    """Path to the measurement set that is being represented"""
-    column: str | None = None
-    """Column that should be operated against"""
-    beam: int | None = None
-    """The beam ID of the MS within an ASKAP field"""
-    spw: int | None = None
-    """Intended to be used with ASKAP high-frequency resolution modes, where the MS is divided into SPWs"""
-    field: str | None = None
-    """The field name  of the data"""
-    model_column: str | None = None
-    """The column name of the most recently MODEL data"""
-
-    @property
-    def ms(self) -> MS:
-        return self
-
-    @classmethod
-    def cast(cls, ms: MS | Path) -> MS:
-        """Create/return a MS instance given either a Path or MS.
-
-        If the input is neither a MS instance or Path, the object will
-        be checked to see if it has a `.ms` attribute. If it does then
-        this will be used.
-
-        Args:
-            ms (Union[MS, Path]): The input type to consider
-
-        Raises:
-            MSError: Raised when the input ms can not be cast to an MS instance
-
-        Returns:
-            MS: A normalised MS
-        """
-        if isinstance(ms, MS):
-            # Nothing to do
-            pass
-        elif isinstance(ms, Path):
-            ms = MS(path=ms)
-        elif "ms" in dir(ms) and isinstance(ms.ms, MS):
-            ms = ms.ms
-        else:
-            raise MSError(f"Unable to convert {ms=} of {type(ms)} to MS object. ")
-
-        return ms
-
-    def with_options(self, **kwargs) -> MS:
-        """Create a new MS instance with keywords updated
-
-        Returns:
-            MS: New MS instance with updated attributes
-        """
-        # TODO: Update the signature to have the actual attributes to
-        # help keep mypy and other linters happy
-        as_dict = self._asdict()
-        as_dict.update(kwargs)
-
-        return MS(**as_dict)
 
 
 def options_to_dict(input_options: Any) -> dict:
@@ -129,9 +60,6 @@ def options_to_dict(input_options: Any) -> dict:
         raise TypeError(f"Input options is not known: {type(input_options)}")
 
 
-T = TypeVar("T", bound=BaseModel)
-
-
 class BaseOptions(BaseModel):
     """A base class that Options style flint classes can
     inherit from. This is derived from ``pydantic.BaseModel``,
@@ -143,17 +71,21 @@ class BaseOptions(BaseModel):
     """
 
     model_config = ConfigDict(
-        frozen=True, from_attributes=True, use_attribute_docstrings=True, extra="forbid"
+        frozen=True,
+        from_attributes=True,
+        use_attribute_docstrings=True,
+        extra="forbid",
+        arbitrary_types_allowed=True,
     )
 
-    def with_options(self: T, /, **kwargs) -> T:
+    def with_options(self, /, **kwargs) -> Self:
         new_args = self.__dict__.copy()
         new_args.update(**kwargs)
 
         return self.__class__(**new_args)
 
     def _asdict(self) -> dict[str, Any]:
-        return self.__dict__
+        return self.model_dump()
 
 
 def _create_argparse_options(name: str, field: FieldInfo) -> tuple[str, dict[str, Any]]:
@@ -555,3 +487,29 @@ class FitsCubeOptions(BaseOptions):
     """The number of concurrent workers (readers/writers) that are permitted at a time"""
     invalidate_zeros: bool = True
     """Set pixels whose values are exactly 0.0 to not-a-number (nan)"""
+
+
+class MS(BaseOptions):
+    path: Path
+    column: str | None = None
+    beam: int | None = None
+    spw: int | None = None
+    field: str | None = None
+    model_column: str | None = None
+
+    @property
+    def ms(self) -> MS:
+        return self
+
+    @classmethod
+    def cast(cls, ms: MS | Path) -> MS:
+        if isinstance(ms, MS):
+            pass
+        elif isinstance(ms, Path):
+            ms = MS(path=ms)
+        elif "ms" in dir(ms) and isinstance(ms.ms, MS):
+            ms = ms.ms
+        else:
+            raise MSError(f"Unable to convert {ms=} of {type(ms)} to MS object. ")
+
+        return ms
