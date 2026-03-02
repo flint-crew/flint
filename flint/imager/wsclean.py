@@ -428,7 +428,9 @@ def _rename_wsclean_title(name_str: str) -> str:
     logger.info(f"Renaming {name_str=} for qu components if necessary")
     name_str = re.sub(
         r"(\.qu)-([^-]+)-?([QU])?(\-(psf|image|dirty|model|residual)\.fits)",
-        lambda m: f".{m.group(3).lower() if m.group(3) else 'q'}-{m.group(2)}{m.group(4)}",
+        lambda m: (
+            f".{m.group(3).lower() if m.group(3) else 'q'}-{m.group(2)}{m.group(4)}"
+        ),
         name_str,
     )
 
