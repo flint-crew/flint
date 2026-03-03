@@ -6,8 +6,9 @@ imaging flows.
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from pathlib import Path
-from typing import Any, Collection, Literal, ParamSpec, TypeVar
+from typing import Any, Literal, ParamSpec, TypeVar
 
 import numpy as np
 import pandas as pd

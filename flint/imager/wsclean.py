@@ -18,10 +18,11 @@ from __future__ import annotations
 
 import re
 from argparse import ArgumentParser
+from collections.abc import Collection
 from glob import glob
 from numbers import Number
 from pathlib import Path
-from typing import Any, Collection, NamedTuple
+from typing import Any, NamedTuple
 
 import numpy as np
 from astropy.io import fits
