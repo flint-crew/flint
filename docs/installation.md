@@ -26,7 +26,7 @@ pip install -e .
 
 ## Python support
 
-We are currently supporting Python 3.11 and 3.12, which is enforced in the `pyproject.toml`:
+We are currently supporting Python >=3.11,<3.14, which is enforced in the `pyproject.toml`:
 
 ```toml
 requires-python = ">=3.11,<3.13"

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import math
 from argparse import ArgumentParser
+from collections.abc import Collection
 from pathlib import Path
-from typing import Collection, NamedTuple
+from typing import NamedTuple
 
 import numpy as np
 from casacore.tables import table

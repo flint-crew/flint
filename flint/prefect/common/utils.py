@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import base64
+from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import Any, Callable, Iterable, ParamSpec, TypeVar
+from typing import Any, ParamSpec, TypeVar
 from uuid import UUID
 
 from prefect import task
