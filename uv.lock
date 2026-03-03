@@ -208,7 +208,7 @@ requires-dist = [
     { name = "pre-commit", marker = "extra == 'dev'" },
     { name = "prefect", specifier = "<3.0.0" },
     { name = "prefect-dask", specifier = ">=0.2.4" },
-    { name = "pydantic" },
+    { name = "pydantic", specifier = ">2.11" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest-cov", marker = "extra == 'dev'" },
     { name = "pytest-rerunfailures", marker = "extra == 'dev'" },
