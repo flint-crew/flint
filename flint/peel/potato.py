@@ -32,7 +32,7 @@ from flint.imager.wsclean import WSCleanOptions
 from flint.logging import logger
 from flint.ms import get_freqs_from_ms, get_phase_dir_from_ms
 from flint.naming import get_potato_output_base_path
-from flint.options import MS
+from flint.options import MS, BaseOptions
 from flint.sclient import run_singularity_command
 from flint.utils import (
     create_directory,
@@ -91,7 +91,7 @@ class PotatoPeelArguments(NamedTuple):
     """Name of the source being peeled"""
 
 
-class PotatoPeelOptions(NamedTuple):
+class PotatoPeelOptions(BaseOptions):
     """Container class to hold options that go to the potato peel
     software by Stefan Duchesne. FLINT uses the `hot_potato` version.
     ee:
@@ -119,11 +119,6 @@ class PotatoPeelOptions(NamedTuple):
     """The minimum uv distance in wavelengths to use for imaging"""
     minuvpeel: float | None = None
     """The minimum uv distance in wavelengths to use when attempting to self-calibrate"""
-
-    def with_options(self, **kwargs) -> PotatoPeelOptions:
-        items = self._asdict()
-        items.update(**kwargs)
-        return PotatoPeelOptions(**items)
 
 
 def load_known_peel_sources() -> Table:
