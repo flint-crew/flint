@@ -383,7 +383,7 @@ def test_assert_strategy_bad():
 def test_updated_get_options(package_strategy):
     # test to make sure that the defaults outlined in a strategy file
     # are correctly overwritten should there be an options in a later
-    # round. All other optiosn should remain the same.
+    # round. All other options should remain the same.
     strategy = package_strategy
     assert isinstance(strategy, Strategy)
 

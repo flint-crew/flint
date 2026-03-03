@@ -8,8 +8,9 @@ import shutil
 import subprocess
 import tarfile
 from argparse import ArgumentParser
+from collections.abc import Collection
 from pathlib import Path
-from typing import Any, Collection
+from typing import Any
 
 from flint.configuration import get_options_from_strategy
 from flint.exceptions import TarArchiveError

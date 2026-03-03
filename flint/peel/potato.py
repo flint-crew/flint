@@ -18,8 +18,9 @@ jiving in newer python versions.
 from __future__ import annotations
 
 from argparse import ArgumentParser
+from collections.abc import Collection
 from pathlib import Path
-from typing import Any, Collection, NamedTuple
+from typing import Any, NamedTuple
 
 import astropy.units as u
 import numpy as np

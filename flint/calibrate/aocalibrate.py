@@ -4,11 +4,10 @@ from __future__ import annotations  # used to keep mypy/pylance happy in AOSolut
 
 import struct
 from argparse import ArgumentParser
+from collections.abc import Collection, Iterable
 from pathlib import Path
 from typing import (
     Any,
-    Collection,
-    Iterable,
     NamedTuple,
 )
 
