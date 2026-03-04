@@ -34,9 +34,7 @@ def jolly_roger_tractor(
     ms = MS.cast(ms)
     if tukey_tractor_options is None:
         logger.info("Using default tukey tractor options")
-        tukey_tractor_options = TukeyTractorOptions(
-            ms_path=ms.path, target_objects=["sun"]
-        )
+        tukey_tractor_options = TukeyTractorOptions()
 
     assert isinstance(tukey_tractor_options, TukeyTractorOptions), (
         "Tukey taper is not correct type, which should not happen"
@@ -48,7 +46,7 @@ def jolly_roger_tractor(
         )
 
     logger.info("Running the jolly-roger's tukey tractor")
-    tukey_tractor(tukey_tractor_options=tukey_tractor_options)
+    tukey_tractor(ms_path=ms.path, tukey_tractor_options=tukey_tractor_options)
 
     return ms.with_options(column=tukey_tractor_options.output_column)
 
