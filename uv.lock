@@ -196,7 +196,7 @@ requires-dist = [
     { name = "fixms", marker = "extra == 'casa'", specifier = ">=0.4.0" },
     { name = "furo", marker = "extra == 'dev'" },
     { name = "isort", marker = "extra == 'dev'" },
-    { name = "jolly-roger", specifier = ">=0.10" },
+    { name = "jolly-roger", specifier = ">=0.10.1" },
     { name = "matplotlib" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "myst-parser", marker = "extra == 'dev'" },
@@ -1583,7 +1583,7 @@ wheels = [
 
 [[package]]
 name = "jolly-roger"
-version = "0.10.0"
+version = "0.10.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "astropy" },
@@ -1593,9 +1593,9 @@ dependencies = [
     { name = "python-casacore" },
     { name = "tqdm" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f8/ab/44ae6ce9044898b03a8c64ba37e2fcb6bedd4608b70add1e4030313b1615/jolly_roger-0.10.0.tar.gz", hash = "sha256:be06a30034c94eaf2c040abb1563c866ba969565d679822651684321bc052a09", size = 3026205, upload-time = "2026-03-04T05:57:21.525Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/32/54/342bac37ac5987ce9b6309756a25517ea6fe27ab020b168ee824302d4753/jolly_roger-0.10.1.tar.gz", hash = "sha256:6559a50a355c0ed494064cfa00f59700d989354d8027f18b5f7a9081ec0f4796", size = 3026218, upload-time = "2026-03-04T06:08:10.437Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ff/00/3e6eaf5e01c8827a86c06490b6401ac12d840062dde97ddf0abe2e85aaf5/jolly_roger-0.10.0-py3-none-any.whl", hash = "sha256:a9fa6b14c7792abb069796d59754d92af6fb06702fc2d5396decfe1c3b3c397c", size = 32429, upload-time = "2026-03-04T05:57:20.007Z" },
+    { url = "https://files.pythonhosted.org/packages/69/0e/8217f9557cde7f32bc113db0f1a159dd36277889934e70c4ef4deb4ad267/jolly_roger-0.10.1-py3-none-any.whl", hash = "sha256:69621be88dcace930e83ac12cc74117c5a3ad265d9bbd4463a455fe2e799e220", size = 32430, upload-time = "2026-03-04T06:08:09.063Z" },
 ]
 
 [[package]]
