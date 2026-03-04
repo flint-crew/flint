@@ -7,6 +7,7 @@ from pathlib import Path
 import astropy.units as u
 import pytest
 from jolly_roger.tractor import TukeyTractorOptions
+from pydantic import ValidationError
 
 from flint.options import MS
 from flint.peel.jolly import (
@@ -19,7 +20,7 @@ def test_raise_bad_tukey_options() -> None:
     on an incorrect type"""
 
     ms_path = Path("JackBeHere.ms")
-    with pytest.raises(TypeError):
+    with pytest.raises(ValidationError):
         TukeyTractorOptions(
             ms_path=ms_path,
             elevation_cut_deg=1.0 * u.deg,  # type: ignore
