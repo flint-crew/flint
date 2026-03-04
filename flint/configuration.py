@@ -12,13 +12,13 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from jolly_roger.tractor import TukeyTractorOptions
 
 from flint.imager.wsclean import WSCleanOptions
 from flint.logging import logger
 from flint.masking import MaskingOptions
 from flint.naming import add_timestamp_to_path
 from flint.options import ArchiveOptions, FitsCubeOptions
-from flint.peel.jolly import TukeyTractorOptions
 from flint.peel.potato import PotatoPeelOptions
 from flint.selfcal.casa import GainCalOptions
 from flint.source_finding.aegean import AegeanOptions, BANEOptions
