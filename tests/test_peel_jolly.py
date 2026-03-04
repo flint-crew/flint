@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import astropy.units as u
 import pytest
 from jolly_roger.tractor import TukeyTractorOptions as JollyTukeyTaperOptions
 
@@ -35,23 +34,16 @@ def test_convert_tractor() -> None:
 
     ms_path = Path("JackSparrow.ms")
 
-    tukey_tractor_options = TukeyTractorOptions()
-    jolly_tractor_options = _create_jolly_tractor_options(
-        ms_path=ms_path, tukey_tractor_options=tukey_tractor_options
-    )
-    assert isinstance(jolly_tractor_options, JollyTukeyTaperOptions)
-    assert jolly_tractor_options.ms_path == ms_path
-    assert (
-        jolly_tractor_options.elevation_cut
-        == tukey_tractor_options.elevation_cut_deg * u.deg
-    )
+    tukey_tractor_options = TukeyTractorOptions(ms_path=ms_path, target_objects=["sun"])
+    assert isinstance(tukey_tractor_options, JollyTukeyTaperOptions)
 
 
 def test_tukey_tractor(ms_example) -> None:
     """Run the tukey tractor to assess for simple errors"""
 
-    tukey_tractor_options = TukeyTractorOptions(apply_towards_object=True)
     ms_path = Path(ms_example)
+
+    tukey_tractor_options = TukeyTractorOptions(ms_path=ms_path, target_objects=["sun"])
 
     ms = jolly_roger_tractor(ms=ms_path, tukey_tractor_options=tukey_tractor_options)
     assert isinstance(ms, MS)

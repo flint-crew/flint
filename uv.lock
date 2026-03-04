@@ -196,7 +196,7 @@ requires-dist = [
     { name = "fixms", marker = "extra == 'casa'", specifier = ">=0.4.0" },
     { name = "furo", marker = "extra == 'dev'" },
     { name = "isort", marker = "extra == 'dev'" },
-    { name = "jolly-roger", specifier = ">=0.5.0,<0.6" },
+    { name = "jolly-roger", specifier = ">=0.9.1" },
     { name = "matplotlib" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "myst-parser", marker = "extra == 'dev'" },
@@ -1583,19 +1583,19 @@ wheels = [
 
 [[package]]
 name = "jolly-roger"
-version = "0.5.0"
+version = "0.9.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "astropy" },
-    { name = "dask-ms" },
     { name = "matplotlib" },
     { name = "numpy" },
+    { name = "pydantic" },
     { name = "python-casacore" },
     { name = "tqdm" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/47/a6/87030770ce7818d8fdfb2ab280649483303b387bea2c702f8026f5842e66/jolly_roger-0.5.0.tar.gz", hash = "sha256:bc7bfd82d6388b4e3ccd9548db1b27b7f932b2d833e6723ea97a88ca31b3fa87", size = 3582351, upload-time = "2025-12-09T02:27:54.737Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/83/ad/cce5bb0f6842dc9a6a1fb7acd441c0991a947944e4936302c249d1d9929c/jolly_roger-0.9.1.tar.gz", hash = "sha256:027f9fada67a6e4e17df8c5216d7d8c6257a54e44a22a6e226d83b181c73fdac", size = 3026217, upload-time = "2026-03-04T03:10:06.61Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/62/13/2650b133a4a64bbcba19432d9447798bf7e1ef5a15750ea4973caa34802b/jolly_roger-0.5.0-py3-none-any.whl", hash = "sha256:9ae1c60ee52bb7f906e92165459f35c72d677a64392b56e54bf8377a67e649da", size = 28222, upload-time = "2025-12-09T02:27:52.971Z" },
+    { url = "https://files.pythonhosted.org/packages/6b/52/315d2049ccd12e58b09031e4b8ed47e119c5be7d42d98c0a02b5baf96d5a/jolly_roger-0.9.1-py3-none-any.whl", hash = "sha256:a5f208615e11b5e8f81df0e396d557df3c2be66c11263e3c3a76a1a906aa8913", size = 32405, upload-time = "2026-03-04T03:10:05.146Z" },
 ]
 
 [[package]]
