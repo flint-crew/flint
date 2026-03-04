@@ -48,7 +48,7 @@ class GainCalOptions(BaseOptions):
     will be used to craft an appropriate ``select_spw=`` interval range. If larger
     than one, ``gaincal`` will be carried out against each interval and results will
     be appended to a common solutions file. """
-    solnorm: bool = False
+    solnorm: bool = True
     """Renormalise the distribution of the amplite gains so the mean is unity."""
 
 
