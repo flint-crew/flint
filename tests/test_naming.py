@@ -68,6 +68,37 @@ def test_create_largest_common_field_name() -> None:
     assert common_field == "Jack"
 
 
+def test_create_largest_common_field_name_different_strip() -> None:
+    """Tests to attempt to extract the longest field name present in a collection
+    of field names. Should it fail a default should be return from the helper
+    function. This makes sure the strip character works"""
+
+    fields: list[str | ProcessedNameComponents] = [
+        "G334_1666!A_1",
+        "G334_1666!B_1",
+        "G334_1666!C_1",
+    ]
+
+    common_field = create_largest_common_field_name(field_list=fields)
+    assert common_field == "G334_1666!"
+
+    common_field = create_largest_common_field_name(
+        field_list=fields, strip_characters=None
+    )
+    assert common_field == "G334_1666!"
+
+    common_field = create_largest_common_field_name(
+        field_list=fields, strip_characters="! _"
+    )
+    assert common_field == "G334_1666"
+
+    fields.append("ThisBreaksThings")
+    common_field = create_largest_common_field_name(
+        field_list=fields, field_default="Jack"
+    )
+    assert common_field == "Jack"
+
+
 def test_create_path_from_process_named_components():
     """Make sure we can create a name"""
     components = ProcessedNameComponents(
