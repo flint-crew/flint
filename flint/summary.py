@@ -5,7 +5,6 @@ from __future__ import (  # Used for mypy/pylance to like the return type of MS.
 )
 
 from pathlib import Path
-from typing import NamedTuple
 
 import astropy.units as u
 from astropy.coordinates import (
@@ -34,13 +33,14 @@ from flint.ms import (
     get_times_from_ms,
 )
 from flint.naming import get_sbid_from_path, processed_ms_format
+from flint.options import BaseOptions
 from flint.source_finding.aegean import AegeanOutputs
 from flint.utils import estimate_skycoord_centre
 
 conf.auto_max_age = None
 
 
-class FieldSummary(NamedTuple):
+class FieldSummary(BaseOptions):
     """The main information about a processed field. This structure is
     intended to store critical components that might be accumulated throughout
     processing of a pipeline, and may be most useful when data-products
@@ -65,7 +65,7 @@ class FieldSummary(NamedTuple):
     """Summaries of measurement sets used in the processing of the filed"""
     centre: SkyCoord | None = None
     """Centre of the field, which is calculated as the mean position of all phase directions of the `mss` measurement sets"""
-    integration_time: int | None = None
+    integration_time: float | None = None
     """The integration time of the observation (seconds)"""
     no_components: int | None = None
     """Number of components found from the source finder"""
@@ -89,12 +89,6 @@ class FieldSummary(NamedTuple):
     """The path to the linmos image of all beams"""
     pol_axis: float | None = None
     """The orientation of the ASKAP third-axis in radians. """
-
-    def with_options(self, **kwargs) -> FieldSummary:
-        prop = self._asdict()
-        prop.update(**kwargs)
-
-        return FieldSummary(**prop)
 
 
 def _get_pol_axis_as_rad(ms: MS | Path) -> float:
@@ -340,7 +334,7 @@ def create_field_summary(
     return field_summary
 
 
-class BeamSummary(NamedTuple):
+class BeamSummary(BaseOptions):
     """Structure intended to collect components from a measurement set
     as it is being processed through a continuum imaging pipeline
     """
@@ -351,12 +345,6 @@ class BeamSummary(NamedTuple):
     """A set of images that have been created from the measurement set represented by `summary`"""
     components: AegeanOutputs | None = None
     """The source finding components from the aegean source finder"""
-
-    def with_options(self, **kwargs) -> BeamSummary:
-        prop = self._asdict()
-        prop.update(**kwargs)
-
-        return BeamSummary(**prop)
 
 
 def create_beam_summary(
