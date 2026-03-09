@@ -28,7 +28,7 @@ that is packaged in aoflagger. The main differences are:
    -- If the following variable is true, the strategy will consider existing flags
    -- as bad data. It will exclude flagged data from detection, and make sure that any existing
    -- flags on input will be flagged on output. If set to false, existing flags are ignored.
-   local exclude_original_flags = false
+   local exclude_original_flags = true
    local frequency_resize_factor = 2.0 -- Amount of "extra" smoothing in frequency direction
    local transient_threshold_factor = 1.0 -- decreasing this value makes detection of transient RFI more aggressive
 
