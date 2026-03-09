@@ -64,6 +64,81 @@ LONG_FIELD_TO_SHORTHAND = {
 """Name mapping between the longform of ProcessedFieldComponents and shorthands used"""
 
 
+def create_largest_common_field_name(
+    field_list: list[str | ProcessedNameComponents],
+    field_default: str = "sparrow",
+    strip_characters: str | None = " _",
+) -> str:
+    """Given a collection of field names in either a string of encapsulated in
+    a ``ProcessedNameComponents`` form, find the longest common substring. If
+
+    >>> fields = [
+    >>>    "G334_1666_A_1",
+    >>>    "G334_1666_B_1",
+    >>>    "G334_1666_C_1"
+    >>> ]
+
+    then the output should be ``G334_1666`` if ``strip_characters`` is used.
+
+
+    Args:
+        field_list (list[str  |  ProcessedNameComponents]): Collection of field names to search through
+        field_default (str, optional): The value to return if no common substring was found. Defaults to "sparrow".
+        strip_characters (str | None, optional): If not None that the ``str.strip()`` method will be issued on the returned result with these characters. Defaults to " _".
+
+    Returns:
+        str: _description_
+    """
+
+    from difflib import SequenceMatcher
+
+    # Construct a list of unique field names seen across all inputs
+    consider_fields = list(
+        set(
+            [
+                f.field if isinstance(f, ProcessedNameComponents) else f
+                for f in field_list
+            ]
+        )
+    )
+
+    assert len(consider_fields) >= 2, (
+        f"Expected a longer list of potential fields, got {consider_fields=}"
+    )
+
+    # The starting case can be any name in the set. The longest substring will be
+    # at best this name if the length is all field names are the same.
+    longest_common_string: str = consider_fields[0]
+
+    # Iterate over the remaining names to consider for substring matches
+    # with the current longest substring seen
+    for i, field_name in enumerate(consider_fields[1:]):
+        logger.debug(f"{i=} {field_name=} {longest_common_string=}")
+
+        # This was a nice find in the stdlib.
+        substring_match = SequenceMatcher(
+            isjunk=None, a=longest_common_string, b=field_name
+        ).find_longest_match()
+
+        # If the below is ever entered irrespective of the number of
+        # unique fields to consider then there is no substring possible,
+        # This silly pirate has just realised that a single common letter
+        # could be returned if it is present across all fields.
+        if substring_match.size == 0:
+            logger.warning("No matching substring found.")
+            return field_default
+
+        longest_common_string = longest_common_string[
+            substring_match.a : substring_match.a + substring_match.size
+        ]
+
+    # Remove any silly characters at the end of the substring, like '_'
+    if strip_characters is not None:
+        longest_common_string = longest_common_string.strip(strip_characters)
+
+    return longest_common_string
+
+
 def create_name_from_common_fields(
     in_paths: tuple[Path, ...], additional_suffixes: str | None = None
 ) -> Path:
@@ -109,6 +184,21 @@ def create_name_from_common_fields(
         if len(set([pcd[key] for pcd in processed_components_dict])) == 1
         and processed_components_dict[0][key] is not None
     }
+
+    # Handle the case where a mandatory field is not present. For field names
+    # we pirates can handle something like this. Not going to for sbids.
+    if "field" not in constant_fields:
+        field_substring = create_largest_common_field_name(
+            field_list=[
+                processed_name_component.field
+                for processed_name_component in processed_components
+                if processed_name_component is not None
+            ]
+        )
+        constant_fields["field"] = field_substring
+        logger.info(
+            f"Have extracted {field_substring=} as there was not a constant field present"
+        )
 
     name_path = create_path_from_processed_name_components(
         processed_name_components=ProcessedNameComponents(**constant_fields),
