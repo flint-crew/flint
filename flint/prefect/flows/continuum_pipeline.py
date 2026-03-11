@@ -26,6 +26,7 @@ from flint.masking import consider_beam_mask_round
 from flint.ms import find_mss
 from flint.naming import (
     CASDANameComponents,
+    ProcessedNameComponents,
     add_timestamp_to_path,
     extract_components_from_name,
     get_sbid_from_path,
@@ -188,9 +189,9 @@ def process_science_fields(
 
     # TODO: This feels a little too much like that feeling of being out
     # at sea for to long. Should refactor (or mask a EMU only).
-    if isinstance(
-        extract_components_from_name(name=science_mss[0].path), CASDANameComponents
-    ):
+    test_ms_format = extract_components_from_name(name=science_mss[0].path)
+
+    if isinstance(test_ms_format, CASDANameComponents):
         preprocess_science_mss = task_copy_and_preprocess_casda_askap_ms.map(
             casda_ms=science_mss,
             casa_container=field_options.casa_container,
@@ -200,6 +201,12 @@ def process_science_fields(
             preprocess_science_mss = task_flag_ms_aoflagger.map(  # type: ignore
                 ms=preprocess_science_mss, container=field_options.flagger_container
             )
+    elif isinstance(test_ms_format, ProcessedNameComponents):
+        logger.info(
+            "Dected a Flint style MS format. Continuing without preprocessing operations."
+        )
+        preprocess_science_mss = science_mss
+
     else:
         # TODO: This will likely need to be expanded should any
         # other calibration strategies get added
