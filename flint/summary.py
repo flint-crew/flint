@@ -20,6 +20,7 @@ from astropy.time import Time
 
 # Addressing some time interval IERS issue with astropy.
 from astropy.utils.iers import conf
+from capn_crunch import BaseOptions
 
 from flint.coadd.linmos import LinmosResult
 from flint.imager.wsclean import ImageSet, WSCleanResult
@@ -33,7 +34,6 @@ from flint.ms import (
     get_times_from_ms,
 )
 from flint.naming import get_sbid_from_path, processed_ms_format
-from flint.options import BaseOptions
 from flint.source_finding.aegean import AegeanOutputs
 from flint.utils import estimate_skycoord_centre
 

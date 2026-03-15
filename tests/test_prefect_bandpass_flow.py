@@ -5,7 +5,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from flint.options import BandpassOptions, create_options_from_parser
+from capn_crunch import create_options_from_parser
+
+from flint.options import BandpassOptions
 from flint.prefect.flows import bandpass_pipeline
 
 

@@ -15,6 +15,7 @@ from typing import Any
 
 import dask
 import numpy as np
+from capn_crunch import add_options_to_parser, create_options_from_parser
 from configargparse import ArgumentParser
 from fitscube.combine_fits import combine_fits
 from prefect import flow, tags, task, unmapped
@@ -36,8 +37,6 @@ from flint.options import (
     AddModelSubtractFieldOptions,
     FitsCubeOptions,
     SubtractFieldOptions,
-    add_options_to_parser,
-    create_options_from_parser,
 )
 from flint.predict.crystalball import CrystalBallOptions
 from flint.prefect.clusters import get_dask_runner

@@ -12,13 +12,13 @@ from collections.abc import Collection
 from pathlib import Path
 from typing import Any
 
+from capn_crunch import add_options_to_parser, create_options_from_parser
+
 from flint.configuration import get_options_from_strategy
 from flint.exceptions import TarArchiveError
 from flint.logging import logger
 from flint.options import (
     ArchiveOptions,
-    add_options_to_parser,
-    create_options_from_parser,
 )
 
 
