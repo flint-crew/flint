@@ -582,6 +582,7 @@ class MS(BaseOptions):
             ms = MS(path=ms)
         elif isinstance(ms, tuple) and all([isinstance(_ms, MS) for _ms in ms]):
             ms = MSs(mss=ms)
+        # extra ininstance here is to keep mypy happy, the rotten barbarnacle
         elif (
             not isinstance(ms, (MS, tuple))
             and "ms" in dir(ms)
