@@ -413,6 +413,70 @@ class PolFieldOptions(BaseOptions):
     """Path that final processed products will be copied into. If None no copying of file products is performed. See ArchiveOptions. """
 
 
+class RACSAllOptions(BaseOptions):
+    """Options to use throughout the RACS-All processing workflow. Based
+    on the continuum self-calibration flow. In the current form this will
+    be processing data from CASDA, i.e. no bandpass applied.
+
+    In its present form this `FieldOptions` class is not intended
+    to contain properties of the data that are being processed,
+    rather how those data will be processed.
+    """
+
+    low_data: Path
+    """Path to the low data to process"""
+    mid_data: Path
+    """Path to the mid data to process"""
+    high_data: Path
+    """Path to the high data to process"""
+    flagger_container: Path | None = None
+    """Path to the singularity aoflagger container"""
+    casa_container: Path | None = None
+    """Path to the singularity CASA container"""
+    expected_ms: int = 36
+    """The expected number of measurement set files to find"""
+    wsclean_container: Path | None = None
+    """Path to the singularity wsclean container"""
+    yandasoft_container: Path | None = None
+    """Path to the singularity yandasoft container"""
+    potato_container: Path | None = None
+    """Path to the singularity potato peel container"""
+    low_holofile: Path | None = None
+    """Path to the holography FITS cube for the low-band data that will be used when co-adding beams"""
+    mid_holofile: Path | None = None
+    """Path to the holography FITS cube for the mid-band data that will be used when co-adding beams"""
+    high_holofile: Path | None = None
+    """Path to the holography FITS cube for the high-band data that will be used when co-adding beams"""
+    rounds: int = 2
+    """Number of required rouds of self-calibration and imaging to perform"""
+    zip_ms: bool = False
+    """Whether to zip measurement sets once they are no longer required"""
+    run_aegean: bool = False
+    """Whether to run the aegean source finding tool"""
+    aegean_container: Path | None = None
+    """Path to the singularity aegean container"""
+    reference_catalogue_directory: Path | None = None
+    """Path to the directory container the reference catalogues, used to generate validation plots"""
+    linmos_residuals: bool = False
+    """Linmos the cleaning residuals together into a field image"""
+    beam_cutoff: float = 150
+    """Cutoff in arcseconds to use when calculating the common beam to convol to"""
+    pb_cutoff: float = 0.1
+    """Primary beam attenuation cutoff to use during linmos"""
+    use_beam_masks: bool = False
+    """Construct beam masks from MFS images to use for the next round of imaging. """
+    imaging_strategy: Path | None = None
+    """Path to a FLINT imaging yaml file that contains settings to use throughout imaging"""
+    sbid_archive_path: Path | None = None
+    """Path that SBID archive tarballs will be created under. If None no archive tarballs are created. See ArchiveOptions. """
+    sbid_copy_path: Path | None = None
+    """Path that final processed products will be copied into. If None no copying of file products is performed. See ArchiveOptions. """
+    rename_ms: bool = False
+    """Rename MSs throughout rounds of imaging and self-cal instead of creating copies. This will delete data-columns throughout. """
+    coadd_cubes: bool = False
+    """Co-add cubes formed throughout imaging together. Cubes will be smoothed channel-wise to a common resolution. Only performed on final set of images"""
+
+
 def dump_field_options_to_yaml(
     output_path: Path,
     field_options: FieldOptions | PolFieldOptions | SubtractFieldOptions,
@@ -491,11 +555,17 @@ class FitsCubeOptions(BaseOptions):
 
 class MS(BaseOptions):
     path: Path
+    """Path to the MS that this instanceis tracking"""
     column: str | None = None
+    """If set indicates column that is activate and should be used during imaging or calibration operations"""
     beam: int | None = None
+    """If set indicates seam number of the MS"""
     spw: int | None = None
+    """If set indicates the SPW that should be used in operations"""
     field: str | None = None
+    """If set indicates the field of the data in the MS"""
     model_column: str | None = None
+    """If set indicates the column with model visibilities"""
 
     @property
     def ms(self) -> MS:
