@@ -7,8 +7,8 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from capn_crunch import create_options_from_parser
 
-from flint.options import create_options_from_parser
 from flint.sky_model import (
     SkyModel,
     SkyModelOptions,

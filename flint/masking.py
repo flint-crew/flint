@@ -13,6 +13,7 @@ import astropy.units as u
 import numpy as np
 from astropy.io import fits
 from astropy.wcs import WCS
+from capn_crunch import BaseOptions, add_options_to_parser, create_options_from_parser
 from numpy.typing import NDArray
 from radio_beam import Beam
 from reproject import reproject_interp
@@ -27,7 +28,6 @@ from scipy.signal import fftconvolve
 
 from flint.logging import logger
 from flint.naming import FITSMaskNames, create_fits_mask_names
-from flint.options import BaseOptions, add_options_to_parser, create_options_from_parser
 from flint.utils import get_pixels_per_beam
 
 # TODO: Need to remove a fair amount of old approaches, and deprecate some of the toy functions

@@ -12,12 +12,12 @@ from astropy import units as u
 from astropy.coordinates import SkyCoord
 from astropy.table import QTable, Table
 from astropy.table.row import Row
+from capn_crunch import BaseOptions, add_options_to_parser, create_options_from_parser
 from scipy.optimize import curve_fit
 
 from flint.catalogue import KNOWN_REFERENCE_CATALOGUES, Catalogue
 from flint.logging import logger
 from flint.ms import get_freqs_from_ms, get_phase_dir_from_ms
-from flint.options import BaseOptions, add_options_to_parser, create_options_from_parser
 from flint.utils import get_packaged_resource_path
 
 KNOWN_PB_TYPES = ("gaussian", "sincsquared", "airy")

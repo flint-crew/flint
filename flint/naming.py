@@ -165,7 +165,7 @@ def create_name_from_common_fields(
     Returns:
         Path: Common fields with the same base parent path
     """
-    from flint.options import options_to_dict
+    from capn_crunch import options_to_dict
 
     in_paths = tuple(Path(p) for p in in_paths)
     parent = in_paths[0].parent

@@ -26,6 +26,11 @@ from typing import Any, NamedTuple
 
 import numpy as np
 from astropy.io import fits
+from capn_crunch import (
+    add_options_to_parser,
+    create_options_from_parser,
+    options_to_dict,
+)
 from fitscube.combine_fits import combine_fits
 
 from flint.exceptions import (
@@ -43,9 +48,6 @@ from flint.naming import (
 from flint.options import (
     MS,
     BaseOptions,
-    add_options_to_parser,
-    create_options_from_parser,
-    options_to_dict,
 )
 from flint.sclient import run_singularity_command
 from flint.utils import (

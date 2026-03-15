@@ -6,13 +6,12 @@ from argparse import ArgumentParser
 from pathlib import Path
 from typing import Any
 
+from capn_crunch import add_options_to_parser, create_options_from_parser
 from jolly_roger.tractor import TukeyTractorOptions, tukey_tractor
 
 from flint.logging import logger
 from flint.options import (
     MS,
-    add_options_to_parser,
-    create_options_from_parser,
 )
 
 
