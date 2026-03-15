@@ -575,14 +575,27 @@ class MS(BaseOptions):
         return self
 
     @classmethod
-    def cast(cls, ms: MS | Path) -> MS:
+    def cast(cls, ms: MS | Path | tuple[MS, ...]) -> MS | MSs:
         if isinstance(ms, MS):
             pass
         elif isinstance(ms, Path):
             ms = MS(path=ms)
-        elif "ms" in dir(ms) and isinstance(ms.ms, MS):
+        elif isinstance(ms, tuple) and all([isinstance(_ms, MS) for _ms in ms]):
+            ms = MSs(mss=ms)
+        elif (
+            not isinstance(ms, (MS, tuple))
+            and "ms" in dir(ms)
+            and isinstance(ms.ms, MS)
+        ):
             ms = ms.ms
         else:
             raise MSError(f"Unable to convert {ms=} of {type(ms)} to MS object. ")
 
         return ms
+
+
+class MSs(BaseOptions):
+    """A very slim container class to represent multiple MS instances"""
+
+    mss: tuple[MS]
+    """The collection of measurement sets"""

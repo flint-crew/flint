@@ -11,13 +11,15 @@ from pathlib import Path
 from typing import TypeAlias
 
 from configargparse import ArgumentParser
-from prefect import flow
+from prefect import flow, unmapped
 
 from flint.catalogue import verify_reference_catalogues
 from flint.configuration import (
     Strategy,
+    get_options_from_strategy,
     load_and_copy_strategy,
 )
+from flint.imager.wsclean import WSCleanResult
 from flint.logging import logger
 from flint.ms import MS, find_mss
 from flint.naming import (
@@ -36,6 +38,8 @@ from flint.prefect.clusters import get_dask_runner
 from flint.prefect.common.imaging import (
     task_copy_and_preprocess_casda_askap_ms,
     task_flag_ms_aoflagger,
+    task_potato_peel,
+    task_wsclean_imager,
 )
 
 MSsByBeam: TypeAlias = tuple[tuple[MS, ...], ...]
@@ -79,6 +83,13 @@ def _check_racs_all_options(racs_all_options: RACSAllOptions) -> None:
             raise ValueError(
                 "Unable to create linmos cubes without a yandasoft container"
             )
+
+    # For the moment we make sure that this is provided. Can consider moving to mandatory argument in
+    # the model definition
+    assert (
+        isinstance(racs_all_options.wsclean_container, Path)
+        and racs_all_options.wsclean_container.exists()
+    ), "Missing wsclean container path"
 
 
 def _check_create_output_science_path(
@@ -228,6 +239,7 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
     _ensure_all_casda_format(mss_by_beams=science_mss_by_beam)
 
     preprocesed_science_mss_by_beam = []
+    linmos_todos: dict[int, list[WSCleanResult]] = {}
     for science_mss in science_mss_by_beam:
         preprocess_science_mss = task_copy_and_preprocess_casda_askap_ms.map(
             casda_ms=science_mss,
@@ -238,6 +250,37 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
             preprocess_science_mss = task_flag_ms_aoflagger.map(
                 ms=preprocess_science_mss, container=racs_all_options.flagger_container
             )
+
+        if racs_all_options.potato_container:
+            # The call into potato peel task has two potential update option keywords.
+            # So for the moment we will not use the task decorated version.
+            potato_wsclean_init = get_options_from_strategy(
+                strategy=strategy, mode="wsclean", round_info=0, operation="selfcal"
+            )
+            potato_peel_options = get_options_from_strategy(
+                strategy=strategy, mode="potatopeel", round_info=0, operation="selfcal"
+            )
+            preprocess_science_mss = task_potato_peel.map(
+                ms=preprocess_science_mss,
+                potato_container=racs_all_options.potato_container,
+                update_wsclean_options=unmapped(potato_wsclean_init),
+                update_potato_peel_options=unmapped(potato_peel_options),
+            )
+
+        wsclean_results = task_wsclean_imager.submit(
+            in_ms=preprocess_science_mss,
+            wsclean_container=racs_all_options.wsclean_container,
+            update_wsclean_options=unmapped(
+                get_options_from_strategy(
+                    strategy=strategy,
+                    mode="wsclean",
+                    round_info=0,
+                    operation="selfcal",
+                )
+            ),
+        )
+        linmos_todos[0] = wsclean_results
+
         preprocesed_science_mss_by_beam.append(preprocess_science_mss)
 
 

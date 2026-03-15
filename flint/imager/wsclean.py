@@ -1204,7 +1204,7 @@ def run_wsclean_imager(
 
 
 def wsclean_imager(
-    ms: Path | MS,
+    ms: Path | MS | tuple[MS, ...],
     wsclean_container: Path,
     update_wsclean_options: dict[str, Any] | None = None,
     make_cube_from_subbands: bool = True,
@@ -1212,7 +1212,7 @@ def wsclean_imager(
     """Create and run a wsclean imager command against a measurement set.
 
     Args:
-        ms (Union[Path,MS]): Path to the measurement set that will be imaged
+        ms (Union[Path,MS, tuple[MS, ...]]): Path to the measurement set that will be imaged
         wsclean_container (Path): Path to the container with wsclean installed
         update_wsclean_options (Optional[Dict[str, Any]], optional): Additional options to update the generated WscleanOptions with. Keys should be attributes of WscleanOptions. Defaults to None.
 
