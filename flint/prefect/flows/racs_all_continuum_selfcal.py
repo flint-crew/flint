@@ -8,14 +8,21 @@ for wide-band multi-frequency synthesis.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TypeAlias
 
 from configargparse import ArgumentParser
 from prefect import flow
 
 from flint.catalogue import verify_reference_catalogues
+from flint.configuration import (
+    Strategy,
+    load_and_copy_strategy,
+)
 from flint.logging import logger
 from flint.ms import MS, find_mss
 from flint.naming import (
+    CASDANameComponents,
+    add_timestamp_to_path,
     extract_components_from_name,
     get_sbid_from_path,
 )
@@ -23,8 +30,15 @@ from flint.options import (
     RACSAllOptions,
     add_options_to_parser,
     create_options_from_parser,
+    dump_field_options_to_yaml,
 )
 from flint.prefect.clusters import get_dask_runner
+from flint.prefect.common.imaging import (
+    task_copy_and_preprocess_casda_askap_ms,
+    task_flag_ms_aoflagger,
+)
+
+MSsByBeam: TypeAlias = tuple[tuple[MS, ...], ...]
 
 
 def _check_racs_all_options(racs_all_options: RACSAllOptions) -> None:
@@ -114,6 +128,20 @@ def _check_create_output_science_path(
 def match_beams_across_bands(
     low_mss: tuple[MS, ...], mid_mss: tuple[MS, ...], high_mss: tuple[MS, ...]
 ) -> tuple[tuple[MS, ...], ...]:
+    """Matchh the input MSs across the three input bands together. This is done based on the
+    information in the file name, assuming the input names are recorgnised.
+
+    Args:
+        low_mss (tuple[MS, ...]): Measurement sets in the low band
+        mid_mss (tuple[MS, ...]): Measurement sets in the mid band
+        high_mss (tuple[MS, ...]): Measurement sets in the high band
+
+    Raises:
+        ValueError: _description_
+
+    Returns:
+        tuple[tuple[MS, ...], ...]: Measurement sets grouped by beam. They are sorted in ascending order.
+    """
 
     from collections import defaultdict
 
@@ -137,14 +165,32 @@ def match_beams_across_bands(
     return tuple([tuple(beam_mss) for _, beam_mss in matched_mss.items()])
 
 
+def _ensure_all_casda_format(mss_by_beams: MSsByBeam) -> None:
+    """A simple check to ensure all are CASDA measurement sets
+
+    Args:
+        mss_by_beams (MSsByBeam): The by beams MSs
+
+    Raises:
+        ValueError: Raised if an input MS is not a CASDA format
+    """
+
+    for mss_in_beam in mss_by_beams:
+        for ms in mss_in_beam:
+            logger.info(ms)
+            components = extract_components_from_name(name=ms.path)
+            if not isinstance(components, CASDANameComponents):
+                raise ValueError(f"Was expecting only CASDA MSs, got {components}")
+
+
 @flow
 def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
     # Any sanity checks will go in here, mateee
     _check_racs_all_options(racs_all_options=racs_all_options)
-    output_scienc_path = _check_create_output_science_path(
+    output_science_path = _check_create_output_science_path(
         science_path=racs_all_options.low_data, output_path=None, check_exists=True
     )
-    logger.info(f"Processing directory is {output_scienc_path=}")
+    logger.info(f"Processing directory is {output_science_path=}")
 
     low_band_mss = find_mss(
         mss_parent_path=racs_all_options.low_data,
@@ -159,9 +205,40 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
         expected_ms_count=racs_all_options.expected_ms,
     )
 
-    match_beams_across_bands(
+    science_mss_by_beam: MSsByBeam = match_beams_across_bands(
         low_mss=low_band_mss, mid_mss=mid_band_mss, high_mss=high_band_mss
     )
+    logger.info(f"Will be processing {len(science_mss_by_beam)} beams")
+
+    dump_field_options_to_yaml(
+        output_path=add_timestamp_to_path(
+            input_path=output_science_path / "racs_all_options.yaml"
+        ),
+        field_options=racs_all_options,
+    )
+
+    strategy: Strategy | None = load_and_copy_strategy(
+        output_split_science_path=output_science_path,
+        imaging_strategy=racs_all_options.imaging_strategy,
+    )
+    logger.info(f"Remove this later {strategy=}")
+
+    # Ya sea dog, we will only be handling CASDA measurementsets for the moment.
+    # We will consider bandpass applications later
+    _ensure_all_casda_format(mss_by_beams=science_mss_by_beam)
+
+    preprocesed_science_mss_by_beam = []
+    for science_mss in science_mss_by_beam:
+        preprocess_science_mss = task_copy_and_preprocess_casda_askap_ms.map(
+            casda_ms=science_mss,
+            casa_container=racs_all_options.casa_container,
+            output_directory=output_science_path,
+        )
+        if racs_all_options.flagger_container is not None:
+            preprocess_science_mss = task_flag_ms_aoflagger.map(
+                ms=preprocess_science_mss, container=racs_all_options.flagger_container
+            )
+        preprocesed_science_mss_by_beam.append(preprocess_science_mss)
 
 
 def setup_run_racs_all_field(

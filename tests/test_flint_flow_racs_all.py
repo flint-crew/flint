@@ -6,10 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from flint.ms import find_mss
+from flint.ms import MS, find_mss
 from flint.naming import CASDANameComponents, extract_components_from_name
 from flint.prefect.flows.racs_all_continuum_selfcal import (
     _check_create_output_science_path,
+    _ensure_all_casda_format,
     match_beams_across_bands,
 )
 
@@ -117,3 +118,22 @@ def test_match_beams_across_bands(mock_band_mss) -> None:
         assert len(beam_mss) == 3
         for ms in beam_mss:
             assert f"beam{beam_idx:02d}" in str(ms.path.name)
+
+
+def test_check_all_casda_format(mock_band_mss) -> None:
+    low_band, mid_band, high_band = mock_band_mss
+
+    sorted_results = match_beams_across_bands(
+        low_mss=find_mss(mss_parent_path=low_band, expected_ms_count=36),
+        mid_mss=find_mss(mss_parent_path=mid_band, expected_ms_count=36),
+        high_mss=find_mss(mss_parent_path=high_band, expected_ms_count=36),
+    )
+    _ensure_all_casda_format(mss_by_beams=sorted_results)
+
+    _temp = list(sorted_results[0])
+    _temp.append(MS(path=Path("AnExampleThing.ms")))
+
+    sorted_results_bad = tuple([tuple(_temp), *sorted_results[1:]])
+
+    with pytest.raises(ValueError):
+        _ensure_all_casda_format(mss_by_beams=sorted_results_bad)
