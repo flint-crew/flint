@@ -1130,13 +1130,20 @@ def run_wsclean_imager(
     move_hold_directories = wsclean_result.move_hold_directories
     image_prefix_str = wsclean_result.image_prefix_str
 
-    sclient_bind_dirs = [Path(ms.path).parent.absolute()]
+    if isinstance(ms, MS):
+        sclient_bind_dirs = [Path(ms.path).parent.absolute()]
+    else:
+        sclient_bind_dirs = [Path(_ms.path).parent.absolute() for _ms in ms.mss]
     if bind_dirs:
         sclient_bind_dirs = sclient_bind_dirs + list(bind_dirs)
 
     prefix = image_prefix_str if image_prefix_str else None
     if prefix is None:
-        prefix = str(ms.path.parent / ms.path.name)
+        prefix = (
+            str(ms.path.parent / ms.path.name)
+            if isinstance(ms, MS)
+            else str(ms.mss[0].path.parent / ms.path.name)
+        )
         logger.warning(f"Setting prefix to {prefix}. Likely this is not correct. ")
 
     if move_hold_directories:
