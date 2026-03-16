@@ -595,6 +595,20 @@ class MS(BaseOptions):
         return ms
 
 
+def _mss_attribute_setter(
+    instance: MSs, column: str, list_of_values: list[Any]
+) -> None:
+    unique_values = set(list_of_values)
+    if len(unique_values) > 1:
+        msg = f"Differing values found, {unique_values}"
+        raise ValueError(msg)
+    if len(unique_values) == 1:
+        # Convert to new list to avoid mypy index errors on set
+        list_unique_values = list(unique_values)
+        if list_unique_values[0] is not None:
+            object.__setattr__(instance, "column", list_unique_values[0])
+
+
 class MSs(BaseOptions):
     """A very slim container class to represent multiple MS instances"""
 
@@ -610,22 +624,15 @@ class MSs(BaseOptions):
 
         # TODO: Offload to helper function ...
         if self.column is None:
-            unique_columns = set([_ms.column for _ms in self.mss])
-            if len(unique_columns) > 1:
-                msg = f"Differing data columns, found {unique_columns}"
-                raise ValueError(msg)
-            if len(unique_columns) == 1:
-                unique_columns = list(unique_columns)
-                if unique_columns[0] is not None:
-                    object.__setattr__(self, "column", unique_columns[0])
+            _mss_attribute_setter(
+                instance=self,
+                column="column",
+                list_of_values=[_ms.column for _ms in self.mss],
+            )
 
-        # TODO: ... to remove duplication
         if self.model_column:
-            unique_model_columns = set([_ms.model_column for _ms in self.mss])
-            if len(unique_model_columns) > 1:
-                msg = f"Differing data columns, found {unique_model_columns}"
-                raise ValueError(msg)
-            if len(unique_model_columns) == 1:
-                unique_model_columns = list(unique_columns)
-                if unique_model_columns[0] is not None:
-                    object.__setattr__(self, "model_column", unique_model_columns[0])
+            _mss_attribute_setter(
+                instance=self,
+                column="model_column",
+                list_of_values=[_ms.model_column for _ms in self.mss],
+            )
