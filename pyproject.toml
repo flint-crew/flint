@@ -112,6 +112,7 @@ flint_flow_bandpass_calibrate = "flint.prefect.flows.bandpass_pipeline:cli"
 flint_flow_continuum_pipeline = "flint.prefect.flows.continuum_pipeline:cli"
 flint_flow_subtract_cube_pipeline = "flint.prefect.flows.subtract_cube_pipeline:cli"
 flint_flow_polarisation_pipeline = "flint.prefect.flows.polarisation_pipeline:cli"
+flint_flow_racs_all_pipeline = "flint.prefect.flows.racs_all_continuum_selfcal:cli"
 
 # [tool.mypy]
 # files = ["flint", "tests"]
