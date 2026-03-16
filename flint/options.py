@@ -598,6 +598,9 @@ class MS(BaseOptions):
 def _mss_attribute_setter(
     instance: MSs, column: str, list_of_values: list[Any]
 ) -> None:
+    """Helper to set the consistent column names and do basic checks intended
+    to ensure all values are the same. The setter here deals with
+    the BaseOptions class being frozen by default"""
     unique_values = set(list_of_values)
     if len(unique_values) > 1:
         msg = f"Differing values found, {unique_values}"
@@ -606,7 +609,7 @@ def _mss_attribute_setter(
         # Convert to new list to avoid mypy index errors on set
         list_unique_values = list(unique_values)
         if list_unique_values[0] is not None:
-            object.__setattr__(instance, "column", list_unique_values[0])
+            object.__setattr__(instance, column, list_unique_values[0])
 
 
 class MSs(BaseOptions):
@@ -630,7 +633,7 @@ class MSs(BaseOptions):
                 list_of_values=[_ms.column for _ms in self.mss],
             )
 
-        if self.model_column:
+        if self.model_column is None:
             _mss_attribute_setter(
                 instance=self,
                 column="model_column",
