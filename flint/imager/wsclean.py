@@ -200,7 +200,7 @@ class WSCleanResult(BaseOptions):
     """The constructede wsclean command that would be executed."""
     options: WSCleanOptions
     """The set of wslean options used for imaging"""
-    ms: MS
+    ms: MS | MSs
     """The measurement sets that have been included in the wsclean command. """
     bind_dirs: tuple[Path, ...]
     """Paths that should be binded to when executing the command"""
@@ -694,20 +694,26 @@ def wsclean_cleanup_files(
     return tuple(rm_files)
 
 
-def create_wsclean_name_argument(wsclean_options: WSCleanOptions, ms: MS) -> Path:
+def create_wsclean_name_argument(wsclean_options: WSCleanOptions, ms: MS | MSs) -> Path:
     """Create the value that will be provided to wsclean -name argument. This has
     to be generated. Among things to consider is the desired output directory of imaging
     files. This by default will be alongside the measurement set. If a `temp_dir`
     has been specified then output files will be written here.
 
+    If the input ``ms`` is an instance of ``MSs`` then the first measurement
+    set will be used to base the name from.
+
     Args:
         wsclean_options (WSCleanOptions): Set of wsclean options to consider
-        ms (MS): The measurement set to be imaged
+        ms (MS | MSs): The measurement set to be imaged
 
     Returns:
         Path: Value of the -name argument to provide to wsclean
     """
     wsclean_options_dict = wsclean_options._asdict()
+
+    # Extract the first measurement set should multiple be provided
+    name_ms: MS = ms if isinstance(ms, MS) else ms.mss[0]
 
     # Prepare the name for the output wsclean command
     # Construct the name property of the string
@@ -715,14 +721,14 @@ def create_wsclean_name_argument(wsclean_options: WSCleanOptions, ms: MS) -> Pat
     channel_range = wsclean_options.channel_range
     scan_range = wsclean_options.interval
     name_prefix_str = create_imaging_name_prefix(
-        ms_path=ms.path,
+        ms_path=name_ms.path,
         pol=pol,
         channel_range=channel_range,
         scan_range=scan_range,
     )
 
     # Now resolve the directory part
-    name_dir: Path | str | None = ms.path.parent
+    name_dir: Path | str | None = name_ms.path.parent
     temp_dir = wsclean_options_dict.get("temp_dir", None)
     if temp_dir:
         # attempt to resolve possible environment variables flexibly
@@ -811,7 +817,7 @@ def _resolve_wsclean_key_value_to_cli_str(key: str, value: Any) -> ResolvedCLIRe
 
 
 def create_wsclean_cmd(
-    ms: MS,
+    ms: MS | MSs,
     wsclean_options: WSCleanOptions,
 ) -> WSCleanResult:
     """Create a wsclean command from a WSCleanOptions container
@@ -826,7 +832,7 @@ def create_wsclean_cmd(
     same directory as the measurement set.
 
     Args:
-        ms (MS): The measurement set to be imaged
+        ms (MS | MSs): The measurement set to be imaged
         wsclean_options (WSCleanOptions): WSClean options to image with
         container (Optional[Path], optional): If a path to a container is provided the command is executed immediately. Defaults to None.
 
@@ -846,10 +852,11 @@ def create_wsclean_cmd(
 
     wsclean_options_dict = wsclean_options._asdict()
 
+    example_ms: MS = ms if isinstance(ms, MS) else ms.mss[0]
     name_argument_path = create_wsclean_name_argument(
-        wsclean_options=wsclean_options, ms=ms
+        wsclean_options=wsclean_options, ms=example_ms
     )
-    move_directory = ms.path.parent
+    move_directory = example_ms.path.parent
     hold_directory: Path | None = Path(name_argument_path).parent
 
     unknowns: list[tuple[Any, Any]] = []
@@ -877,9 +884,13 @@ def create_wsclean_cmd(
         raise ValueError(f"Unknown wsclean option types: {msg}")
 
     cmds += [f"-name {name_argument_path!s}"]
-    cmds += [f"{ms.path!s} "]
-
-    bind_dir_paths.append(ms.path.parent)
+    if isinstance(ms, MS):
+        cmds += [f"{ms.path!s} "]
+        bind_dir_paths.append(ms.path.parent)
+    else:
+        assert isinstance(ms, MSs), f"Expected MSs, got {type(ms)}"
+        cmds += [f"{_ms.path!s}" for _ms in ms.mss]
+        bind_dir_paths += [_ms.path.parent for _ms in ms.mss]
 
     # TODO: Currently there are two calls into the `parse_environment_variable`
     # when processing the `-temp-dir` and `-name` options. When using the `FLINT_UUID`

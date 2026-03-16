@@ -35,7 +35,7 @@ from flint.imager.wsclean import (
 )
 from flint.logging import logger
 from flint.naming import create_imaging_name_prefix
-from flint.options import MS
+from flint.options import MS, MSs
 from flint.utils import get_packaged_resource_path
 
 
@@ -331,7 +331,7 @@ def test_resolve_key_value_to_cli():
     assert res.ignore
 
 
-def test_create_wsclean_name(ms_example):
+def test_create_wsclean_name(ms_example) -> None:
     """Test the creation of a wsclean name argument"""
     name = create_imaging_name_prefix(ms_path=ms_example)
     assert name == "SB39400.RACS_0635-31.beam0.small"
@@ -362,6 +362,36 @@ def test_create_wsclean_name_argument(ms_example):
     assert "/jack/sparrow/SB39400.RACS_0635-31.beam0.small.i" == str(name_argument_path)
 
 
+def test_create_wsclean_name_argument_with_mss(ms_example) -> None:
+    """Ensure that the generated name argument behaves as expected.
+    This uses a MSs to create the base name."""
+
+    ms = MS.cast(
+        ms=(
+            Path(ms_example),
+            Path("SB39400.RACS_0635-31.beam0"),
+            Path("SB39401.RACS_0635-31.beam0"),
+            Path("SB39402.RACS_0635-31.beam0"),
+        )
+    )
+
+    wsclean_options = WSCleanOptions()
+    name_argument_path = create_wsclean_name_argument(
+        wsclean_options=wsclean_options, ms=ms
+    )
+
+    parent = str(Path(ms_example).parent)
+    assert isinstance(name_argument_path, Path)
+    assert f"{parent}/SB39400.RACS_0635-31.beam0.small.i" == str(name_argument_path)
+
+    wsclean_options_2 = WSCleanOptions(temp_dir="/jack/sparrow")
+    name_argument_path = create_wsclean_name_argument(
+        wsclean_options=wsclean_options_2, ms=ms
+    )
+
+    assert "/jack/sparrow/SB39400.RACS_0635-31.beam0.small.i" == str(name_argument_path)
+
+
 def test_create_wsclean_command(ms_example):
     """Test whether WSCleanOptions can be correctly cast to a command string"""
     wsclean_options = WSCleanOptions()
@@ -370,6 +400,27 @@ def test_create_wsclean_command(ms_example):
         ms=MS.cast(ms_example), wsclean_options=wsclean_options
     )
     assert isinstance(command, WSCleanResult)
+
+
+def test_create_wsclean_command_with_mss(ms_example) -> None:
+    """Test whether WSCleanOptions can be correctly cast to a command string
+    when using a MSs instance"""
+    wsclean_options = WSCleanOptions()
+
+    mss = MS.cast(
+        (
+            Path(ms_example),
+            Path("SB1234.JACK_0001+234.beam00"),
+        )
+    )
+    assert isinstance(mss, MSs)
+    assert all([isinstance(_ms, MS) for _ms in mss.mss])
+
+    command = create_wsclean_cmd(ms=mss, wsclean_options=wsclean_options)
+    assert isinstance(command, WSCleanResult)
+
+    for _ms in mss.mss:
+        assert _ms.path.name in command.cmd
 
 
 def test_create_wsclean_command_with_environment(ms_example):
