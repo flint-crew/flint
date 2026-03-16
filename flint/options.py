@@ -625,7 +625,6 @@ class MSs(BaseOptions):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-        # TODO: Offload to helper function ...
         if self.column is None:
             _mss_attribute_setter(
                 instance=self,
