@@ -576,7 +576,7 @@ class MS(BaseOptions):
 
     @classmethod
     def cast(cls, ms: MS | Path | tuple[MS | Path, ...]) -> MS | MSs:
-        if isinstance(ms, MS):
+        if isinstance(ms, (MS, MSs)):
             pass
         elif isinstance(ms, Path):
             ms = MS(path=ms)

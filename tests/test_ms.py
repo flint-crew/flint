@@ -59,6 +59,23 @@ def test_ms_cast_into_mss_only_paths() -> None:
     assert all(isinstance(_ms, MS) for _ms in mss.mss)
 
 
+def test_ms_cast_into_mss_with_mss() -> None:
+    """See if the measurement cast function can pick up
+    the tuple of MSs. See if casting function handles
+    existing MSs"""
+    ms_1 = MS(path=Path("Jack.ms"))
+    ms_2 = MS(path=Path("Sparrow.ms"))
+    ms_3 = MS(path=Path("Black.ms"))
+    ms_4 = MS(path=Path("Pearl.ms"))
+
+    mss = MSs(mss=(ms_1, ms_2, ms_3, ms_4))
+    mss = MS.cast(mss)
+
+    assert isinstance(mss, MSs)
+    assert len(mss.mss) == 4
+    assert all(isinstance(_ms, MS) for _ms in mss.mss)
+
+
 def test_consistent_channelwise_frequencies():
     """Some steps the channels in a set of MSs all need
     to be the same, in the same relative order"""
