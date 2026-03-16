@@ -345,7 +345,7 @@ def task_wsclean_imager(
         WSCleanResult: A resulting wsclean command and resulting meta-data
     """
 
-    ms: MS | MSs = MS.cast(in_ms)
+    ms: MS | MSs = MS.cast(tuple(in_ms))
 
     update_wsclean_options = (
         {} if update_wsclean_options is None else update_wsclean_options
