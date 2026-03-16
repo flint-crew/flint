@@ -25,7 +25,38 @@ from flint.ms import (
     rename_ms_and_columns_for_selfcal,
     subtract_model_from_data_column,
 )
+from flint.options import MSs
 from flint.utils import get_packaged_resource_path
+
+
+def test_ms_cast_into_mss() -> None:
+    """See if the measurement cast function can pick up
+    the tuple of MSs"""
+    ms_1 = MS(path=Path("Jack.ms"))
+    ms_2 = MS(path=Path("Sparrow.ms"))
+    ms_3 = MS(path=Path("Black.ms"))
+    ms_4 = MS(path=Path("Pearl.ms"))
+
+    mss = MS.cast((ms_1, ms_2, ms_3, ms_4))
+
+    assert isinstance(mss, MSs)
+    assert len(mss.mss) == 4
+    assert all(isinstance(_ms, MS) for _ms in mss.mss)
+
+
+def test_ms_cast_into_mss_only_paths() -> None:
+    """See if the measurement cast function can pick up
+    the tuple of MSs. This uses only Path objects to create the MS"""
+    ms_1 = Path("Jack.ms")
+    ms_2 = Path("Sparrow.ms")
+    ms_3 = Path("Black.ms")
+    ms_4 = Path("Pearl.ms")
+
+    mss = MS.cast((ms_1, ms_2, ms_3, ms_4))
+
+    assert isinstance(mss, MSs)
+    assert len(mss.mss) == 4
+    assert all(isinstance(_ms, MS) for _ms in mss.mss)
 
 
 def test_consistent_channelwise_frequencies():

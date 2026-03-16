@@ -575,13 +575,13 @@ class MS(BaseOptions):
         return self
 
     @classmethod
-    def cast(cls, ms: MS | Path | tuple[MS, ...]) -> MS | MSs:
+    def cast(cls, ms: MS | Path | tuple[MS | Path, ...]) -> MS | MSs:
         if isinstance(ms, MS):
             pass
         elif isinstance(ms, Path):
             ms = MS(path=ms)
-        elif isinstance(ms, tuple) and all([isinstance(_ms, MS) for _ms in ms]):
-            ms = MSs(mss=ms)
+        elif isinstance(ms, tuple) and all([isinstance(_ms, (MS, Path)) for _ms in ms]):
+            ms = MSs(mss=tuple([MS.cast(ms=_ms) for _ms in ms]))
         # extra ininstance here is to keep mypy happy, the rotten barbarnacle
         elif (
             not isinstance(ms, (MS, tuple))
@@ -598,5 +598,5 @@ class MS(BaseOptions):
 class MSs(BaseOptions):
     """A very slim container class to represent multiple MS instances"""
 
-    mss: tuple[MS]
+    mss: tuple[MS, ...]
     """The collection of measurement sets"""
