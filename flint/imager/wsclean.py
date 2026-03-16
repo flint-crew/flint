@@ -43,6 +43,7 @@ from flint.naming import (
 from flint.options import (
     MS,
     BaseOptions,
+    MSs,
     add_options_to_parser,
     create_options_from_parser,
     options_to_dict,
@@ -1204,7 +1205,7 @@ def run_wsclean_imager(
 
 
 def wsclean_imager(
-    ms: Path | MS | tuple[MS, ...],
+    ms: Path | MS | tuple[MS, ...] | MSs,
     wsclean_container: Path,
     update_wsclean_options: dict[str, Any] | None = None,
     make_cube_from_subbands: bool = True,
@@ -1212,7 +1213,7 @@ def wsclean_imager(
     """Create and run a wsclean imager command against a measurement set.
 
     Args:
-        ms (Union[Path,MS, tuple[MS, ...]]): Path to the measurement set that will be imaged
+        ms (Path | MS | tuple[MS, ...] | MSs): Path to the measurement set that will be imaged
         wsclean_container (Path): Path to the container with wsclean installed
         update_wsclean_options (Optional[Dict[str, Any]], optional): Additional options to update the generated WscleanOptions with. Keys should be attributes of WscleanOptions. Defaults to None.
 

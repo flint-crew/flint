@@ -76,6 +76,37 @@ def test_ms_cast_into_mss_with_mss() -> None:
     assert all(isinstance(_ms, MS) for _ms in mss.mss)
 
 
+def test_ms_cast_into_mss_with_columns() -> None:
+    """See if the measurement cast function can pick up
+    the tuple of MSs. Sanity check that the 'collecting' function
+    of the MSs can accumulate the common column and model column
+    attributes"""
+    ms_1 = MS(path=Path("Jack.ms"), column="DATA")
+    ms_2 = MS(path=Path("Sparrow.ms"), column="DATA")
+    ms_3 = MS(path=Path("Black.ms"), column="DATA")
+    ms_4 = MS(path=Path("Pearl.ms"), column="DATA")
+
+    mss = MS.cast((ms_1, ms_2, ms_3, ms_4))
+
+    assert isinstance(mss, MSs)
+    assert len(mss.mss) == 4
+    assert all(isinstance(_ms, MS) for _ms in mss.mss)
+    assert mss.column == "DATA"
+
+
+def test_ms_cast_into_mss_with_columns_fail_common() -> None:
+    """See if the measurement cast function can pick up
+    the tuple of MSs. Similar to above by catch the case
+    of different model or data columns"""
+    ms_1 = MS(path=Path("Jack.ms"), column="DATA")
+    ms_2 = MS(path=Path("Sparrow.ms"), column="DATA")
+    ms_3 = MS(path=Path("Black.ms"), column="DATA")
+    ms_4 = MS(path=Path("Pearl.ms"), column="BAD")
+
+    with pytest.raises(ValueError):
+        MS.cast((ms_1, ms_2, ms_3, ms_4))
+
+
 def test_consistent_channelwise_frequencies():
     """Some steps the channels in a set of MSs all need
     to be the same, in the same relative order"""

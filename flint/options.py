@@ -600,3 +600,32 @@ class MSs(BaseOptions):
 
     mss: tuple[MS, ...]
     """The collection of measurement sets"""
+    column: str | None = None
+    """The column to use across the MSs"""
+    model_column: str | None = None
+    """If set indicates the column with model visibilities"""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+        # TODO: Offload to helper function ...
+        if self.column is None:
+            unique_columns = set([_ms.column for _ms in self.mss])
+            if len(unique_columns) > 1:
+                msg = f"Differing data columns, found {unique_columns}"
+                raise ValueError(msg)
+            if len(unique_columns) == 1:
+                unique_columns = list(unique_columns)
+                if unique_columns[0] is not None:
+                    object.__setattr__(self, "column", unique_columns[0])
+
+        # TODO: ... to remove duplication
+        if self.model_column:
+            unique_model_columns = set([_ms.model_column for _ms in self.mss])
+            if len(unique_model_columns) > 1:
+                msg = f"Differing data columns, found {unique_model_columns}"
+                raise ValueError(msg)
+            if len(unique_model_columns) == 1:
+                unique_model_columns = list(unique_columns)
+                if unique_model_columns[0] is not None:
+                    object.__setattr__(self, "model_column", unique_model_columns[0])
