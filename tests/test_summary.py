@@ -8,7 +8,12 @@ from astropy.coordinates import EarthLocation, Latitude, Longitude
 from astropy.time import Time
 
 from flint.imager.wsclean import ImageSet
-from flint.ms import describe_ms, get_telescope_location_from_ms, get_times_from_ms
+from flint.ms import (
+    MSSummary,
+    describe_ms,
+    get_telescope_location_from_ms,
+    get_times_from_ms,
+)
 from flint.source_finding.aegean import AegeanOutputs
 from flint.summary import (
     FieldSummary,
@@ -159,6 +164,9 @@ def test_field_summary_with_mss_and_summariers(
 
     assert isinstance(field_summary.hour_angles, Longitude)
     assert isinstance(field_summary.elevations, Latitude)
+    assert field_summary.ms_summaries is not None and all(
+        isinstance(summary, MSSummary) for summary in field_summary.ms_summaries
+    )
 
 
 def test_field_summary_with_mss(ms_example, aegean_outputs_example):
