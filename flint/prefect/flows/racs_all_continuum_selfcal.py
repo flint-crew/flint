@@ -292,7 +292,7 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
         preprocesed_science_mss_by_beam.append(preprocess_science_mss)
 
     field_summary = task_create_field_summary.submit(
-        mss=[ms for beam_mss in science_mss_by_beam for ms in beam_mss],
+        mss=[ms for beam_mss in preprocesed_science_mss_by_beam for ms in beam_mss],
         cal_sbid_path=None,  # CASDA MSs have solutions applied
         holography_path=None,  # No unified holography (yet, mate)
         ms_summaries=ms_summaries,
