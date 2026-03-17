@@ -153,7 +153,7 @@ def task_flag_ms_aoflagger(ms: FlagMS, container: Path | None) -> FlagMS:
 
     extracted_ms = flag_ms_aoflagger(ms=extracted_ms, container=container)
 
-    return ms
+    return extracted_ms
 
 
 @task
