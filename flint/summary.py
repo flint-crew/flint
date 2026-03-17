@@ -285,7 +285,7 @@ def create_field_summary(
         cal_sbid_path (Optional[Path], optional): Path to an example of a bandpass measurement set. Defaults to None.
         holography_path (Optional[Path], optional): The holography fits cube used (or will be) to linmos. Defaults to None.
         aegean_outputs (Optional[AegeanOutputs], optional): Should RMS / source information be added to the instance. Defaults to None.
-        ms_summaries (list[MSSummary], optional): Pre-computed MSSummary objects for each of the input mss. Defaults to None.
+        ms_summaries (list[MSSummary] | None, optional): Pre-computed MSSummary objects for each of the input mss. Defaults to None.
 
     Returns:
         FieldSummary: A summary of a field

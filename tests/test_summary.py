@@ -8,7 +8,7 @@ from astropy.coordinates import EarthLocation, Latitude, Longitude
 from astropy.time import Time
 
 from flint.imager.wsclean import ImageSet
-from flint.ms import get_telescope_location_from_ms, get_times_from_ms
+from flint.ms import describe_ms, get_telescope_location_from_ms, get_times_from_ms
 from flint.source_finding.aegean import AegeanOutputs
 from flint.summary import (
     FieldSummary,
@@ -132,6 +132,33 @@ def test_field_summary(ms_example):
     assert field_summary.integration_time == 19.90655994415036
     assert isinstance(field_summary.ms_times, Time)
     assert len(field_summary.ms_times) == 2
+
+
+def test_field_summary_with_mss_and_summariers(
+    ms_example, aegean_outputs_example
+) -> None:
+    """Ensure that precomputed MSSummary objects can be provided to the
+    create field summary entry point. Avoids serial computing them"""
+    cal_sbid_path = Path("/scratch3/gal16b/split/39433/SB39433.1934-638.beam0.ms")
+
+    mss = [ms_example for _ in range(36)]
+    ms_summariers = tuple(map(describe_ms, mss))
+
+    field_summary = create_field_summary(
+        cal_sbid_path=cal_sbid_path,
+        aegean_outputs=aegean_outputs_example,
+        mss=mss,
+        ms_summaries=list(ms_summariers),
+    )
+
+    # This si the phase direction, in degrees, of the one MS
+    # this pirate is sneakily repeating
+    centre = field_summary.centre
+    assert np.isclose(centre.ra.deg, 98.211959)  # type: ignore
+    assert np.isclose(centre.dec.deg, -30.86099889)  # type: ignore
+
+    assert isinstance(field_summary.hour_angles, Longitude)
+    assert isinstance(field_summary.elevations, Latitude)
 
 
 def test_field_summary_with_mss(ms_example, aegean_outputs_example):
