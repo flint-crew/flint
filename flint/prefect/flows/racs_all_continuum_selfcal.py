@@ -244,6 +244,7 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
     preprocesed_science_mss_by_beam = []
     ms_summaries = []
     linmos_todos: dict[int, list[WSCleanResult]] = {}
+    linmos_todos[0] = []
     for science_mss in science_mss_by_beam:
         preprocess_science_mss = task_copy_and_preprocess_casda_askap_ms.map(
             casda_ms=science_mss,
@@ -287,7 +288,7 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
                 )
             ),
         )
-        linmos_todos[0] = wsclean_results
+        linmos_todos[0].append(wsclean_results)
 
         preprocesed_science_mss_by_beam.append(preprocess_science_mss)
 
