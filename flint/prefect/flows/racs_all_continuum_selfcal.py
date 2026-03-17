@@ -36,11 +36,14 @@ from flint.options import (
 )
 from flint.prefect.clusters import get_dask_runner
 from flint.prefect.common.imaging import (
+    create_convol_linmos_images,
     task_copy_and_preprocess_casda_askap_ms,
     task_flag_ms_aoflagger,
     task_potato_peel,
     task_wsclean_imager,
 )
+from flint.prefect.common.ms import task_describe_ms
+from flint.prefect.common.utils import task_create_field_summary
 
 MSsByBeam: TypeAlias = tuple[tuple[MS, ...], ...]
 
@@ -239,6 +242,7 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
     _ensure_all_casda_format(mss_by_beams=science_mss_by_beam)
 
     preprocesed_science_mss_by_beam = []
+    ms_summaries = []
     linmos_todos: dict[int, list[WSCleanResult]] = {}
     for science_mss in science_mss_by_beam:
         preprocess_science_mss = task_copy_and_preprocess_casda_askap_ms.map(
@@ -246,6 +250,8 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
             casa_container=racs_all_options.casa_container,
             output_directory=output_science_path,
         )
+        preprocess_science_mss = task_describe_ms.map(ms=preprocess_science_mss)
+        ms_summaries.extend(preprocess_science_mss)
         if racs_all_options.flagger_container is not None:
             preprocess_science_mss = task_flag_ms_aoflagger.map(
                 ms=preprocess_science_mss, container=racs_all_options.flagger_container
@@ -283,15 +289,24 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
 
         preprocesed_science_mss_by_beam.append(preprocess_science_mss)
 
-    # if racs_all_options.yandasoft_container:
-    #     for key in linmos_todos:
-    #         additional_linmos_suffix = "noselfcal" if key == 0 else f"round{key}"
-    #         parsets = create_convol_linmos_images(
-    #             wsclean_results=wsclean_results,
-    #             field_options=racs_all_options,
-    #             field_summary=None,
-    #             additional_linmos_suffix_str=additional_linmos_suffix,  # indicate in output linmos name no selfcal
-    #         )
+    field_summary = task_create_field_summary.submit(
+        mss=[ms for beam_mss in science_mss_by_beam for ms in beam_mss],
+        cal_sbid_path=None,  # CASDA MSs have solutions applied
+        holography_path=None,  # No unified holography (yet, mate)
+        ms_summaries=ms_summaries,
+    )
+
+    if racs_all_options.yandasoft_container:
+        for key in linmos_todos:
+            additional_linmos_suffix = "noselfcal" if key == 0 else f"round{key}"
+            wsclean_results = linmos_todos[key]
+            # parsets =
+            _ = create_convol_linmos_images(
+                wsclean_results=wsclean_results,
+                field_options=racs_all_options,
+                field_summary=field_summary,
+                additional_linmos_suffix_str=additional_linmos_suffix,  # indicate in output linmos name no selfcal
+            )
 
 
 def setup_run_racs_all_field(

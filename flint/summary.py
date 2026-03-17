@@ -112,8 +112,14 @@ def _get_pol_axis_as_rad(ms: MS | Path) -> float:
 
 
 # TODO: Need to establise a MSLike type
-def add_ms_summaries(field_summary: FieldSummary, mss: list[MS]) -> FieldSummary:
-    """Obtain a MSSummary instance to add to a FieldSummary
+def add_ms_summaries(
+    field_summary: FieldSummary,
+    mss: list[MS],
+    ms_summaries: list[MSSummary] | None = None,
+) -> FieldSummary:
+    """Obtain a MSSummary instance to add to a FieldSummary. If existing
+    ``MSSummary`` instances are provided than the internal creation will
+    be skipped.
 
     Quantities derived from the field centre (hour angles, elevations) are
     also calculated. The field centre position is estimated by taking the
@@ -124,13 +130,15 @@ def add_ms_summaries(field_summary: FieldSummary, mss: list[MS]) -> FieldSummary
     Args:
         field_summary (FieldSummary): Existing field summary object to update
         mss (List[MS]): Set of measurement sets to describe
+        ms_summaries (list[MSSumarry] | None, optional): Precomputed ``MSSummary`` objects. Defaults to None.
 
     Returns:
-        Tuple[MSSummary]: Results from the inspected set of measurement sets
+        FieldSummary: The updated field summary object with addition information from individual MS objects
     """
     logger.info("Adding MS summaries")
 
-    ms_summaries = tuple(map(describe_ms, mss))
+    if ms_summaries is None:
+        ms_summaries = list(map(describe_ms, mss))
     centres_list = [ms_summary.phase_dir for ms_summary in ms_summaries]
     if len(centres_list) == 0:
         raise ValueError("No phase directions found in the MSs")
@@ -151,7 +159,7 @@ def add_ms_summaries(field_summary: FieldSummary, mss: list[MS]) -> FieldSummary
     pol_axis = _get_pol_axis_as_rad(ms=mss[0])
 
     field_summary = field_summary.with_options(
-        ms_summaries=ms_summaries,
+        ms_summaries=tuple(ms_summaries),
         centre=centre,
         hour_angles=hour_angles,
         elevations=elevations,
@@ -262,18 +270,22 @@ def create_field_summary(
     cal_sbid_path: Path | None = None,
     holography_path: Path | None = None,
     aegean_outputs: AegeanOutputs | None = None,
+    ms_summaries: list[MSSummary] | None = None,
     **kwargs,
 ) -> FieldSummary:
     """Create a field summary object using a measurement set.
 
+    If a set of ``MSSummary`` instances are provided then the (sometimes costly)
+    process to compute the ``MSSummary`` objects internally will be skipped.
+
     All other keyword arguments are passed directly through to `FieldSummary`
 
     Args:
-        ms (Union[MS, Path]): Measurement set information will be pulled from
+        mss (Union[MS, Path]): Set of measurement sets to describe/ The first will be used to set information will be pulled from
         cal_sbid_path (Optional[Path], optional): Path to an example of a bandpass measurement set. Defaults to None.
         holography_path (Optional[Path], optional): The holography fits cube used (or will be) to linmos. Defaults to None.
         aegean_outputs (Optional[AegeanOutputs], optional): Should RMS / source information be added to the instance. Defaults to None.
-        mss (Optional[Collection[MS]], optionals): Set of measurement sets to describe
+        ms_summaries (list[MSSummary], optional): Pre-computed MSSummary objects for each of the input mss. Defaults to None.
 
     Returns:
         FieldSummary: A summary of a field
@@ -323,7 +335,9 @@ def create_field_summary(
     )
 
     field_summary = add_ms_summaries(
-        field_summary=field_summary, mss=[MS.cast(ms=ms) for ms in mss]
+        field_summary=field_summary,
+        mss=[MS.cast(ms=ms) for ms in mss],
+        ms_summaries=ms_summaries,
     )
 
     if aegean_outputs:
