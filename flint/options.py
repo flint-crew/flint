@@ -14,13 +14,16 @@ from pathlib import Path
 from types import NoneType, UnionType
 from typing import (
     Any,
+    NamedTuple,
     Self,
     TypeVar,
     get_args,
     get_origin,
 )
 
+import numpy as np
 import yaml
+from astropy.coordinates import SkyCoord
 from pydantic import BaseModel, ConfigDict
 from pydantic.fields import FieldInfo
 
@@ -556,6 +559,31 @@ class FitsCubeOptions(BaseOptions):
     """Set pixels whose values are exactly 0.0 to not-a-number (nan)"""
 
 
+class MSSummary(NamedTuple):
+    """Small structure to contain overview of a MS"""
+
+    unflagged: int
+    """Number of unflagged records"""
+    flagged: int
+    """Number of flagged records"""
+    flag_spectrum: np.ndarray
+    """Flagged spectral channels"""
+    fields: list[str]
+    """Collection of unique field names from the FIELDS table"""
+    ants: list[int]
+    """Collection of unique antennas"""
+    beam: int
+    """The ASKAP beam number of the measurement set"""
+    path: Path
+    """Path to the measurement set that is being represented"""
+    phase_dir: SkyCoord
+    """The phase direction of the measurement set, which will be where the image will be centred"""
+    spw: int | None = None
+    """Intended to be used with ASKAP high-frequency resolution modes, where the MS is divided into SPWs"""
+    ms: MS | None = None
+    """The MS object used to generate the summary"""
+
+
 class MS(BaseOptions):
     path: Path
     """Path to the MS that this instanceis tracking"""
@@ -586,7 +614,7 @@ class MS(BaseOptions):
         elif (
             not isinstance(ms, (MS, tuple))
             and "ms" in dir(ms)
-            and isinstance(ms.ms, MS)
+            and isinstance(ms.ms, (MS, MSSummary))
         ):
             ms = ms.ms
         else:

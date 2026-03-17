@@ -15,7 +15,6 @@ from contextlib import contextmanager
 from curses.ascii import controlnames
 from os import PathLike
 from pathlib import Path
-from typing import NamedTuple
 
 import astropy.units as u
 import numpy as np
@@ -28,34 +27,8 @@ from fixms.fix_ms_dir import fix_ms_dir
 from flint.casa import copy_with_mstranform
 from flint.logging import logger
 from flint.naming import create_ms_name
-from flint.options import MS
+from flint.options import MS, MSSummary
 from flint.utils import copy_directory, rsync_copy_directory
-
-
-class MSSummary(NamedTuple):
-    """Small structure to contain overview of a MS"""
-
-    unflagged: int
-    """Number of unflagged records"""
-    flagged: int
-    """Number of flagged records"""
-    flag_spectrum: np.ndarray
-    """Flagged spectral channels"""
-    fields: list[str]
-    """Collection of unique field names from the FIELDS table"""
-    ants: list[int]
-    """Collection of unique antennas"""
-    beam: int
-    """The ASKAP beam number of the measurement set"""
-    path: Path
-    """Path to the measurement set that is being represented"""
-    phase_dir: SkyCoord
-    """The phase direction of the measurement set, which will be where the image will be centred"""
-    spw: int | None = None
-    """Intended to be used with ASKAP high-frequency resolution modes, where the MS is divided into SPWs"""
-    ms: MS | None = None
-    """The MS object used to generate the summary"""
-
 
 # TODO: Some common MS validation functions?
 # - list / number of fields
