@@ -53,6 +53,8 @@ class MSSummary(NamedTuple):
     """The phase direction of the measurement set, which will be where the image will be centred"""
     spw: int | None = None
     """Intended to be used with ASKAP high-frequency resolution modes, where the MS is divided into SPWs"""
+    ms: MS | None = None
+    """The MS object used to generate the summary"""
 
 
 # TODO: Some common MS validation functions?
@@ -319,12 +321,15 @@ def get_pol_axis_from_ms(
 
 # TODO: Inline with other changing conventions this should be
 # changed to `create_ms_summary`
-def describe_ms(ms: MS | Path, verbose: bool = False) -> MSSummary:
+def describe_ms(
+    ms: MS | Path, verbose: bool = False, attaches_ms: bool = False
+) -> MSSummary:
     """Print some basic information from the inpute measurement set.
 
     Args:
         ms (Union[MS,Path]): Measurement set to inspect
         verbose (bool, optional): Log MS options to the flint logger. Defaults to False.
+        attach_ms (bool, optional): If True, attach the input MS that was used to generate the summary. Defaults to False.
 
     Returns:
         MSSummary: Brief overview of the MS.
@@ -368,6 +373,7 @@ def describe_ms(ms: MS | Path, verbose: bool = False) -> MSSummary:
         beam=beam_no,
         path=ms.path,
         phase_dir=phase_dir,
+        ms=ms if attaches_ms else None,
     )
 
 

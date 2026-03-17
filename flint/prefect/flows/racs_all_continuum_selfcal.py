@@ -250,7 +250,9 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
             casa_container=racs_all_options.casa_container,
             output_directory=output_science_path,
         )
-        preprocess_science_mss = task_describe_ms.map(ms=preprocess_science_mss)
+        preprocess_science_mss = task_describe_ms.map(
+            ms=preprocess_science_mss, attach_ms=True
+        )
         ms_summaries.extend(preprocess_science_mss)
         if racs_all_options.flagger_container is not None:
             preprocess_science_mss = task_flag_ms_aoflagger.map(
