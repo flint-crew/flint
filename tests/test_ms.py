@@ -30,6 +30,27 @@ from flint.options import MSs
 from flint.utils import get_packaged_resource_path
 
 
+def test_mssummary_ms_in_dir(ms_example) -> None:
+    """Make sure that the ms in dir chect in MS.cast continues to trigger"""
+
+    ms = MS.cast(ms_example)
+    summary = describe_ms(ms=ms, attach_ms=True)
+    assert "ms" in dir(summary)
+
+
+def test_mssummary_to_ms_through_cast(ms_example) -> None:
+    """See if the MSSummary with attached ms can be cast to MS"""
+
+    ms = MS.cast(ms_example)
+    summary = describe_ms(ms=ms, attach_ms=True)
+
+    assert summary.ms == ms
+    assert summary.ms is not None
+    ms_new = MS.cast(summary)
+    assert isinstance(ms_new, MS)
+    assert ms == ms_new
+
+
 def test_describe_ms(ms_example) -> None:
     """Describe the example MS, return a summary with and without the MS attached"""
 

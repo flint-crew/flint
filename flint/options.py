@@ -14,7 +14,6 @@ from pathlib import Path
 from types import NoneType, UnionType
 from typing import (
     Any,
-    NamedTuple,
     Self,
     TypeVar,
     get_args,
@@ -559,7 +558,7 @@ class FitsCubeOptions(BaseOptions):
     """Set pixels whose values are exactly 0.0 to not-a-number (nan)"""
 
 
-class MSSummary(NamedTuple):
+class MSSummary(BaseOptions):
     """Small structure to contain overview of a MS"""
 
     unflagged: int
@@ -604,6 +603,7 @@ class MS(BaseOptions):
 
     @classmethod
     def cast(cls, ms: MS | Path | tuple[MS | Path, ...]) -> MS | MSs:
+
         if isinstance(ms, (MS, MSs)):
             pass
         elif isinstance(ms, Path):
@@ -612,12 +612,16 @@ class MS(BaseOptions):
             ms = MSs(mss=tuple([MS.cast(ms=_ms) for _ms in ms]))
         # extra ininstance here is to keep mypy happy, the rotten barbarnacle
         elif (
-            not isinstance(ms, (MS, tuple))
+            (not isinstance(ms, (MS, tuple)))
             and "ms" in dir(ms)
-            and isinstance(ms.ms, (MS, MSSummary))
+            and isinstance(ms.ms, MS)
         ):
             ms = ms.ms
         else:
+            # Helpful checks that helped figure out issues involving NamedTuples
+            logger.debug(f"{not isinstance(ms, (MS, tuple))=}")
+            logger.debug(f"{'ms' in dir(ms)=}")
+
             raise MSError(f"Unable to convert {ms=} of {type(ms)} to MS object. ")
 
         return ms
