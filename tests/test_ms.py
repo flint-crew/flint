@@ -18,6 +18,7 @@ from flint.ms import (
     check_column_in_ms,
     consistent_channelwise_frequencies,
     copy_and_preprocess_casda_askap_ms,
+    describe_ms,
     find_mss,
     get_phase_dir_from_ms,
     get_times_from_ms,
@@ -27,6 +28,20 @@ from flint.ms import (
 )
 from flint.options import MSs
 from flint.utils import get_packaged_resource_path
+
+
+def test_describe_ms(ms_example) -> None:
+    """Describe the example MS, return a summary with and without the MS attached"""
+
+    ms = MS.cast(ms_example)
+    summary_1 = describe_ms(ms=ms)
+    summary_2 = describe_ms(ms=ms, attach_ms=True)
+
+    assert summary_1.ms is None
+    assert summary_2.ms == ms
+    for summary in (summary_1, summary_2):
+        assert summary.path == ms_example
+        assert summary.beam == 0
 
 
 def test_ms_cast_into_mss() -> None:

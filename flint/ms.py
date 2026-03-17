@@ -322,7 +322,7 @@ def get_pol_axis_from_ms(
 # TODO: Inline with other changing conventions this should be
 # changed to `create_ms_summary`
 def describe_ms(
-    ms: MS | Path, verbose: bool = False, attaches_ms: bool = False
+    ms: MS | Path, verbose: bool = False, attach_ms: bool = False
 ) -> MSSummary:
     """Print some basic information from the inpute measurement set.
 
@@ -373,7 +373,7 @@ def describe_ms(
         beam=beam_no,
         path=ms.path,
         phase_dir=phase_dir,
-        ms=ms if attaches_ms else None,
+        ms=ms if attach_ms else None,
     )
 
 
