@@ -303,12 +303,13 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
             additional_linmos_suffix = "noselfcal" if key == 0 else f"round{key}"
             wsclean_results = linmos_todos[key]
             # parsets =
-            _ = create_convol_linmos_images(
+            parsets = create_convol_linmos_images(
                 wsclean_results=wsclean_results,
                 field_options=racs_all_options,
                 field_summary=field_summary,
                 additional_linmos_suffix_str=additional_linmos_suffix,  # indicate in output linmos name no selfcal
             )
+            logger.info(f"Self-cal round {key}, number of parsets {len(parsets)}")
 
 
 def setup_run_racs_all_field(
