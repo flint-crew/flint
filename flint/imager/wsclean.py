@@ -949,6 +949,11 @@ def rotate_cube(output_cube_path: str | Path, inplace: bool = True) -> Path:
     # Swap axes in header
     tmp_header = header.copy()
     for a, b in ((3, 4), (4, 3)):
+        # Can not rotate if the keys do not exist. This
+        # can happen if uneven plans in cube
+        if f"CTYPE{b}" not in tmp_header:
+            continue
+
         header[f"CTYPE{a}"] = tmp_header[f"CTYPE{b}"]
         header[f"CRPIX{a}"] = tmp_header[f"CRPIX{b}"]
         header[f"CRVAL{a}"] = tmp_header[f"CRVAL{b}"]
@@ -1024,7 +1029,9 @@ def combine_image_set_to_cube(
         )
 
         logger.info(f"Combining {len(subband_images)} images. {subband_images=}")
-        freqs = combine_fits(file_list=subband_images, out_cube=output_cube_name)
+        freqs = combine_fits(
+            file_list=subband_images, out_cube=output_cube_name, create_blanks=True
+        )
 
         rotate_cube(output_cube_name, inplace=inplace)
 

@@ -283,6 +283,16 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
 
         preprocesed_science_mss_by_beam.append(preprocess_science_mss)
 
+    # if racs_all_options.yandasoft_container:
+    #     for key in linmos_todos:
+    #         additional_linmos_suffix = "noselfcal" if key == 0 else f"round{key}"
+    #         parsets = create_convol_linmos_images(
+    #             wsclean_results=wsclean_results,
+    #             field_options=racs_all_options,
+    #             field_summary=None,
+    #             additional_linmos_suffix_str=additional_linmos_suffix,  # indicate in output linmos name no selfcal
+    #         )
+
 
 def setup_run_racs_all_field(
     cluster_config: Path, racs_all_options: RACSAllOptions
