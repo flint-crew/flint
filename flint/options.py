@@ -22,7 +22,8 @@ from typing import (
 
 import numpy as np
 import yaml
-from astropy.coordinates import SkyCoord
+from astropy.coordinates import EarthLocation, SkyCoord
+from numpy.typing import NDArray
 from pydantic import BaseModel, ConfigDict
 from pydantic.fields import FieldInfo
 
@@ -583,6 +584,14 @@ class MSSummary(BaseOptions):
     """Intended to be used with ASKAP high-frequency resolution modes, where the MS is divided into SPWs"""
     ms: MS | None = None
     """The MS object used to generate the summary"""
+    pol_axus: float | None = None
+    """The rotation of the third-axis mount recorded in the MS"""
+    location: EarthLocation | None = None
+    """Location of the instrument"""
+    ms_times: NDArray[np.floating] | None = None
+    """Unique timesteps in the measurement set"""
+    integration: float | None = None
+    """Length of the observing time in seconds"""
 
 
 class MS(BaseOptions):

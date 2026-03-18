@@ -292,6 +292,42 @@ def get_pol_axis_from_ms(
     return pol_ang
 
 
+def get_pol_axis_as_rad(ms: MS | Path) -> float:
+    """Get the rotation of the third-axis out of the mesaurement set.
+    It prioritises the information updated by `fixms` to handle
+    instances where data have been rotated to sky-frame. The order
+    of the columns searched from the FEED table are:
+
+    >>> INSTRUMENT_RECEPTOR_ANGLE
+    >>> RECEPTOR_ANGLE
+
+    Further the object returned is in radians and stripped
+    from the astropy units meta-data.
+
+    Args:
+        ms (MS | Path): The MS to examine
+
+    Returns:
+        float: The rotation of the third-axis in radians.
+    """
+    ms = MS.cast(ms=ms)
+
+    # The INSTRUMENT_RECEPTOR_ANGLE comes from fixms and is
+    # inserted to preserve the original orientation.
+
+    try:
+        pol_axis = get_pol_axis_from_ms(ms=ms, col="INSTRUMENT_RECEPTOR_ANGLE")
+
+        logger.info(f"INSTRUMENT_RECEPTOR_ANGLE obtained pol_axis={pol_axis}")
+    except ValueError:
+        pol_axis = get_pol_axis_from_ms(ms=ms, col="RECEPTOR_ANGLE")
+
+        # The prefect logger (or maybe the logger in general) does not render the quantity
+        logger.info(f"RECEPTOR_ANGLE obtained pol_axis={pol_axis}")
+
+    return pol_axis.to(u.rad).value
+
+
 # TODO: Inline with other changing conventions this should be
 # changed to `create_ms_summary`
 def describe_ms(
@@ -328,6 +364,11 @@ def describe_ms(
     beam_no = get_beam_from_ms(ms=ms)
     phase_dir = get_phase_dir_from_ms(ms=ms)
 
+    ms_times = get_times_from_ms(ms=ms)
+    integration = ms_times.ptp().to(u.second).value
+    location = get_telescope_location_from_ms(ms=ms)
+    pol_axis = get_pol_axis_as_rad(ms=ms)
+
     if verbose:
         logger.info(f"Inspecting {ms.path}.")
         logger.info(f"Contains: {colnames}")
@@ -347,6 +388,10 @@ def describe_ms(
         path=ms.path,
         phase_dir=phase_dir,
         ms=ms if attach_ms else None,
+        ms_times=ms_times,
+        integration=integration,
+        location=location,
+        pol_axus=pol_axis,
     )
 
 

@@ -246,7 +246,7 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
     # We will consider bandpass applications later
     _ensure_all_casda_format(mss_by_beams=science_mss_by_beam)
 
-    preprocesed_science_mss_by_beam = []
+    preprocessed_science_mss_by_beam = []
     ms_summaries = []
     linmos_todos: dict[int, list[WSCleanResult]] = {}
     linmos_todos[0] = []
@@ -295,14 +295,39 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
         )
         linmos_todos[0].append(wsclean_results)
 
-        preprocesed_science_mss_by_beam.append(preprocess_science_mss)
+        preprocessed_science_mss_by_beam.append(preprocess_science_mss)
 
     field_summary = task_create_field_summary.submit(
-        mss=[ms for beam_mss in preprocesed_science_mss_by_beam for ms in beam_mss],
+        mss=[ms for beam_mss in preprocessed_science_mss_by_beam for ms in beam_mss],
         cal_sbid_path=None,  # CASDA MSs have solutions applied
         holography_path=None,  # No unified holography (yet, mate)
         ms_summaries=ms_summaries,
     )
+
+    # for current_round in range(1, racs_all_options.rounds + 1):
+    #     final_round = current_round == racs_all_options.rounds
+    #     if final_round:
+    #         logger.info("This is the final round of selcalibtation")
+
+    #     with tags(f"selfcal-{current_round}"):
+    #         selfcal_mss_by_beam = []
+    #         for preprocessed_science_mss in preprocessed_science_mss_by_beam:
+    #             update_gain_options = get_options_from_strategy(
+    #                 strategy=strategy,
+    #                 mode="gaincal",
+    #                 round_info=current_round,
+    #                 operation="selfcal",
+    #             )
+    #             cal_mss = task_gaincal_applycal_ms.map(
+    #                 ms=wsclean_results,
+    #                 selfcal_round=current_round,
+    #                 archive_input_ms=racs_all_options.zip_ms,
+    #                 skip_selfcal=False,
+    #                 rename_ms=racs_all_options.rename_ms,
+    #                 archive_cal_table=True,
+    #                 casa_container=racs_all_options.casa_container,
+    #                 update_gain_cal_options=unmapped(update_gain_options),
+    #             )
 
     if racs_all_options.yandasoft_container:
         for key in linmos_todos:

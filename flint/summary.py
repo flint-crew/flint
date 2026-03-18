@@ -28,7 +28,7 @@ from flint.ms import (
     MS,
     MSSummary,
     describe_ms,
-    get_pol_axis_from_ms,
+    get_pol_axis_as_rad,
     get_telescope_location_from_ms,
     get_times_from_ms,
 )
@@ -91,30 +91,10 @@ class FieldSummary(BaseOptions):
     """The orientation of the ASKAP third-axis in radians. """
 
 
-def _get_pol_axis_as_rad(ms: MS | Path) -> float:
-    """Helper to get the appropriate pol_axis out of a MS. Prioritises the instrumental third-axis imprinted from fixms"""
-    ms = MS.cast(ms=ms)
-
-    # The INSTRUMENT_RECEPTOR_ANGLE comes from fixms and is
-    # inserted to preserve the original orientation.
-
-    try:
-        pol_axis = get_pol_axis_from_ms(ms=ms, col="INSTRUMENT_RECEPTOR_ANGLE")
-
-        logger.info(f"INSTRUMENT_RECEPTOR_ANGLE obtained pol_axis={pol_axis}")
-    except ValueError:
-        pol_axis = get_pol_axis_from_ms(ms=ms, col="RECEPTOR_ANGLE")
-
-        # The prefect logger (or maybe the logger in general) does not render the quantity
-        logger.info(f"RECEPTOR_ANGLE obtained pol_axis={pol_axis}")
-
-    return pol_axis.to(u.rad).value
-
-
 # TODO: Need to establise a MSLike type
 def add_ms_summaries(
     field_summary: FieldSummary,
-    mss: list[MS],
+    mss: list[MS] | None = None,
     ms_summaries: list[MSSummary] | None = None,
 ) -> FieldSummary:
     """Obtain a MSSummary instance to add to a FieldSummary. If existing
@@ -137,7 +117,12 @@ def add_ms_summaries(
     """
     logger.info("Adding MS summaries")
 
+    if mss is None and ms_summaries is None:
+        msg = f"{mss=} and {ms_summaries}, one should be set"
+        raise ValueError(msg)
+
     if ms_summaries is None:
+        assert mss is not None, f"This is bad, {mss=}"
         ms_summaries = list(map(describe_ms, mss))
     centres_list = [ms_summary.phase_dir for ms_summary in ms_summaries]
     if len(centres_list) == 0:
@@ -156,7 +141,7 @@ def add_ms_summaries(
 
     # The INSTRUMENT_RECEPTOR_ANGLE comes from fixms and is
     # inserted to preserve the original orientation.
-    pol_axis = _get_pol_axis_as_rad(ms=mss[0])
+    pol_axis = ms_summaries[0].pol_axis
 
     field_summary = field_summary.with_options(
         ms_summaries=tuple(ms_summaries),
@@ -266,7 +251,7 @@ def update_field_summary(
 
 
 def create_field_summary(
-    mss: list[MS | Path],
+    mss: list[MS | Path] | None = None,
     cal_sbid_path: Path | None = None,
     holography_path: Path | None = None,
     aegean_outputs: AegeanOutputs | None = None,
@@ -281,7 +266,7 @@ def create_field_summary(
     All other keyword arguments are passed directly through to `FieldSummary`
 
     Args:
-        mss (Union[MS, Path]): Set of measurement sets to describe/ The first will be used to set information will be pulled from
+        mss (Union[MS, Path | None, optional]): Set of measurement sets to describe/ The first will be used to set information will be pulled from. If ``None`` information is drawn from ``ms_summaries``. Defaults to None.
         cal_sbid_path (Optional[Path], optional): Path to an example of a bandpass measurement set. Defaults to None.
         holography_path (Optional[Path], optional): The holography fits cube used (or will be) to linmos. Defaults to None.
         aegean_outputs (Optional[AegeanOutputs], optional): Should RMS / source information be added to the instance. Defaults to None.
@@ -293,18 +278,38 @@ def create_field_summary(
 
     logger.info("Creating field summary object")
 
-    mss = [MS.cast(ms=ms) for ms in mss]
+    sbid: None | str = None
+    field: None | str = None
+    pol_axis: None | float = None
+    if mss is not None:
+        mss = [MS.cast(ms=ms) for ms in mss]
 
-    # TODO: A check here to ensure all MSs are in a consistent format
-    # and are from the same field
-    ms = MS.cast(ms=mss[0])
+        # TODO: A check here to ensure all MSs are in a consistent format
+        # and are from the same field
+        ms = MS.cast(ms=mss[0])
 
-    ms_components = processed_ms_format(in_name=ms.path)
-    assert ms_components is not None, (
-        f"MS ({ms.path}) is not in a flint-processed format!"
-    )
-    sbid = str(ms_components.sbid)
-    field = ms_components.field
+        ms_components = processed_ms_format(in_name=ms.path)
+        assert ms_components is not None, (
+            f"MS ({ms.path}) is not in a flint-processed format!"
+        )
+        sbid = str(ms_components.sbid)
+        field = ms_components.field
+
+        ms_times = get_times_from_ms(ms=ms)
+        integration = ms_times.ptp().to(u.second).value
+        location = get_telescope_location_from_ms(ms=ms)
+        pol_axis = get_pol_axis_as_rad(ms=ms)
+
+    if ms_summaries is not None:
+        ms_components = processed_ms_format(in_name=ms_summaries[0].path.name)
+        assert ms_components is not None, (
+            f"MS ({ms_summaries[0].path}) is not in a flint-processed format"
+        )
+
+        sbid = str(ms_components.sbid)
+        field = ms_components.field
+
+        pol_axis = ms_summaries[0].pol_axus
 
     assert field is not None, f"Field name is empty in {ms_components=} from {ms.path=}"
 
@@ -315,12 +320,6 @@ def create_field_summary(
     except ValueError:
         cal_sbid = "-9999"
         logger.info(f"Extracting SBID from {cal_sbid_path=} failed. Using {cal_sbid=}")
-
-    ms_times = get_times_from_ms(ms=ms)
-    integration = ms_times.ptp().to(u.second).value
-    location = get_telescope_location_from_ms(ms=ms)
-
-    pol_axis = _get_pol_axis_as_rad(ms=ms)
 
     field_summary = FieldSummary(
         sbid=sbid,
@@ -336,7 +335,7 @@ def create_field_summary(
 
     field_summary = add_ms_summaries(
         field_summary=field_summary,
-        mss=[MS.cast(ms=ms) for ms in mss],
+        mss=[MS.cast(ms=ms) for ms in mss] if mss is not None else None,
         ms_summaries=ms_summaries,
     )
 
