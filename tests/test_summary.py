@@ -139,7 +139,7 @@ def test_field_summary(ms_example):
     assert len(field_summary.ms_times) == 2
 
 
-def test_field_summary_with_mss_and_summariers(
+def test_field_summary_with_mss_and_summaries(
     ms_example, aegean_outputs_example
 ) -> None:
     """Ensure that precomputed MSSummary objects can be provided to the
@@ -153,6 +153,33 @@ def test_field_summary_with_mss_and_summariers(
         cal_sbid_path=cal_sbid_path,
         aegean_outputs=aegean_outputs_example,
         mss=mss,
+        ms_summaries=list(ms_summariers),
+    )
+
+    # This si the phase direction, in degrees, of the one MS
+    # this pirate is sneakily repeating
+    centre = field_summary.centre
+    assert np.isclose(centre.ra.deg, 98.211959)  # type: ignore
+    assert np.isclose(centre.dec.deg, -30.86099889)  # type: ignore
+
+    assert isinstance(field_summary.hour_angles, Longitude)
+    assert isinstance(field_summary.elevations, Latitude)
+    assert field_summary.ms_summaries is not None and all(
+        isinstance(summary, MSSummary) for summary in field_summary.ms_summaries
+    )
+
+
+def test_field_summary_with_summaries(ms_example, aegean_outputs_example) -> None:
+    """Construct the field summary object with MSSummaries only"""
+    cal_sbid_path = Path("/scratch3/gal16b/split/39433/SB39433.1934-638.beam0.ms")
+
+    mss = [ms_example for _ in range(36)]
+    ms_summariers = tuple(map(describe_ms, mss))
+
+    field_summary = create_field_summary(
+        cal_sbid_path=cal_sbid_path,
+        aegean_outputs=aegean_outputs_example,
+        mss=None,
         ms_summaries=list(ms_summariers),
     )
 
