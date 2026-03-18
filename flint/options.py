@@ -23,7 +23,7 @@ from typing import (
 import numpy as np
 import yaml
 from astropy.coordinates import EarthLocation, SkyCoord
-from numpy.typing import NDArray
+from astropy.time import Time
 from pydantic import BaseModel, ConfigDict
 from pydantic.fields import FieldInfo
 
@@ -588,7 +588,7 @@ class MSSummary(BaseOptions):
     """The rotation of the third-axis mount recorded in the MS"""
     location: EarthLocation | None = None
     """Location of the instrument"""
-    ms_times: NDArray[np.floating] | None = None
+    ms_times: Time | None = None
     """Unique timesteps in the measurement set"""
     integration: float | None = None
     """Length of the observing time in seconds"""
