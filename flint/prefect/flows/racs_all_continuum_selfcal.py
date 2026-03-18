@@ -297,8 +297,10 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
 
         preprocessed_science_mss_by_beam.append(preprocess_science_mss)
 
+    # Using ms summary objects as basis of field summary as MSs can change names
+    # or be deleted throughout processing. TThis allows for no `wait_for` usage.
     field_summary = task_create_field_summary.submit(
-        mss=[ms for beam_mss in preprocessed_science_mss_by_beam for ms in beam_mss],
+        mss=None,  # Constructed from the ms summaries
         cal_sbid_path=None,  # CASDA MSs have solutions applied
         holography_path=None,  # No unified holography (yet, mate)
         ms_summaries=ms_summaries,
