@@ -308,8 +308,10 @@ def create_field_summary(
 
         sbid = str(ms_components.sbid)
         field = ms_components.field
-
-        pol_axis = ms_summaries[0].pol_axus
+        ms_times = ms_summaries[0].ms_times
+        integration = ms_summaries[0].integration
+        location = ms_summaries[0].location
+        pol_axis = ms_summaries[0].pol_axis
 
     assert field is not None, f"Field name is empty in {ms_components=} from {ms.path=}"
 

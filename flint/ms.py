@@ -365,6 +365,7 @@ def describe_ms(
     phase_dir = get_phase_dir_from_ms(ms=ms)
 
     ms_times = get_times_from_ms(ms=ms)
+    ms_times = Time([ms_times.min(), ms_times.max()])
     integration = ms_times.ptp().to(u.second).value
     location = get_telescope_location_from_ms(ms=ms)
     pol_axis = get_pol_axis_as_rad(ms=ms)
@@ -391,7 +392,7 @@ def describe_ms(
         ms_times=ms_times,
         integration=integration,
         location=location,
-        pol_axus=pol_axis,
+        pol_axis=pol_axis,
     )
 
 

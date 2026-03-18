@@ -584,7 +584,7 @@ class MSSummary(BaseOptions):
     """Intended to be used with ASKAP high-frequency resolution modes, where the MS is divided into SPWs"""
     ms: MS | None = None
     """The MS object used to generate the summary"""
-    pol_axus: float | None = None
+    pol_axis: float | None = None
     """The rotation of the third-axis mount recorded in the MS"""
     location: EarthLocation | None = None
     """Location of the instrument"""
