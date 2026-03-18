@@ -1222,19 +1222,35 @@ def task_create_validation_tables(
 def validation_items(
     field_summary: FieldSummary,
     aegean_outputs: AegeanOutputs,
-    reference_catalogue_directory: Path,
-):
+    reference_catalogue_directory: Path | None = None,
+) -> None | tuple[Path, Path]:
     """Construct the validation plot and validation table items for the imaged field.
 
     Internally these are submitting the prefect task versions of:
     - `task_create_validation_plot`
     - `task_create_validation_tables`
 
+    If ``reference_catalogue_directory`` does not exist or unspecified than
+    this function returns ``None``. Otherwise a Path objects to output data
+    products are returned.
+
     Args:
         field_summary (FieldSummary): Container representing the SBID being imaged and its populated characteristics
         aegean_outputs (AegeanOutputs): Source finding results
-        reference_catalogue_directory (Path): Location of directory containing the reference known NVSS, SUMSS and ICRS catalogues
+        reference_catalogue_directory (Path | None, optional): Location of directory containing the reference known NVSS, SUMSS and ICRS catalogues. Defaults to None.
+
+        Returns:
+        None | tuple[Path, Path] -- None is returned if the ``reference_catalogue_directory`` does not exist, other the paths to output data products are returned.
     """
+
+    if (
+        not isinstance(reference_catalogue_directory, Path)
+        or not reference_catalogue_directory.exists()
+    ):
+        logger.info(
+            "Reference catalogue directory not specified or does not exist. Not creating validation products."
+        )
+        return None
 
     val_plot_path = task_create_validation_plot.submit(
         field_summary=field_summary,

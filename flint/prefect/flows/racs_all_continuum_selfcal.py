@@ -40,10 +40,15 @@ from flint.prefect.common.imaging import (
     task_copy_and_preprocess_casda_askap_ms,
     task_flag_ms_aoflagger,
     task_potato_peel,
+    task_run_bane_and_aegean,
     task_wsclean_imager,
+    validation_items,
 )
 from flint.prefect.common.ms import task_describe_ms
-from flint.prefect.common.utils import task_create_field_summary
+from flint.prefect.common.utils import (
+    task_create_field_summary,
+    task_update_field_summary,
+)
 
 MSsByBeam: TypeAlias = tuple[tuple[MS, ...], ...]
 
@@ -311,6 +316,23 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
                 additional_linmos_suffix_str=additional_linmos_suffix,  # indicate in output linmos name no selfcal
             )
             logger.info(f"Self-cal round {key}, number of parsets {len(parsets)}")
+
+            if racs_all_options.aegean_container:
+                logger.info(f"Running aegean on round {key}")
+                aegean_outputs = task_run_bane_and_aegean.submit(
+                    image=parsets[-1],
+                    aegean_container=unmapped(racs_all_options.aegean_container),
+                )  # type: ignore
+                field_summary = task_update_field_summary.submit(
+                    field_summary=field_summary,
+                    aegean_outputs=aegean_outputs,
+                    round=key if key > 0 else None,
+                )
+                validation_items(
+                    field_summary=field_summary,
+                    aegean_outputs=aegean_outputs,
+                    reference_catalogue_directory=racs_all_options.reference_catalogue_directory,
+                )
 
 
 def setup_run_racs_all_field(
