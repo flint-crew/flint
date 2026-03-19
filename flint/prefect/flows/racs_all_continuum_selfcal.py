@@ -263,55 +263,60 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
     ms_summaries = []
     imaging_results: dict[int, list[LoopFutures]] = {}
     imaging_results[0] = []
-    for science_mss in science_mss_by_beam:
-        preprocess_science_mss = task_copy_and_preprocess_casda_askap_ms.map(
-            casda_ms=science_mss,
-            casa_container=racs_all_options.casa_container,
-            output_directory=output_science_path,
-        )
-        preprocess_science_mss = task_describe_ms.map(
-            ms=preprocess_science_mss, attach_ms=True
-        )
-        ms_summaries.extend(preprocess_science_mss)
-        if racs_all_options.flagger_container is not None:
-            preprocess_science_mss = task_flag_ms_aoflagger.map(
-                ms=preprocess_science_mss, container=racs_all_options.flagger_container
+    with tags("no-selfcal"):
+        for science_mss in science_mss_by_beam:
+            preprocess_science_mss = task_copy_and_preprocess_casda_askap_ms.map(
+                casda_ms=science_mss,
+                casa_container=racs_all_options.casa_container,
+                output_directory=output_science_path,
             )
+            preprocess_science_mss = task_describe_ms.map(
+                ms=preprocess_science_mss, attach_ms=True
+            )
+            ms_summaries.extend(preprocess_science_mss)
+            if racs_all_options.flagger_container is not None:
+                preprocess_science_mss = task_flag_ms_aoflagger.map(
+                    ms=preprocess_science_mss,
+                    container=racs_all_options.flagger_container,
+                )
 
-        if racs_all_options.potato_container:
-            # The call into potato peel task has two potential update option keywords.
-            # So for the moment we will not use the task decorated version.
-            potato_wsclean_init = get_options_from_strategy(
-                strategy=strategy, mode="wsclean", round_info=0, operation="selfcal"
-            )
-            potato_peel_options = get_options_from_strategy(
-                strategy=strategy, mode="potatopeel", round_info=0, operation="selfcal"
-            )
-            preprocess_science_mss = task_potato_peel.map(
-                ms=preprocess_science_mss,
-                potato_container=racs_all_options.potato_container,
-                update_wsclean_options=unmapped(potato_wsclean_init),
-                update_potato_peel_options=unmapped(potato_peel_options),
-            )
-
-        wsclean_result = task_wsclean_imager.submit(
-            in_ms=preprocess_science_mss,
-            wsclean_container=racs_all_options.wsclean_container,
-            update_wsclean_options=unmapped(
-                get_options_from_strategy(
+            if racs_all_options.potato_container:
+                # The call into potato peel task has two potential update option keywords.
+                # So for the moment we will not use the task decorated version.
+                potato_wsclean_init = get_options_from_strategy(
+                    strategy=strategy, mode="wsclean", round_info=0, operation="selfcal"
+                )
+                potato_peel_options = get_options_from_strategy(
                     strategy=strategy,
-                    mode="wsclean",
+                    mode="potatopeel",
                     round_info=0,
                     operation="selfcal",
                 )
-            ),
-        )
-        imaging_results[0].append(
-            LoopFutures(
-                mss=preprocess_science_mss,
-                wsclean_result=wsclean_result,
+                preprocess_science_mss = task_potato_peel.map(
+                    ms=preprocess_science_mss,
+                    potato_container=racs_all_options.potato_container,
+                    update_wsclean_options=unmapped(potato_wsclean_init),
+                    update_potato_peel_options=unmapped(potato_peel_options),
+                )
+
+            wsclean_result = task_wsclean_imager.submit(
+                in_ms=preprocess_science_mss,
+                wsclean_container=racs_all_options.wsclean_container,
+                update_wsclean_options=unmapped(
+                    get_options_from_strategy(
+                        strategy=strategy,
+                        mode="wsclean",
+                        round_info=0,
+                        operation="selfcal",
+                    )
+                ),
             )
-        )
+            imaging_results[0].append(
+                LoopFutures(
+                    mss=preprocess_science_mss,
+                    wsclean_result=wsclean_result,
+                )
+            )
 
     # Using ms summary objects as basis of field summary as MSs can change names
     # or be deleted throughout processing. TThis allows for no `wait_for` usage.
