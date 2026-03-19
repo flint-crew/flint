@@ -1043,7 +1043,7 @@ def create_convolve_linmos_cubes(
 @task
 def task_create_image_mask_model(
     image: LinmosResult | ImageSet | WSCleanResult,
-    image_products: AegeanOutputs,
+    image_products: AegeanOutputs | None = None,
     update_masking_options: dict[str, Any] | None = None,
 ) -> FITSMaskNames:
     """Create a mask for an image, with the intention of providing it as a clean mask
@@ -1051,7 +1051,7 @@ def task_create_image_mask_model(
 
     Args:
         linmos_parset (LinmosResult): Linmos command and associated meta-data
-        image_products (AegeanOutputs): Images of the RMS and BKG
+        image_products (AegeanOutputs | None, optional): Images of the RMS and BKG. If None then signal mask creation will also be skipped.
         update_masking_options (Optional[Dict[str,Any]], optional): Updated options supplied to the default MaskingOptions. Defaults to None.
 
 
@@ -1064,6 +1064,9 @@ def task_create_image_mask_model(
     if isinstance(image_products, AegeanOutputs):
         source_rms = image_products.rms
         source_bkg = image_products.bkg
+    elif image_products is None:
+        source_rms = None
+        source_bkg = None
     else:
         raise ValueError("Unsupported bkg/rms mode. ")
 
@@ -1071,10 +1074,12 @@ def task_create_image_mask_model(
     if isinstance(image, LinmosResult):
         source_image = image.image_fits
     elif isinstance(image, ImageSet) and image.image is not None:
+        # TODO: By convention this is the MFS image, but this
+        # needs to be made explicit
         source_image = list(image.image)[-1]
     elif isinstance(image, WSCleanResult) and image.image_set is not None:
         source_image = list(image.image_set.image)[-1]
-    else:
+    elif image_products is not None:
         source_image = image_products.image
 
     if source_image is None:
@@ -1093,7 +1098,7 @@ def task_create_image_mask_model(
         fits_bkg_path=source_bkg,
         fits_rms_path=source_rms,
         masking_options=masking_options,
-        create_signal_fits=True,
+        create_signal_fits=source_rms is not None,
     )
 
     logger.info(f"Created {mask_names.mask_fits}")

@@ -7,11 +7,12 @@ for wide-band multi-frequency synthesis.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TypeAlias
 
 from configargparse import ArgumentParser
-from prefect import flow, unmapped
+from prefect import flow, tags, unmapped
 
 from flint.catalogue import verify_reference_catalogues
 from flint.configuration import (
@@ -38,7 +39,9 @@ from flint.prefect.clusters import get_dask_runner
 from flint.prefect.common.imaging import (
     create_convol_linmos_images,
     task_copy_and_preprocess_casda_askap_ms,
+    task_create_image_mask_model,
     task_flag_ms_aoflagger,
+    task_gaincal_applycal_ms,
     task_potato_peel,
     task_run_bane_and_aegean,
     task_wsclean_imager,
@@ -51,6 +54,17 @@ from flint.prefect.common.utils import (
 )
 
 MSsByBeam: TypeAlias = tuple[tuple[MS, ...], ...]
+
+
+@dataclass
+class LoopFutures:
+    """Simple collector to help avoid miss-matching Future objects. Single set of MSs
+    and their wsclean results."""
+
+    mss: list[MS]
+    """Futures of the MSs"""
+    wsclean_result: WSCleanResult
+    """Imaging results from wsclean imaging"""
 
 
 def _check_racs_all_options(racs_all_options: RACSAllOptions) -> None:
@@ -246,10 +260,9 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
     # We will consider bandpass applications later
     _ensure_all_casda_format(mss_by_beams=science_mss_by_beam)
 
-    preprocessed_science_mss_by_beam = []
     ms_summaries = []
-    linmos_todos: dict[int, list[WSCleanResult]] = {}
-    linmos_todos[0] = []
+    imaging_results: dict[int, list[LoopFutures]] = {}
+    imaging_results[0] = []
     for science_mss in science_mss_by_beam:
         preprocess_science_mss = task_copy_and_preprocess_casda_askap_ms.map(
             casda_ms=science_mss,
@@ -281,7 +294,7 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
                 update_potato_peel_options=unmapped(potato_peel_options),
             )
 
-        wsclean_results = task_wsclean_imager.submit(
+        wsclean_result = task_wsclean_imager.submit(
             in_ms=preprocess_science_mss,
             wsclean_container=racs_all_options.wsclean_container,
             update_wsclean_options=unmapped(
@@ -293,9 +306,12 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
                 )
             ),
         )
-        linmos_todos[0].append(wsclean_results)
-
-        preprocessed_science_mss_by_beam.append(preprocess_science_mss)
+        imaging_results[0].append(
+            LoopFutures(
+                mss=preprocess_science_mss,
+                wsclean_result=wsclean_result,
+            )
+        )
 
     # Using ms summary objects as basis of field summary as MSs can change names
     # or be deleted throughout processing. TThis allows for no `wait_for` usage.
@@ -306,45 +322,81 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
         ms_summaries=ms_summaries,
     )
 
-    # for current_round in range(1, racs_all_options.rounds + 1):
-    #     final_round = current_round == racs_all_options.rounds
-    #     if final_round:
-    #         logger.info("This is the final round of selcalibtation")
+    for current_round in range(1, racs_all_options.rounds + 1):
+        final_round = current_round == racs_all_options.rounds
+        if final_round:
+            logger.info("This is the final round of selcalibtation")
 
-    #     with tags(f"selfcal-{current_round}"):
-    #         selfcal_mss_by_beam = []
-    #         for preprocessed_science_mss in preprocessed_science_mss_by_beam:
-    #             update_gain_options = get_options_from_strategy(
-    #                 strategy=strategy,
-    #                 mode="gaincal",
-    #                 round_info=current_round,
-    #                 operation="selfcal",
-    #             )
-    #             cal_mss = task_gaincal_applycal_ms.map(
-    #                 ms=wsclean_results,
-    #                 selfcal_round=current_round,
-    #                 archive_input_ms=racs_all_options.zip_ms,
-    #                 skip_selfcal=False,
-    #                 rename_ms=racs_all_options.rename_ms,
-    #                 archive_cal_table=True,
-    #                 casa_container=racs_all_options.casa_container,
-    #                 update_gain_cal_options=unmapped(update_gain_options),
-    #             )
+        with tags(f"selfcal-{current_round}"):
+            round_imaging_results = imaging_results[current_round - 1]
+            imaging_results[current_round] = []
+            for beam_imaging_results in round_imaging_results:
+                update_gain_options = get_options_from_strategy(
+                    strategy=strategy,
+                    mode="gaincal",
+                    round_info=current_round,
+                    operation="selfcal",
+                )
+                cal_mss = task_gaincal_applycal_ms.map(
+                    ms=beam_imaging_results.mss,
+                    selfcal_round=current_round,
+                    archive_input_ms=racs_all_options.zip_ms,
+                    skip_selfcal=False,
+                    rename_ms=racs_all_options.rename_ms,
+                    archive_cal_table=True,
+                    casa_container=racs_all_options.casa_container,
+                    update_gain_cal_options=unmapped(update_gain_options),
+                    wait_for=beam_imaging_results.wsclean_result,
+                )
+                update_masking_options = get_options_from_strategy(
+                    strategy=strategy,
+                    mode="masking",
+                    round_info=current_round,
+                    operation="selfcal",
+                )
+                fits_beam_mask = task_create_image_mask_model.submit(
+                    image=beam_imaging_results.wsclean_result,
+                    image_products=None,  # Mac works on apparent brightness
+                    update_masking_options=unmapped(update_masking_options),
+                )
+                wsclean_result = task_wsclean_imager.submit(
+                    in_ms=cal_mss,
+                    wsclean_container=racs_all_options.wsclean_container,
+                    fits_mask=fits_beam_mask,
+                    update_wsclean_options=unmapped(
+                        get_options_from_strategy(
+                            strategy=strategy,
+                            mode="wsclean",
+                            round_info=current_round,
+                            operation="selfcal",
+                        )
+                    ),
+                )
+                imaging_results[current_round].append(
+                    LoopFutures(mss=cal_mss, wsclean_result=wsclean_result)
+                )
 
     if racs_all_options.yandasoft_container:
-        for key in linmos_todos:
-            additional_linmos_suffix = "noselfcal" if key == 0 else f"round{key}"
-            wsclean_results = linmos_todos[key]
+        for selfcal_round, final_beam_imaging_results in imaging_results.items():
+            additional_linmos_suffix = (
+                "noselfcal" if selfcal_round == 0 else f"round{selfcal_round}"
+            )
+            wsclean_results = [
+                final_beam_imaging_result.wsclean_result
+                for final_beam_imaging_result in final_beam_imaging_results
+            ]
             parsets = create_convol_linmos_images(
                 wsclean_results=wsclean_results,
                 field_options=racs_all_options,
                 field_summary=field_summary,
                 additional_linmos_suffix_str=additional_linmos_suffix,  # indicate in output linmos name no selfcal
             )
-            logger.info(f"Self-cal round {key}, number of parsets {len(parsets)}")
+            logger.info(
+                f"Self-cal round {selfcal_round}, number of parsets {len(parsets)}"
+            )
 
             if racs_all_options.aegean_container:
-                logger.info(f"Running aegean on round {key}")
+                logger.info(f"Running aegean on round {selfcal_round}")
                 aegean_outputs = task_run_bane_and_aegean.submit(
                     image=parsets[-1],
                     aegean_container=unmapped(racs_all_options.aegean_container),
@@ -352,7 +404,7 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
                 field_summary = task_update_field_summary.submit(
                     field_summary=field_summary,
                     aegean_outputs=aegean_outputs,
-                    round=key if key > 0 else None,
+                    round=selfcal_round if selfcal_round > 0 else None,
                 )
                 validation_items(
                     field_summary=field_summary,
