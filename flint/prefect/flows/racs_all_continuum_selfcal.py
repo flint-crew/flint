@@ -354,6 +354,13 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
                     round_info=current_round,
                     operation="selfcal",
                 )
+
+                # TODO: An explicit trminder to add per-beam aegean source finding, or
+                # just make the mac for this explicit and required
+                assert update_gain_options["flood_fill_use_mac"], (
+                    "Currently only support mac based masking (no per-beam aegean)"
+                )
+
                 fits_beam_mask = task_create_image_mask_model.submit(
                     image=beam_imaging_results.wsclean_result,
                     image_products=None,  # Mac works on apparent brightness
