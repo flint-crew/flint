@@ -326,7 +326,7 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
         beam_summaries.extend(
             task_create_beam_summary.map(
                 ms=loop_result.mss,
-                image_set=unmapped(loop_result),
+                image_set=unmapped(loop_result.wsclean_result),
             )
         )
 
