@@ -50,8 +50,10 @@ from flint.prefect.common.imaging import (
 )
 from flint.prefect.common.ms import task_describe_ms
 from flint.prefect.common.utils import (
+    task_create_beam_summary,
     task_create_field_summary,
     task_update_field_summary,
+    task_update_with_options,
 )
 
 MSsByBeam: TypeAlias = tuple[tuple[MS, ...], ...]
@@ -319,6 +321,15 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
                 )
             )
 
+    beam_summaries = []
+    for loop_result in imaging_results[0]:
+        beam_summaries.extend(
+            task_create_beam_summary.map(
+                ms=loop_result.mss,
+                image_set=unmapped(loop_result),
+            )
+        )
+
     # Using ms summary objects as basis of field summary as MSs can change names
     # or be deleted throughout processing. TThis allows for no `wait_for` usage.
     field_summary = task_create_field_summary.submit(
@@ -326,6 +337,10 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
         cal_sbid_path=None,  # CASDA MSs have solutions applied
         holography_path=None,  # No unified holography (yet, mate)
         ms_summaries=ms_summaries,
+    )
+
+    field_summary = task_update_with_options.submit(
+        input_object=field_summary, beam_summaries=beam_summaries
     )
 
     for current_round in range(1, racs_all_options.rounds + 1):
