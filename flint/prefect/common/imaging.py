@@ -1257,6 +1257,8 @@ def validation_items(
         )
         return None
 
+    logger.info("Creating validation plots")
+
     val_plot_path = task_create_validation_plot.submit(
         field_summary=field_summary,
         aegean_outputs=aegean_outputs,
