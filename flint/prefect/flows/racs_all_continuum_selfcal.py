@@ -38,6 +38,7 @@ from flint.options import (
 from flint.prefect.clusters import get_dask_runner
 from flint.prefect.common.imaging import (
     create_convol_linmos_images,
+    create_convolve_linmos_cubes,
     task_copy_and_preprocess_casda_askap_ms,
     task_create_image_mask_model,
     task_flag_ms_aoflagger,
@@ -389,6 +390,29 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
                 )
 
     if racs_all_options.yandasoft_container:
+        if racs_all_options.coadd_cubes:
+            with tags("cubes"):
+                cube_add_round = racs_all_options.rounds
+                cube_add_round = racs_all_options.rounds
+
+                assert cube_add_round is not None, (
+                    f"{racs_all_options.rounds=}, but needs to be positive"
+                )
+
+                cube_results = [
+                    beam_result.wsclean_result
+                    for beam_result in imaging_results[cube_add_round]
+                ]
+
+                create_convolve_linmos_cubes(
+                    wsclean_results=cube_results,  # type: ignore
+                    field_options=racs_all_options,
+                    current_round=(
+                        racs_all_options.rounds if racs_all_options.rounds else None
+                    ),
+                    additional_linmos_suffix_str="cube",
+                )
+
         for selfcal_round, final_beam_imaging_results in imaging_results.items():
             additional_linmos_suffix = (
                 "noselfcal" if selfcal_round == 0 else f"round{selfcal_round}"
