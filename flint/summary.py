@@ -363,23 +363,38 @@ class BeamSummary(BaseOptions):
 
 
 def create_beam_summary(
-    ms: MS | Path,
+    ms: MS | Path | None = None,
     image_set: ImageSet | WSCleanResult | None = None,
     components: AegeanOutputs | None = None,
+    ms_summary: MSSummary | None = None,
 ) -> BeamSummary:
     """Create a summary of a beam
 
     Args:
-        ms (Union[MS, Path]): The measurement set being considered
+        ms (MS | Path | None, optional): The measurement set being considered and used to generate a summary object. Defaults to None.
         image_set (Optional[ImageSet], optional): Images produced from an imager. Defaults to None.
         components (Optional[AegeanOutputs], optional): Source finding output components. Defaults to None.
+        ms_summary (MSSummary | None, optional): A precomputed summary object. This should be specified if ``ms`` is None. Defaults to None.
+
+    Raises:
+        ValueError: Raised when both `column` and `ms.column` are None.
 
     Returns:
         BeamSummary: Summary object of a beam
     """
-    ms = MS.cast(ms=ms)
-    logger.info(f"Creating BeamSummary for {ms.path=}")
-    ms_summary = describe_ms(ms=ms)
+    if ms is None and ms_summary is None:
+        msg = "A measurement summary object was not created. Set with ms or ms_summary."
+        raise ValueError(msg)
+
+    if not isinstance(ms_summary, MSSummary):
+        assert ms is not None, "Input ms is None"
+        ms = MS.cast(ms=ms)
+        logger.info(f"Creating BeamSummary for {ms.path=}")
+        ms_summary = describe_ms(ms=ms)
+
+    assert ms_summary is not None, (
+        "MS Summary is not set, which is not supposed to happen"
+    )
 
     # TODO: Another example where a .cast type method could be useful
     # or where a standardised set of attributes with a HasImageSet type

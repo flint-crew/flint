@@ -22,7 +22,7 @@ from flint.configuration import (
 )
 from flint.imager.wsclean import WSCleanResult
 from flint.logging import logger
-from flint.ms import MS, find_mss
+from flint.ms import MS, MSSummary, find_mss
 from flint.naming import (
     CASDANameComponents,
     add_timestamp_to_path,
@@ -68,6 +68,8 @@ class LoopFutures:
     """Futures of the MSs"""
     wsclean_result: WSCleanResult
     """Imaging results from wsclean imaging"""
+    ms_summaries: list[MSSummary] | None = None
+    """Results from a MS description"""
 
 
 def _check_racs_all_options(racs_all_options: RACSAllOptions) -> None:
@@ -318,6 +320,7 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
                 LoopFutures(
                     mss=preprocess_science_mss,
                     wsclean_result=wsclean_result,
+                    ms_summaries=ms_summaries,
                 )
             )
 
@@ -325,7 +328,7 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
     for loop_result in imaging_results[0]:
         beam_summaries.extend(
             task_create_beam_summary.map(
-                ms=loop_result.mss,
+                ms_summaries=loop_result.ms_summaries,
                 image_set=unmapped(loop_result.wsclean_result),
             )
         )
