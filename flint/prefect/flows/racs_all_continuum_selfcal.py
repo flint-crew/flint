@@ -278,6 +278,7 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
             preprocess_science_mss = task_describe_ms.map(
                 ms=preprocess_science_mss, attach_ms=True
             )
+            ms_summaries_for_beam = preprocess_science_mss
             ms_summaries.extend(preprocess_science_mss)
             if racs_all_options.flagger_container is not None:
                 preprocess_science_mss = task_flag_ms_aoflagger.map(
@@ -320,7 +321,7 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
                 LoopFutures(
                     mss=preprocess_science_mss,
                     wsclean_result=wsclean_result,
-                    ms_summaries=ms_summaries,
+                    ms_summaries=ms_summaries_for_beam,
                 )
             )
 
