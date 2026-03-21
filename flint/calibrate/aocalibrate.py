@@ -461,7 +461,7 @@ def find_existing_solutions(
     calibrate_cmds = [
         CalibrateCommand(
             cmd="None",
-            ms=MS(ms),
+            ms=MS(path=ms),
             solution_path=solution_path,
             model=Path("None"),
             preflagged=True,
