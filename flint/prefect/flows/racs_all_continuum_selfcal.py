@@ -461,11 +461,12 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
                     aegean_outputs=aegean_outputs,
                     round=selfcal_round if selfcal_round > 0 else None,
                 )
-                validation_items(
-                    field_summary=field_summary,
-                    aegean_outputs=aegean_outputs,
-                    reference_catalogue_directory=racs_all_options.reference_catalogue_directory,
-                )
+                if selfcal_round in (0, racs_all_options.rounds):
+                    validation_items(
+                        field_summary=field_summary,
+                        aegean_outputs=aegean_outputs,
+                        reference_catalogue_directory=racs_all_options.reference_catalogue_directory,
+                    )
 
 
 def setup_run_racs_all_field(
