@@ -55,6 +55,24 @@ def test_create_beam_summary(ms_example, aegean_outputs_example):
     assert beam_summary.ms_summary.path == ms_example
 
 
+def test_create_beam_summary_with_mssummary(ms_example, aegean_outputs_example) -> None:
+    """Create a beam summary using an existing MS summary description"""
+    ms_summary = describe_ms(Path(ms_example))
+    beam_summary = create_beam_summary(
+        ms=None, components=aegean_outputs_example, ms_summary=ms_summary
+    )
+
+    assert beam_summary.ms_summary.path == ms_example
+    assert ms_summary == beam_summary.ms_summary
+
+
+def test_create_beam_summary_raise_error(aegean_outputs_example) -> None:
+    """Raise a value error if no ms and ms summary provided"""
+
+    with pytest.raises(ValueError):
+        create_beam_summary(ms=None, components=aegean_outputs_example, ms_summary=None)
+
+
 def test_create_field_summary_beam_summary(ms_example, aegean_outputs_example):
     cal_sbid_path = Path("/scratch3/gal16b/split/39433/SB39433.1934-638.beam0.ms")
     mss = [ms_example for _ in range(36)]
