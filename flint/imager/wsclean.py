@@ -188,6 +188,8 @@ class WSCleanOptions(BaseOptions):
     """Opposite of -ms-weighting; can be used to turn off MF weighting in -join-channels mode"""
     verbose: bool = False
     """Increase logging output"""
+    deconvolution_threads: int | None = None
+    """Number of threads to use during the deconvolution. More may make things faster but can come with a memory hit. If None defaults to -j"""
     # Options below here are not added to wsclean command
     flint_make_cube_inplace: bool = True
     """Rotate the cube for the linmos axis ordering in place, or do it via a temporary file that then gets deleted. Good thing to turn off when getting weird OSErrors on file writing"""
