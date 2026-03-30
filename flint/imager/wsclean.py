@@ -187,6 +187,8 @@ class WSCleanOptions(BaseOptions):
     """If True turn off the reordering of the MS at the beginning of wsclean"""
     no_mf_weighting: bool = False
     """Opposite of -ms-weighting; can be used to turn off MF weighting in -join-channels mode"""
+    taper_gaussian: float | None = None
+    """The size of a Gaussian function applied to the weights, assuming units of arcseconds. Defaults to None. """
     # Options below here are not added to wsclean command
     flint_make_cube_inplace: bool = True
     """Rotate the cube for the linmos axis ordering in place, or do it via a temporary file that then gets deleted. Good thing to turn off when getting weird OSErrors on file writing"""
