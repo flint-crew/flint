@@ -7,11 +7,11 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 from astropy.io import fits
+from capn_crunch import BaseOptions, add_options_to_parser, create_options_from_parser
 
 from flint.exceptions import AttemptRerunException
 from flint.logging import logger
 from flint.naming import create_aegean_names
-from flint.options import BaseOptions, add_options_to_parser, create_options_from_parser
 from flint.sclient import run_singularity_command
 
 

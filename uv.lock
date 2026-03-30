@@ -140,6 +140,7 @@ dependencies = [
     { name = "aegeantools" },
     { name = "astropy" },
     { name = "astroquery" },
+    { name = "capn-crunch" },
     { name = "configargparse" },
     { name = "crystalball" },
     { name = "dask-jobqueue" },
@@ -189,6 +190,7 @@ requires-dist = [
     { name = "aegeantools", specifier = "==2.3.0" },
     { name = "astropy", specifier = ">=6.1.3" },
     { name = "astroquery", specifier = ">=0.4.8.dev0" },
+    { name = "capn-crunch", specifier = ">=1.1.0" },
     { name = "configargparse", specifier = ">=1.7" },
     { name = "crystalball", specifier = ">=0.4.3" },
     { name = "dask-jobqueue" },
@@ -420,6 +422,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/39/91/d9ae9a66b01102a18cd16db0cf4cd54187ffe10f0865cc80071a4104fbb3/cachetools-6.2.6.tar.gz", hash = "sha256:16c33e1f276b9a9c0b49ab5782d901e3ad3de0dd6da9bf9bcd29ac5672f2f9e6", size = 32363, upload-time = "2026-01-27T20:32:59.956Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/90/45/f458fa2c388e79dd9d8b9b0c99f1d31b568f27388f2fdba7bb66bbc0c6ed/cachetools-6.2.6-py3-none-any.whl", hash = "sha256:8c9717235b3c651603fff0076db52d6acbfd1b338b8ed50256092f7ce9c85bda", size = 11668, upload-time = "2026-01-27T20:32:58.527Z" },
+]
+
+[[package]]
+name = "capn-crunch"
+version = "1.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/59/7d/4a9110e41c89c27b5d700cac115bb59a8a7f667832eca55af4f3be00c9b8/capn_crunch-1.1.0.tar.gz", hash = "sha256:5eb9cb6b8c7e5710c51c27b87aa5efdd87732b80fc9e2e73b962c991cc85381c", size = 46161, upload-time = "2026-03-15T10:38:56.277Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d9/04/565191902dcc8dba5b05625e8086095282ec3a9a583eac7364514e3f3827/capn_crunch-1.1.0-py3-none-any.whl", hash = "sha256:6cd4dbe8c1737dabcfafd1636598c54c020dbaa0c18af45ffd2150e24220f5bf", size = 5684, upload-time = "2026-03-15T10:38:54.942Z" },
 ]
 
 [[package]]

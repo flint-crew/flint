@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from capn_crunch import add_options_to_parser, create_options_from_parser
 from configargparse import ArgumentParser
 from prefect import flow, tags, unmapped
 
@@ -32,8 +33,6 @@ from flint.naming import (
 )
 from flint.options import (
     FieldOptions,
-    add_options_to_parser,
-    create_options_from_parser,
     dump_field_options_to_yaml,
 )
 from flint.prefect.clusters import get_dask_runner
