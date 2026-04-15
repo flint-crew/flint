@@ -65,6 +65,21 @@ def test_describe_ms(ms_example) -> None:
         assert summary.beam == 0
 
 
+def test_ms_cast_into_mss_as_list() -> None:
+    """See if the measurement cast function can pick up
+    the list of MSs"""
+    ms_1 = MS(path=Path("Jack.ms"))
+    ms_2 = MS(path=Path("Sparrow.ms"))
+    ms_3 = MS(path=Path("Black.ms"))
+    ms_4 = MS(path=Path("Pearl.ms"))
+
+    mss = MS.cast([ms_1, ms_2, ms_3, ms_4])
+
+    assert isinstance(mss, MSs)
+    assert len(mss.mss) == 4
+    assert all(isinstance(_ms, MS) for _ms in mss.mss)
+
+
 def test_ms_cast_into_mss() -> None:
     """See if the measurement cast function can pick up
     the tuple of MSs"""

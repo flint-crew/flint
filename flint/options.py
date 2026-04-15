@@ -613,17 +613,19 @@ class MS(BaseOptions):
         return self
 
     @classmethod
-    def cast(cls, ms: MS | Path | tuple[MS | Path, ...]) -> MS | MSs:
+    def cast(cls, ms: MS | Path | tuple[MS | Path, ...] | list[MS | Path]) -> MS | MSs:
 
         if isinstance(ms, (MS, MSs)):
             pass
         elif isinstance(ms, Path):
             ms = MS(path=ms)
-        elif isinstance(ms, tuple) and all([isinstance(_ms, (MS, Path)) for _ms in ms]):
+        elif isinstance(ms, (list, tuple)) and all(
+            [isinstance(_ms, (MS, Path)) for _ms in ms]
+        ):
             ms = MSs(mss=tuple([MS.cast(ms=_ms) for _ms in ms]))
         # extra ininstance here is to keep mypy happy, the rotten barbarnacle
         elif (
-            (not isinstance(ms, (MS, tuple)))
+            (not isinstance(ms, (MS, tuple, list)))
             and "ms" in dir(ms)
             and isinstance(ms.ms, MS)
         ):
