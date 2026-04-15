@@ -392,7 +392,7 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
                     update_masking_options=unmapped(update_masking_options),
                 )
                 wsclean_result = task_wsclean_imager.submit(
-                    in_ms=cal_mss,
+                    in_ms=tuple(cal_mss),
                     wsclean_container=racs_all_options.wsclean_container,
                     fits_mask=fits_beam_mask,
                     update_wsclean_options=unmapped(
