@@ -306,7 +306,7 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
                 )
 
             wsclean_result = task_wsclean_imager.submit(
-                in_ms=preprocess_science_mss,
+                in_ms=tuple(preprocess_science_mss),
                 wsclean_container=racs_all_options.wsclean_container,
                 update_wsclean_options=unmapped(
                     get_options_from_strategy(
