@@ -246,6 +246,11 @@ def create_aoflagger_cmd(ms: MS) -> AOFlaggerCommand:
     )
     logger.info(f"Flagging using the strategy file {flagging_strategy}")
 
+    # This is purely a temporary sanity test
+    with open(flagging_strategy) as strategy:
+        for line in strategy:
+            logger.info(line.strip())
+
     cmd = f"aoflagger -column {ms.column} -strategy {flagging_strategy} -v {ms.path.absolute()!s}"
 
     return AOFlaggerCommand(
