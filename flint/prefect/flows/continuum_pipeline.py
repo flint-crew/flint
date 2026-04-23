@@ -204,7 +204,7 @@ def process_science_fields(
                 preprocess_science_mss = (
                     task_flag_antenna_from_casda_bandpass_table.map(
                         ms=preprocess_science_mss,
-                        bandpass_path=field_options.casda_bandpass_table,
+                        bandpass_table=field_options.casda_bandpass_table,
                     )
                 )
     else:
