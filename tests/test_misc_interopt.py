@@ -64,7 +64,23 @@ def test_flag_antenna_from_casda_bandpass_table(
     casda_bandpass_table, ms_example
 ) -> None:
     """Check on the flagging infrastructure between bandpass table and a slim measurement set"""
+    # Get the result so we know which antennas would be flagged
+    result = get_flagged_antenna_casda_solutions(bandpass_table=casda_bandpass_table)
+
+    with table(str(ms_example), readonly=False, ack=False) as tab:
+        flags = tab.getcol("FLAG")
+        flags = np.zeros_like(flags, dtype=bool)
+        tab.putcol("FLAG", flags)
+        tab.flush()
 
     _ = flag_antenna_from_casda_bandpass_table(
         ms=ms_example, bandpass_table=casda_bandpass_table
     )
+
+    with table(str(ms_example), ack=False) as tab:
+        # NOTE: The beam we will be using is 0, based on the file name
+        # path, mate
+        for ant_idx in result[0]:
+            sub_tab = tab.query(f"ANTENNA1=={ant_idx} OR ANTENNA2=={ant_idx}")
+            sub_flags = sub_tab.getcol("FLAG")
+            assert np.all(sub_flags)
