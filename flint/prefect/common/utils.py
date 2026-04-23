@@ -13,6 +13,7 @@ from prefect.artifacts import create_markdown_artifact
 
 from flint.archive import copy_sbid_files_archive, create_sbid_tar_archive
 from flint.logging import logger
+from flint.misc.interopt import flag_antenna_from_casda_bandpass_table
 from flint.naming import (
     add_timestamp_to_path,
     get_fits_cube_from_paths,
@@ -32,6 +33,10 @@ R = TypeVar("R")
 C = TypeVar("C", bound=Callable)
 
 SUPPORTED_IMAGE_TYPES = ("png",)
+
+task_flag_antenna_from_casda_bandpass_table = task(
+    flag_antenna_from_casda_bandpass_table
+)
 
 
 @task
