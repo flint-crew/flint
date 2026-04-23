@@ -104,7 +104,7 @@ def flag_antenna_from_casda_bandpass_table(ms: MS | Path, bandpass_table: Path) 
             flags_after = np.sum(flags)
 
             logger.info(
-                f"Flagging {ant_idx=} - flags {flags.shape}, before {flags_before=} vs {flags_after=}"
+                f"Flagging {ant_idx=} - flags {flags.shape}, Difference {flags_after - flags_before=}, {flags_before=} vs {flags_after=}"
             )
             ant_tab.putcol(columnname="FLAG", value=flags)
 
