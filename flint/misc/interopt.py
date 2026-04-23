@@ -107,5 +107,6 @@ def flag_antenna_from_casda_bandpass_table(ms: MS | Path, bandpass_table: Path) 
                 f"Flagging {ant_idx=} - flags {flags.shape}, Difference {flags_after - flags_before=}, {flags_before=} vs {flags_after=}"
             )
             ant_tab.putcol(columnname="FLAG", value=flags)
+            ant_tab.flush()
 
     return _ms
