@@ -98,9 +98,14 @@ def flag_antenna_from_casda_bandpass_table(ms: MS | Path, bandpass_table: Path) 
         for ant_idx in ant_idx_to_flag:
             ant_tab = tab.query(f"ANTENNA1=={ant_idx} OR ANTENNA2=={ant_idx}")
             flags = ant_tab.getcol("FLAG")
-            flags = np.zeros_like(flags, dtype=bool)
+            flags_before = np.sum(flags)
 
-            logger.info(f"Flagging {ant_idx=} - flags set {flags.shape}")
+            flags = np.ones_like(flags, dtype=bool)
+            flags_after = np.sum(flags)
+
+            logger.info(
+                f"Flagging {ant_idx=} - flags {flags.shape}, before {flags_before=} vs {flags_after=}"
+            )
             ant_tab.putcol(columnname="FLAG", value=flags)
 
     return _ms
