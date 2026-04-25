@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from curses.ascii import controlnames
 from os import PathLike
 from pathlib import Path
-from typing import NamedTuple, cast
+from typing import cast
 
 import astropy.units as u
 import numpy as np
@@ -28,32 +28,8 @@ from fixms.fix_ms_dir import fix_ms_dir
 from flint.casa import copy_with_mstranform
 from flint.logging import logger
 from flint.naming import create_ms_name
-from flint.options import MS
+from flint.options import MS, MSSummary
 from flint.utils import copy_directory, rsync_copy_directory
-
-
-class MSSummary(NamedTuple):
-    """Small structure to contain overview of a MS"""
-
-    unflagged: int
-    """Number of unflagged records"""
-    flagged: int
-    """Number of flagged records"""
-    flag_spectrum: np.ndarray
-    """Flagged spectral channels"""
-    fields: list[str]
-    """Collection of unique field names from the FIELDS table"""
-    ants: list[int]
-    """Collection of unique antennas"""
-    beam: int
-    """The ASKAP beam number of the measurement set"""
-    path: Path
-    """Path to the measurement set that is being represented"""
-    phase_dir: SkyCoord
-    """The phase direction of the measurement set, which will be where the image will be centred"""
-    spw: int | None = None
-    """Intended to be used with ASKAP high-frequency resolution modes, where the MS is divided into SPWs"""
-
 
 # TODO: Some common MS validation functions?
 # - list / number of fields
@@ -317,14 +293,53 @@ def get_pol_axis_from_ms(
     return pol_ang
 
 
+def get_pol_axis_as_rad(ms: MS | Path) -> float:
+    """Get the rotation of the third-axis out of the measurement set.
+    It prioritises the information updated by `fixms` to handle
+    instances where data have been rotated to sky-frame. The order
+    of the columns searched from the FEED table are:
+
+    >>> INSTRUMENT_RECEPTOR_ANGLE
+    >>> RECEPTOR_ANGLE
+
+    Further the object returned is in radians and stripped
+    from the astropy units meta-data.
+
+    Args:
+        ms (MS | Path): The MS to examine
+
+    Returns:
+        float: The rotation of the third-axis in radians.
+    """
+    ms = MS.cast(ms=ms)
+
+    # The INSTRUMENT_RECEPTOR_ANGLE comes from fixms and is
+    # inserted to preserve the original orientation.
+
+    try:
+        pol_axis = get_pol_axis_from_ms(ms=ms, col="INSTRUMENT_RECEPTOR_ANGLE")
+
+        logger.info(f"INSTRUMENT_RECEPTOR_ANGLE obtained pol_axis={pol_axis}")
+    except ValueError:
+        pol_axis = get_pol_axis_from_ms(ms=ms, col="RECEPTOR_ANGLE")
+
+        # The prefect logger (or maybe the logger in general) does not render the quantity
+        logger.info(f"RECEPTOR_ANGLE obtained pol_axis={pol_axis}")
+
+    return pol_axis.to(u.rad).value
+
+
 # TODO: Inline with other changing conventions this should be
 # changed to `create_ms_summary`
-def describe_ms(ms: MS | Path, verbose: bool = False) -> MSSummary:
+def describe_ms(
+    ms: MS | Path, verbose: bool = False, attach_ms: bool = False
+) -> MSSummary:
     """Print some basic information from the inpute measurement set.
 
     Args:
         ms (Union[MS,Path]): Measurement set to inspect
         verbose (bool, optional): Log MS options to the flint logger. Defaults to False.
+        attach_ms (bool, optional): If True, attach the input MS that was used to generate the summary. Defaults to False.
 
     Returns:
         MSSummary: Brief overview of the MS.
@@ -350,6 +365,12 @@ def describe_ms(ms: MS | Path, verbose: bool = False) -> MSSummary:
     beam_no = get_beam_from_ms(ms=ms)
     phase_dir = get_phase_dir_from_ms(ms=ms)
 
+    ms_times = get_times_from_ms(ms=ms)
+    ms_times = Time([ms_times.min(), ms_times.max()])
+    integration = ms_times.ptp().to(u.second).value
+    location = get_telescope_location_from_ms(ms=ms)
+    pol_axis = get_pol_axis_as_rad(ms=ms)
+
     if verbose:
         logger.info(f"Inspecting {ms.path}.")
         logger.info(f"Contains: {colnames}")
@@ -368,6 +389,11 @@ def describe_ms(ms: MS | Path, verbose: bool = False) -> MSSummary:
         beam=beam_no,
         path=ms.path,
         phase_dir=phase_dir,
+        ms=ms if attach_ms else None,
+        ms_times=ms_times,
+        integration=integration,
+        location=location,
+        pol_axis=pol_axis,
     )
 
 

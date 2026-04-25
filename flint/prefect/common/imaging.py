@@ -59,7 +59,7 @@ from flint.naming import (
     get_beam_resolution_str,
     get_fits_cube_from_paths,
 )
-from flint.options import FieldOptions, SubtractFieldOptions
+from flint.options import FieldOptions, MSs, SubtractFieldOptions
 from flint.peel.potato import potato_peel
 from flint.prefect.common.utils import upload_image_as_artifact
 from flint.selfcal.casa import gaincal_applycal_ms
@@ -153,7 +153,7 @@ def task_flag_ms_aoflagger(ms: FlagMS, container: Path | None) -> FlagMS:
 
     extracted_ms = flag_ms_aoflagger(ms=extracted_ms, container=container)
 
-    return ms
+    return extracted_ms
 
 
 @task
@@ -320,7 +320,7 @@ def task_gaincal_applycal_ms(
 
 @task
 def task_wsclean_imager(
-    in_ms: ApplySolutions | MS,
+    in_ms: ApplySolutions | MS | tuple[MS, ...] | MSs,
     wsclean_container: Path,
     update_wsclean_options: dict[str, Any] | None = None,
     fits_mask: FITSMaskNames | None = None,
@@ -334,7 +334,7 @@ def task_wsclean_imager(
     `update_wsclean_options`, as some flow programmatically create these.
 
     Args:
-        in_ms (Union[ApplySolutions, MS]): The measurement set that will be imaged
+        in_ms (Union[ApplySolutions, MS, tuple[MS, ...]]): The measurement set that will be imaged
         wsclean_container (Path): Path to a singularity container with wsclean packages
         update_wsclean_options (Optional[Dict[str, Any]], optional): Options to update from the default wsclean options. Defaults to None.
         fits_mask (Optional[FITSMaskNames], optional): A path to a clean guard mask. Defaults to None.
@@ -345,7 +345,7 @@ def task_wsclean_imager(
         WSCleanResult: A resulting wsclean command and resulting meta-data
     """
 
-    ms = in_ms if isinstance(in_ms, MS) else in_ms.ms
+    ms: MS | MSs = MS.cast(in_ms)
 
     update_wsclean_options = (
         {} if update_wsclean_options is None else update_wsclean_options
@@ -1043,7 +1043,7 @@ def create_convolve_linmos_cubes(
 @task
 def task_create_image_mask_model(
     image: LinmosResult | ImageSet | WSCleanResult,
-    image_products: AegeanOutputs,
+    image_products: AegeanOutputs | None = None,
     update_masking_options: dict[str, Any] | None = None,
 ) -> FITSMaskNames:
     """Create a mask for an image, with the intention of providing it as a clean mask
@@ -1051,7 +1051,7 @@ def task_create_image_mask_model(
 
     Args:
         linmos_parset (LinmosResult): Linmos command and associated meta-data
-        image_products (AegeanOutputs): Images of the RMS and BKG
+        image_products (AegeanOutputs | None, optional): Images of the RMS and BKG. If None then signal mask creation will also be skipped.
         update_masking_options (Optional[Dict[str,Any]], optional): Updated options supplied to the default MaskingOptions. Defaults to None.
 
 
@@ -1064,6 +1064,9 @@ def task_create_image_mask_model(
     if isinstance(image_products, AegeanOutputs):
         source_rms = image_products.rms
         source_bkg = image_products.bkg
+    elif image_products is None:
+        source_rms = None
+        source_bkg = None
     else:
         raise ValueError("Unsupported bkg/rms mode. ")
 
@@ -1071,10 +1074,12 @@ def task_create_image_mask_model(
     if isinstance(image, LinmosResult):
         source_image = image.image_fits
     elif isinstance(image, ImageSet) and image.image is not None:
+        # TODO: By convention this is the MFS image, but this
+        # needs to be made explicit
         source_image = list(image.image)[-1]
     elif isinstance(image, WSCleanResult) and image.image_set is not None:
         source_image = list(image.image_set.image)[-1]
-    else:
+    elif image_products is not None:
         source_image = image_products.image
 
     if source_image is None:
@@ -1093,7 +1098,7 @@ def task_create_image_mask_model(
         fits_bkg_path=source_bkg,
         fits_rms_path=source_rms,
         masking_options=masking_options,
-        create_signal_fits=True,
+        create_signal_fits=source_rms is not None,
     )
 
     logger.info(f"Created {mask_names.mask_fits}")
@@ -1222,19 +1227,37 @@ def task_create_validation_tables(
 def validation_items(
     field_summary: FieldSummary,
     aegean_outputs: AegeanOutputs,
-    reference_catalogue_directory: Path,
-):
+    reference_catalogue_directory: Path | None = None,
+) -> None | tuple[Path, Path]:
     """Construct the validation plot and validation table items for the imaged field.
 
     Internally these are submitting the prefect task versions of:
     - `task_create_validation_plot`
     - `task_create_validation_tables`
 
+    If ``reference_catalogue_directory`` does not exist or unspecified than
+    this function returns ``None``. Otherwise a Path objects to output data
+    products are returned.
+
     Args:
         field_summary (FieldSummary): Container representing the SBID being imaged and its populated characteristics
         aegean_outputs (AegeanOutputs): Source finding results
-        reference_catalogue_directory (Path): Location of directory containing the reference known NVSS, SUMSS and ICRS catalogues
+        reference_catalogue_directory (Path | None, optional): Location of directory containing the reference known NVSS, SUMSS and ICRS catalogues. Defaults to None.
+
+        Returns:
+        None | tuple[Path, Path] -- None is returned if the ``reference_catalogue_directory`` does not exist, other the paths to output data products are returned.
     """
+
+    if (
+        not isinstance(reference_catalogue_directory, Path)
+        or not reference_catalogue_directory.exists()
+    ):
+        logger.info(
+            "Reference catalogue directory not specified or does not exist. Not creating validation products."
+        )
+        return None
+
+    logger.info("Creating validation plots")
 
     val_plot_path = task_create_validation_plot.submit(
         field_summary=field_summary,

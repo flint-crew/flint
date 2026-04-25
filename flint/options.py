@@ -10,8 +10,12 @@ hold stateful properties throughout the flint codebase.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
+import numpy as np
 import yaml
+from astropy.coordinates import EarthLocation, SkyCoord
+from astropy.time import Time
 from capn_crunch import BaseOptions
 
 from flint.exceptions import MSError
@@ -234,9 +238,78 @@ class PolFieldOptions(BaseOptions):
     """Path that final processed products will be copied into. If None no copying of file products is performed. See ArchiveOptions. """
 
 
+class RACSAllOptions(BaseOptions):
+    """Options to use throughout the RACS-All processing workflow. Based
+    on the continuum self-calibration flow. In the current form this will
+    be processing data from CASDA, i.e. no bandpass applied.
+
+    In its present form this `FieldOptions` class is not intended
+    to contain properties of the data that are being processed,
+    rather how those data will be processed.
+    """
+
+    low_data: Path
+    """Path to the low data to process"""
+    mid_data: Path
+    """Path to the mid data to process"""
+    high_data: Path
+    """Path to the high data to process"""
+    flagger_container: Path | None = None
+    """Path to the singularity aoflagger container"""
+    casa_container: Path | None = None
+    """Path to the singularity CASA container"""
+    expected_ms: int = 36
+    """The expected number of measurement set files to find"""
+    wsclean_container: Path | None = None
+    """Path to the singularity wsclean container"""
+    yandasoft_container: Path | None = None
+    """Path to the singularity yandasoft container"""
+    potato_container: Path | None = None
+    """Path to the singularity potato peel container"""
+    low_holofile: Path | None = None
+    """Path to the holography FITS cube for the low-band data that will be used when co-adding beams"""
+    mid_holofile: Path | None = None
+    """Path to the holography FITS cube for the mid-band data that will be used when co-adding beams"""
+    high_holofile: Path | None = None
+    """Path to the holography FITS cube for the high-band data that will be used when co-adding beams"""
+    rounds: int = 2
+    """Number of required rouds of self-calibration and imaging to perform"""
+    zip_ms: bool = False
+    """Whether to zip measurement sets once they are no longer required"""
+    run_aegean: bool = False
+    """Whether to run the aegean source finding tool"""
+    aegean_container: Path | None = None
+    """Path to the singularity aegean container"""
+    reference_catalogue_directory: Path | None = None
+    """Path to the directory container the reference catalogues, used to generate validation plots"""
+    linmos_residuals: bool = False
+    """Linmos the cleaning residuals together into a field image"""
+    beam_cutoff: float = 150
+    """Cutoff in arcseconds to use when calculating the common beam to convol to"""
+    pb_cutoff: float = 0.1
+    """Primary beam attenuation cutoff to use during linmos"""
+    use_beam_masks: bool = False
+    """Construct beam masks from MFS images to use for the next round of imaging. """
+    imaging_strategy: Path | None = None
+    """Path to a FLINT imaging yaml file that contains settings to use throughout imaging"""
+    sbid_archive_path: Path | None = None
+    """Path that SBID archive tarballs will be created under. If None no archive tarballs are created. See ArchiveOptions. """
+    sbid_copy_path: Path | None = None
+    """Path that final processed products will be copied into. If None no copying of file products is performed. See ArchiveOptions. """
+    rename_ms: bool = False
+    """Rename MSs throughout rounds of imaging and self-cal instead of creating copies. This will delete data-columns throughout. """
+    coadd_cubes: bool = False
+    """Co-add cubes formed throughout imaging together. Cubes will be smoothed channel-wise to a common resolution. Only performed on final set of images"""
+    holofile: Path | None = None
+    """Place holder for the moment"""
+
+
 def dump_field_options_to_yaml(
     output_path: Path,
-    field_options: FieldOptions | PolFieldOptions | SubtractFieldOptions,
+    field_options: FieldOptions
+    | PolFieldOptions
+    | SubtractFieldOptions
+    | RACSAllOptions,
     overwrite: bool = False,
 ) -> Path:
     """Dump the supplied instance of `FieldOptions` to a yaml file
@@ -247,7 +320,7 @@ def dump_field_options_to_yaml(
 
     Args:
         output_path (Path): Path of the output file.
-        field_options (FieldOptions): The `FieldOptions` class to write.
+        field_options (FieldOptions | PolFieldOptions | SubtractFieldOptions | RACSAllOptions): The `FieldOptions` class to write.
         overwrite (bool, optional): Overwrite the file if it exists. Defaults to False.
 
     Raises:
@@ -310,27 +383,125 @@ class FitsCubeOptions(BaseOptions):
     """Set pixels whose values are exactly 0.0 to not-a-number (nan)"""
 
 
+class MSSummary(BaseOptions):
+    """Small structure to contain overview of a MS"""
+
+    unflagged: int
+    """Number of unflagged records"""
+    flagged: int
+    """Number of flagged records"""
+    flag_spectrum: np.ndarray
+    """Flagged spectral channels"""
+    fields: list[str]
+    """Collection of unique field names from the FIELDS table"""
+    ants: list[int]
+    """Collection of unique antennas"""
+    beam: int
+    """The ASKAP beam number of the measurement set"""
+    path: Path
+    """Path to the measurement set that is being represented"""
+    phase_dir: SkyCoord
+    """The phase direction of the measurement set, which will be where the image will be centred"""
+    spw: int | None = None
+    """Intended to be used with ASKAP high-frequency resolution modes, where the MS is divided into SPWs"""
+    ms: MS | None = None
+    """The MS object used to generate the summary"""
+    pol_axis: float | None = None
+    """The rotation of the third-axis mount recorded in the MS"""
+    location: EarthLocation | None = None
+    """Location of the instrument"""
+    ms_times: Time | None = None
+    """Unique timesteps in the measurement set"""
+    integration: float | None = None
+    """Length of the observing time in seconds"""
+
+
 class MS(BaseOptions):
     path: Path
+    """Path to the MS that this instanceis tracking"""
     column: str | None = None
+    """If set indicates column that is activate and should be used during imaging or calibration operations"""
     beam: int | None = None
+    """If set indicates seam number of the MS"""
     spw: int | None = None
+    """If set indicates the SPW that should be used in operations"""
     field: str | None = None
+    """If set indicates the field of the data in the MS"""
     model_column: str | None = None
+    """If set indicates the column with model visibilities"""
 
     @property
     def ms(self) -> MS:
         return self
 
     @classmethod
-    def cast(cls, ms: MS | Path) -> MS:
-        if isinstance(ms, MS):
+    def cast(cls, ms: MS | Path | tuple[MS | Path, ...] | list[MS | Path]) -> MS | MSs:
+
+        if isinstance(ms, (MS, MSs)):
             pass
         elif isinstance(ms, Path):
             ms = MS(path=ms)
-        elif "ms" in dir(ms) and isinstance(ms.ms, MS):
+        elif isinstance(ms, (list, tuple)) and all(
+            [isinstance(_ms, (MS, Path)) for _ms in ms]
+        ):
+            ms = MSs(mss=tuple([MS.cast(ms=_ms) for _ms in ms]))
+        # extra ininstance here is to keep mypy happy, the rotten barbarnacle
+        elif (
+            (not isinstance(ms, (MS, tuple, list)))
+            and "ms" in dir(ms)
+            and isinstance(ms.ms, MS)
+        ):
             ms = ms.ms
         else:
+            # Helpful checks that helped figure out issues involving NamedTuples
+            logger.debug(f"{not isinstance(ms, (MS, tuple))=}")
+            logger.debug(f"{'ms' in dir(ms)=}")
+
             raise MSError(f"Unable to convert {ms=} of {type(ms)} to MS object. ")
 
         return ms
+
+
+def _mss_attribute_setter(
+    instance: MSs, column: str, list_of_values: list[Any]
+) -> None:
+    """Helper to set the consistent column names and do basic checks intended
+    to ensure all values are the same. The setter here deals with
+    the BaseOptions class being frozen by default"""
+    unique_values = set(list_of_values)
+    if len(unique_values) > 1:
+        msg = f"Differing values found, {unique_values}"
+        raise ValueError(msg)
+    if len(unique_values) == 1:
+        # Convert to new list to avoid mypy index errors on set
+        list_unique_values = list(unique_values)
+        if list_unique_values[0] is not None:
+            object.__setattr__(instance, column, list_unique_values[0])
+
+
+class MSs(BaseOptions):
+    """A very slim container class to represent multiple MS instances"""
+
+    mss: tuple[MS, ...]
+    """The collection of measurement sets"""
+    column: str | None = None
+    """The column to use across the MSs"""
+    model_column: str | None = None
+    """If set indicates the column with model visibilities"""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+        if self.column is None:
+            _mss_attribute_setter(
+                instance=self,
+                column="column",
+                list_of_values=[_ms.column for _ms in self.mss],
+            )
+
+        if self.model_column is None:
+            _mss_attribute_setter(
+                instance=self,
+                column="model_column",
+                list_of_values=[_ms.model_column for _ms in self.mss],
+            )

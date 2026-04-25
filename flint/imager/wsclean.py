@@ -48,6 +48,7 @@ from flint.naming import (
 from flint.options import (
     MS,
     BaseOptions,
+    MSs,
 )
 from flint.sclient import run_singularity_command
 from flint.utils import (
@@ -187,6 +188,10 @@ class WSCleanOptions(BaseOptions):
     """If True turn off the reordering of the MS at the beginning of wsclean"""
     no_mf_weighting: bool = False
     """Opposite of -ms-weighting; can be used to turn off MF weighting in -join-channels mode"""
+    verbose: bool = False
+    """Increase logging output"""
+    deconvolution_threads: int | None = None
+    """Number of threads to use during the deconvolution. More may make things faster but can come with a memory hit. If None defaults to -j"""
     taper_gaussian: float | None = None
     """The size of a Gaussian function applied to the weights, assuming units of arcseconds. Defaults to None. """
     # Options below here are not added to wsclean command
@@ -203,7 +208,7 @@ class WSCleanResult(BaseOptions):
     """The constructede wsclean command that would be executed."""
     options: WSCleanOptions
     """The set of wslean options used for imaging"""
-    ms: MS
+    ms: MS | MSs
     """The measurement sets that have been included in the wsclean command. """
     bind_dirs: tuple[Path, ...]
     """Paths that should be binded to when executing the command"""
@@ -697,20 +702,26 @@ def wsclean_cleanup_files(
     return tuple(rm_files)
 
 
-def create_wsclean_name_argument(wsclean_options: WSCleanOptions, ms: MS) -> Path:
+def create_wsclean_name_argument(wsclean_options: WSCleanOptions, ms: MS | MSs) -> Path:
     """Create the value that will be provided to wsclean -name argument. This has
     to be generated. Among things to consider is the desired output directory of imaging
     files. This by default will be alongside the measurement set. If a `temp_dir`
     has been specified then output files will be written here.
 
+    If the input ``ms`` is an instance of ``MSs`` then the first measurement
+    set will be used to base the name from.
+
     Args:
         wsclean_options (WSCleanOptions): Set of wsclean options to consider
-        ms (MS): The measurement set to be imaged
+        ms (MS | MSs): The measurement set to be imaged
 
     Returns:
         Path: Value of the -name argument to provide to wsclean
     """
     wsclean_options_dict = wsclean_options._asdict()
+
+    # Extract the first measurement set should multiple be provided
+    name_ms: MS = ms if isinstance(ms, MS) else ms.mss[0]
 
     # Prepare the name for the output wsclean command
     # Construct the name property of the string
@@ -718,14 +729,14 @@ def create_wsclean_name_argument(wsclean_options: WSCleanOptions, ms: MS) -> Pat
     channel_range = wsclean_options.channel_range
     scan_range = wsclean_options.interval
     name_prefix_str = create_imaging_name_prefix(
-        ms_path=ms.path,
+        ms_path=name_ms.path,
         pol=pol,
         channel_range=channel_range,
         scan_range=scan_range,
     )
 
     # Now resolve the directory part
-    name_dir: Path | str | None = ms.path.parent
+    name_dir: Path | str | None = name_ms.path.parent
     temp_dir = wsclean_options_dict.get("temp_dir", None)
     if temp_dir:
         # attempt to resolve possible environment variables flexibly
@@ -814,7 +825,7 @@ def _resolve_wsclean_key_value_to_cli_str(key: str, value: Any) -> ResolvedCLIRe
 
 
 def create_wsclean_cmd(
-    ms: MS,
+    ms: MS | MSs,
     wsclean_options: WSCleanOptions,
 ) -> WSCleanResult:
     """Create a wsclean command from a WSCleanOptions container
@@ -829,7 +840,7 @@ def create_wsclean_cmd(
     same directory as the measurement set.
 
     Args:
-        ms (MS): The measurement set to be imaged
+        ms (MS | MSs): The measurement set to be imaged
         wsclean_options (WSCleanOptions): WSClean options to image with
         container (Optional[Path], optional): If a path to a container is provided the command is executed immediately. Defaults to None.
 
@@ -849,10 +860,11 @@ def create_wsclean_cmd(
 
     wsclean_options_dict = wsclean_options._asdict()
 
+    example_ms: MS = ms if isinstance(ms, MS) else ms.mss[0]
     name_argument_path = create_wsclean_name_argument(
-        wsclean_options=wsclean_options, ms=ms
+        wsclean_options=wsclean_options, ms=example_ms
     )
-    move_directory = ms.path.parent
+    move_directory = example_ms.path.parent
     hold_directory: Path | None = Path(name_argument_path).parent
 
     unknowns: list[tuple[Any, Any]] = []
@@ -880,9 +892,13 @@ def create_wsclean_cmd(
         raise ValueError(f"Unknown wsclean option types: {msg}")
 
     cmds += [f"-name {name_argument_path!s}"]
-    cmds += [f"{ms.path!s} "]
-
-    bind_dir_paths.append(ms.path.parent)
+    if isinstance(ms, MS):
+        cmds += [f"{ms.path!s} "]
+        bind_dir_paths.append(ms.path.parent)
+    else:
+        assert isinstance(ms, MSs), f"Expected MSs, got {type(ms)}"
+        cmds += [f"{_ms.path!s}" for _ms in ms.mss]
+        bind_dir_paths += [_ms.path.parent for _ms in ms.mss]
 
     # TODO: Currently there are two calls into the `parse_environment_variable`
     # when processing the `-temp-dir` and `-name` options. When using the `FLINT_UUID`
@@ -941,6 +957,11 @@ def rotate_cube(output_cube_path: str | Path, inplace: bool = True) -> Path:
     # Swap axes in header
     tmp_header = header.copy()
     for a, b in ((3, 4), (4, 3)):
+        # Can not rotate if the keys do not exist. This
+        # can happen if uneven plans in cube
+        if f"CTYPE{b}" not in tmp_header:
+            continue
+
         header[f"CTYPE{a}"] = tmp_header[f"CTYPE{b}"]
         header[f"CRPIX{a}"] = tmp_header[f"CRPIX{b}"]
         header[f"CRVAL{a}"] = tmp_header[f"CRVAL{b}"]
@@ -1016,7 +1037,9 @@ def combine_image_set_to_cube(
         )
 
         logger.info(f"Combining {len(subband_images)} images. {subband_images=}")
-        freqs = combine_fits(file_list=subband_images, out_cube=output_cube_name)
+        freqs = combine_fits(
+            file_list=subband_images, out_cube=output_cube_name, create_blanks=True
+        )
 
         rotate_cube(output_cube_name, inplace=inplace)
 
@@ -1122,13 +1145,20 @@ def run_wsclean_imager(
     move_hold_directories = wsclean_result.move_hold_directories
     image_prefix_str = wsclean_result.image_prefix_str
 
-    sclient_bind_dirs = [Path(ms.path).parent.absolute()]
+    if isinstance(ms, MS):
+        sclient_bind_dirs = [Path(ms.path).parent.absolute()]
+    else:
+        sclient_bind_dirs = [Path(_ms.path).parent.absolute() for _ms in ms.mss]
     if bind_dirs:
         sclient_bind_dirs = sclient_bind_dirs + list(bind_dirs)
 
     prefix = image_prefix_str if image_prefix_str else None
     if prefix is None:
-        prefix = str(ms.path.parent / ms.path.name)
+        prefix = (
+            str(ms.path.parent / ms.path.name)
+            if isinstance(ms, MS)
+            else str(ms.mss[0].path.parent / ms.path.name)
+        )
         logger.warning(f"Setting prefix to {prefix}. Likely this is not correct. ")
 
     if move_hold_directories:
@@ -1208,7 +1238,7 @@ def run_wsclean_imager(
 
 
 def wsclean_imager(
-    ms: Path | MS,
+    ms: Path | MS | tuple[MS, ...] | MSs,
     wsclean_container: Path,
     update_wsclean_options: dict[str, Any] | None = None,
     make_cube_from_subbands: bool = True,
@@ -1216,7 +1246,7 @@ def wsclean_imager(
     """Create and run a wsclean imager command against a measurement set.
 
     Args:
-        ms (Union[Path,MS]): Path to the measurement set that will be imaged
+        ms (Path | MS | tuple[MS, ...] | MSs): Path to the measurement set that will be imaged
         wsclean_container (Path): Path to the container with wsclean installed
         update_wsclean_options (Optional[Dict[str, Any]], optional): Additional options to update the generated WscleanOptions with. Keys should be attributes of WscleanOptions. Defaults to None.
 
@@ -1264,9 +1294,10 @@ def get_parser() -> ArgumentParser:
     wsclean_parser.add_argument(
         "ms", type=Path, help="Path to a measurement set to image"
     )
-    wsclean_parser.add_argument(
-        "-v", "--verbose", action="store_true", help="Extra output logging."
-    )
+    # The wsclean options class has a verbose option. Since we can not
+    # change that we are simply using the shortform option only.
+    # TODO: Could consider using something like 'debug' here, ya sea dog
+    wsclean_parser.add_argument("-v", action="store_true", help="Extra output logging.")
     wsclean_parser.add_argument(
         "--wsclean-container",
         type=Path,
@@ -1286,7 +1317,7 @@ def cli() -> None:
     args = parser.parse_args()
 
     if args.mode == "image":
-        if args.verbose:
+        if args.v:
             import logging
 
             logger.setLevel(logging.DEBUG)
