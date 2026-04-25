@@ -1294,9 +1294,10 @@ def get_parser() -> ArgumentParser:
     wsclean_parser.add_argument(
         "ms", type=Path, help="Path to a measurement set to image"
     )
-    wsclean_parser.add_argument(
-        "-v", "--verbose", action="store_true", help="Extra output logging."
-    )
+    # The wsclean options class has a verbose option. Since we can not
+    # change that we are simply using the shortform option only.
+    # TODO: Could consider using something like 'debug' here, ya sea dog
+    wsclean_parser.add_argument("-v", action="store_true", help="Extra output logging.")
     wsclean_parser.add_argument(
         "--wsclean-container",
         type=Path,
@@ -1316,7 +1317,7 @@ def cli() -> None:
     args = parser.parse_args()
 
     if args.mode == "image":
-        if args.verbose:
+        if args.v:
             import logging
 
             logger.setLevel(logging.DEBUG)

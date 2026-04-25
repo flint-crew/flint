@@ -25,6 +25,7 @@ from flint.imager.wsclean import (
     combine_image_set_to_cube,
     create_wsclean_cmd,
     create_wsclean_name_argument,
+    get_parser,
     get_wsclean_output_names,
     get_wsclean_output_source_list_path,
     merge_image_sets,
@@ -37,6 +38,13 @@ from flint.logging import logger
 from flint.naming import create_imaging_name_prefix
 from flint.options import MS, MSs
 from flint.utils import get_packaged_resource_path
+
+
+def test_get_cli_parser() -> None:
+    """capn_crunch was throwing error over duplicated options being added to
+    the argpase object. No conflicting options means the parser should just
+    be returned"""
+    _ = get_parser()
 
 
 def test_rotate_cube_no_exists() -> None:
