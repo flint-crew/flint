@@ -9,197 +9,17 @@ hold stateful properties throughout the flint codebase.
 
 from __future__ import annotations
 
-from argparse import ArgumentParser, Namespace
 from pathlib import Path
-from types import NoneType, UnionType
-from typing import (
-    Any,
-    Self,
-    TypeVar,
-    get_args,
-    get_origin,
-)
+from typing import Any
 
 import numpy as np
 import yaml
 from astropy.coordinates import EarthLocation, SkyCoord
 from astropy.time import Time
-from pydantic import BaseModel, ConfigDict
-from pydantic.fields import FieldInfo
+from capn_crunch import BaseOptions
 
 from flint.exceptions import MSError
 from flint.logging import logger
-
-
-def options_to_dict(input_options: Any) -> dict:
-    """Helper function to convert an `Options` type class to a dictionary.
-
-    Most of `flint` `Option` and `Result` classes used `typing.NamedTuples`, which carry with
-    it a `_asdict` method to convert them to a dictionary. Future roadmap plans to move over to
-    pydantic type models. This is a place holder function to help transition to this.
-
-    Args:
-        input_options (Any): Item to convert to a dictionary
-
-    Raises:
-        TypeError: Raised if the conversion to a dictionary was not successful
-
-    Returns:
-        Dict: The dictionary version of the input options
-    """
-
-    if "_asdict" in dir(input_options):
-        return input_options._asdict()
-
-    try:
-        if issubclass(input_options, BaseModel):
-            return dict(**input_options.__dict__)
-    except TypeError:
-        logger.debug(f"can not use issubclass on {input_options}")
-
-    try:
-        return dict(**input_options)
-    except TypeError:
-        raise TypeError(f"Input options is not known: {type(input_options)}")
-
-
-class BaseOptions(BaseModel):
-    """A base class that Options style flint classes can
-    inherit from. This is derived from ``pydantic.BaseModel``,
-    and can be used for validation of supplied values.
-
-    Class derived from ``BaseOptions`` are immutable by
-    default, and have the docstrings of attributes
-    extracted.
-    """
-
-    model_config = ConfigDict(
-        frozen=True,
-        from_attributes=True,
-        use_attribute_docstrings=True,
-        extra="forbid",
-        arbitrary_types_allowed=True,
-    )
-
-    def with_options(self, /, **kwargs) -> Self:
-        new_args = self.__dict__.copy()
-        new_args.update(**kwargs)
-
-        return self.__class__(**new_args)
-
-    def _asdict(self) -> dict[str, Any]:
-        return self.model_dump()
-
-
-def _create_argparse_options(name: str, field: FieldInfo) -> tuple[str, dict[str, Any]]:
-    """Convert a pydantic Field into ``dict`` to splate into ArgumentParser.add_argument()"""
-
-    field_name = name if field.is_required() else "--" + name.replace("_", "-")
-
-    field_type = get_origin(field.annotation)
-    field_args = get_args(field.annotation)
-    iterable_types = (list, tuple, set)
-
-    options = dict(action="store", help=field.description, default=field.default)
-
-    if field.annotation is bool:
-        options["action"] = "store_false" if field.default else "store_true"
-
-    # if field_type is in (list, tuple, set) OR if (list, tuple, set) | Any
-    elif field_type in iterable_types or (
-        field_type is UnionType
-        and any(get_origin(p) in iterable_types for p in field_args)
-    ):
-        nargs: str | int = "+"
-
-        # If the field is a tuple, and the Ellipsis is not present
-        # We can assume that the nargs is the length of the tuple
-        if field_type is tuple and Ellipsis not in field_args:
-            nargs = len(field_args)
-
-        # Now we handle unions, but do the same check as above
-        elif field_type is UnionType and Ellipsis not in field_args:
-            for arg in field_args:
-                args = get_args(arg)
-                if arg is not NoneType and type(args) is tuple and Ellipsis not in args:
-                    nargs = len(args)
-
-        if nargs == 0:
-            raise ValueError(f"Unable to determine nargs for {name=}, got {nargs=}")
-        options["nargs"] = nargs
-
-    return field_name, options
-
-
-def add_options_to_parser(
-    parser: ArgumentParser,
-    options_class: type[BaseOptions],
-    description: str | None = None,
-) -> ArgumentParser:
-    """Given an established argument parser and a class derived
-    from a ``pydantic.BaseModel``, populate the argument parser
-    with the model properties.
-
-    Args:
-        parser (ArgumentParser): Parser that arguments will be added to
-        options_class (type[BaseModel]): A ``Options`` style class derived from ``BaseOptions``
-
-    Returns:
-        ArgumentParser: Updated argument parser
-    """
-
-    assert issubclass(options_class, BaseModel), (
-        f"{options_class=} is not a pydantic BaseModel"
-    )
-
-    group = parser.add_argument_group(
-        title=f"Inputs for {options_class.__name__}", description=description
-    )
-
-    for name, field in options_class.model_fields.items():
-        field_name, options = _create_argparse_options(name=name, field=field)
-        try:
-            group.add_argument(field_name, **options)  # type: ignore
-        except Exception as e:
-            logger.error(f"{field_name=} {options=}")
-            raise e
-
-    return parser
-
-
-U = TypeVar("U", bound=BaseOptions)
-
-
-def create_options_from_parser(
-    parser_namespace: Namespace, options_class: type[U]
-) -> U:
-    """Given a ``BaseOptions`` derived class, extract the corresponding
-    arguments from an ``argparse.nNamespace``. These options correspond to
-    ones generated by ``add_options_to_parser``.
-
-    Args:
-        parser_namespace (Namespace): The argument parser corresponding to those in the ``BaseOptions`` class
-        options_class (U): A ``BaseOptions`` derived class
-
-    Returns:
-        U: An populated options class with arguments drawn from CLI argument parser
-    """
-    assert issubclass(
-        options_class,  # type: ignore
-        BaseModel,
-    ), f"{options_class=} is not a pydantic BaseModel"
-
-    args = (
-        vars(parser_namespace)
-        if not isinstance(parser_namespace, dict)
-        else parser_namespace
-    )
-
-    opts_dict = {}
-    for name, field in options_class.model_fields.items():
-        opts_dict[name] = args[name]
-
-    return options_class(**opts_dict)
 
 
 class BandpassOptions(BaseOptions):
@@ -378,6 +198,8 @@ class FieldOptions(BaseOptions):
     """Attempt to update a MSs MODEL_DATA column with a source list (e.g. source list output from wsclean)"""
     use_jolly_tukey_tractor: bool = False
     """Use the jolly roger tukey tractor. See the TukeyTractorOptions and the jolly-roger package for more details."""
+    casda_bandpass_table: Path | None = None
+    """The bandpass table applied to the MSs for this SBID, as deposited onto CASDA. Used to identify antennas to flag that may be unflagged under certain conditions."""
 
 
 class PolFieldOptions(BaseOptions):

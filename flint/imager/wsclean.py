@@ -26,6 +26,11 @@ from typing import Any, NamedTuple
 
 import numpy as np
 from astropy.io import fits
+from capn_crunch import (
+    add_options_to_parser,
+    create_options_from_parser,
+    options_to_dict,
+)
 from fitscube.combine_fits import combine_fits
 
 from flint.exceptions import (
@@ -44,9 +49,6 @@ from flint.options import (
     MS,
     BaseOptions,
     MSs,
-    add_options_to_parser,
-    create_options_from_parser,
-    options_to_dict,
 )
 from flint.sclient import run_singularity_command
 from flint.utils import (
@@ -190,6 +192,8 @@ class WSCleanOptions(BaseOptions):
     """Increase logging output"""
     deconvolution_threads: int | None = None
     """Number of threads to use during the deconvolution. More may make things faster but can come with a memory hit. If None defaults to -j"""
+    taper_gaussian: float | None = None
+    """The size of a Gaussian function applied to the weights, assuming units of arcseconds. Defaults to None. """
     # Options below here are not added to wsclean command
     flint_make_cube_inplace: bool = True
     """Rotate the cube for the linmos axis ordering in place, or do it via a temporary file that then gets deleted. Good thing to turn off when getting weird OSErrors on file writing"""

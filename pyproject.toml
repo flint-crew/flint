@@ -50,6 +50,7 @@ dependencies = [
     "astroquery>=0.4.8.dev0",
     "crystalball>=0.4.3",
     "jolly-roger>=0.10.1",
+    "capn-crunch>=1.1.0",
 ]
 
 [tool.hatch]

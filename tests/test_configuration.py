@@ -4,9 +4,11 @@ import filecmp
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from flint.configuration import (
     Strategy,
+    TukeyTractorOptions,
     _create_mode_mapping_defaults,
     copy_and_timestamp_strategy_file,
     create_default_yaml,
@@ -71,6 +73,37 @@ def package_strategy_path():
     )
 
     return example
+
+
+@pytest.fixture
+def package_strategy_3_path():
+    example = get_packaged_resource_path(
+        package="flint", filename="data/tests/test_config_3.yaml"
+    )
+
+    return example
+
+
+def test_defaults_error_raised(package_strategy_3_path) -> None:
+    """If there is a bad field in the defaults section but is
+    otherwise not further defined in the subsequent operation
+    sections then it is missed until it is accessed.
+    """
+    # The verification is turned off as the file is not valid
+    strategy = load_strategy_yaml(input_yaml=package_strategy_3_path, verify=False)
+    tukey_tractor_options = get_options_from_strategy(
+        strategy=strategy, mode="tukeytractor", round_info=0, operation="selfcal"
+    )
+
+    # During construction of options validation error was being thrown.
+    # Make sure that happens here
+    with pytest.raises(ValidationError):
+        TukeyTractorOptions(**tukey_tractor_options)
+
+    # Should the above happen a ValueError needs to be raised
+    # by the verify function
+    with pytest.raises(ValueError):
+        verify_configuration(input_strategy=strategy)
 
 
 def test_get_jolly_tukey_tractor_options(package_strategy_operations):

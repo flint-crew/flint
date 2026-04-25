@@ -1,0 +1,24 @@
+# An example config that caused issues. When running an invalid
+# field in the defaults section (outer_width) was passing the
+# verification stage, but failing when accessing through the
+# get argument interface in actual use.
+
+# This main file is using the TukeyTractorOptions class
+# from jolly roger. Should the options in that class change
+# then this test may also fail
+
+version: 0.2
+defaults:
+  tukeytractor:
+    outer_width: 30.0
+    ignore_nyquist_zone: 2
+selfcal:
+  0:
+    wsclean:
+      auto_mask: 5
+      auto_threshold: 3
+      multiscale_scale_bias: 0.7
+      multiscale: true
+      niter: 100000
+      local_rms: true
+      local_rms_window: 600

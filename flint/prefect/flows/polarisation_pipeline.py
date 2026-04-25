@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from capn_crunch import add_options_to_parser, create_options_from_parser
 from configargparse import ArgumentParser
 from prefect import flow, tags, unmapped
 from prefect.futures import PrefectFuture
@@ -28,8 +29,6 @@ from flint.naming import (
 )
 from flint.options import (
     PolFieldOptions,
-    add_options_to_parser,
-    create_options_from_parser,
     dump_field_options_to_yaml,
 )
 from flint.prefect.clusters import get_dask_runner

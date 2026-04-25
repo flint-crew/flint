@@ -9,10 +9,10 @@ from typing import Literal, NamedTuple
 
 import numpy as np
 from astropy.io import fits
+from capn_crunch import BaseOptions, add_options_to_parser, create_options_from_parser
 
 from flint.logging import logger
 from flint.naming import LinmosNames, create_linmos_names, extract_beam_from_name
-from flint.options import BaseOptions, add_options_to_parser, create_options_from_parser
 from flint.sclient import run_singularity_command
 from flint.utils import remove_files_folders
 

@@ -15,6 +15,7 @@ from contextlib import contextmanager
 from curses.ascii import controlnames
 from os import PathLike
 from pathlib import Path
+from typing import cast
 
 import astropy.units as u
 import numpy as np
@@ -833,10 +834,11 @@ def preprocess_askap_ms(
 
     if skip_rotation:
         # TODO: Should we copy the DATA to INSTRUMENT_DATA?
+        ms = MS.cast(corrected_ms_path)
         logger.info("Skipping the rotation of the visibilities. ")
         ms = ms.with_options(column=data_column)
         logger.info(f"Returning {ms=}.")
-        return ms
+        return cast(MS, ms)
 
     logger.info("Applying rotation matrix to correlations. ")
     logger.info(
@@ -856,6 +858,7 @@ def preprocess_askap_ms(
         shutil.move(ms.path, new_ms_path)
         ms = ms.with_options(path=new_ms_path)
 
+    ms = cast(MS, ms)
     return ms.with_options(column=data_column)
 
 
