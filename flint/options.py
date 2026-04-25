@@ -194,6 +194,8 @@ class FieldOptions(BaseOptions):
     """Attempt to update a MSs MODEL_DATA column with a source list (e.g. source list output from wsclean)"""
     use_jolly_tukey_tractor: bool = False
     """Use the jolly roger tukey tractor. See the TukeyTractorOptions and the jolly-roger package for more details."""
+    casda_bandpass_table: Path | None = None
+    """The bandpass table applied to the MSs for this SBID, as deposited onto CASDA. Used to identify antennas to flag that may be unflagged under certain conditions."""
 
 
 class PolFieldOptions(BaseOptions):

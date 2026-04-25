@@ -62,6 +62,7 @@ from flint.prefect.common.utils import (
     task_archive_sbid,
     task_create_beam_summary,
     task_create_field_summary,
+    task_flag_antenna_from_casda_bandpass_table,
     task_flatten,
     task_update_field_summary,
     task_update_with_options,
@@ -199,6 +200,13 @@ def process_science_fields(
             preprocess_science_mss = task_flag_ms_aoflagger.map(  # type: ignore
                 ms=preprocess_science_mss, container=field_options.flagger_container
             )
+            if field_options.casda_bandpass_table is not None:
+                preprocess_science_mss = (
+                    task_flag_antenna_from_casda_bandpass_table.map(
+                        ms=preprocess_science_mss,
+                        bandpass_table=field_options.casda_bandpass_table,
+                    )
+                )
     else:
         # TODO: This will likely need to be expanded should any
         # other calibration strategies get added

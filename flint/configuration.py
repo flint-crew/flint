@@ -377,6 +377,22 @@ def verify_configuration(input_strategy: Strategy, raise_on_error: bool = True) 
             errors.append(
                 f"Required section header {known_header} missing from input configuration."
             )
+            continue
+
+        # Tests for correctness of the required fields if they
+        # do in fact exist
+        if known_header == "defaults":
+            for default_options in input_strategy["defaults"].keys():
+                try:
+                    options = input_strategy["defaults"][default_options]
+                    try:
+                        _ = MODE_OPTIONS_MAPPING[default_options](**options)
+                    except TypeError as typeerror:
+                        errors.append(
+                            f"{default_options=} mode in defaults incorrectly formed. {typeerror} "
+                        )
+                except Exception as exception:
+                    errors.append(f"{exception}")
 
     if "version" in input_strategy.keys():
         if input_strategy["version"] != FORMAT_VERSION:
@@ -440,7 +456,8 @@ def verify_configuration(input_strategy: Strategy, raise_on_error: bool = True) 
                 except Exception as exception:
                     errors.append(f"{exception}")
 
-    for operation in KNOWN_OPERATIONS:
+    test_operations = KNOWN_OPERATIONS
+    for operation in test_operations:
         # Already checked above
         if operation == "selfcal" or operation == "polarisation":
             continue
