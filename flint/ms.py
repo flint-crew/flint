@@ -294,7 +294,7 @@ def get_pol_axis_from_ms(
 
 
 def get_pol_axis_as_rad(ms: MS | Path) -> float:
-    """Get the rotation of the third-axis out of the mesaurement set.
+    """Get the rotation of the third-axis out of the measurement set.
     It prioritises the information updated by `fixms` to handle
     instances where data have been rotated to sky-frame. The order
     of the columns searched from the FEED table are:
