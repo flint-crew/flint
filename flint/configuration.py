@@ -33,7 +33,7 @@ from flint.source_finding.aegean import AegeanOptions, BANEOptions
 # Known headers must **always** be present in the strategy file
 KNOWN_HEADERS = ("defaults", "version")
 # Known options are optional, but if present must be in the correct format
-KNOWN_OPERATIONS = ("selfcal", "stokesv", "subtractcube", "polarisation")
+KNOWN_OPERATIONS = ("selfcal", "stokesv", "subtractcube", "polarisation", "cubletimage")
 FORMAT_VERSION = 0.2
 MODE_OPTIONS_MAPPING = {
     "wsclean": WSCleanOptions,
