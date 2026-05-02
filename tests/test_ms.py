@@ -26,7 +26,6 @@ from flint.ms import (
     rename_ms_and_columns_for_selfcal,
     subtract_model_from_data_column,
 )
-from flint.options import MSs
 from flint.utils import get_packaged_resource_path
 
 
@@ -63,121 +62,6 @@ def test_describe_ms(ms_example) -> None:
     for summary in (summary_1, summary_2):
         assert summary.path == ms_example
         assert summary.beam == 0
-
-
-def test_ms_cast_into_mss_as_list() -> None:
-    """See if the measurement cast function can pick up
-    the list of MSs"""
-    ms_1 = MS(path=Path("Jack.ms"))
-    ms_2 = MS(path=Path("Sparrow.ms"))
-    ms_3 = MS(path=Path("Black.ms"))
-    ms_4 = MS(path=Path("Pearl.ms"))
-
-    mss = MS.cast([ms_1, ms_2, ms_3, ms_4])
-
-    assert isinstance(mss, MSs)
-    assert len(mss.mss) == 4
-    assert all(isinstance(_ms, MS) for _ms in mss.mss)
-
-
-def test_ms_cast_into_mss() -> None:
-    """See if the measurement cast function can pick up
-    the tuple of MSs"""
-    ms_1 = MS(path=Path("Jack.ms"))
-    ms_2 = MS(path=Path("Sparrow.ms"))
-    ms_3 = MS(path=Path("Black.ms"))
-    ms_4 = MS(path=Path("Pearl.ms"))
-
-    mss = MS.cast((ms_1, ms_2, ms_3, ms_4))
-
-    assert isinstance(mss, MSs)
-    assert len(mss.mss) == 4
-    assert all(isinstance(_ms, MS) for _ms in mss.mss)
-
-
-def test_ms_cast_into_mss_only_paths() -> None:
-    """See if the measurement cast function can pick up
-    the tuple of MSs. This uses only Path objects to create the MS"""
-    ms_1 = Path("Jack.ms")
-    ms_2 = Path("Sparrow.ms")
-    ms_3 = Path("Black.ms")
-    ms_4 = Path("Pearl.ms")
-
-    mss = MS.cast((ms_1, ms_2, ms_3, ms_4))
-
-    assert isinstance(mss, MSs)
-    assert len(mss.mss) == 4
-    assert all(isinstance(_ms, MS) for _ms in mss.mss)
-
-
-def test_ms_cast_into_mss_with_mss() -> None:
-    """See if the measurement cast function can pick up
-    the tuple of MSs. See if casting function handles
-    existing MSs"""
-    ms_1 = MS(path=Path("Jack.ms"))
-    ms_2 = MS(path=Path("Sparrow.ms"))
-    ms_3 = MS(path=Path("Black.ms"))
-    ms_4 = MS(path=Path("Pearl.ms"))
-
-    mss = MSs(mss=(ms_1, ms_2, ms_3, ms_4))
-    mss = MS.cast(mss)
-
-    assert isinstance(mss, MSs)
-    assert len(mss.mss) == 4
-    assert all(isinstance(_ms, MS) for _ms in mss.mss)
-
-
-def test_ms_cast_into_mss_with_columns() -> None:
-    """See if the measurement cast function can pick up
-    the tuple of MSs. Sanity check that the 'collecting' function
-    of the MSs can accumulate the common column and model column
-    attributes"""
-    ms_1 = MS(path=Path("Jack.ms"), column="DATA")
-    ms_2 = MS(path=Path("Sparrow.ms"), column="DATA")
-    ms_3 = MS(path=Path("Black.ms"), column="DATA")
-    ms_4 = MS(path=Path("Pearl.ms"), column="DATA")
-
-    mss = MS.cast((ms_1, ms_2, ms_3, ms_4))
-
-    assert isinstance(mss, MSs)
-    assert len(mss.mss) == 4
-    assert all(isinstance(_ms, MS) for _ms in mss.mss)
-    assert mss.column == "DATA"
-    assert mss.model_column is None
-
-    ms_1 = MS(path=Path("Jack.ms"), column="DATA", model_column="MODEL_DATA")
-    ms_2 = MS(path=Path("Sparrow.ms"), column="DATA", model_column="MODEL_DATA")
-    ms_3 = MS(path=Path("Black.ms"), column="DATA", model_column="MODEL_DATA")
-    ms_4 = MS(path=Path("Pearl.ms"), column="DATA", model_column="MODEL_DATA")
-
-    mss = MS.cast((ms_1, ms_2, ms_3, ms_4))
-
-    assert isinstance(mss, MSs)
-    assert len(mss.mss) == 4
-    assert all(isinstance(_ms, MS) for _ms in mss.mss)
-    assert mss.column == "DATA"
-    assert mss.model_column == "MODEL_DATA"
-
-
-def test_ms_cast_into_mss_with_columns_fail_common() -> None:
-    """See if the measurement cast function can pick up
-    the tuple of MSs. Similar to above by catch the case
-    of different model or data columns"""
-    ms_1 = MS(path=Path("Jack.ms"), column="DATA")
-    ms_2 = MS(path=Path("Sparrow.ms"), column="DATA")
-    ms_3 = MS(path=Path("Black.ms"), column="DATA")
-    ms_4 = MS(path=Path("Pearl.ms"), column="BAD")
-
-    with pytest.raises(ValueError):
-        MS.cast((ms_1, ms_2, ms_3, ms_4))
-
-    ms_1 = MS(path=Path("Jack.ms"), column="DATA")
-    ms_2 = MS(path=Path("Sparrow.ms"), column="DATA")
-    ms_3 = MS(path=Path("Black.ms"), column="DATA")
-    ms_4 = MS(path=Path("Pearl.ms"), column="DATA", model_column="TEST")
-
-    with pytest.raises(ValueError):
-        MS.cast((ms_1, ms_2, ms_3, ms_4))
 
 
 def test_consistent_channelwise_frequencies():

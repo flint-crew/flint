@@ -10,7 +10,6 @@ hold stateful properties throughout the flint codebase.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import yaml
@@ -435,22 +434,13 @@ class MS(BaseOptions):
         return self
 
     @classmethod
-    def cast(cls, ms: MS | Path | tuple[MS | Path, ...] | list[MS | Path]) -> MS | MSs:
+    def cast(cls, ms: MS | Path) -> MS:
 
-        if isinstance(ms, (MS, MSs)):
+        if isinstance(ms, MS):
             pass
         elif isinstance(ms, Path):
             ms = MS(path=ms)
-        elif isinstance(ms, (list, tuple)) and all(
-            [isinstance(_ms, (MS, Path)) for _ms in ms]
-        ):
-            ms = MSs(mss=tuple([MS.cast(ms=_ms) for _ms in ms]))
-        # extra ininstance here is to keep mypy happy, the rotten barbarnacle
-        elif (
-            (not isinstance(ms, (MS, tuple, list)))
-            and "ms" in dir(ms)
-            and isinstance(ms.ms, MS)
-        ):
+        elif not isinstance(ms, MS) and "ms" in dir(ms) and isinstance(ms.ms, MS):
             ms = ms.ms
         else:
             # Helpful checks that helped figure out issues involving NamedTuples
@@ -460,48 +450,3 @@ class MS(BaseOptions):
             raise MSError(f"Unable to convert {ms=} of {type(ms)} to MS object. ")
 
         return ms
-
-
-def _mss_attribute_setter(
-    instance: MSs, column: str, list_of_values: list[Any]
-) -> None:
-    """Helper to set the consistent column names and do basic checks intended
-    to ensure all values are the same. The setter here deals with
-    the BaseOptions class being frozen by default"""
-    unique_values = set(list_of_values)
-    if len(unique_values) > 1:
-        msg = f"Differing values found, {unique_values}"
-        raise ValueError(msg)
-    if len(unique_values) == 1:
-        # Convert to new list to avoid mypy index errors on set
-        list_unique_values = list(unique_values)
-        if list_unique_values[0] is not None:
-            object.__setattr__(instance, column, list_unique_values[0])
-
-
-class MSs(BaseOptions):
-    """A very slim container class to represent multiple MS instances"""
-
-    mss: tuple[MS, ...]
-    """The collection of measurement sets"""
-    column: str | None = None
-    """The column to use across the MSs"""
-    model_column: str | None = None
-    """If set indicates the column with model visibilities"""
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-        if self.column is None:
-            _mss_attribute_setter(
-                instance=self,
-                column="column",
-                list_of_values=[_ms.column for _ms in self.mss],
-            )
-
-        if self.model_column is None:
-            _mss_attribute_setter(
-                instance=self,
-                column="model_column",
-                list_of_values=[_ms.model_column for _ms in self.mss],
-            )
