@@ -10,6 +10,7 @@ hold stateful properties throughout the flint codebase.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Protocol
 
 import numpy as np
 import yaml
@@ -415,6 +416,10 @@ class MSSummary(BaseOptions):
     """Length of the observing time in seconds"""
 
 
+class HasMS(Protocol):
+    ms: MS
+
+
 class MS(BaseOptions):
     path: Path
     """Path to the MS that this instanceis tracking"""
@@ -434,7 +439,7 @@ class MS(BaseOptions):
         return self
 
     @classmethod
-    def cast(cls, ms: MS | Path) -> MS:
+    def cast(cls, ms: MS | Path | HasMS) -> MS:
 
         if isinstance(ms, MS):
             pass
@@ -453,7 +458,7 @@ class MS(BaseOptions):
 
 
 def standardise_ms_to_list_ms(
-    ms: Path | MS | tuple[MS | Path, ...] | list[MS | Path],
+    ms: Path | MS | tuple[MS | Path, ...] | list[MS | Path] | HasMS,
 ) -> list[MS]:
     """A utility to process a collection of inputs that could be linked to a
     set of MS instances, and output a single list of MS objects. The list may

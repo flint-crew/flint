@@ -438,7 +438,10 @@ def test_create_wsclean_command_with_environment(ms_example):
     wsclean_options = WSCleanOptions(temp_dir="$LOCALDIR")
 
     command = create_wsclean_cmd(
-        ms=MS.cast(ms_example), wsclean_options=wsclean_options
+        ms=[
+            MS.cast(ms_example),
+        ],
+        wsclean_options=wsclean_options,
     )
     assert isinstance(command, WSCleanResult)
     assert "Pirates/be/here" in command.cmd

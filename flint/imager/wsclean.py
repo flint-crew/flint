@@ -858,6 +858,12 @@ def create_wsclean_cmd(
     # argument alongside the prefix in the WSCleanCMD. Also need to rename that, its a horrible
     # name for a variable and ship
 
+    if isinstance(ms, MS):
+        ms = standardise_ms_to_list_ms(ms=ms)
+        import warnings
+
+        warnings.warn("Input `ms` will need to be list[MS] type.", DeprecationWarning)
+
     # Some options should also extend the singularity bind directories
     bind_dir_paths = []
 

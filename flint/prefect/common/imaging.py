@@ -53,13 +53,14 @@ from flint.ms import (
     preprocess_askap_ms,
     rename_column_in_ms,
     split_by_field,
+    standardise_ms_to_list_ms,
 )
 from flint.naming import (
     FITSMaskNames,
     get_beam_resolution_str,
     get_fits_cube_from_paths,
 )
-from flint.options import FieldOptions, MSs, SubtractFieldOptions
+from flint.options import FieldOptions, SubtractFieldOptions
 from flint.peel.potato import potato_peel
 from flint.prefect.common.utils import upload_image_as_artifact
 from flint.selfcal.casa import gaincal_applycal_ms
@@ -320,7 +321,7 @@ def task_gaincal_applycal_ms(
 
 @task
 def task_wsclean_imager(
-    in_ms: ApplySolutions | MS | tuple[MS, ...] | MSs,
+    in_ms: ApplySolutions | MS | tuple[MS, ...],
     wsclean_container: Path,
     update_wsclean_options: dict[str, Any] | None = None,
     fits_mask: FITSMaskNames | None = None,
@@ -345,7 +346,7 @@ def task_wsclean_imager(
         WSCleanResult: A resulting wsclean command and resulting meta-data
     """
 
-    ms: MS | MSs = MS.cast(in_ms)
+    ms: list[MS] = standardise_ms_to_list_ms(in_ms)
 
     update_wsclean_options = (
         {} if update_wsclean_options is None else update_wsclean_options
@@ -365,7 +366,7 @@ def task_wsclean_imager(
 
     logger.info(f"wsclean inager {ms=}")
     return wsclean_imager(
-        ms=ms,
+        ms=ms,  # type: ignore[arg-type]
         wsclean_container=wsclean_container,
         update_wsclean_options=update_wsclean_options,
         make_cube_from_subbands=make_cube_from_subbands,
