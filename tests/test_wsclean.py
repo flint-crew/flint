@@ -36,7 +36,7 @@ from flint.imager.wsclean import (
 )
 from flint.logging import logger
 from flint.naming import create_imaging_name_prefix
-from flint.options import MS, MSs
+from flint.options import MS
 from flint.utils import get_packaged_resource_path
 
 
@@ -370,18 +370,19 @@ def test_create_wsclean_name_argument(ms_example):
     assert "/jack/sparrow/SB39400.RACS_0635-31.beam0.small.i" == str(name_argument_path)
 
 
-def test_create_wsclean_name_argument_with_mss(ms_example) -> None:
+def test_create_wsclean_name_argument_with_list_mss(ms_example) -> None:
     """Ensure that the generated name argument behaves as expected.
-    This uses a MSs to create the base name."""
+    This uses list of MS to create the base name."""
 
-    ms = MS.cast(
-        ms=(
+    ms = [
+        MS.cast(ms)
+        for ms in (
             Path(ms_example),
             Path("SB39400.RACS_0635-31.beam0"),
             Path("SB39401.RACS_0635-31.beam0"),
             Path("SB39402.RACS_0635-31.beam0"),
         )
-    )
+    ]
 
     wsclean_options = WSCleanOptions()
     name_argument_path = create_wsclean_name_argument(
@@ -410,24 +411,25 @@ def test_create_wsclean_command(ms_example):
     assert isinstance(command, WSCleanResult)
 
 
-def test_create_wsclean_command_with_mss(ms_example) -> None:
+def test_create_wsclean_command_with_list_ms(ms_example) -> None:
     """Test whether WSCleanOptions can be correctly cast to a command string
-    when using a MSs instance"""
+    when using a list of MS instance"""
     wsclean_options = WSCleanOptions()
 
-    mss = MS.cast(
-        (
+    mss = [
+        MS.cast(ms)
+        for ms in (
             Path(ms_example),
             Path("SB1234.JACK_0001+234.beam00"),
         )
-    )
-    assert isinstance(mss, MSs)
-    assert all([isinstance(_ms, MS) for _ms in mss.mss])
+    ]
+    assert isinstance(mss, list)
+    assert all([isinstance(_ms, MS) for _ms in mss])
 
     command = create_wsclean_cmd(ms=mss, wsclean_options=wsclean_options)
     assert isinstance(command, WSCleanResult)
 
-    for _ms in mss.mss:
+    for _ms in mss:
         assert _ms.path.name in command.cmd
 
 

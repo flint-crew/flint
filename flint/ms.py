@@ -28,7 +28,7 @@ from fixms.fix_ms_dir import fix_ms_dir
 from flint.casa import copy_with_mstranform
 from flint.logging import logger
 from flint.naming import create_ms_name
-from flint.options import MS, MSSummary
+from flint.options import MS, MSSummary, standardise_ms_to_list_ms
 from flint.utils import copy_directory, rsync_copy_directory
 
 # TODO: Some common MS validation functions?
@@ -36,6 +36,9 @@ from flint.utils import copy_directory, rsync_copy_directory
 # - new name function (using names / beams)
 # - check to see if fix_ms_dir / fix_ms_corrs
 # - delete column/rename column
+
+# Prohibits auto-removal
+_ = (standardise_ms_to_list_ms,)
 
 
 @contextmanager

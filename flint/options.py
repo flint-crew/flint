@@ -450,3 +450,36 @@ class MS(BaseOptions):
             raise MSError(f"Unable to convert {ms=} of {type(ms)} to MS object. ")
 
         return ms
+
+
+def standardise_ms_to_list_ms(
+    ms: Path | MS | tuple[MS | Path, ...] | list[MS | Path],
+) -> list[MS]:
+    """A utility to process a collection of inputs that could be linked to a
+    set of MS instances, and output a single list of MS objects. The list may
+    be of length 1.
+
+    Args:
+        ms (Path | MS | tuple[MS  |  Path, ...] | list[MS  |  Path]): Descriptions to create MS instances
+
+    Raises:
+        ValueError: Raised when an empty list is formed
+
+    Returns:
+        list[MS]: Set of output MS objects
+    """
+    output_list: list[MS] = []
+    if isinstance(ms, Path):
+        output_list.append(MS(path=ms))
+    elif isinstance(ms, MS):
+        output_list.append(ms)
+    elif isinstance(ms, (list, tuple)):
+        for item in ms:
+            output_list.append(MS.cast(item))
+    assert isinstance(output_list, list), f"{type(output_list)=} is not list"
+
+    if not len(output_list) > 0:
+        msg = f"Constructed output list of MSs is empty, {output_list=}"
+        raise ValueError(msg)
+
+    return output_list

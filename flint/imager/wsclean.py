@@ -40,15 +40,14 @@ from flint.exceptions import (
     NotSupportedError,
 )
 from flint.logging import logger
+from flint.ms import MS, standardise_ms_to_list_ms
 from flint.naming import (
     create_image_cube_name,
     create_imaging_name_prefix,
     split_images,
 )
 from flint.options import (
-    MS,
     BaseOptions,
-    MSs,
 )
 from flint.sclient import run_singularity_command
 from flint.utils import (
@@ -208,8 +207,10 @@ class WSCleanResult(BaseOptions):
     """The constructede wsclean command that would be executed."""
     options: WSCleanOptions
     """The set of wslean options used for imaging"""
-    ms: MS | MSs
-    """The measurement sets that have been included in the wsclean command. """
+    ms: MS
+    """The base measurement sets that have been included in the wsclean command. """
+    ms_list: list[MS]
+    """List of measurement sets uused in the wsclean command"""
     bind_dirs: tuple[Path, ...]
     """Paths that should be binded to when executing the command"""
     move_hold_directories: tuple[Path, Path]
@@ -702,7 +703,9 @@ def wsclean_cleanup_files(
     return tuple(rm_files)
 
 
-def create_wsclean_name_argument(wsclean_options: WSCleanOptions, ms: MS | MSs) -> Path:
+def create_wsclean_name_argument(
+    wsclean_options: WSCleanOptions, ms: MS | list[MS]
+) -> Path:
     """Create the value that will be provided to wsclean -name argument. This has
     to be generated. Among things to consider is the desired output directory of imaging
     files. This by default will be alongside the measurement set. If a `temp_dir`
@@ -713,7 +716,7 @@ def create_wsclean_name_argument(wsclean_options: WSCleanOptions, ms: MS | MSs) 
 
     Args:
         wsclean_options (WSCleanOptions): Set of wsclean options to consider
-        ms (MS | MSs): The measurement set to be imaged
+        ms (MS | list[MS]): The measurement set to be imaged
 
     Returns:
         Path: Value of the -name argument to provide to wsclean
@@ -721,7 +724,7 @@ def create_wsclean_name_argument(wsclean_options: WSCleanOptions, ms: MS | MSs) 
     wsclean_options_dict = wsclean_options._asdict()
 
     # Extract the first measurement set should multiple be provided
-    name_ms: MS = ms if isinstance(ms, MS) else ms.mss[0]
+    name_ms: MS = ms if isinstance(ms, MS) else ms[0]
 
     # Prepare the name for the output wsclean command
     # Construct the name property of the string
@@ -825,7 +828,7 @@ def _resolve_wsclean_key_value_to_cli_str(key: str, value: Any) -> ResolvedCLIRe
 
 
 def create_wsclean_cmd(
-    ms: MS | MSs,
+    ms: list[MS],
     wsclean_options: WSCleanOptions,
 ) -> WSCleanResult:
     """Create a wsclean command from a WSCleanOptions container
@@ -840,7 +843,7 @@ def create_wsclean_cmd(
     same directory as the measurement set.
 
     Args:
-        ms (MS | MSs): The measurement set to be imaged
+        ms (list[MS]): The measurement sets to be imaged
         wsclean_options (WSCleanOptions): WSClean options to image with
         container (Optional[Path], optional): If a path to a container is provided the command is executed immediately. Defaults to None.
 
@@ -860,7 +863,7 @@ def create_wsclean_cmd(
 
     wsclean_options_dict = wsclean_options._asdict()
 
-    example_ms: MS = ms if isinstance(ms, MS) else ms.mss[0]
+    example_ms: MS = ms[0]
     name_argument_path = create_wsclean_name_argument(
         wsclean_options=wsclean_options, ms=example_ms
     )
@@ -892,13 +895,10 @@ def create_wsclean_cmd(
         raise ValueError(f"Unknown wsclean option types: {msg}")
 
     cmds += [f"-name {name_argument_path!s}"]
-    if isinstance(ms, MS):
-        cmds += [f"{ms.path!s} "]
-        bind_dir_paths.append(ms.path.parent)
-    else:
-        assert isinstance(ms, MSs), f"Expected MSs, got {type(ms)}"
-        cmds += [f"{_ms.path!s}" for _ms in ms.mss]
-        bind_dir_paths += [_ms.path.parent for _ms in ms.mss]
+
+    assert isinstance(ms, list), f"Expected MSs, got {type(ms)}"
+    cmds += [f"{_ms.path!s}" for _ms in ms]
+    bind_dir_paths += [_ms.path.parent for _ms in ms]
 
     # TODO: Currently there are two calls into the `parse_environment_variable`
     # when processing the `-temp-dir` and `-name` options. When using the `FLINT_UUID`
@@ -914,10 +914,13 @@ def create_wsclean_cmd(
     logger.info(f"Constructed wsclean command: {cmd=}")
     logger.info("Setting default model data column to 'MODEL_DATA'")
 
+    ms = [_ms.with_options(model_column="MODEL_DATA") for _ms in ms]
+
     return WSCleanResult(
         cmd=cmd,
         options=wsclean_options,
-        ms=ms.with_options(model_column="MODEL_DATA"),
+        ms=ms[0],
+        ms_list=ms,
         bind_dirs=tuple(bind_dir_paths),
         move_hold_directories=(move_directory, hold_directory),
         image_prefix_str=str(name_argument_path),
@@ -1238,7 +1241,7 @@ def run_wsclean_imager(
 
 
 def wsclean_imager(
-    ms: Path | MS | tuple[MS, ...] | MSs,
+    ms: Path | MS | tuple[MS | Path, ...] | list[MS | Path],
     wsclean_container: Path,
     update_wsclean_options: dict[str, Any] | None = None,
     make_cube_from_subbands: bool = True,
@@ -1246,7 +1249,7 @@ def wsclean_imager(
     """Create and run a wsclean imager command against a measurement set.
 
     Args:
-        ms (Path | MS | tuple[MS, ...] | MSs): Path to the measurement set that will be imaged
+        ms (Path | MS | tuple[MS | Path, ...] | list[MS | Path]): Path to the measurement set that will be imaged
         wsclean_container (Path): Path to the container with wsclean installed
         update_wsclean_options (Optional[Dict[str, Any]], optional): Additional options to update the generated WscleanOptions with. Keys should be attributes of WscleanOptions. Defaults to None.
 
@@ -1254,8 +1257,12 @@ def wsclean_imager(
         WSCleanResult: _description_
     """
 
-    # TODO: This should be expanded to support multiple measurement sets
-    ms = MS.cast(ms)
+    ms_list: list[MS] = standardise_ms_to_list_ms(ms=ms)
+    assert isinstance(ms, list), f"Should be list, got {ms}"
+    assert all(isinstance(_ms, MS) for _ms in ms_list)
+
+    # Help out the linter
+    del ms
 
     wsclean_options = WSCleanOptions()
     if update_wsclean_options:
@@ -1268,10 +1275,12 @@ def wsclean_imager(
         logger.info(f"Updating wsclean options with {temp_dir=}")
         wsclean_options = wsclean_options.with_options(temp_dir=temp_dir)
 
-    assert ms.column is not None, "A MS column needs to be elected for imaging. "
-    wsclean_options = wsclean_options.with_options(data_column=ms.column)
+    assert ms_list[0].column is not None, (
+        "A MS column needs to be elected for imaging. "
+    )
+    wsclean_options = wsclean_options.with_options(data_column=ms_list[0].column)
     wsclean_result = create_wsclean_cmd(
-        ms=ms,
+        ms=ms_list,
         wsclean_options=wsclean_options,
     )
     image_set = run_wsclean_imager(
