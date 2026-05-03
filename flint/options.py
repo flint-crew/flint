@@ -459,6 +459,9 @@ def standardise_ms_to_list_ms(
     set of MS instances, and output a single list of MS objects. The list may
     be of length 1.
 
+    Useful for when a single task could potentially operate against a set of
+    input MSs simuletanously, such as wsclean.
+
     Args:
         ms (Path | MS | tuple[MS  |  Path, ...] | list[MS  |  Path]): Descriptions to create MS instances
 
