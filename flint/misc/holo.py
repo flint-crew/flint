@@ -268,7 +268,7 @@ def reproject_cubes(
         np.nan,
         dtype=np.float32,
     )
-
+    logger.info(f"Output cube shape: {out.shape}")
     tol = (
         abs(frequency_grid.cdelt) * cdelt_tol
     )  # 1 ppm tolerance for frequency matching
@@ -302,7 +302,7 @@ def reproject_cubes(
                 f"({len(matched_indices)} channels x {nstokes} Stokes planes)"
             )
 
-    return arr
+    return out
 
 
 def create_output_header(
