@@ -365,6 +365,9 @@ def concatenate_holography(concat_holo_options: ConcatHolo) -> Path:
         frequency_grid=frequency_grid,
     )
 
+    logger.info(
+        f"Writing out data of shape {reprojected_holo.shape} to {concat_holo_options.out_path}"
+    )
     fits.PrimaryHDU(data=reprojected_holo, header=output_header).writeto(
         concat_holo_options.out_path, overwrite=True
     )
