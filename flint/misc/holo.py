@@ -345,9 +345,11 @@ def reproject_cubes(
                             )
                         )
 
-            results = pool.map(reproject_interp_func, pool_items)
+            logger.info(f"Collcted {len(pool_items)} for reprojection")
+            results = list(pool.map(reproject_interp_func, pool_items))
 
-            for reproject_worker in list(results):
+            logger.info("Collected results, saving")
+            for reproject_worker in results:
                 out[
                     reproject_worker.beam,
                     reproject_worker.stokes,
