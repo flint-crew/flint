@@ -300,6 +300,7 @@ def reproject_cubes(
                         spatial_header,
                         shape_out=shape_out_sky,
                         parallel=True,
+                        block_size=(10, 10),
                     )
                     out[beam, stokes, ch_out[ch_idx], :, :] = reprojected.astype(
                         np.float32
