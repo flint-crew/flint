@@ -281,7 +281,6 @@ def reproject_cubes(
     for cube_idx, fits_cube_info in enumerate(fits_cube_infos):
         logger.info(f"Reprojecting cube {cube_idx} - {fits_cube_info.path} ...")
 
-        logger.info("Loading data")
         arr = fits.getdata(
             fits_cube_info.path, fits_cube_info.index
         )  # (nbeam, nstokes, nchan, ny, nx)
