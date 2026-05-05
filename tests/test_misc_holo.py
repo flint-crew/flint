@@ -11,8 +11,11 @@ from astropy.io import fits
 
 from flint.misc.holo import (
     FITSCubeInfo,
+    FrequencyGrid,
+    construct_frequency_grid,
     construct_spatial_output_wcs,
     create_fits_info,
+    get_freq_axis,
     get_parser,
     load_and_sort_cubes,
 )
@@ -36,6 +39,32 @@ def example_cube_fits(tmpdir) -> tuple[Path, ...]:
     assert len(output_cubes) == 3
 
     return tuple(output_cubes)
+
+
+def test_construct_frequency_grid(example_cube_fits) -> None:
+    """Construct the frequnecy grid that would be placed into the
+    final output cube"""
+    fits_cube_infos = load_and_sort_cubes(cube_paths=example_cube_fits)
+
+    frequency_grid = construct_frequency_grid(fits_cube_infos=fits_cube_infos)
+    assert isinstance(frequency_grid, FrequencyGrid)
+    assert frequency_grid.cdelt == 1000000.0
+    assert frequency_grid.min_hz == 799990740.7407407
+    assert frequency_grid.max_hz == 1798990740.740741
+    assert len(frequency_grid.grid) == 1000
+
+
+def test_get_freq_axis(example_cube_fits) -> None:
+    """Extract the spectral axis from a cube and reconstruct the frequency axis
+    as a numpy array, in herta"""
+    header = fits.getheader(example_cube_fits[0])
+
+    freqs = get_freq_axis(header=header)
+    print(example_cube_fits[0])
+
+    assert freqs[0] == 1151990740.7407405
+    assert freqs[19] == 1170990740.7407405
+    assert len(freqs) == 288
 
 
 def test_create_spatual_wcs(example_cube_fits) -> None:

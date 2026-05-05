@@ -34,14 +34,16 @@ class FITSCubeInfo:
     """Path to the cube being considered"""
     header: fits.Header
     """Header from the FITS cube"""
-    data: NDArray[np.floating]
-    """The data attribute that corresponds to the header"""
+    # data: NDArray[np.floating]
+    # """The data attribute that corresponds to the header"""
     freqs_hz: NDArray[np.floating]
     """The minimum frequency in the cube (in Hertz, used for ordering)"""
     spatial_shape: tuple[int, int]
     """The (ny, nx) spatial shape of the input cubes"""
     celestial_wcs: WCS
     """The world coordinate system specification that accompanies the spatial dimension"""
+    index: int = 0
+    """The HDU index read"""
 
 
 def get_freq_axis(header: fits.Header) -> NDArray[np.floating]:
@@ -58,19 +60,20 @@ def celestial_wcs_from_header(header: fits.Header) -> WCS:
     return WCS(header).celestial
 
 
-def create_fits_info(cube_path: Path) -> FITSCubeInfo:
+def create_fits_info(cube_path: Path, hdu_index: int = 0) -> FITSCubeInfo:
     """Load a FITS cube container the holography and extra information
     from it.
 
     Args:
         cube_path (Path): Cube to load
+        hdu_index (int, optional): The HDU the header and data are to be drawn from
 
     Returns:
         FITSCubeInfo: Representative information
     """
     hdu = fits.open(cube_path)
-    header = hdu[0].header
-    data = hdu[0].data
+    header = hdu[hdu_index].header
+    # data = hdu[0].data
     freqs_hz = get_freq_axis(header=header)
 
     spatial_shape = (header["NAXIS2"], header["NAXIS1"])
@@ -79,10 +82,11 @@ def create_fits_info(cube_path: Path) -> FITSCubeInfo:
     return FITSCubeInfo(
         path=cube_path,
         header=header,
-        data=data,
+        # data=data,
         freqs_hz=freqs_hz,
         spatial_shape=spatial_shape,
         celestial_wcs=celestial_wcs,
+        index=hdu_index,
     )
 
 
@@ -277,7 +281,9 @@ def reproject_cubes(
     for cube_idx, fits_cube_info in enumerate(fits_cube_infos):
         logger.info(f"\nReprojecting cube {cube_idx} ...")
 
-        arr = fits_cube_info.data  # (nbeam, nstokes, nchan, ny, nx)
+        arr = fits.getdata(
+            fits_cube_info.path, fits_cube_info.index
+        )  # (nbeam, nstokes, nchan, ny, nx)
         ch_out, matched_indices = map_frequencies_to_channels(
             freqs_1=frequency_grid.grid, freqs_2=fits_cube_info.freqs_hz, tol=tol
         )
