@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from argparse import ArgumentParser
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 
 import numpy as np
@@ -242,6 +244,36 @@ def _get_cube_header(fits_cube_info: FITSCubeInfo) -> fits.Header:
     return in_header_2d
 
 
+@dataclass
+class ReprojectWorker:
+    plane: NDArray[np.floating]
+    """The plane to be reprojected. The indices refer to the output cube"""
+    in_cube_header: fits.Header
+    """The header that corresponds to ``plane``"""
+    beam: int
+    """The beam index"""
+    stokes: int
+    """The stokes index"""
+    out_idx: int
+    """The channel index"""
+
+
+def reproject_wrapper(
+    reproject_worker: ReprojectWorker,
+    output_projection: fits.Header,
+    shape_out: tuple[int, int],
+) -> ReprojectWorker:
+
+    reprojected, _ = reproject_interp(
+        (reproject_worker.plane, reproject_worker.in_cube_header),
+        output_projection=output_projection,
+        shape_out=shape_out,
+    )
+    reproject_worker.plane = reprojected
+
+    return reproject_worker
+
+
 def reproject_cubes(
     fits_cube_infos: list[FITSCubeInfo],
     spatial_header: fits.Header,
@@ -294,19 +326,35 @@ def reproject_cubes(
         )
         in_cube_header = _get_cube_header(fits_cube_info=fits_cube_info)
 
-        for beam in range(nbeam):
-            for stokes in range(nstokes):
-                for ch_idx in matched_indices:
-                    plane = arr[beam, stokes, ch_idx, :, :]
+        reproject_interp_func = partial(
+            reproject_wrapper, output_projection=spatial_header, shape_out=shape_out_sky
+        )
+        pool_items = []
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            for beam in range(nbeam):
+                for stokes in range(nstokes):
+                    for ch_idx in matched_indices:
+                        plane = arr[beam, stokes, ch_idx, :, :]
+                        pool_items.append(
+                            ReprojectWorker(
+                                plane=plane,
+                                in_cube_header=in_cube_header,
+                                beam=beam,
+                                stokes=stokes,
+                                out_idx=ch_out[ch_idx],
+                            )
+                        )
 
-                    reprojected, _ = reproject_interp(
-                        (plane, in_cube_header),
-                        spatial_header,
-                        shape_out=shape_out_sky,
-                    )
-                    out[beam, stokes, ch_out[ch_idx], :, :] = reprojected.astype(
-                        np.float32
-                    )
+            results = pool.map(reproject_interp_func, pool_items)
+
+            for reproject_worker in list(results):
+                out[
+                    reproject_worker.beam,
+                    reproject_worker.stokes,
+                    reproject_worker.out_idx,
+                    :,
+                    :,
+                ] = reproject_worker.plane.astype(np.float32)
 
             logger.info(
                 f"  beam {beam + 1}/{nbeam} complete  "
