@@ -329,9 +329,9 @@ def reproject_cubes(
         reproject_interp_func = partial(
             reproject_wrapper, output_projection=spatial_header, shape_out=shape_out_sky
         )
-        pool_items = []
         with ThreadPoolExecutor(max_workers=8) as pool:
             for beam in range(nbeam):
+                pool_items = []
                 for stokes in range(nstokes):
                     for ch_idx in matched_indices:
                         plane = arr[beam, stokes, ch_idx, :, :]
@@ -345,23 +345,23 @@ def reproject_cubes(
                             )
                         )
 
-            logger.info(f"Collcted {len(pool_items)} for reprojection")
-            results = list(pool.map(reproject_interp_func, pool_items))
+                logger.info(f"Collcted {len(pool_items)} for reprojection")
+                results = list(pool.map(reproject_interp_func, pool_items))
 
-            logger.info("Collected results, saving")
-            for reproject_worker in results:
-                out[
-                    reproject_worker.beam,
-                    reproject_worker.stokes,
-                    reproject_worker.out_idx,
-                    :,
-                    :,
-                ] = reproject_worker.plane.astype(np.float32)
+                logger.info("Collected results, saving")
+                for reproject_worker in results:
+                    out[
+                        reproject_worker.beam,
+                        reproject_worker.stokes,
+                        reproject_worker.out_idx,
+                        :,
+                        :,
+                    ] = reproject_worker.plane.astype(np.float32)
 
-            logger.info(
-                f"  beam {beam + 1}/{nbeam} complete  "
-                f"({len(matched_indices)} channels x {nstokes} Stokes planes)"
-            )
+                logger.info(
+                    f"  beam {beam + 1}/{nbeam} complete  "
+                    f"({len(matched_indices)} channels x {nstokes} Stokes planes)"
+                )
 
     return out
 
