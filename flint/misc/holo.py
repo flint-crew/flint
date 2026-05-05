@@ -224,7 +224,7 @@ def map_frequencies_to_channels(
             f"  WARNING: {(~matched).sum()} channel(s) skipped (no matching output frequency slot)"
         )
 
-    return ch_out, np.argwhere(matched)[0]
+    return ch_out, np.where(matched)[0]
 
 
 def _get_cube_header(fits_cube_info: FITSCubeInfo) -> fits.Header:
