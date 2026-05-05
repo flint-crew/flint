@@ -202,8 +202,12 @@ def construct_frequency_grid(fits_cube_infos: list[FITSCubeInfo]) -> FrequencyGr
 
 def map_frequencies_to_channels(
     freqs_1: np.NDArray[np.floating], freqs_2: NDArray[np.floating], tol: float
-) -> tuple[NDArray[int], NDArray[int]]:
+) -> tuple[NDArray[np.int_], NDArray[np.int_]]:
     """Create mappings resolving `freq_2` to channels in `freqs_1`
+
+    The outputs here are channel indices. The first array are the indices into
+    the `freqs_1` grid. The second set are the the elements of ``freqs_2`` that
+    were successfully matched.
 
     Args:
         freqs_1 (np.NDArray[np.floating]): The final output frequency grid that the cube will be written to
@@ -211,7 +215,7 @@ def map_frequencies_to_channels(
         tol (float): The appropriate tolerance to use when mapping ``freqs_2`` onto ``freqs_1`` for a match to be found.
 
     Returns:
-        tuple[NDArray[np.int], NDArray[np.int]]: The output channels into ``freqs_1``, and channel indices of ``freqs_2`` elements into ``freqs_1``
+        tuple[NDArray[np.int_], NDArray[np.int_]]: The output channels into ``freqs_1``, and channel indices of ``freqs_2`` elements into ``freqs_1``
     """
 
     # Map this cube's input channels onto output frequency slots

@@ -18,6 +18,7 @@ from flint.misc.holo import (
     get_freq_axis,
     get_parser,
     load_and_sort_cubes,
+    map_frequencies_to_channels,
 )
 from flint.utils import get_packaged_resource_path
 
@@ -39,6 +40,40 @@ def example_cube_fits(tmpdir) -> tuple[Path, ...]:
     assert len(output_cubes) == 3
 
     return tuple(output_cubes)
+
+
+def test_map_frequencies_to_channels() -> None:
+    """Resolve the matching to frequencies between sets and where
+    they insert into"""
+    # Base range goes from 800 (inclusive) to 1800 (exclusive)
+    freqs_1 = np.arange(1000) + 800
+    freqs_2 = np.arange(200) + 800
+
+    ch_out, ch_in = map_frequencies_to_channels(
+        freqs_1=freqs_1, freqs_2=freqs_2, tol=1e-6
+    )
+    assert ch_out[0] == 0
+    assert ch_out[-1] == 199
+    assert ch_in[0] == 0
+    assert ch_in[-1] == 199
+
+    freqs_3 = np.arange(200) + 1000
+    ch_out, ch_in = map_frequencies_to_channels(
+        freqs_1=freqs_1, freqs_2=freqs_3, tol=1e-6
+    )
+    assert ch_out[0] == 200
+    assert ch_out[-1] == 399
+    assert ch_in[0] == 0
+    assert ch_in[-1] == 199
+
+    freqs_4 = np.arange(200) + 1700
+    ch_out, ch_in = map_frequencies_to_channels(
+        freqs_1=freqs_1, freqs_2=freqs_4, tol=1e-6
+    )
+    assert ch_out[0] == 900
+    assert ch_out[-1] == 999
+    assert ch_in[0] == 0
+    assert ch_in[-1] == 99
 
 
 def test_construct_frequency_grid(example_cube_fits) -> None:
