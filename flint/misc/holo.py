@@ -279,7 +279,7 @@ def reproject_cubes(
     shape_out_sky = (spatial_header["NAXIS2"], spatial_header["NAXIS1"])
 
     for cube_idx, fits_cube_info in enumerate(fits_cube_infos):
-        logger.info(f"\nReprojecting cube {cube_idx} ...")
+        logger.info(f"Reprojecting cube {cube_idx} - {fits_cube_info.path} ...")
 
         logger.info("Loading data")
         arr = fits.getdata(
