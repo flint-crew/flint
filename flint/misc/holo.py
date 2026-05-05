@@ -329,7 +329,7 @@ def reproject_cubes(
         reproject_interp_func = partial(
             reproject_wrapper, output_projection=spatial_header, shape_out=shape_out_sky
         )
-        with ThreadPoolExecutor(max_workers=8) as pool:
+        with ThreadPoolExecutor(max_workers=82) as pool:
             for beam in range(nbeam):
                 pool_items = []
                 for stokes in range(nstokes):
