@@ -348,7 +348,7 @@ def reproject_cubes(
                         )
 
                 logger.debug(f"Collcted {len(pool_items)} for reprojection")
-                results = list(pool.map(reproject_interp_func, pool_items))
+                results = pool.map(reproject_interp_func, pool_items, chunksize=8)
 
                 for reproject_worker in results:
                     out[
