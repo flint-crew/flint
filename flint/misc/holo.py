@@ -281,9 +281,11 @@ def reproject_cubes(
     for cube_idx, fits_cube_info in enumerate(fits_cube_infos):
         logger.info(f"\nReprojecting cube {cube_idx} ...")
 
+        logger.info("Loading data")
         arr = fits.getdata(
             fits_cube_info.path, fits_cube_info.index
         )  # (nbeam, nstokes, nchan, ny, nx)
+        logger.info(f"Loaded data shape: {arr.shape}")
         ch_out, matched_indices = map_frequencies_to_channels(
             freqs_1=frequency_grid.grid, freqs_2=fits_cube_info.freqs_hz, tol=tol
         )
