@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from argparse import ArgumentParser
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -17,6 +17,8 @@ from reproject import reproject_interp
 from reproject.mosaicking import find_optimal_celestial_wcs
 
 from flint.logging import logger
+
+_ = (ProcessPoolExecutor, ThreadPoolExecutor)
 
 
 class ConcatHolo(BaseOptions):
@@ -329,7 +331,7 @@ def reproject_cubes(
         reproject_interp_func = partial(
             reproject_wrapper, output_projection=spatial_header, shape_out=shape_out_sky
         )
-        with ThreadPoolExecutor(max_workers=82) as pool:
+        with ProcessPoolExecutor(max_workers=82) as pool:
             for beam in range(nbeam):
                 pool_items = []
                 for stokes in range(nstokes):
@@ -345,10 +347,9 @@ def reproject_cubes(
                             )
                         )
 
-                logger.info(f"Collcted {len(pool_items)} for reprojection")
+                logger.debug(f"Collcted {len(pool_items)} for reprojection")
                 results = list(pool.map(reproject_interp_func, pool_items))
 
-                logger.info("Collected results, saving")
                 for reproject_worker in results:
                     out[
                         reproject_worker.beam,
