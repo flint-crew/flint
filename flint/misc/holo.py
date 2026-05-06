@@ -292,6 +292,7 @@ def reproject_wrapper(
         :,
         :,
     ] = reprojected.astype(np.float32)
+    arr.flush()
 
     reproject_worker.plane = np.ones((2, 2))
     return reproject_worker
@@ -371,8 +372,8 @@ def create_placeholder_cube(
         frequency_grid=frequency_grid,
     )
     logger.info("Generating placeholder data")
-    with open(output_path, "wb") as f:
-        f.write(output_header.tostring().encode())
+    with open(output_path, "w") as f:
+        f.write(output_header.tostring())
         cursor_tell_pos = f.tell()
         f.seek(np.prod(output_shape) * 4, 1)
 
