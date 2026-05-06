@@ -372,8 +372,8 @@ def create_placeholder_cube(
         frequency_grid=frequency_grid,
     )
     logger.info("Generating placeholder data")
-    with open(output_path, "w") as f:
-        f.write(output_header.tostring())
+    with open(output_path, "wb") as f:
+        f.write(output_header.tostring().encode("ascii"))
         cursor_tell_pos = f.tell()
         f.seek(np.prod(output_shape) * 4, 1)
 
