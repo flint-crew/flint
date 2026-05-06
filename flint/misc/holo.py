@@ -275,7 +275,6 @@ def reproject_wrapper(
         output_projection=output_projection,
         shape_out=shape_out,
     )
-    reproject_worker.plane = reprojected
 
     dest_cube_info: FinalFITSCubeInfo = reproject_worker.final_fits_cube_info
 
@@ -381,10 +380,13 @@ def create_placeholder_cube(
     # logger.info(f"Writing out data of shape {arr.shape} to {output_path}")
     # fits.PrimaryHDU(data=arr, header=output_header).writeto(output_path, overwrite=True)
 
+    data_offset = len(output_header.tostring())
+    logger.info(f"Start of data: {data_offset} bytes")
+
     return FinalFITSCubeInfo(
         path=output_path,
         output_shape=output_shape,
-        data_offset=len(output_header.tostring()),
+        data_offset=data_offset,
     )
 
 
@@ -425,7 +427,7 @@ def reproject_cubes(
         logger.info(f"Reprojecting cube {cube_idx} - {fits_cube_info.path} ...")
 
         arr = fits.getdata(
-            fits_cube_info.path, fits_cube_info.index, memmap=False
+            fits_cube_info.path, fits_cube_info.index, memmap=True
         )  # (nbeam, nstokes, nchan, ny, nx)
         logger.info(f"Loaded data shape: {arr.shape}")
         ch_out, matched_indices = map_frequencies_to_channels(
