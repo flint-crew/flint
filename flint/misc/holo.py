@@ -258,6 +258,8 @@ class ReprojectWorker:
     """The stokes index"""
     out_idx: int
     """The channel index"""
+    final_fits_cube_info: FinalFITSCubeInfo
+    """Information around the destination FITS cube"""
 
 
 def reproject_wrapper(
@@ -273,15 +275,119 @@ def reproject_wrapper(
     )
     reproject_worker.plane = reprojected
 
+    dest_cube_info: FinalFITSCubeInfo = reproject_worker.final_fits_cube_info
+
+    arr = np.memmap(
+        filename=dest_cube_info.path,
+        dtype=np.float32,
+        offset=dest_cube_info.data_offset,
+        mode="r+",
+        shape=dest_cube_info.output_shape,
+    )
+    arr[
+        reproject_worker.beam,
+        reproject_worker.stokes,
+        reproject_worker.out_idx,
+        :,
+        :,
+    ] = reprojected.astype(np.float32)
+
     return reproject_worker
+
+
+def get_output_data_shape(
+    fits_cube_infos: list[FITSCubeInfo],
+    spatial_header: fits.Header,
+    frequency_grid: FrequencyGrid,
+) -> list[int]:
+    """Construct the final output shape of the concatenated holography cube
+
+    Args:
+        fits_cube_infos (list[FITSCubeInfo]): The loaded information from the individual FITS cubes
+        spatial_header (fits.Header): The new output spatial header information
+        frequency_grid (FrequencyGrid): The output frequency grid
+
+    Returns:
+        list[int]: The expected output shape of the new holography
+    """
+
+    nbeam = fits_cube_infos[0].header["NAXIS5"]
+    nstokes = fits_cube_infos[0].header["NAXIS4"]
+    out_shape = [
+        nbeam,
+        nstokes,
+        len(frequency_grid.grid),
+        spatial_header["NAXIS2"],
+        spatial_header["NAXIS1"],
+    ]
+
+    logger.info(f"Output data shape: {out_shape}")
+    return out_shape
+
+
+@dataclass
+class FinalFITSCubeInfo:
+    """Simple representation of final FITS cube"""
+
+    path: Path
+    """The output path of the fits file"""
+    output_shape: list[int]
+    """The output shape of the data"""
+    data_offset: int
+    """The number of bytes the FITS header represents"""
+
+
+def create_placeholder_cube(
+    fits_cube_infos: list[FITSCubeInfo],
+    spatial_header: fits.Header,
+    frequency_grid: FrequencyGrid,
+    output_path: Path,
+) -> FinalFITSCubeInfo:
+    """Write out the final fits cube, but fill it with placeholder
+    data.
+
+    Args:
+        fits_cube_infos (list[FITSCubeInfo]): The set of loaded FITS cubes
+        spatial_header (fits.Header): The new spatial header description
+        frequency_grid (FrequencyGrid): The output frequency grid
+        output_path (Path): The output path to write the cube to
+
+    Returns:
+        FinalFITSCubeInfo: The output cube written
+    """
+    logger.info("Creating placeholder FITS cube file")
+    output_header = create_output_header(
+        base_header=fits_cube_infos[0].header,
+        spatial_header=spatial_header,
+        frequency_grid=frequency_grid,
+    )
+    # TODO: This should be rewritten to extract purely from
+    # the output header
+    output_shape = get_output_data_shape(
+        fits_cube_infos=fits_cube_infos,
+        spatial_header=spatial_header,
+        frequency_grid=frequency_grid,
+    )
+    logger.info("Generating placeholder data")
+    arr = np.full(output_shape, np.nan, dtype=np.float32)
+
+    logger.info(f"Writing out data of shape {arr.shape} to {output_path}")
+    fits.PrimaryHDU(data=arr, header=output_header).writeto(output_path, overwrite=True)
+
+    return FinalFITSCubeInfo(
+        path=output_path,
+        output_shape=output_shape,
+        data_offset=len(output_header.tostring()),
+    )
 
 
 def reproject_cubes(
     fits_cube_infos: list[FITSCubeInfo],
     spatial_header: fits.Header,
     frequency_grid: FrequencyGrid,
+    final_fits_cube_info: FinalFITSCubeInfo,
     cdelt_tol: float = 1e-6,
-) -> NDArray[np.floating]:
+) -> None:
     """Reproject the input cubes onto a final output spatial grid, as defined by
     ``spatial_grid``.
 
@@ -290,6 +396,7 @@ def reproject_cubes(
         spatial_header (fits.Header): The description of the final output spatial grid data will be mapped to
         frequency_grid (FrequencyGrid): The frequency axis of the output cube
         cdelt_tol (float, optional): The acceptable tolerance between matching the frequency grid of input data to the output cube. Defaults to 1e-6.
+        final_fits_cube_info (FinalFITSCubeInfo): The description of the final output cube
 
     Returns:
         NDArray[np.floating]: The final reprojected array
@@ -297,20 +404,10 @@ def reproject_cubes(
 
     # Axis order follows FITS convention reversed for numpy:
     # (NAXIS5=beam, NAXIS4=Stokes, NAXIS3=freq, NAXIS2=dec, NAXIS1=ra)
-    nbeam = fits_cube_infos[0].header["NAXIS5"]
-    nstokes = fits_cube_infos[0].header["NAXIS4"]
-    out = np.full(
-        (
-            nbeam,
-            nstokes,
-            len(frequency_grid.grid),
-            spatial_header["NAXIS2"],
-            spatial_header["NAXIS1"],
-        ),
-        np.nan,
-        dtype=np.float32,
-    )
-    logger.info(f"Output cube shape: {out.shape}")
+    nbeam = final_fits_cube_info.output_shape[0]
+    nstokes = final_fits_cube_info.output_shape[1]
+
+    logger.info(f"Output cube shape: {final_fits_cube_info.output_shape}")
     tol = (
         abs(frequency_grid.cdelt) * cdelt_tol
     )  # 1 ppm tolerance for frequency matching
@@ -344,6 +441,7 @@ def reproject_cubes(
                                 beam=beam,
                                 stokes=stokes,
                                 out_idx=ch_out[ch_idx],
+                                final_fits_cube_info=final_fits_cube_info,
                             )
                         )
 
@@ -351,20 +449,16 @@ def reproject_cubes(
                 results = pool.map(reproject_interp_func, pool_items, chunksize=8)
 
                 for reproject_worker in results:
-                    out[
-                        reproject_worker.beam,
-                        reproject_worker.stokes,
-                        reproject_worker.out_idx,
-                        :,
-                        :,
-                    ] = reproject_worker.plane.astype(np.float32)
+                    logger.debug(
+                        f"Finished {reproject_worker.beam} {reproject_worker.stokes}"
+                    )
 
                 logger.info(
                     f"  beam {beam + 1}/{nbeam} complete  "
                     f"({len(matched_indices)} channels x {nstokes} Stokes planes)"
                 )
 
-    return out
+    return None
 
 
 def create_output_header(
@@ -415,23 +509,19 @@ def concatenate_holography(concat_holo_options: ConcatHolo) -> Path:
     spatial_header = construct_spatial_output_wcs(fits_cube_infos=fits_cube_infos)
     frequency_grid = construct_frequency_grid(fits_cube_infos=fits_cube_infos)
 
-    reprojected_holo = reproject_cubes(
+    final_fits_cube_info: FinalFITSCubeInfo = create_placeholder_cube(
+        fits_cube_infos=fits_cube_infos,
+        spatial_header=spatial_header,
+        frequency_grid=frequency_grid,
+        output_path=concat_holo_options.out_path,
+    )
+
+    reproject_cubes(
         fits_cube_infos=fits_cube_infos,
         spatial_header=spatial_header,
         frequency_grid=frequency_grid,
         cdelt_tol=1e-6,  # 1ppm of the cdelt
-    )
-    output_header = create_output_header(
-        base_header=fits_cube_infos[0].header,
-        spatial_header=spatial_header,
-        frequency_grid=frequency_grid,
-    )
-
-    logger.info(
-        f"Writing out data of shape {reprojected_holo.shape} to {concat_holo_options.out_path}"
-    )
-    fits.PrimaryHDU(data=reprojected_holo, header=output_header).writeto(
-        concat_holo_options.out_path, overwrite=True
+        final_fits_cube_info=final_fits_cube_info,
     )
 
     return concat_holo_options.out_path
