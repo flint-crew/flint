@@ -500,6 +500,7 @@ def create_output_header(
     out_header["CRVAL3"] = frequency_grid.min_hz
     out_header["CRPIX3"] = 1.0
     out_header["CDELT3"] = frequency_grid.cdelt
+    out_header["NAXIS"] = 5
 
     return out_header
 
