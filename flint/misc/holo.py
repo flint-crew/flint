@@ -372,10 +372,14 @@ def create_placeholder_cube(
         frequency_grid=frequency_grid,
     )
     logger.info("Generating placeholder data")
-    arr = np.full(output_shape, np.nan, dtype=np.float32)
+    with open(output_path, "wb") as f:
+        f.write(output_header.tostring())
+        f.seek(np.prod(output_shape * 4), 1)
 
-    logger.info(f"Writing out data of shape {arr.shape} to {output_path}")
-    fits.PrimaryHDU(data=arr, header=output_header).writeto(output_path, overwrite=True)
+    # arr = np.full(output_shape, np.nan, dtype=np.float32)
+
+    # logger.info(f"Writing out data of shape {arr.shape} to {output_path}")
+    # fits.PrimaryHDU(data=arr, header=output_header).writeto(output_path, overwrite=True)
 
     return FinalFITSCubeInfo(
         path=output_path,
