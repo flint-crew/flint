@@ -373,7 +373,7 @@ def create_placeholder_cube(
     )
     logger.info("Generating placeholder data")
     with open(output_path, "rb") as f:
-        f.write(output_header.tostring().encode("ascii"))
+        f.write(output_header.tostring().encode())
         f.seek(np.prod(output_shape) * 4, 1)
 
     # arr = np.full(output_shape, np.nan, dtype=np.float32)
