@@ -28,6 +28,8 @@ class ConcatHolo(BaseOptions):
     """Output holography cube to make"""
     holo_cubes: tuple[Path, ...]
     """The path to the holography IQUV cubes to concatenate together"""
+    max_workers: int = 8
+    """The maximum number of sub-processes that may be spawned"""
 
 
 @dataclass
@@ -387,6 +389,7 @@ def reproject_cubes(
     frequency_grid: FrequencyGrid,
     final_fits_cube_info: FinalFITSCubeInfo,
     cdelt_tol: float = 1e-6,
+    max_workers: int = 2,
 ) -> None:
     """Reproject the input cubes onto a final output spatial grid, as defined by
     ``spatial_grid``.
@@ -428,7 +431,7 @@ def reproject_cubes(
         reproject_interp_func = partial(
             reproject_wrapper, output_projection=spatial_header, shape_out=shape_out_sky
         )
-        with ProcessPoolExecutor(max_workers=8) as pool:
+        with ProcessPoolExecutor(max_workers=max_workers) as pool:
             for beam in range(nbeam):
                 pool_items = []
                 for stokes in range(nstokes):
@@ -522,6 +525,7 @@ def concatenate_holography(concat_holo_options: ConcatHolo) -> Path:
         frequency_grid=frequency_grid,
         cdelt_tol=1e-6,  # 1ppm of the cdelt
         final_fits_cube_info=final_fits_cube_info,
+        max_workers=concat_holo_options.max_workers,
     )
 
     return concat_holo_options.out_path
