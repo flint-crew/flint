@@ -294,6 +294,7 @@ def reproject_wrapper(
         :,
     ] = reprojected.astype(np.float32)
 
+    reproject_worker.plane = np.ones((2, 2))
     return reproject_worker
 
 
