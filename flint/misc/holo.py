@@ -280,7 +280,7 @@ def reproject_wrapper(
 
     arr = np.memmap(
         filename=dest_cube_info.path,
-        dtype=np.float32,
+        dtype=">f4",
         offset=dest_cube_info.data_offset,
         mode="r+",
         shape=dest_cube_info.output_shape,
@@ -291,7 +291,7 @@ def reproject_wrapper(
         reproject_worker.out_idx,
         :,
         :,
-    ] = reprojected.astype(np.float32)
+    ] = reprojected.astype(">f4")
     arr.flush()
 
     reproject_worker.plane = np.ones((2, 2))
