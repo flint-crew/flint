@@ -539,6 +539,7 @@ def concatenate_holography(concat_holo_options: ConcatHolo) -> Path:
         max_workers=concat_holo_options.max_workers,
     )
 
+    logger.info(f"Finished writing {concat_holo_options.out_path}")
     return concat_holo_options.out_path
 
 
