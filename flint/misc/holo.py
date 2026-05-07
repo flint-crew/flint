@@ -435,10 +435,6 @@ def reproject_cubes(
     for cube_idx, fits_cube_info in enumerate(fits_cube_infos):
         logger.info(f"Reprojecting cube {cube_idx} - {fits_cube_info.path} ...")
 
-        # arr = fits.getdata(
-        #     fits_cube_info.path, fits_cube_info.index, memmap=True
-        # )  # (nbeam, nstokes, nchan, ny, nx)
-        # logger.info(f"Loaded data shape: {arr.shape}")
         ch_out, matched_indices = map_frequencies_to_channels(
             freqs_1=frequency_grid.grid, freqs_2=fits_cube_info.freqs_hz, tol=tol
         )
@@ -452,12 +448,10 @@ def reproject_cubes(
                 pool_items = []
                 for stokes in range(nstokes):
                     for ch_idx in matched_indices:
-                        # plane = arr[beam, stokes, ch_idx, :, :]
                         pool_items.append(
                             ReprojectWorker(
                                 in_cube_path=fits_cube_info.path,
                                 in_ch_idx=ch_idx,
-                                # plane=plane.copy(),
                                 in_cube_header=in_cube_header,
                                 beam=beam,
                                 stokes=stokes,
