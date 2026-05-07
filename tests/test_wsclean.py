@@ -406,7 +406,7 @@ def test_create_wsclean_command(ms_example):
     wsclean_options = WSCleanOptions()
 
     command = create_wsclean_cmd(
-        ms=MS.cast(ms_example), wsclean_options=wsclean_options
+        ms_list=MS.cast(ms_example), wsclean_options=wsclean_options
     )
     assert isinstance(command, WSCleanResult)
 
@@ -426,7 +426,7 @@ def test_create_wsclean_command_with_list_ms(ms_example) -> None:
     assert isinstance(mss, list)
     assert all([isinstance(_ms, MS) for _ms in mss])
 
-    command = create_wsclean_cmd(ms=mss, wsclean_options=wsclean_options)
+    command = create_wsclean_cmd(ms_list=mss, wsclean_options=wsclean_options)
     assert isinstance(command, WSCleanResult)
 
     for _ms in mss:
@@ -438,7 +438,7 @@ def test_create_wsclean_command_with_environment(ms_example):
     wsclean_options = WSCleanOptions(temp_dir="$LOCALDIR")
 
     command = create_wsclean_cmd(
-        ms=[
+        ms_list=[
             MS.cast(ms_example),
         ],
         wsclean_options=wsclean_options,
