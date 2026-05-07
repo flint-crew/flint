@@ -374,17 +374,10 @@ def create_placeholder_cube(
     logger.info("Generating placeholder data")
     with open(output_path, "wb") as f:
         f.write(output_header.tostring().encode("ascii"))
-        cursor_tell_pos = f.tell()
+        data_offset = f.tell()  # End of header, start of data
         f.seek(np.prod(output_shape) * 4, 1)
 
-    # arr = np.full(output_shape, np.nan, dtype=np.float32)
-
-    # logger.info(f"Writing out data of shape {arr.shape} to {output_path}")
-    # fits.PrimaryHDU(data=arr, header=output_header).writeto(output_path, overwrite=True)
-
-    data_offset = len(output_header.tostring())
     logger.info(f"Start of data: {data_offset} bytes")
-    logger.info(f"End of header tell position: {cursor_tell_pos}")
 
     return FinalFITSCubeInfo(
         path=output_path,
