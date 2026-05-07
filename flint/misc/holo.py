@@ -392,6 +392,13 @@ def create_placeholder_cube(
     with open(output_path, "wb") as f:
         f.write(output_header.tostring().encode("ascii"))
         data_offset = f.tell()  # End of header, start of data
+
+        # NOTE: Seeking to this position creates the output file on
+        # disk for later use. It will be all zeros, and it is done
+        # instantly. This works on linux systemss, may not on Windows
+        # or OSX - the latter had a unit test failing when attempting
+        # to fits.getdata on it, returning a buffer vs data shape mismatch.
+        # Curious, pal.
         f.seek(data_payload_size, 1)
 
     logger.info(f"Start of data: {data_offset} bytes")
