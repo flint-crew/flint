@@ -828,7 +828,7 @@ def _resolve_wsclean_key_value_to_cli_str(key: str, value: Any) -> ResolvedCLIRe
 
 
 def create_wsclean_cmd(
-    ms: list[MS],
+    ms_list: list[MS],
     wsclean_options: WSCleanOptions,
 ) -> WSCleanResult:
     """Create a wsclean command from a WSCleanOptions container
@@ -843,7 +843,7 @@ def create_wsclean_cmd(
     same directory as the measurement set.
 
     Args:
-        ms (list[MS]): The measurement sets to be imaged
+        ms_list (list[MS]): The measurement sets to be imaged
         wsclean_options (WSCleanOptions): WSClean options to image with
         container (Optional[Path], optional): If a path to a container is provided the command is executed immediately. Defaults to None.
 
@@ -858,8 +858,8 @@ def create_wsclean_cmd(
     # argument alongside the prefix in the WSCleanCMD. Also need to rename that, its a horrible
     # name for a variable and ship
 
-    if isinstance(ms, MS):
-        ms = standardise_ms_to_list_ms(ms=ms)
+    if isinstance(ms_list, MS):
+        ms_list = standardise_ms_to_list_ms(ms=ms_list)
         import warnings
 
         warnings.warn("Input `ms` will need to be list[MS] type.", DeprecationWarning)
@@ -869,7 +869,7 @@ def create_wsclean_cmd(
 
     wsclean_options_dict = wsclean_options._asdict()
 
-    example_ms: MS = ms[0]
+    example_ms: MS = ms_list[0]
     name_argument_path = create_wsclean_name_argument(
         wsclean_options=wsclean_options, ms=example_ms
     )
@@ -902,9 +902,9 @@ def create_wsclean_cmd(
 
     cmds += [f"-name {name_argument_path!s}"]
 
-    assert isinstance(ms, list), f"Expected MSs, got {type(ms)}"
-    cmds += [f"{_ms.path!s}" for _ms in ms]
-    bind_dir_paths += [_ms.path.parent for _ms in ms]
+    assert isinstance(ms_list, list), f"Expected MSs, got {type(ms_list)}"
+    cmds += [f"{ms.path!s}" for ms in ms_list]
+    bind_dir_paths += [ms.path.parent for ms in ms_list]
 
     # TODO: Currently there are two calls into the `parse_environment_variable`
     # when processing the `-temp-dir` and `-name` options. When using the `FLINT_UUID`
@@ -920,13 +920,13 @@ def create_wsclean_cmd(
     logger.info(f"Constructed wsclean command: {cmd=}")
     logger.info("Setting default model data column to 'MODEL_DATA'")
 
-    ms = [_ms.with_options(model_column="MODEL_DATA") for _ms in ms]
+    ms_list = [ms.with_options(model_column="MODEL_DATA") for ms in ms_list]
 
     return WSCleanResult(
         cmd=cmd,
         options=wsclean_options,
-        ms=ms[0],
-        ms_list=ms,
+        ms=ms_list[0],
+        ms_list=ms_list,
         bind_dirs=tuple(bind_dir_paths),
         move_hold_directories=(move_directory, hold_directory),
         image_prefix_str=str(name_argument_path),
@@ -1286,7 +1286,7 @@ def wsclean_imager(
     )
     wsclean_options = wsclean_options.with_options(data_column=ms_list[0].column)
     wsclean_result = create_wsclean_cmd(
-        ms=ms_list,
+        ms_list=ms_list,
         wsclean_options=wsclean_options,
     )
     image_set = run_wsclean_imager(
