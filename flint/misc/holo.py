@@ -250,8 +250,12 @@ def _get_cube_header(fits_cube_info: FITSCubeInfo) -> fits.Header:
 
 @dataclass
 class ReprojectWorker:
-    plane: NDArray[np.floating]
-    """The plane to be reprojected. The indices refer to the output cube"""
+    in_cube_path: Path
+    """The cube to load"""
+    in_ch_idx: int
+    """The channel index of the input cube"""
+    # plane: NDArray[np.floating]
+    # """The plane to be reprojected. The indices refer to the output cube"""
     in_cube_header: fits.Header
     """The header that corresponds to ``plane``"""
     beam: int
@@ -270,8 +274,17 @@ def reproject_wrapper(
     shape_out: tuple[int, int],
 ) -> ReprojectWorker:
 
+    in_cube_arr = fits.getdata(reproject_worker.in_cube_header, memmap=True)
+
+    plane = in_cube_arr[
+        reproject_worker.beam,
+        reproject_worker.stokes,
+        reproject_worker.in_ch_idx,
+        :,
+        :,
+    ]
     reprojected, _ = reproject_interp(
-        (reproject_worker.plane, reproject_worker.in_cube_header),
+        (plane, reproject_worker.in_cube_header),
         output_projection=output_projection,
         shape_out=shape_out,
     )
@@ -294,7 +307,7 @@ def reproject_wrapper(
     ] = reprojected.astype(">f4")
     arr.flush()
 
-    reproject_worker.plane = np.ones((2, 2))
+    # reproject_worker.plane = np.ones((2, 2))
     return reproject_worker
 
 
@@ -422,10 +435,10 @@ def reproject_cubes(
     for cube_idx, fits_cube_info in enumerate(fits_cube_infos):
         logger.info(f"Reprojecting cube {cube_idx} - {fits_cube_info.path} ...")
 
-        arr = fits.getdata(
-            fits_cube_info.path, fits_cube_info.index, memmap=True
-        )  # (nbeam, nstokes, nchan, ny, nx)
-        logger.info(f"Loaded data shape: {arr.shape}")
+        # arr = fits.getdata(
+        #     fits_cube_info.path, fits_cube_info.index, memmap=True
+        # )  # (nbeam, nstokes, nchan, ny, nx)
+        # logger.info(f"Loaded data shape: {arr.shape}")
         ch_out, matched_indices = map_frequencies_to_channels(
             freqs_1=frequency_grid.grid, freqs_2=fits_cube_info.freqs_hz, tol=tol
         )
@@ -439,10 +452,12 @@ def reproject_cubes(
                 pool_items = []
                 for stokes in range(nstokes):
                     for ch_idx in matched_indices:
-                        plane = arr[beam, stokes, ch_idx, :, :]
+                        # plane = arr[beam, stokes, ch_idx, :, :]
                         pool_items.append(
                             ReprojectWorker(
-                                plane=plane.copy(),
+                                in_cube_path=fits_cube_info.path,
+                                in_ch_idx=ch_idx,
+                                # plane=plane.copy(),
                                 in_cube_header=in_cube_header,
                                 beam=beam,
                                 stokes=stokes,
