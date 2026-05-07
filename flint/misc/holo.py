@@ -40,8 +40,6 @@ class FITSCubeInfo:
     """Path to the cube being considered"""
     header: fits.Header
     """Header from the FITS cube"""
-    # data: NDArray[np.floating]
-    # """The data attribute that corresponds to the header"""
     freqs_hz: NDArray[np.floating]
     """The minimum frequency in the cube (in Hertz, used for ordering)"""
     spatial_shape: tuple[int, int]
@@ -88,7 +86,6 @@ def create_fits_info(cube_path: Path, hdu_index: int = 0) -> FITSCubeInfo:
     return FITSCubeInfo(
         path=cube_path,
         header=header,
-        # data=data,
         freqs_hz=freqs_hz,
         spatial_shape=spatial_shape,
         celestial_wcs=celestial_wcs,
@@ -254,8 +251,6 @@ class ReprojectWorker:
     """The cube to load"""
     in_ch_idx: int
     """The channel index of the input cube"""
-    # plane: NDArray[np.floating]
-    # """The plane to be reprojected. The indices refer to the output cube"""
     in_cube_header: fits.Header
     """The header that corresponds to ``plane``"""
     beam: int
