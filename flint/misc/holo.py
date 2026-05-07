@@ -387,12 +387,15 @@ def create_placeholder_cube(
         frequency_grid=frequency_grid,
     )
     logger.info("Generating placeholder data")
+
+    data_payload_size = np.prod(output_shape) * 4  # 4 bytes for float32
     with open(output_path, "wb") as f:
         f.write(output_header.tostring().encode("ascii"))
         data_offset = f.tell()  # End of header, start of data
-        f.seek(np.prod(output_shape) * 4, 1)
+        f.seek(data_payload_size, 1)
 
     logger.info(f"Start of data: {data_offset} bytes")
+    logger.info(f"Size of data: {data_payload_size} bytes")
 
     return FinalFITSCubeInfo(
         path=output_path,

@@ -10,11 +10,13 @@ import pytest
 from astropy.io import fits
 
 from flint.misc.holo import (
+    FinalFITSCubeInfo,
     FITSCubeInfo,
     FrequencyGrid,
     construct_frequency_grid,
     construct_spatial_output_wcs,
     create_fits_info,
+    create_placeholder_cube,
     get_freq_axis,
     get_parser,
     load_and_sort_cubes,
@@ -74,6 +76,30 @@ def test_map_frequencies_to_channels() -> None:
     assert ch_out[-1] == 999
     assert ch_in[0] == 0
     assert ch_in[-1] == 99
+
+
+def test_construct_placeholder_cube(example_cube_fits, tmpdir) -> None:
+    """Make sure the inplace cube can be formed"""
+    fits_cube_infos = load_and_sort_cubes(cube_paths=example_cube_fits)
+
+    hdr = construct_spatial_output_wcs(fits_cube_infos=fits_cube_infos)
+    frequency_grid = construct_frequency_grid(fits_cube_infos=fits_cube_infos)
+
+    output_path = Path(tmpdir) / "example_concat.fits"
+
+    cube = create_placeholder_cube(
+        fits_cube_infos=fits_cube_infos,
+        spatial_header=hdr,
+        frequency_grid=frequency_grid,
+        output_path=output_path,
+    )
+
+    assert isinstance(cube, FinalFITSCubeInfo)
+    assert cube.path == output_path
+    new_hdr = fits.getheader(cube.path)
+    assert new_hdr["NAXIS"] == 5
+    assert len(cube.output_shape) == 5
+    assert cube.data_offset == 5760
 
 
 def test_construct_frequency_grid(example_cube_fits) -> None:
