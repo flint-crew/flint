@@ -100,6 +100,9 @@ def test_construct_placeholder_cube(example_cube_fits, tmpdir) -> None:
     assert new_hdr["NAXIS"] == 5
     assert len(cube.output_shape) == 5
     assert cube.data_offset == 5760
+    d = fits.getdata(cube.path)
+    assert len(d.shape) == 5
+    assert d.shape == tuple(cube.output_shape)
 
 
 def test_construct_frequency_grid(example_cube_fits) -> None:

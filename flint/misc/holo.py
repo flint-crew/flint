@@ -400,6 +400,7 @@ def create_placeholder_cube(
         # to fits.getdata on it, returning a buffer vs data shape mismatch.
         # Curious, pal.
         f.seek(data_payload_size, 1)
+        f.write(b"\x00")  # Writing out a byte fixes OSX issue
 
     logger.info(f"Start of data: {data_offset} bytes")
     logger.info(f"Size of data: {data_payload_size} bytes")
