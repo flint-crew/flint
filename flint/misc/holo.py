@@ -305,7 +305,7 @@ def reproject_wrapper(
         :,
         :,
     ] = reprojected.astype(">f4")
-    arr.flush()
+    # arr.flush()
 
     # reproject_worker.plane = np.ones((2, 2))
     return reproject_worker
