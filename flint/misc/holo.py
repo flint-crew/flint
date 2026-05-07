@@ -305,9 +305,11 @@ def reproject_wrapper(
         :,
         :,
     ] = reprojected.astype(">f4")
-    # arr.flush()
 
-    # reproject_worker.plane = np.ones((2, 2))
+    # NOTE: We are relying on the operating system to flush the updated data back
+    # to disk as it sees fit. The Usage of memmap here is pointing to a single
+    # block of memory between processes, and the OS is smart enough to manage
+    # this similar to what it would otherwise do with virtual memory -> page file.
     return reproject_worker
 
 
