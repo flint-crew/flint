@@ -248,6 +248,7 @@ def get_telescope_location_from_ms(ms: MS | Path) -> EarthLocation:
     return pos
 
 
+# TODO: Use fixms version for consistency
 def get_pol_axis_from_ms(
     ms: MS | Path, feed_idx: int | None = None, col: str = "RECEPTOR_ANGLE"
 ) -> u.Quantity:

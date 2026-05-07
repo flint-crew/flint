@@ -57,6 +57,7 @@ from flint.prefect.common.utils import (
     task_update_field_summary,
     task_update_with_options,
 )
+from flint.summary import BeamSummary
 
 MSsByBeam: TypeAlias = tuple[tuple[MS, ...], ...]
 
@@ -267,7 +268,7 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
     # We will consider bandpass applications later
     _ensure_all_casda_format(mss_by_beams=science_mss_by_beam)
 
-    ms_summaries = []
+    ms_summaries: list = []
     imaging_results: dict[int, list[LoopFutures]] = {}
     imaging_results[0] = []
     with tags("no-selfcal"):
@@ -327,7 +328,7 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
                 )
             )
 
-    beam_summaries = []
+    beam_summaries: list[BeamSummary] = []
     for loop_result in imaging_results[0]:
         beam_summaries.extend(
             task_create_beam_summary.map(
