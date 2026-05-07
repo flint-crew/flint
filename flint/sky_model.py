@@ -649,7 +649,7 @@ def make_calibrate_model(out_path: Path, sources: list[tuple[Row, CurvedPL]]) ->
         Path: Output path of the model file
     """
     logger.info(
-        f"Creating AO calibrate sky-model, witing {len(sources)} components to {out_path}."
+        f"Creating AO calibrate sky-model, writing {len(sources)} components to {out_path}."
     )
 
     ref_nu = sources[0][1].ref_nu

@@ -6,6 +6,6 @@ from flint.prefect.flows.subtract_cube_pipeline import get_parser
 
 
 def test_get_parser():
-    """Make sure the parser can actually be builts"""
+    """Make sure the parser can actually be builds"""
     # This is a silly one but I was bitten by it not working, arrrrhh matey
     _ = get_parser()
