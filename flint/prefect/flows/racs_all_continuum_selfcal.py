@@ -241,6 +241,17 @@ def all_holography_available(
         logger.info("Insufficient holography available - not concatenating together")
         return None
 
+    if not all(
+        holo is not None and holo.exists()
+        for holo in (
+            racs_all_options.low_holofile,
+            racs_all_options.mid_holofile,
+            racs_all_options.high_holofile,
+        )
+    ):
+        msg = "Holography patch for low-, mid- and high-band data have to exist. Some are missing."
+        raise ValueError(msg)
+
     assert isinstance(racs_all_options.low_holofile, Path), (
         "Expected Path for low-band holography"
     )
