@@ -452,6 +452,10 @@ def reproject_cubes(
         reproject_interp_func = partial(
             reproject_wrapper, output_projection=spatial_header, shape_out=shape_out_sky
         )
+        # Using billiard Pool to allow a process pool executor like parallelism to be
+        # available when running under a dask-worker context. In such cases sub-processes
+        # may not normally be spawned - dask-workers start as a daemon and can not have
+        # children.
         # with ProcessPoolExecutor(max_workers=max_workers) as pool:
         with billiard.Pool(max_workers) as pool:
             for beam in range(nbeam):
