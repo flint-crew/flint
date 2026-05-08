@@ -313,7 +313,7 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
         racs_all_options=racs_all_options, output_science_path=output_science_path
     )
     if isinstance(holography_path, Path):
-        holography_path = task_concatenate_holography.submit(
+        holography_path = task_concatenate_holography(
             output_path=holography_path,
             holo_cubes=[
                 racs_all_options.low_holofile,
