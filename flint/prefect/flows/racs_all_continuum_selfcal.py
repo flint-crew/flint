@@ -313,7 +313,7 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
         racs_all_options=racs_all_options, output_science_path=output_science_path
     )
     if isinstance(holography_path, Path):
-        holography_path = task_concatenate_holography(
+        holography_path = task_concatenate_holography.submit(
             output_path=holography_path,
             holo_cubes=[
                 racs_all_options.low_holofile,
@@ -321,7 +321,9 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
                 racs_all_options.high_holofile,
             ],
         )
-        racs_all_options = racs_all_options.with_options(holofile=holography_path)
+        racs_all_options = racs_all_options.with_options(
+            holofile=holography_path
+        ).result()
 
     ms_summaries: list = []
     imaging_results: dict[int, list[LoopFutures]] = {}
