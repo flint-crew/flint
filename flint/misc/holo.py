@@ -415,7 +415,7 @@ def reproject_cubes(
     final_fits_cube_info: FinalFITSCubeInfo,
     cdelt_tol: float = 1e-6,
     max_workers: int = 2,
-) -> None:
+) -> FinalFITSCubeInfo:
     """Reproject the input cubes onto a final output spatial grid, as defined by
     ``spatial_grid``.
 
@@ -427,7 +427,7 @@ def reproject_cubes(
         final_fits_cube_info (FinalFITSCubeInfo): The description of the final output cube
 
     Returns:
-        NDArray[np.floating]: The final reprojected array
+        FinalFITSCubeInfo: The final FITS cube info that was provided as input
     """
 
     # Axis order follows FITS convention reversed for numpy:
@@ -487,7 +487,7 @@ def reproject_cubes(
                     f"({len(matched_indices)} channels x {nstokes} Stokes planes)"
                 )
 
-    return None
+    return final_fits_cube_info
 
 
 def create_output_header(
