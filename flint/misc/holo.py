@@ -21,10 +21,10 @@ from flint.logging import logger
 _ = (ProcessPoolExecutor, ThreadPoolExecutor)
 
 
-class ConcatHolo(BaseOptions):
+class ConcatHoloOptions(BaseOptions):
     """Options to use to concatenate holography cubes today"""
 
-    out_path: Path
+    output_path: Path
     """Output holography cube to make"""
     holo_cubes: tuple[Path, ...]
     """The path to the holography IQUV cubes to concatenate together"""
@@ -515,13 +515,13 @@ def create_output_header(
     return out_header
 
 
-def concatenate_holography(concat_holo_options: ConcatHolo) -> Path:
+def concatenate_holography(concat_holo_options: ConcatHoloOptions) -> Path:
     """Reproject a set of ASKAP IQUV primary beam cubes into a single output cube.
     An optimal spatial grid is computed internally through ``reproject``, and input
     cubes are placed onto a consistent channel frequency gride.
 
     Args:
-        concat_holo_options (ConcatHolo): Options to direction the concatenation of the holography cubes.
+        concat_holo_options (ConcatHoloOptions): Options to direction the concatenation of the holography cubes.
 
     Returns:
         Path: Path to the output cube formed
@@ -537,7 +537,7 @@ def concatenate_holography(concat_holo_options: ConcatHolo) -> Path:
         fits_cube_infos=fits_cube_infos,
         spatial_header=spatial_header,
         frequency_grid=frequency_grid,
-        output_path=concat_holo_options.out_path,
+        output_path=concat_holo_options.output_path,
     )
 
     reproject_cubes(
@@ -549,14 +549,14 @@ def concatenate_holography(concat_holo_options: ConcatHolo) -> Path:
         max_workers=concat_holo_options.max_workers,
     )
 
-    logger.info(f"Finished writing {concat_holo_options.out_path}")
-    return concat_holo_options.out_path
+    logger.info(f"Finished writing {concat_holo_options.output_path}")
+    return concat_holo_options.output_path
 
 
 def get_parser() -> ArgumentParser:
     parser = ArgumentParser(description="Helper utilities around holography")
 
-    parser = add_options_to_parser(parser=parser, options_class=ConcatHolo)
+    parser = add_options_to_parser(parser=parser, options_class=ConcatHoloOptions)
 
     return parser
 
@@ -567,7 +567,7 @@ def cli() -> None:
     args = parser.parse_args()
 
     concat_holo_options = create_options_from_parser(
-        parser_namespace=args, options_class=ConcatHolo
+        parser_namespace=args, options_class=ConcatHoloOptions
     )
 
     concatenate_holography(concat_holo_options=concat_holo_options)
