@@ -18,14 +18,99 @@ from flint.ms import (
     check_column_in_ms,
     consistent_channelwise_frequencies,
     copy_and_preprocess_casda_askap_ms,
+    describe_ms,
     find_mss,
     get_phase_dir_from_ms,
     get_times_from_ms,
     remove_columns_from_ms,
     rename_ms_and_columns_for_selfcal,
+    standardise_ms_to_list_ms,
     subtract_model_from_data_column,
 )
 from flint.utils import get_packaged_resource_path
+
+
+def test_standardise_ms_to_list_ms(ms_example) -> None:
+    """Tests around converting a MS to a list of MS"""
+
+    list_ms = standardise_ms_to_list_ms(ms=ms_example)
+    assert isinstance(list_ms, list)
+    assert len(list_ms) == 1
+    assert all(isinstance(_ms, MS) for _ms in list_ms)
+
+    list_ms = standardise_ms_to_list_ms(ms=MS.cast(ms_example))
+    assert isinstance(list_ms, list)
+    assert len(list_ms) == 1
+    assert all(isinstance(_ms, MS) for _ms in list_ms)
+
+
+def test_standardise_ms_to_list_ms_w_list(ms_example) -> None:
+    """Tests around converting a MS to a list of MS. Here input is
+    a list of MSs"""
+
+    list_ms = standardise_ms_to_list_ms(ms=[ms_example, ms_example, ms_example])
+    assert isinstance(list_ms, list)
+    assert len(list_ms) == 3
+    assert all(isinstance(_ms, MS) for _ms in list_ms)
+
+    list_ms = standardise_ms_to_list_ms(
+        ms=[MS.cast(ms_example), ms_example, ms_example]
+    )
+    assert isinstance(list_ms, list)
+    assert len(list_ms) == 3
+    assert all(isinstance(_ms, MS) for _ms in list_ms)
+
+
+def test_standardise_ms_to_list_ms_w_tuple(ms_example) -> None:
+    """Tests around converting a MS to a list of MS. Here input is
+    a list of MSs"""
+
+    list_ms = standardise_ms_to_list_ms(ms=(ms_example, ms_example, ms_example))
+    assert isinstance(list_ms, list)
+    assert len(list_ms) == 3
+    assert all(isinstance(_ms, MS) for _ms in list_ms)
+
+    list_ms = standardise_ms_to_list_ms(
+        ms=(MS.cast(ms_example), ms_example, ms_example)
+    )
+    assert isinstance(list_ms, list)
+    assert len(list_ms) == 3
+    assert all(isinstance(_ms, MS) for _ms in list_ms)
+
+
+def test_mssummary_ms_in_dir(ms_example) -> None:
+    """Make sure that the ms in dir chect in MS.cast continues to trigger"""
+
+    ms = MS.cast(ms_example)
+    summary = describe_ms(ms=ms, attach_ms=True)
+    assert "ms" in dir(summary)
+
+
+def test_mssummary_to_ms_through_cast(ms_example) -> None:
+    """See if the MSSummary with attached ms can be cast to MS"""
+
+    ms = MS.cast(ms_example)
+    summary = describe_ms(ms=ms, attach_ms=True)
+
+    assert summary.ms == ms
+    assert summary.ms is not None
+    ms_new = MS.cast(summary)
+    assert isinstance(ms_new, MS)
+    assert ms == ms_new
+
+
+def test_describe_ms(ms_example) -> None:
+    """Describe the example MS, return a summary with and without the MS attached"""
+
+    ms = MS.cast(ms_example)
+    summary_1 = describe_ms(ms=ms)
+    summary_2 = describe_ms(ms=ms, attach_ms=True)
+
+    assert summary_1.ms is None
+    assert summary_2.ms == ms
+    for summary in (summary_1, summary_2):
+        assert summary.path == ms_example
+        assert summary.beam == 0
 
 
 def test_consistent_channelwise_frequencies():
@@ -65,7 +150,7 @@ def test_find_mss(tmpdir):
         _ = find_mss(mss_parent_path=tmpdir, expected_ms_count=49005)
 
 
-def test_find_mss_withdatacolumn(tmpdir):
+def test_find_mss_withdatacolumn(tmpdir) -> None:
     """Same as above but with setting a data column"""
     tmpdir = Path(tmpdir) / "Another_Pirate"
     for name in range(45):
