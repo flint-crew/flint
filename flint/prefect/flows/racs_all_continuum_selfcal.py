@@ -322,8 +322,8 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
             ],
         )
         racs_all_options = racs_all_options.with_options(
-            holofile=holography_path
-        ).result()
+            holofile=holography_path.result()
+        )
 
     ms_summaries: list = []
     imaging_results: dict[int, list[LoopFutures]] = {}
