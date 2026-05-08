@@ -321,9 +321,6 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
                 racs_all_options.high_holofile,
             ],
         )
-        racs_all_options = racs_all_options.with_options(
-            holofile=holography_path.result()
-        )
 
     ms_summaries: list = []
     imaging_results: dict[int, list[LoopFutures]] = {}
@@ -490,6 +487,7 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
                         racs_all_options.rounds if racs_all_options.rounds else None
                     ),
                     additional_linmos_suffix_str="cube",
+                    holofile=holography_path,
                 )
 
         for selfcal_round, final_beam_imaging_results in imaging_results.items():
@@ -504,7 +502,8 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
                 wsclean_results=wsclean_results,
                 field_options=racs_all_options,
                 field_summary=field_summary,
-                additional_linmos_suffix_str=additional_linmos_suffix,  # indicate in output linmos name no selfcal
+                additional_linmos_suffix_str=additional_linmos_suffix,
+                holofile=holography_path,  # indicate in output linmos name no selfcal
             )
             logger.info(
                 f"Self-cal round {selfcal_round}, number of parsets {len(parsets)}"
