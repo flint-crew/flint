@@ -12,6 +12,7 @@ import numpy as np
 from astropy.io import fits
 from astropy.wcs import WCS
 from capn_crunch import BaseOptions, add_options_to_parser, create_options_from_parser
+from loky import get_reusable_executor
 from numpy.typing import NDArray
 from reproject import reproject_interp
 from reproject.mosaicking import find_optimal_celestial_wcs
@@ -451,7 +452,7 @@ def reproject_cubes(
         reproject_interp_func = partial(
             reproject_wrapper, output_projection=spatial_header, shape_out=shape_out_sky
         )
-        with ProcessPoolExecutor(max_workers=max_workers) as pool:
+        with get_reusable_executor(max_workers=max_workers) as pool:
             for beam in range(nbeam):
                 pool_items = []
                 for stokes in range(nstokes):
