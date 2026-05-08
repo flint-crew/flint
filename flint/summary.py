@@ -29,7 +29,7 @@ from flint.ms import (
     MS,
     MSSummary,
     describe_ms,
-    get_pol_axis_from_ms,
+    get_pol_axis_as_rad,
     get_telescope_location_from_ms,
     get_times_from_ms,
 )
@@ -91,29 +91,15 @@ class FieldSummary(BaseOptions):
     """The orientation of the ASKAP third-axis in radians. """
 
 
-def _get_pol_axis_as_rad(ms: MS | Path) -> float:
-    """Helper to get the appropriate pol_axis out of a MS. Prioritises the instrumental third-axis imprinted from fixms"""
-    ms = MS.cast(ms=ms)
-
-    # The INSTRUMENT_RECEPTOR_ANGLE comes from fixms and is
-    # inserted to preserve the original orientation.
-
-    try:
-        pol_axis = get_pol_axis_from_ms(ms=ms, col="INSTRUMENT_RECEPTOR_ANGLE")
-
-        logger.info(f"INSTRUMENT_RECEPTOR_ANGLE obtained pol_axis={pol_axis}")
-    except ValueError:
-        pol_axis = get_pol_axis_from_ms(ms=ms, col="RECEPTOR_ANGLE")
-
-        # The prefect logger (or maybe the logger in general) does not render the quantity
-        logger.info(f"RECEPTOR_ANGLE obtained pol_axis={pol_axis}")
-
-    return pol_axis.to(u.rad).value
-
-
 # TODO: Need to establise a MSLike type
-def add_ms_summaries(field_summary: FieldSummary, mss: list[MS]) -> FieldSummary:
-    """Obtain a MSSummary instance to add to a FieldSummary
+def add_ms_summaries(
+    field_summary: FieldSummary,
+    mss: list[MS] | None = None,
+    ms_summaries: list[MSSummary] | None = None,
+) -> FieldSummary:
+    """Obtain a MSSummary instance to add to a FieldSummary. If existing
+    ``MSSummary`` instances are provided than the internal creation will
+    be skipped.
 
     Quantities derived from the field centre (hour angles, elevations) are
     also calculated. The field centre position is estimated by taking the
@@ -124,13 +110,20 @@ def add_ms_summaries(field_summary: FieldSummary, mss: list[MS]) -> FieldSummary
     Args:
         field_summary (FieldSummary): Existing field summary object to update
         mss (List[MS]): Set of measurement sets to describe
+        ms_summaries (list[MSSumarry] | None, optional): Precomputed ``MSSummary`` objects. Defaults to None.
 
     Returns:
-        Tuple[MSSummary]: Results from the inspected set of measurement sets
+        FieldSummary: The updated field summary object with addition information from individual MS objects
     """
     logger.info("Adding MS summaries")
 
-    ms_summaries = tuple(map(describe_ms, mss))
+    if mss is None and ms_summaries is None:
+        msg = f"{mss=} and {ms_summaries}, one should be set"
+        raise ValueError(msg)
+
+    if ms_summaries is None:
+        assert mss is not None, f"This is bad, {mss=}"
+        ms_summaries = list(map(describe_ms, mss))
     centres_list = [ms_summary.phase_dir for ms_summary in ms_summaries]
     if len(centres_list) == 0:
         raise ValueError("No phase directions found in the MSs")
@@ -148,10 +141,10 @@ def add_ms_summaries(field_summary: FieldSummary, mss: list[MS]) -> FieldSummary
 
     # The INSTRUMENT_RECEPTOR_ANGLE comes from fixms and is
     # inserted to preserve the original orientation.
-    pol_axis = _get_pol_axis_as_rad(ms=mss[0])
+    pol_axis = ms_summaries[0].pol_axis
 
     field_summary = field_summary.with_options(
-        ms_summaries=ms_summaries,
+        ms_summaries=tuple(ms_summaries),
         centre=centre,
         hour_angles=hour_angles,
         elevations=elevations,
@@ -258,22 +251,26 @@ def update_field_summary(
 
 
 def create_field_summary(
-    mss: list[MS | Path],
+    mss: list[MS | Path] | None = None,
     cal_sbid_path: Path | None = None,
     holography_path: Path | None = None,
     aegean_outputs: AegeanOutputs | None = None,
+    ms_summaries: list[MSSummary] | None = None,
     **kwargs,
 ) -> FieldSummary:
     """Create a field summary object using a measurement set.
 
+    If a set of ``MSSummary`` instances are provided then the (sometimes costly)
+    process to compute the ``MSSummary`` objects internally will be skipped.
+
     All other keyword arguments are passed directly through to `FieldSummary`
 
     Args:
-        ms (Union[MS, Path]): Measurement set information will be pulled from
+        mss (Union[MS, Path | None, optional]): Set of measurement sets to describe/ The first will be used to set information will be pulled from. If ``None`` information is drawn from ``ms_summaries``. Defaults to None.
         cal_sbid_path (Optional[Path], optional): Path to an example of a bandpass measurement set. Defaults to None.
         holography_path (Optional[Path], optional): The holography fits cube used (or will be) to linmos. Defaults to None.
         aegean_outputs (Optional[AegeanOutputs], optional): Should RMS / source information be added to the instance. Defaults to None.
-        mss (Optional[Collection[MS]], optionals): Set of measurement sets to describe
+        ms_summaries (list[MSSummary] | None, optional): Pre-computed MSSummary objects for each of the input mss. Defaults to None.
 
     Returns:
         FieldSummary: A summary of a field
@@ -281,18 +278,40 @@ def create_field_summary(
 
     logger.info("Creating field summary object")
 
-    mss = [MS.cast(ms=ms) for ms in mss]
+    sbid: None | str = None
+    field: None | str = None
+    pol_axis: None | float = None
+    if mss is not None:
+        mss = [MS.cast(ms=ms) for ms in mss]
 
-    # TODO: A check here to ensure all MSs are in a consistent format
-    # and are from the same field
-    ms = MS.cast(ms=mss[0])
+        # TODO: A check here to ensure all MSs are in a consistent format
+        # and are from the same field
+        ms = MS.cast(ms=mss[0])
 
-    ms_components = processed_ms_format(in_name=ms.path)
-    assert ms_components is not None, (
-        f"MS ({ms.path}) is not in a flint-processed format!"
-    )
-    sbid = str(ms_components.sbid)
-    field = ms_components.field
+        ms_components = processed_ms_format(in_name=ms.path)
+        assert ms_components is not None, (
+            f"MS ({ms.path}) is not in a flint-processed format!"
+        )
+        sbid = str(ms_components.sbid)
+        field = ms_components.field
+
+        ms_times = get_times_from_ms(ms=ms)
+        integration = ms_times.ptp().to(u.second).value
+        location = get_telescope_location_from_ms(ms=ms)
+        pol_axis = get_pol_axis_as_rad(ms=ms)
+
+    if ms_summaries is not None:
+        ms_components = processed_ms_format(in_name=ms_summaries[0].path.name)
+        assert ms_components is not None, (
+            f"MS ({ms_summaries[0].path}) is not in a flint-processed format"
+        )
+
+        sbid = str(ms_components.sbid)
+        field = ms_components.field
+        ms_times = ms_summaries[0].ms_times
+        integration = ms_summaries[0].integration
+        location = ms_summaries[0].location
+        pol_axis = ms_summaries[0].pol_axis
 
     assert field is not None, f"Field name is empty in {ms_components=} from {ms.path=}"
 
@@ -303,12 +322,6 @@ def create_field_summary(
     except ValueError:
         cal_sbid = "-9999"
         logger.info(f"Extracting SBID from {cal_sbid_path=} failed. Using {cal_sbid=}")
-
-    ms_times = get_times_from_ms(ms=ms)
-    integration = ms_times.ptp().to(u.second).value
-    location = get_telescope_location_from_ms(ms=ms)
-
-    pol_axis = _get_pol_axis_as_rad(ms=ms)
 
     field_summary = FieldSummary(
         sbid=sbid,
@@ -323,7 +336,9 @@ def create_field_summary(
     )
 
     field_summary = add_ms_summaries(
-        field_summary=field_summary, mss=[MS.cast(ms=ms) for ms in mss]
+        field_summary=field_summary,
+        mss=[MS.cast(ms=ms) for ms in mss] if mss is not None else None,
+        ms_summaries=ms_summaries,
     )
 
     if aegean_outputs:
@@ -348,23 +363,38 @@ class BeamSummary(BaseOptions):
 
 
 def create_beam_summary(
-    ms: MS | Path,
+    ms: MS | Path | None = None,
     image_set: ImageSet | WSCleanResult | None = None,
     components: AegeanOutputs | None = None,
+    ms_summary: MSSummary | None = None,
 ) -> BeamSummary:
     """Create a summary of a beam
 
     Args:
-        ms (Union[MS, Path]): The measurement set being considered
+        ms (MS | Path | None, optional): The measurement set being considered and used to generate a summary object. Defaults to None.
         image_set (Optional[ImageSet], optional): Images produced from an imager. Defaults to None.
         components (Optional[AegeanOutputs], optional): Source finding output components. Defaults to None.
+        ms_summary (MSSummary | None, optional): A precomputed summary object. This should be specified if ``ms`` is None. Defaults to None.
+
+    Raises:
+        ValueError: Raised when both `column` and `ms.column` are None.
 
     Returns:
         BeamSummary: Summary object of a beam
     """
-    ms = MS.cast(ms=ms)
-    logger.info(f"Creating BeamSummary for {ms.path=}")
-    ms_summary = describe_ms(ms=ms)
+    if ms is None and ms_summary is None:
+        msg = "A measurement summary object was not created. Set with ms or ms_summary."
+        raise ValueError(msg)
+
+    if not isinstance(ms_summary, MSSummary):
+        assert ms is not None, "Input ms is None"
+        ms = MS.cast(ms=ms)
+        logger.info(f"Creating BeamSummary for {ms.path=}")
+        ms_summary = describe_ms(ms=ms)
+
+    assert ms_summary is not None, (
+        "MS Summary is not set, which is not supposed to happen"
+    )
 
     # TODO: Another example where a .cast type method could be useful
     # or where a standardised set of attributes with a HasImageSet type

@@ -9,7 +9,7 @@ from prefect import Task, task
 
 from flint.imager.wsclean import WSCleanResult
 from flint.logging import logger
-from flint.ms import subtract_model_from_data_column
+from flint.ms import describe_ms, subtract_model_from_data_column
 from flint.options import MS
 from flint.peel.jolly import jolly_roger_tractor
 from flint.predict.addmodel import AddModelOptions, add_model
@@ -18,6 +18,7 @@ P = ParamSpec("P")
 R = TypeVar("R")
 
 task_subtract_model_from_ms = task(subtract_model_from_data_column)
+task_describe_ms = task(describe_ms)
 
 
 @task
