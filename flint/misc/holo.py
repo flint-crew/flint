@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from argparse import ArgumentParser
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -18,8 +17,6 @@ from reproject import reproject_interp
 from reproject.mosaicking import find_optimal_celestial_wcs
 
 from flint.logging import logger
-
-_ = (ProcessPoolExecutor, ThreadPoolExecutor)
 
 
 class ConcatHoloOptions(BaseOptions):
@@ -456,7 +453,6 @@ def reproject_cubes(
         # available when running under a dask-worker context. In such cases sub-processes
         # may not normally be spawned - dask-workers start as a daemon and can not have
         # children.
-        # with ProcessPoolExecutor(max_workers=max_workers) as pool:
         with billiard.Pool(max_workers) as pool:
             for beam in range(nbeam):
                 pool_items = []
