@@ -6,6 +6,7 @@ from argparse import ArgumentParser
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
+from socket import gethostname
 
 import billiard
 import numpy as np
@@ -530,6 +531,7 @@ def concatenate_holography(concat_holo_options: ConcatHoloOptions) -> Path:
     """
 
     logger.info("Attempting to concatenate holography cubes")
+    logger.info(f"Running on host {gethostname()}")
 
     fits_cube_infos = load_and_sort_cubes(cube_paths=concat_holo_options.holo_cubes)
     spatial_header = construct_spatial_output_wcs(fits_cube_infos=fits_cube_infos)
