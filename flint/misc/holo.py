@@ -439,22 +439,24 @@ def reproject_cubes(
     )  # 1 ppm tolerance for frequency matching
     shape_out_sky = (spatial_header["NAXIS2"], spatial_header["NAXIS1"])
 
-    for cube_idx, fits_cube_info in enumerate(fits_cube_infos):
-        logger.info(f"Reprojecting cube {cube_idx} - {fits_cube_info.path} ...")
+    # Using billiard Pool to allow a process pool executor like parallelism to be
+    # available when running under a dask-worker context. In such cases sub-processes
+    # may not normally be spawned - dask-workers start as a daemon and can not have
+    # children.
+    with billiard.Pool(max_workers) as pool:
+        for cube_idx, fits_cube_info in enumerate(fits_cube_infos):
+            logger.info(f"Reprojecting cube {cube_idx} - {fits_cube_info.path} ...")
 
-        ch_out, matched_indices = map_frequencies_to_channels(
-            freqs_1=frequency_grid.grid, freqs_2=fits_cube_info.freqs_hz, tol=tol
-        )
-        in_cube_header = _get_cube_header(fits_cube_info=fits_cube_info)
+            ch_out, matched_indices = map_frequencies_to_channels(
+                freqs_1=frequency_grid.grid, freqs_2=fits_cube_info.freqs_hz, tol=tol
+            )
+            in_cube_header = _get_cube_header(fits_cube_info=fits_cube_info)
 
-        reproject_interp_func = partial(
-            reproject_wrapper, output_projection=spatial_header, shape_out=shape_out_sky
-        )
-        # Using billiard Pool to allow a process pool executor like parallelism to be
-        # available when running under a dask-worker context. In such cases sub-processes
-        # may not normally be spawned - dask-workers start as a daemon and can not have
-        # children.
-        with billiard.Pool(max_workers) as pool:
+            reproject_interp_func = partial(
+                reproject_wrapper,
+                output_projection=spatial_header,
+                shape_out=shape_out_sky,
+            )
             for beam in range(nbeam):
                 pool_items = []
                 for stokes in range(nstokes):
