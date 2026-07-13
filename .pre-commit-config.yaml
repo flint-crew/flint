@@ -40,14 +40,14 @@ repos:
   #       args: [--prose-wrap=always]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: "v0.15.12"
+    rev: "v0.15.21"
     hooks:
       - id: ruff
         args: ["--fix", "--show-fixes"]
       - id: ruff-format
 
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: "v2.0.0"
+    rev: "v2.3.0"
     hooks:
       - id: mypy
         files: flint|tests
@@ -57,7 +57,7 @@ repos:
           - types-PyYAML
 
   - repo: https://github.com/crate-ci/typos
-    rev: "v1.46.0"
+    rev: "v1"
     hooks:
       - id: typos
 
@@ -87,7 +87,7 @@ repos:
         additional_dependencies: ["validate-pyproject-schema-store[all]"]
 
   - repo: https://github.com/python-jsonschema/check-jsonschema
-    rev: "0.37.2"
+    rev: "0.37.4"
     hooks:
       - id: check-dependabot
       - id: check-github-workflows
