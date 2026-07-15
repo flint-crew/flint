@@ -735,6 +735,7 @@ def task_linmos_images(
     field_summary: FieldSummary | None = None,
     suffix_str: str | None = None,
     parset_output_path: str | None = None,
+    holofile: Path | None = None,
 ) -> LinmosResult:
     """Linmos together a set of input images.
 
@@ -748,6 +749,7 @@ def task_linmos_images(
         field_summary (FieldSummary | None, optional): Description of the field, used to get the ``pol_axis`` of the field. Defaults to None.
         suffix_str (str | None, optional): Additional suffix str to add when generating the output file names. Defaults to None.
         parset_output_path (str | None, optional): The output parameter set that will be generated. Defaults to None.
+        holofile (Path | None, optional): Path to a holofile that will overwrite the one specified  in linmos options. Defaults to None.
 
     Returns:
         LinmosResult: Collection of linmos items generated
@@ -770,6 +772,9 @@ def task_linmos_images(
         base_output_name=output_path,
         pol_axis=field_summary.pol_axis if field_summary else None,
     )
+    if holofile is not None:
+        # Only update if one is set
+        linmos_options = linmos_options.with_options(holofile=holofile)
 
     linmos_result = linmos_images(
         images=image_list,
@@ -792,6 +797,7 @@ def convolve_then_linmos(
     trim_linmos_fits: bool = True,
     remove_original_images: bool = False,
     cleanup_linmos: bool = False,
+    holofile: Path | None = None,
 ) -> LinmosResult:
     """An internal function that launches the convolution to a common resolution
     and subsequent linmos of the wsclean residual images.
@@ -808,6 +814,7 @@ def convolve_then_linmos(
         trim_linmos_fits (bool, optional): Attempt to trim the output linmos files of as much empty space as possible. Defaults to True.
         remove_original_images (bool, optional): If True remove the original image after they have been convolved. Defaults to False.
         cleanup_linmos (bool, optional): Clean up items created throughout linmos, including the per-channel weight text files for each input image. Defaults to False.
+        holofile (Path | None, optional): Path of a holography file. If provided will override the one presented by field_options. Defaults to None.
 
     Returns:
         LinmosResult: Resulting linmos command parset
@@ -838,6 +845,7 @@ def convolve_then_linmos(
         suffix_str=linmos_suffix_str,
         linmos_options=linmos_options,
         field_summary=field_summary,
+        holofile=holofile,
     )  # type: ignore
 
     return parset
@@ -899,6 +907,7 @@ def create_convol_linmos_images(
     field_options: FieldOptions,
     field_summary: FieldSummary | None = None,
     additional_linmos_suffix_str: str | None = None,
+    holofile: Path | None = None,
 ) -> list[LinmosResult]:
     """Derive the appropriate set of beam shapes and then produce corresponding
     convolved and co-added images
@@ -908,6 +917,7 @@ def create_convol_linmos_images(
         field_options (FieldOptions): Set of field imaging options, containing details of the beam/s
         field_summary (Optional[FieldSummary], optional): Summary of the MSs, importantly containing their third-axis rotation. Defaults to None.
         additional_linmos_suffix_str (Optional[str], optional): An additional string added to the end of the auto-generated linmos base name. Defaults to None.
+        holofile (Optional[Path], optional): The path to the holofile. If provided will override one presented by field_options. Defaults to None.
 
     Returns:
         List[LinmosResult]: The collection of linmos commands executed.
@@ -942,6 +952,7 @@ def create_convol_linmos_images(
                 convol_mode="residual",
                 convol_filter=".MFS.",
                 convol_suffix_str=convol_suffix_str,
+                holofile=holofile,
             )
         )
     parsets.append(
@@ -954,6 +965,7 @@ def create_convol_linmos_images(
             convol_mode="image",
             convol_filter=".MFS.",
             convol_suffix_str=convol_suffix_str,
+            holofile=holofile,
         )
     )
 
@@ -1011,6 +1023,7 @@ def create_convolve_linmos_cubes(
     field_options: FieldOptions,
     current_round: int | None = None,
     additional_linmos_suffix_str: str | None = "cube",
+    holofile: Path | None = None,
 ):
     suffixes = [f"round{current_round}" if current_round is not None else "noselfcal"]
     if additional_linmos_suffix_str:
@@ -1037,6 +1050,7 @@ def create_convolve_linmos_cubes(
         container=field_options.yandasoft_container,
         suffix_str=linmos_suffix_str,
         linmos_options=linmos_options,
+        holofile=holofile,
     )
     return parset
 

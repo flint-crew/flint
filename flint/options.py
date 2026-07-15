@@ -301,7 +301,7 @@ class RACSAllOptions(BaseOptions):
     coadd_cubes: bool = False
     """Co-add cubes formed throughout imaging together. Cubes will be smoothed channel-wise to a common resolution. Only performed on final set of images"""
     holofile: Path | None = None
-    """Place holder for the moment"""
+    """The oath to a concatenated holography FITS file that contains low-, mid- and high-band cubes"""
 
 
 def dump_field_options_to_yaml(

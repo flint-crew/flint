@@ -13,6 +13,7 @@ from prefect.artifacts import create_markdown_artifact
 
 from flint.archive import copy_sbid_files_archive, create_sbid_tar_archive
 from flint.logging import logger
+from flint.misc.holo import ConcatHoloOptions, concatenate_holography
 from flint.misc.interopt import flag_antenna_from_casda_bandpass_table
 from flint.naming import (
     add_timestamp_to_path,
@@ -37,6 +38,19 @@ SUPPORTED_IMAGE_TYPES = ("png",)
 task_flag_antenna_from_casda_bandpass_table = task(
     flag_antenna_from_casda_bandpass_table
 )
+
+
+@task
+def task_concatenate_holography(
+    output_path: Path,
+    holo_cubes: list[Path],
+) -> Path:
+    logger.info("Attempting to concatenate holography cubes")
+    concat_holo_options = ConcatHoloOptions(
+        output_path=output_path, holo_cubes=holo_cubes, max_workers=8
+    )
+
+    return concatenate_holography(concat_holo_options=concat_holo_options)
 
 
 @task
