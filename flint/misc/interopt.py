@@ -81,7 +81,8 @@ def get_flagged_antenna_casda_solutions(
         beam_ant_flagged = np.all(flags, axis=2)
 
         for beam, ant_flags in enumerate(beam_ant_flagged):
-            beam_ant_idxs[beam] = np.squeeze(np.argwhere(ant_flags))
+            # Avoids numpy squeeze returning a scalara when there is exactly a single item flagged
+            beam_ant_idxs[beam] = np.atleast_1d(np.squeeze(np.argwhere(ant_flags)))
 
     return beam_ant_idxs
 
