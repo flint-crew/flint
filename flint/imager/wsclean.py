@@ -112,6 +112,8 @@ class WSCleanOptions(BaseOptions):
     """Threshold in Jy to stop cleaning"""
     channels_out: int = 4
     """Number of output channels"""
+    gain: float = 0.1
+    """Minor cycle gain"""
     mgain: float = 0.7
     """Major cycle gain"""
     nmiter: int = 15
