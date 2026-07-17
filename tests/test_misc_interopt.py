@@ -11,6 +11,7 @@ import pytest
 from casacore.tables import table
 
 from flint.misc.interopt import (
+    _find_casda_bandpass_table_type,
     flag_antenna_from_casda_bandpass_table,
     get_flagged_antenna_casda_solutions,
 )
@@ -32,6 +33,33 @@ def casda_bandpass_table(tmpdir):
     bandpass_table_path = Path(outpath) / "calparameters.1934_bp.SB83782.tab"
 
     return bandpass_table_path
+
+
+def test_find_casda_bandpass_table_type_raise_error() -> None:
+    """Make sure that an exception is raised when a unknown set of
+    column names are passed"""
+    with pytest.raises(ValueError):
+        _find_casda_bandpass_table_type(["TIME", "JACKSPARROW"])
+
+
+def test_find_casda_bandpass_table_type(casda_bandpass_table) -> None:
+    """Check that the function can identify the correct column name for the flagging
+    information in a casda bandpass table"""
+    with table(str(casda_bandpass_table), ack=False, readonly=True) as tab:
+        columns = tab.colnames()
+
+    result = _find_casda_bandpass_table_type(columns)
+
+    assert result == "BANDPASS_VALID"
+
+    result = _find_casda_bandpass_table_type(["TIME", "BPLEAKAGE", "BPLEAKAGE_VALID"])
+    assert result == "BPLEAKAGE_VALID"
+
+    # This tests for a super set of column names
+    result = _find_casda_bandpass_table_type(
+        ["TIME", "BPLEAKAGE", "BPLEAKAGE_VALID", "JACKSPARROW"]
+    )
+    assert result == "BPLEAKAGE_VALID"
 
 
 def test_get_flagged_antenna_casda_solutions(casda_bandpass_table) -> None:
