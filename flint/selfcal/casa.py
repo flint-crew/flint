@@ -230,6 +230,28 @@ def merge_spws_in_ms(casa_container: Path, ms_path: Path) -> Path:
     return ms_path
 
 
+def _process_gaincal_options(
+    gain_cal_options: GainCalOptions | None = None,
+    update_gain_cal_options: dict[str, Any] | None = None,
+) -> GainCalOptions:
+    """Helper to process and update GaincalOptions on initialise of self-calibration routine
+
+    Args:
+        gain_cal_options (GainCalOptions | None, optional): Any existing gaincal options. Defaults to None.
+        update_gain_cal_options (dict[str, Any] | None, optional): Overrides to provide the to input gaincal options or defaults. Defaults to None.
+
+    Returns:
+        GainCalOptions: options to use throughout gaincalibtaion
+    """
+    if gain_cal_options is None:
+        gain_cal_options = GainCalOptions()
+    if update_gain_cal_options:
+        logger.info(f"Updating gaincal options with: {update_gain_cal_options}")
+        gain_cal_options = gain_cal_options.with_options(**update_gain_cal_options)
+
+    return gain_cal_options
+
+
 def gaincal_applycal_ms(
     ms: MS,
     casa_container: Path,
@@ -267,11 +289,10 @@ def gaincal_applycal_ms(
 
     assert casa_container.exists(), f"{casa_container=} does not exist. "
 
-    if gain_cal_options is None:
-        gain_cal_options = GainCalOptions()
-    if update_gain_cal_options:
-        logger.info(f"Updating gaincal options with: {update_gain_cal_options}")
-        gain_cal_options = gain_cal_options.with_options(**update_gain_cal_options)
+    gain_cal_options = _process_gaincal_options(
+        gain_cal_options=gain_cal_options,
+        update_gain_cal_options=update_gain_cal_options,
+    )
 
     # TODO: If the skip_selfcal is True we should just symlink, maybe?
     # Pirates like easy things though.
@@ -298,29 +319,35 @@ def gaincal_applycal_ms(
             ms=cal_ms, channel_range=channel_range
         )
 
-        gaincal(
-            container=casa_container,
-            bind_dirs=(cal_ms.path.parent, cal_table.parent),
-            vis=str(cal_ms.path),
-            caltable=str(cal_table),
-            spw=spw_str,
-            solint=gain_cal_options.solint,
-            gaintype=gain_cal_options.gaintype,
-            minsnr=gain_cal_options.minsnr,
-            calmode=gain_cal_options.calmode,
-            selectdata=gain_cal_options.selectdata,
-            uvrange=gain_cal_options.uvrange,
-            solnorm=gain_cal_options.solnorm,
-        )
-
-        if not cal_table.exists():
-            logger.critical(
-                "The calibration table was not created. Likely gaincal failed. "
+        # This check attempts to avoid reduplication of work if already
+        # carried out. Trying to make this function pure with no side
+        # effects, matie
+        if cal_table.parent.exists():
+            logger.warning(f"Found an earlier {cal_table=}. Not rerunning gaincal!")
+        else:
+            gaincal(
+                container=casa_container,
+                bind_dirs=(cal_ms.path.parent, cal_table.parent),
+                vis=str(cal_ms.path),
+                caltable=str(cal_table),
+                spw=spw_str,
+                solint=gain_cal_options.solint,
+                gaintype=gain_cal_options.gaintype,
+                minsnr=gain_cal_options.minsnr,
+                calmode=gain_cal_options.calmode,
+                selectdata=gain_cal_options.selectdata,
+                uvrange=gain_cal_options.uvrange,
+                solnorm=gain_cal_options.solnorm,
             )
-            if raise_error_on_fail:
-                raise GainCalError(f"Gaincal failed for {cal_ms.path}")
-            else:
-                return ms
+
+            if not cal_table.exists():
+                logger.critical(
+                    "The calibration table was not created. Likely gaincal failed. "
+                )
+                if raise_error_on_fail:
+                    raise GainCalError(f"Gaincal failed for {cal_ms.path}")
+                else:
+                    return ms
 
         spw_and_cal_tables.append((spw_str, cal_table))
 
@@ -329,6 +356,10 @@ def gaincal_applycal_ms(
     # the visibilities in the existing CORRECTED_DATA column,
     # not overwriting the entire column
     for idx, (spw_str, cal_table) in enumerate(spw_and_cal_tables):
+        # shoulod this be rerunning in again, from recovery of a
+        # dead worker, then this will simply reapply the solutions
+        # overwriting any that may already existing in the column.
+        # Some operations are lost, but no side effects, ya sea dog
         logger.info(
             f"Apply solutions {idx + 1} of {len(spw_and_cal_tables)}, {spw_str}"
         )
@@ -341,7 +372,11 @@ def gaincal_applycal_ms(
             flagbackup=False,
         )
 
-        if archive_cal_table:
+    # Only archive tables if application of solutions was successful. If
+    # we ought to make sure we don't potentially double up on work
+    if archive_cal_table:
+        logger.info("Archiving calibration tables")
+        for idx, (spw_str, cal_table) in enumerate(spw_and_cal_tables):
             zip_folder(in_path=cal_table)
 
     flag_versions_table = cal_ms.path.with_suffix(".ms.flagversions")
