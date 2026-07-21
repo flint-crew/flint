@@ -33,11 +33,43 @@ from flint.imager.wsclean import (
     rotate_cube,
     split_and_get_image_set,
     split_image_set,
+    transpose_and_sort_channel_images,
 )
 from flint.logging import logger
 from flint.naming import create_imaging_name_prefix
 from flint.options import MS
 from flint.utils import get_packaged_resource_path
+
+
+def test_transpose_and_sort_channel_images() -> None:
+    """Per-beam channel image lists should regroup into per-channel beam groups,
+    sorted by channel range and independent of the input ordering."""
+    base = (
+        "SB39400.RACS_0000-123.beam{beam}.round3.i.ch{lo:04d}-{hi:04d}.image.conv.fits"
+    )
+    channels = [(0, 1), (2, 3), (4, 5)]
+
+    def beam_list(beam: int, order: list[tuple[int, int]]) -> list[Path]:
+        return [Path(base.format(beam=beam, lo=lo, hi=hi)) for lo, hi in order]
+
+    # Beam 0 in order, beam 1 shuffled - both must sort to the same channel order
+    beam_channel_images = [
+        beam_list(0, channels),
+        beam_list(1, [channels[2], channels[0], channels[1]]),
+    ]
+
+    channel_groups = transpose_and_sort_channel_images(beam_channel_images)
+
+    assert len(channel_groups) == len(channels)
+    for group, (lo, hi) in zip(channel_groups, channels):
+        assert len(group) == 2
+        assert all(f"ch{lo:04d}-{hi:04d}" in str(p) for p in group)
+        assert [f"beam{b}" in str(p) for b, p in enumerate(group)] == [True, True]
+
+    with pytest.raises(AssertionError):
+        transpose_and_sort_channel_images(
+            [beam_list(0, channels), beam_list(1, channels[:2])]
+        )
 
 
 def test_get_cli_parser() -> None:
