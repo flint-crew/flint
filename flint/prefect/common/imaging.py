@@ -39,6 +39,7 @@ from flint.imager.wsclean import (
     merge_image_sets,
     merge_image_sets_from_results,
     split_and_get_image_set,
+    transpose_and_sort_channel_images,
     wsclean_imager,
 )
 from flint.logging import logger
@@ -57,6 +58,7 @@ from flint.ms import (
 )
 from flint.naming import (
     FITSMaskNames,
+    create_name_from_common_fields,
     get_beam_resolution_str,
     get_fits_cube_from_paths,
 )
@@ -68,6 +70,7 @@ from flint.source_finding.aegean import AegeanOutputs, run_bane_and_aegean
 from flint.summary import FieldSummary
 from flint.utils import (
     flatten_items,
+    remove_files_folders,
     zip_folder,
 )
 from flint.validation import (
@@ -95,6 +98,9 @@ task_image_set_from_result = task(image_set_from_result)
 task_combine_images_to_cube = task(combine_images_to_cube)
 task_merge_image_sets = task(merge_image_sets)
 task_merge_image_sets_from_results = task(merge_image_sets_from_results)
+task_transpose_and_sort_channel_images = task(transpose_and_sort_channel_images)
+task_create_name_from_common_fields = task(create_name_from_common_fields)
+task_remove_files_folders = task(remove_files_folders)
 
 # Tasks below are extracting componented from earlier stages, or are
 # otherwise doing something important

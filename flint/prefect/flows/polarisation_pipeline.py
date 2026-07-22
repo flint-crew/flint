@@ -7,7 +7,7 @@ from configargparse import ArgumentParser
 from prefect import flow, tags, unmapped
 from prefect.futures import PrefectFuture
 
-from flint.coadd.linmos import LinmosOptions, LinmosResult
+from flint.coadd.linmos import LinmosOptions
 from flint.configuration import (
     POLARISATION_MAPPING,
     get_options_from_strategy,
@@ -35,19 +35,20 @@ from flint.prefect.clusters import get_dask_runner
 from flint.prefect.common.imaging import (
     task_combine_images_to_cube,
     task_convolve_images,
+    task_create_name_from_common_fields,
     task_get_channel_images_from_paths,
     task_get_common_beam_from_image_set,
     task_linmos_images,
     task_merge_image_sets,
     task_preprocess_askap_ms,
+    task_remove_files_folders,
     task_split_and_get_image_set,
+    task_transpose_and_sort_channel_images,
     task_wsclean_imager,
 )
 from flint.prefect.common.utils import (
     task_create_field_summary,
-    task_create_object,
     task_getattr,
-    task_rename_linear_to_stokes,
 )
 
 
@@ -174,7 +175,10 @@ def process_science_fields_pol(
         fixed_beam_shape=pol_field_options.fixed_beam_shape,
     )
 
-    stokes_beam_cubes: dict[str, list[PrefectFuture[Path]]] = {}
+    # Convolve every beam's sub-band images to the common beam, keeping the
+    # per-channel images (rather than cubing per beam) so we can co-add across
+    # beams one channel at a time.
+    stokes_beam_channel_images: dict[str, list[PrefectFuture[list[Path]]]] = {}
     for polarisation, image_set_list in image_sets_dict.items():
         with tags(f"polarisation-{polarisation}"):
             # Get the individual Stokes parameters in case of joint imaging
@@ -183,7 +187,7 @@ def process_science_fields_pol(
             stokes_list = list(POLARISATION_MAPPING[polarisation])
             for stokes in stokes_list:
                 with tags(f"stokes-{stokes}"):
-                    beam_cubes: list[PrefectFuture[Path]] = []
+                    beam_channel_images: list[PrefectFuture[list[Path]]] = []
                     for image_set in image_set_list:
                         stokes_image_list = task_split_and_get_image_set.submit(
                             image_set=image_set,
@@ -196,55 +200,84 @@ def process_science_fields_pol(
                             beam_shape=common_beam_shape,
                             cutoff=pol_field_options.beam_cutoff,
                         )
-                        # TODO: Consider accerating this by doing a linmos per-channel, then combining
                         channel_image_list = task_get_channel_images_from_paths.submit(
                             paths=convolved_image_list
                         )
-                        prefix = task_getattr.submit(image_set, "prefix")
+                        beam_channel_images.append(channel_image_list)
+                    stokes_beam_channel_images[stokes] = beam_channel_images
 
-                        if polarisation == "linear":
-                            # Get single Stokes prefix - the original prefix is the linear prefix
-                            # i.e. `.qu.` -> `.q.` or `.u.` depending on the stokes
-                            prefix = task_rename_linear_to_stokes.submit(
-                                linear_name=prefix,
-                                stokes=stokes,
-                            )
-                        cube_path = task_combine_images_to_cube.submit(
-                            images=channel_image_list,
-                            prefix=prefix,
-                            mode="image",
-                            remove_original_images=True,
-                        )
-                        beam_cubes.append(cube_path)
-                stokes_beam_cubes[stokes] = beam_cubes
+    # Regroup each Stokes' per-beam channel images into per-channel beam groups
+    # so linmos can run one channel at a time in parallel. Resolving here blocks
+    # until the convolutions above have completed.
+    stokes_channel_groups: dict[str, list[list[Path]]] = {
+        stokes: task_transpose_and_sort_channel_images.submit(
+            beam_channel_images=beam_channel_images
+        ).result()
+        for stokes, beam_channel_images in stokes_beam_channel_images.items()
+    }
 
-    linmos_result_list: list[PrefectFuture[LinmosResult]] = []
-    # We run linmos now to ensure we have Stokes I images for leakage correction
-    # If we have not imaged Stokes I, we cannot do leakage correction
-    force_remove_leakage: bool | None = None
-    if "i" not in stokes_beam_cubes.keys():
-        force_remove_leakage = False
+    # Stokes I beam images (per channel) are needed to correct widefield leakage
+    # in the Stokes Q/U mosaics. If Stokes I was not imaged we cannot do this.
+    i_channel_groups = stokes_channel_groups.get("i")
+    force_remove_leakage: bool | None = None if i_channel_groups else False
 
-    linmos_options = task_create_object(
-        object=LinmosOptions,
-        holofile=pol_field_options.holofile,
-        cutoff=pol_field_options.pb_cutoff,
-        stokesi_images=stokes_beam_cubes.get("i"),
-        force_remove_leakage=force_remove_leakage,
-        trim_linmos_fits=pol_field_options.trim_linmos_fits,
-    )
-    for stokes, beam_cubes in stokes_beam_cubes.items():
-        with tags(f"stokes-{stokes}"):
-            linmos_result = task_linmos_images.submit(
-                image_list=beam_cubes,
-                container=pol_field_options.yandasoft_container,
-                linmos_options=linmos_options,
-                field_summary=field_summary,
+    cube_results: list[PrefectFuture[Path]] = []
+    all_input_images: list[Path] = []
+    for stokes, channel_groups in stokes_channel_groups.items():
+        if i_channel_groups is not None:
+            assert len(i_channel_groups) == len(channel_groups), (
+                f"Stokes {stokes} has {len(channel_groups)} channels, "
+                f"but Stokes I has {len(i_channel_groups)}"
             )
-            linmos_result_list.append(linmos_result)
+        with tags(f"stokes-{stokes}"):
+            image_planes: list[PrefectFuture[Path]] = []
+            weight_planes: list[PrefectFuture[Path]] = []
+            for channel_idx, beam_images in enumerate(channel_groups):
+                all_input_images.extend(beam_images)
+                linmos_options = LinmosOptions(
+                    holofile=pol_field_options.holofile,
+                    cutoff=pol_field_options.pb_cutoff,
+                    stokesi_images=i_channel_groups[channel_idx]
+                    if i_channel_groups is not None
+                    else None,
+                    force_remove_leakage=force_remove_leakage,
+                    trim_linmos_fits=pol_field_options.trim_linmos_fits,
+                    cleanup=True,
+                )
+                linmos_result = task_linmos_images.submit(
+                    image_list=beam_images,
+                    container=pol_field_options.yandasoft_container,
+                    linmos_options=linmos_options,
+                    field_summary=field_summary,
+                )
+                image_planes.append(task_getattr.submit(linmos_result, "image_fits"))
+                weight_planes.append(task_getattr.submit(linmos_result, "weight_fits"))
 
-    # wait for all linmos results to be completed
-    _ = [linmos_result.result() for linmos_result in linmos_result_list]
+            # Stack the per-channel mosaics back into image and weight cubes,
+            # removing the per-channel mosaics once cubed.
+            cube_prefix = task_create_name_from_common_fields.submit(
+                in_paths=image_planes
+            )
+            image_cube = task_combine_images_to_cube.submit(
+                images=image_planes,
+                prefix=cube_prefix,
+                mode="image",
+                remove_original_images=True,
+            )
+            weight_cube = task_combine_images_to_cube.submit(
+                images=weight_planes,
+                prefix=cube_prefix,
+                mode="weight",
+                remove_original_images=True,
+            )
+            cube_results.extend([image_cube, weight_cube])
+
+    # Remove the convolved per-beam channel images now that every cube is built.
+    # Stokes I images are kept until here as they feed the Q/U leakage correction.
+    task_remove_files_folders.submit(*all_input_images, wait_for=cube_results)
+
+    # wait for all cubes to be completed
+    _ = [cube_result.result() for cube_result in cube_results]
 
 
 def setup_run_process_science_field(

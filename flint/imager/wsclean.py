@@ -42,8 +42,10 @@ from flint.exceptions import (
 from flint.logging import logger
 from flint.ms import MS, standardise_ms_to_list_ms
 from flint.naming import (
+    ProcessedNameComponents,
     create_image_cube_name,
     create_imaging_name_prefix,
+    extract_components_from_name,
     split_images,
 )
 from flint.options import (
@@ -382,6 +384,40 @@ def split_and_get_image_set(
         raise NamingException(f"Failed to get {get=} from {split_dict=}")
 
     return split_list
+
+
+def transpose_and_sort_channel_images(
+    beam_channel_images: list[list[Path]],
+) -> list[list[Path]]:
+    """Regroup per-beam lists of sub-band channel images into per-channel lists
+    of beam images, ready to be co-added one channel at a time.
+
+    Each beam's images are sorted by their channel range, and every beam must
+    contribute the same number of channels.
+
+    Args:
+        beam_channel_images (list[list[Path]]): For each beam, the list of its per-channel images.
+
+    Returns:
+        list[list[Path]]: For each channel, the list of beam images at that channel.
+    """
+
+    def _channel_key(path: Path) -> int:
+        processed_name = extract_components_from_name(path)
+        if not isinstance(processed_name, ProcessedNameComponents):
+            msg = f"Expected Flint-named images e.g. ProcessedNameComponents. Got {type(processed_name)}"
+            raise ValueError(msg)
+        channel_range = processed_name.channel_range
+        assert channel_range is not None, f"No channel range in {path=}"
+        return channel_range[0]
+
+    sorted_beams = [sorted(images, key=_channel_key) for images in beam_channel_images]
+    channel_counts = {len(images) for images in sorted_beams}
+    assert len(channel_counts) == 1, (
+        f"Beams contribute differing channel counts: {channel_counts}"
+    )
+
+    return [list(channel_group) for channel_group in zip(*sorted_beams)]
 
 
 def get_wsclean_output_source_list_path(
