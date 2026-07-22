@@ -68,11 +68,11 @@ def get_flagged_antenna_casda_solutions(
         columns = tab.colnames()
         # Determined the type of bandpass table we found and find
         # the appropriate valid column
-        flag_col_name = _find_casda_bandpass_table_type(columns)
+        valid_col_name = _find_casda_bandpass_table_type(columns)
 
-        # Remember that VALID is opposite to FLAG, so calling
-        # mask to try to highlight difference
-        mask = ~tab.getcol(flag_col_name)
+        # Remember that VALID column is opposite in meaning
+        # to the FLAG column, so calling mask to try to highlight difference
+        mask = ~tab.getcol(valid_col_name)
 
         # Flag shape will be (TIME, BEAM, ANT, JONES_ELEMENT).
         assert mask.shape[0] == 1, f"More then one TIME interval in {mask.shape=}"
