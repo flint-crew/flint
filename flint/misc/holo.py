@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from argparse import ArgumentParser
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
+from socket import gethostname
 
+import billiard
 import numpy as np
 from astropy.io import fits
 from astropy.wcs import WCS
@@ -18,13 +19,11 @@ from reproject.mosaicking import find_optimal_celestial_wcs
 
 from flint.logging import logger
 
-_ = (ProcessPoolExecutor, ThreadPoolExecutor)
 
-
-class ConcatHolo(BaseOptions):
+class ConcatHoloOptions(BaseOptions):
     """Options to use to concatenate holography cubes today"""
 
-    out_path: Path
+    output_path: Path
     """Output holography cube to make"""
     holo_cubes: tuple[Path, ...]
     """The path to the holography IQUV cubes to concatenate together"""
@@ -394,7 +393,7 @@ def create_placeholder_cube(
         # or OSX - the latter had a unit test failing when attempting
         # to fits.getdata on it, returning a buffer vs data shape mismatch.
         # Curious, pal.
-        f.seek(data_payload_size, 1)
+        f.seek(data_payload_size - 1, 1)  # The -1 makes space for empty byte below
         f.write(b"\x00")  # Writing out a byte fixes OSX issue
 
     logger.info(f"Start of data: {data_offset} bytes")
@@ -414,7 +413,7 @@ def reproject_cubes(
     final_fits_cube_info: FinalFITSCubeInfo,
     cdelt_tol: float = 1e-6,
     max_workers: int = 2,
-) -> None:
+) -> FinalFITSCubeInfo:
     """Reproject the input cubes onto a final output spatial grid, as defined by
     ``spatial_grid``.
 
@@ -426,7 +425,7 @@ def reproject_cubes(
         final_fits_cube_info (FinalFITSCubeInfo): The description of the final output cube
 
     Returns:
-        NDArray[np.floating]: The final reprojected array
+        FinalFITSCubeInfo: The final FITS cube info that was provided as input
     """
 
     # Axis order follows FITS convention reversed for numpy:
@@ -440,18 +439,24 @@ def reproject_cubes(
     )  # 1 ppm tolerance for frequency matching
     shape_out_sky = (spatial_header["NAXIS2"], spatial_header["NAXIS1"])
 
-    for cube_idx, fits_cube_info in enumerate(fits_cube_infos):
-        logger.info(f"Reprojecting cube {cube_idx} - {fits_cube_info.path} ...")
+    # Using billiard Pool to allow a process pool executor like parallelism to be
+    # available when running under a dask-worker context. In such cases sub-processes
+    # may not normally be spawned - dask-workers start as a daemon and can not have
+    # children.
+    with billiard.Pool(max_workers) as pool:
+        for cube_idx, fits_cube_info in enumerate(fits_cube_infos):
+            logger.info(f"Reprojecting cube {cube_idx} - {fits_cube_info.path} ...")
 
-        ch_out, matched_indices = map_frequencies_to_channels(
-            freqs_1=frequency_grid.grid, freqs_2=fits_cube_info.freqs_hz, tol=tol
-        )
-        in_cube_header = _get_cube_header(fits_cube_info=fits_cube_info)
+            ch_out, matched_indices = map_frequencies_to_channels(
+                freqs_1=frequency_grid.grid, freqs_2=fits_cube_info.freqs_hz, tol=tol
+            )
+            in_cube_header = _get_cube_header(fits_cube_info=fits_cube_info)
 
-        reproject_interp_func = partial(
-            reproject_wrapper, output_projection=spatial_header, shape_out=shape_out_sky
-        )
-        with ProcessPoolExecutor(max_workers=max_workers) as pool:
+            reproject_interp_func = partial(
+                reproject_wrapper,
+                output_projection=spatial_header,
+                shape_out=shape_out_sky,
+            )
             for beam in range(nbeam):
                 pool_items = []
                 for stokes in range(nstokes):
@@ -481,7 +486,7 @@ def reproject_cubes(
                     f"({len(matched_indices)} channels x {nstokes} Stokes planes)"
                 )
 
-    return None
+    return final_fits_cube_info
 
 
 def create_output_header(
@@ -515,19 +520,20 @@ def create_output_header(
     return out_header
 
 
-def concatenate_holography(concat_holo_options: ConcatHolo) -> Path:
+def concatenate_holography(concat_holo_options: ConcatHoloOptions) -> Path:
     """Reproject a set of ASKAP IQUV primary beam cubes into a single output cube.
     An optimal spatial grid is computed internally through ``reproject``, and input
     cubes are placed onto a consistent channel frequency gride.
 
     Args:
-        concat_holo_options (ConcatHolo): Options to direction the concatenation of the holography cubes.
+        concat_holo_options (ConcatHoloOptions): Options to direction the concatenation of the holography cubes.
 
     Returns:
         Path: Path to the output cube formed
     """
 
     logger.info("Attempting to concatenate holography cubes")
+    logger.info(f"Running on host {gethostname()}")
 
     fits_cube_infos = load_and_sort_cubes(cube_paths=concat_holo_options.holo_cubes)
     spatial_header = construct_spatial_output_wcs(fits_cube_infos=fits_cube_infos)
@@ -537,7 +543,7 @@ def concatenate_holography(concat_holo_options: ConcatHolo) -> Path:
         fits_cube_infos=fits_cube_infos,
         spatial_header=spatial_header,
         frequency_grid=frequency_grid,
-        output_path=concat_holo_options.out_path,
+        output_path=concat_holo_options.output_path,
     )
 
     reproject_cubes(
@@ -549,14 +555,14 @@ def concatenate_holography(concat_holo_options: ConcatHolo) -> Path:
         max_workers=concat_holo_options.max_workers,
     )
 
-    logger.info(f"Finished writing {concat_holo_options.out_path}")
-    return concat_holo_options.out_path
+    logger.info(f"Finished writing {concat_holo_options.output_path}")
+    return concat_holo_options.output_path
 
 
 def get_parser() -> ArgumentParser:
     parser = ArgumentParser(description="Helper utilities around holography")
 
-    parser = add_options_to_parser(parser=parser, options_class=ConcatHolo)
+    parser = add_options_to_parser(parser=parser, options_class=ConcatHoloOptions)
 
     return parser
 
@@ -567,7 +573,7 @@ def cli() -> None:
     args = parser.parse_args()
 
     concat_holo_options = create_options_from_parser(
-        parser_namespace=args, options_class=ConcatHolo
+        parser_namespace=args, options_class=ConcatHoloOptions
     )
 
     concatenate_holography(concat_holo_options=concat_holo_options)

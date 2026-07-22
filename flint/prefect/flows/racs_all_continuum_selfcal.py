@@ -52,6 +52,7 @@ from flint.prefect.common.imaging import (
 )
 from flint.prefect.common.ms import task_describe_ms
 from flint.prefect.common.utils import (
+    task_concatenate_holography,
     task_create_beam_summary,
     task_create_field_summary,
     task_update_field_summary,
@@ -224,6 +225,46 @@ def _ensure_all_casda_format(mss_by_beams: MSsByBeam) -> None:
                 raise ValueError(f"Was expecting only CASDA MSs, got {components}")
 
 
+def all_holography_available(
+    racs_all_options: RACSAllOptions,
+    output_science_path: Path,
+) -> Path | None:
+
+    if any(
+        not isinstance(holo, Path)
+        for holo in (
+            racs_all_options.low_holofile,
+            racs_all_options.mid_holofile,
+            racs_all_options.high_holofile,
+        )
+    ):
+        logger.info("Insufficient holography available - not concatenating together")
+        return None
+
+    if not all(
+        holo is not None and holo.exists()
+        for holo in (
+            racs_all_options.low_holofile,
+            racs_all_options.mid_holofile,
+            racs_all_options.high_holofile,
+        )
+    ):
+        msg = "Holography patch for low-, mid- and high-band data have to exist. Some are missing."
+        raise ValueError(msg)
+
+    assert isinstance(racs_all_options.low_holofile, Path), (
+        "Expected Path for low-band holography"
+    )
+
+    holo_output_path = output_science_path / racs_all_options.low_holofile.name
+    holo_output_path = holo_output_path.with_suffix(".concatenated.fits")
+    logger.info(
+        f"Holography cubes exist, output concatenated cube will be {holo_output_path=}"
+    )
+
+    return holo_output_path
+
+
 @flow
 def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
     # Any sanity checks will go in here, mateee
@@ -267,6 +308,19 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
     # Ya sea dog, we will only be handling CASDA measurementsets for the moment.
     # We will consider bandpass applications later
     _ensure_all_casda_format(mss_by_beams=science_mss_by_beam)
+
+    holography_path = all_holography_available(
+        racs_all_options=racs_all_options, output_science_path=output_science_path
+    )
+    if isinstance(holography_path, Path):
+        holography_path = task_concatenate_holography.submit(
+            output_path=holography_path,
+            holo_cubes=[
+                racs_all_options.low_holofile,
+                racs_all_options.mid_holofile,
+                racs_all_options.high_holofile,
+            ],
+        )
 
     ms_summaries: list = []
     imaging_results: dict[int, list[LoopFutures]] = {}
@@ -433,6 +487,7 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
                         racs_all_options.rounds if racs_all_options.rounds else None
                     ),
                     additional_linmos_suffix_str="cube",
+                    holofile=holography_path,
                 )
 
         for selfcal_round, final_beam_imaging_results in imaging_results.items():
@@ -447,7 +502,8 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
                 wsclean_results=wsclean_results,
                 field_options=racs_all_options,
                 field_summary=field_summary,
-                additional_linmos_suffix_str=additional_linmos_suffix,  # indicate in output linmos name no selfcal
+                additional_linmos_suffix_str=additional_linmos_suffix,
+                holofile=holography_path,  # indicate in output linmos name no selfcal
             )
             logger.info(
                 f"Self-cal round {selfcal_round}, number of parsets {len(parsets)}"

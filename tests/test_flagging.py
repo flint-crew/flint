@@ -12,9 +12,58 @@ from flint.containers import get_known_container_path
 from flint.flagging import (
     flag_ms_aoflagger,
     flag_ms_zero_uvws,
+    get_all_chans_flagged_by_baseline,
     nan_zero_extreme_flag_ms,
+    set_all_chans_flagged_by_baseline,
 )
 from flint.ms import MS
+
+
+def test_get_all_chans_flagged_by_baseline(ms_example) -> None:
+    """Test that the function correctly identifies channels that are flagged across all timesteps per baseline"""
+
+    with table(str(ms_example), ack=False, readonly=False) as tab:
+        original_flags = tab.getcol("FLAG")
+        original_flags = np.zeros_like(original_flags, dtype=bool)
+        original_flags[:, 110:120, :] = (
+            True  # Flag the first channel for all timesteps of the first baseline
+        )
+
+        tab.putcol("FLAG", original_flags)
+
+    result = get_all_chans_flagged_by_baseline(ms=ms_example)
+
+    assert isinstance(result, dict)
+
+    for baseline, channels in result.items():
+        assert isinstance(baseline, tuple)
+        assert isinstance(channels, np.ndarray)
+        assert channels.dtype == bool
+        assert channels.shape[0] == original_flags.shape[1]
+        assert np.all(channels[110:120])
+
+
+def test_set_all_chans_flagged_by_baseline(ms_example) -> None:
+    """Test that the function correctly sets channels flagged across all timesteps per baseline"""
+
+    with table(str(ms_example), ack=False, readonly=False) as tab:
+        original_flags = tab.getcol("FLAG")
+        original_flags = np.zeros_like(original_flags, dtype=bool)
+        tab.putcol("FLAG", original_flags)
+
+    baseline_flags = get_all_chans_flagged_by_baseline(ms=ms_example)
+    for baseline, channels in baseline_flags.items():
+        baseline_flags[baseline][:] = False
+        baseline_flags[baseline][110:120] = True
+
+    ms_modified = set_all_chans_flagged_by_baseline(
+        ms=ms_example, baseline_flags=baseline_flags
+    )
+
+    with table(str(ms_modified.path), ack=False) as tab:
+        modified_flags = tab.getcol("FLAG")
+
+    assert np.all(modified_flags[:, 110:120, :])
 
 
 def test_flag_ms_zero_uvws(ms_example):
