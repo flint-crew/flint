@@ -70,18 +70,19 @@ def get_flagged_antenna_casda_solutions(
         # the appropriate valid column
         flag_col_name = _find_casda_bandpass_table_type(columns)
 
-        # Remember that VALID is opposite to FLAG
-        flags = ~tab.getcol(flag_col_name)
+        # Remember that VALID is opposite to FLAG, so calling
+        # mask to try to highlight difference
+        mask = ~tab.getcol(flag_col_name)
 
-        # Flag shape will be (TIME, BEAM, ANT, GAIN).
-        assert flags.shape[0] == 1, f"More then one TIME interval in {flags.shape=}"
-        assert len(flags.shape) == 4, (
-            f"Expected dimensionality of 4, but got {flags.shape=}"
+        # Flag shape will be (TIME, BEAM, ANT, JONES_ELEMENT).
+        assert mask.shape[0] == 1, f"More then one TIME interval in {mask.shape=}"
+        assert len(mask.shape) == 4, (
+            f"Expected dimensionality of 4, but got {mask.shape=}"
         )
 
-        # Shape now (BEAM, ANT, GAIN)
-        flags = np.squeeze(flags)
-        beam_ant_flagged = np.all(flags, axis=2)
+        # Shape now (BEAM, ANT, JONES_ELEMENT)
+        mask = np.squeeze(mask)
+        beam_ant_flagged = np.all(mask, axis=2)
 
         for beam, ant_flags in enumerate(beam_ant_flagged):
             beam_ant_idxs[beam] = np.squeeze(np.argwhere(ant_flags))
