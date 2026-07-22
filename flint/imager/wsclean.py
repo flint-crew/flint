@@ -42,6 +42,7 @@ from flint.exceptions import (
 from flint.logging import logger
 from flint.ms import MS, standardise_ms_to_list_ms
 from flint.naming import (
+    ProcessedNameComponents,
     create_image_cube_name,
     create_imaging_name_prefix,
     extract_components_from_name,
@@ -402,7 +403,11 @@ def transpose_and_sort_channel_images(
     """
 
     def _channel_key(path: Path) -> int:
-        channel_range = extract_components_from_name(path).channel_range
+        processed_name = extract_components_from_name(path)
+        if not isinstance(processed_name, ProcessedNameComponents):
+            msg = f"Expected Flint-named images e.g. ProcessedNameComponents. Got {type(processed_name)}"
+            raise ValueError(msg)
+        channel_range = processed_name.channel_range
         assert channel_range is not None, f"No channel range in {path=}"
         return channel_range[0]
 
