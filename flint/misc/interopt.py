@@ -3,6 +3,7 @@ data sets"""
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
@@ -11,6 +12,34 @@ from numpy.typing import NDArray
 
 from flint.logging import logger
 from flint.ms import MS, get_beam_from_ms
+
+
+def _find_casda_bandpass_table_type(column_name: Sequence[str]) -> str:
+    """Examine the bandpass table to determine if it is a CASDA provided table or not.
+    This is done by examining the columns of the table and looking for the expected
+    columns that are present in a CASDA provided bandpass table.
+
+    Args:
+        column_name (Sequence[str]): The columns of the bandpass table to examine
+
+    Raises:
+        ValueError: Raised if the table does not appear to be from CASDA
+
+    Returns:
+        str: The name of the column with the validity flags for the bandpass solutions. These could be 'BANDPASS_VALID' or 'BPLEAKAGE_VALID' for CASDA provided tables.
+
+    """
+    expected_columns: dict[str, Sequence[str]] = {
+        "BANDPASS_VALID": ("TIME", "BANDPASS", "BANDPASS_VALID"),
+        "BPLEAKAGE_VALID": ("TIME", "BPLEAKAGE", "BPLEAKAGE_VALID"),
+    }
+
+    for col_name, expected_cols in expected_columns.items():
+        if all(col in column_name for col in expected_cols):
+            return col_name
+
+    msg = f"Unable to determine bandpass flag column given input {column_name=}. Expected one of {list(expected_columns.values())=}"
+    raise ValueError(msg)
 
 
 def get_flagged_antenna_casda_solutions(
@@ -35,25 +64,25 @@ def get_flagged_antenna_casda_solutions(
     """
 
     beam_ant_idxs: dict[int, NDArray[np.bool]] = {}
-    expected_columns = ("TIME", "BANDPASS", "BANDPASS_VALID")
     with table(str(bandpass_table), ack=False, readonly=True) as tab:
         columns = tab.colnames()
+        # Determined the type of bandpass table we found and find
+        # the appropriate valid column
+        valid_col_name = _find_casda_bandpass_table_type(columns)
 
-        if not all(col in columns for col in expected_columns):
-            msg = f"{expected_columns=}, but found {columns=}"
-            raise ValueError(msg)
+        # Remember that VALID column is opposite in meaning
+        # to the FLAG column, so calling mask to try to highlight difference
+        mask = ~tab.getcol(valid_col_name)
 
-        flags = ~tab.getcol("BANDPASS_VALID")
-
-        # Flag shape will be (TIME, BEAM, ANT, GAIN).
-        assert flags.shape[0] == 1, f"More then one TIME interval in {flags.shape=}"
-        assert len(flags.shape) == 4, (
-            f"Expected dimensionality of 4, but got {flags.shape=}"
+        # Flag shape will be (TIME, BEAM, ANT, JONES_ELEMENT).
+        assert mask.shape[0] == 1, f"More then one TIME interval in {mask.shape=}"
+        assert len(mask.shape) == 4, (
+            f"Expected dimensionality of 4, but got {mask.shape=}"
         )
 
-        # Shape now (BEAM, ANT, GAIN)
-        flags = np.squeeze(flags)
-        beam_ant_flagged = np.all(flags, axis=2)
+        # Shape now (BEAM, ANT, JONES_ELEMENT)
+        mask = np.squeeze(mask)
+        beam_ant_flagged = np.all(mask, axis=2)
 
         for beam, ant_flags in enumerate(beam_ant_flagged):
             beam_ant_idxs[beam] = np.squeeze(np.argwhere(ant_flags))
