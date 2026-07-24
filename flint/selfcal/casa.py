@@ -307,7 +307,6 @@ def gaincal_applycal_ms(
     gain_cal_options: GainCalOptions | None = None,
     update_gain_cal_options: dict[str, Any] | None = None,
     archive_input_ms: bool = False,
-    raise_error_on_fail: bool = True,
     skip_selfcal: bool = False,
     rename_ms: bool = False,
     archive_cal_table: bool = False,
@@ -322,13 +321,12 @@ def gaincal_applycal_ms(
         gain_cal_options (Optional[GainCalOptions], optional): Options provided to gaincal. Defaults to None.
         update_gain_cal_options (Optional[Dict[str, Any]], optional): Update the gain_cal_options with these. Defaults to None.
         archive_input_ms (bool, optional): If True, the input measurement set will be compressed into a single file. Defaults to False.
-        raise_error_on_fail (bool, optional): If gaincal does not converge raise en error. If False and gain cal fails return the input ms. Defaults to True.
         skip_selfcal (bool, optional): Should this self-cal be skipped. If `True`, the a new MS is created but not calibrated the appropriate new name and returned.
         rename_ms (bool, optional): It `True` simply rename a MS and adjust columns appropriately (potentially deleting them) instead of copying the complete MS. If `True` `archive_input_ms` is ignored. Defaults to False.
         archive_cal_table (bool, optional): Archive the output calibration table in a tarball. Defaults to False.
 
     Raises:
-        GainCallError: Raised when raise_error_on_fail is True and gaincal does not converge.
+        GainCallError: Raised when no self-calibration solutions were found
 
     Returns:
         MS: The self-calibrated measurement set.
@@ -394,14 +392,11 @@ def gaincal_applycal_ms(
                 solnorm=gain_cal_options.solnorm,
             )
 
-            if not cal_table.exists():
-                logger.critical(
-                    "The calibration table was not created. Likely gaincal failed. "
-                )
-                if raise_error_on_fail:
-                    raise GainCalError(f"Gaincal failed for {cal_ms.path}")
-                else:
-                    return ms
+        if not cal_table.exists():
+            logger.critical(
+                "The calibration table was not created. Likely gaincal failed. "
+            )
+            raise GainCalError(f"Gaincal failed for {cal_ms.path}")
 
         spw_and_cal_tables.append((spw_str, cal_table))
 
