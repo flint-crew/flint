@@ -376,7 +376,7 @@ def gaincal_applycal_ms(
         # This check attempts to avoid reduplication of work if already
         # carried out. Trying to make this function pure with no side
         # effects, matie
-        if cal_table.parent.exists():
+        if cal_table.exists():
             logger.warning(f"Found an earlier {cal_table=}. Not rerunning gaincal!")
         else:
             gaincal(
