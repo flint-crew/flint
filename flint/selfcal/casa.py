@@ -87,7 +87,7 @@ def _skippable_ms_copy_and_clean(
     with table(str(out_ms_path), ack=False, readonly=True) as tab:
         column_names: list[str] = tab.colnames()
 
-    return "DATA" in column_names
+    return "DATA" in column_names and "CORRECTED_DATA" not in column_names
 
 
 def copy_and_clean_ms_casagain(
