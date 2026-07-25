@@ -53,7 +53,7 @@ class GainCalOptions(BaseOptions):
 
 
 def _skippable_ms_copy_and_clean(
-    ms: MS, out_ms_path: Path, verify: bool = True, rename_ms: bool = False
+    ms: MS, out_ms_path: Path, rename_ms: bool = False
 ) -> bool:
     """In some circumstances components of self-calibration may be
     partway through before being restarted. This is to try to allow
@@ -69,6 +69,9 @@ def _skippable_ms_copy_and_clean(
         ms (MS): The target MS that was going to be self-calibrated
         out_ms_path (Path): The expected MS output name
         rename_ms (bool, optional): Whether the MS will simply be renamed. Defaults to False.
+
+    Raises:
+        ValueError: Raised when neither the input or output MS vsn not be found.
 
     Returns:
         bool: Indicates where previous self-calibration round has partly been attempted, and if it can be continued.
