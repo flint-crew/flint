@@ -52,6 +52,50 @@ class GainCalOptions(BaseOptions):
     """Renormalise the distribution of the amplite gains so the mean is unity."""
 
 
+def check_for_valid_calibration_table(caltable_path: Path) -> bool:
+    """Basic checks to ensure that the calibration table
+    from CASAs gaincal is valid
+
+    Args:
+        caltable_path (Path): Table path to examine
+
+    Returns:
+        bool: Whether the input table appears to be a CASA solutions table from gaincal
+    """
+
+    if not caltable_path.exists() or not caltable_path.is_dir():
+        return False
+
+    logger.info(f"{caltable_path=}")
+
+    try:
+        with table(str(caltable_path)) as tab:
+            colnames = tab.colnames()
+            no_rows = len(tab)
+    except:  # noqa: E722
+        return False
+
+    expected_columns = [
+        "TIME",
+        "FIELD_ID",
+        "SPECTRAL_WINDOW_ID",
+        "ANTENNA1",
+        "ANTENNA2",
+        "INTERVAL",
+        "SCAN_NUMBER",
+        "OBSERVATION_ID",
+        "CPARAM",
+        "PARAMERR",
+        "FLAG",
+        "SNR",
+        "WEIGHT",
+    ]
+
+    all_columns_exist = all(col in colnames for col in expected_columns)
+
+    return no_rows >= 1 and all_columns_exist
+
+
 def _skippable_ms_copy_and_clean(
     ms: MS, out_ms_path: Path, rename_ms: bool = False
 ) -> bool:
@@ -377,7 +421,7 @@ def gaincal_applycal_ms(
         # This check attempts to avoid reduplication of work if already
         # carried out. Trying to make this function pure with no side
         # effects, matie
-        if cal_table.exists():
+        if check_for_valid_calibration_table(caltable_path=cal_table):
             logger.warning(f"Found an earlier {cal_table=}. Not rerunning gaincal!")
         else:
             gaincal(

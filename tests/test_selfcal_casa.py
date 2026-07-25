@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -11,7 +12,37 @@ from flint.selfcal.casa import (
     GainCalOptions,
     _process_gaincal_options,
     _skippable_ms_copy_and_clean,
+    check_for_valid_calibration_table,
 )
+from flint.utils import get_packaged_resource_path
+
+
+def test_check_for_valid_calibration_table(tmpdir) -> None:
+    """Basic checks around the calibration table"""
+
+    tmp_path = Path(tmpdir)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+
+    bad_file = tmp_path / "JACKSPARROWMATE.txt"
+    bad_file.touch()
+    assert not check_for_valid_calibration_table(caltable_path=bad_file)
+    assert not check_for_valid_calibration_table(caltable_path=bad_file.parent)
+
+    caltable_zip = Path(
+        get_packaged_resource_path(
+            package="flint.data.tests",
+            filename="SB75061.EMU_1210+04A.beam08.round1.caltable.ch0000-0287.zip",
+        )
+    )
+    assert caltable_zip.exists()
+    outpath = tmp_path / "EXAMPLE"
+    outpath.mkdir(exist_ok=True, parents=True)
+
+    shutil.unpack_archive(caltable_zip, outpath)
+    caltable_path = outpath / "SB75061.EMU_1210+04A.beam08.round1.caltable.ch0000-0287"
+    assert caltable_path.exists()
+
+    assert check_for_valid_calibration_table(caltable_path=caltable_path)
 
 
 def test_skippable_ms_copy_and_clean(ms_example) -> None:
