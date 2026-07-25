@@ -23,6 +23,7 @@ from flint.imager.wsclean import (
     _resolve_wsclean_key_value_to_cli_str,
     _wsclean_output_callback,
     combine_image_set_to_cube,
+    combine_images_to_cube,
     create_wsclean_cmd,
     create_wsclean_name_argument,
     get_parser,
@@ -32,6 +33,7 @@ from flint.imager.wsclean import (
     rename_wsclean_prefix_in_image_set,
     rotate_cube,
     split_and_get_image_set,
+    split_cube_into_planes,
     split_image_set,
     transpose_and_sort_channel_images,
 )
@@ -39,6 +41,40 @@ from flint.logging import logger
 from flint.naming import create_imaging_name_prefix
 from flint.options import MS
 from flint.utils import get_packaged_resource_path
+
+
+def test_split_cube_into_planes(tmpdir) -> None:
+    """A cube should split into flint named planes that can be regrouped across beams"""
+    files = [
+        Path(
+            shutil.copy(
+                get_packaged_resource_path(
+                    package="flint.data.tests",
+                    filename=f"SB56659.RACS_0940-04.beam17.round3-000{i}-image.sub.fits",
+                ),
+                Path(tmpdir),
+            )
+        )
+        for i in range(3)
+    ]
+    cube = combine_images_to_cube(
+        images=files,
+        prefix=f"{tmpdir}/SB56659.RACS_0940-04.beam17.round3",
+        mode="image",
+    )
+
+    planes = split_cube_into_planes(cube=cube)
+
+    assert [plane.name for plane in planes] == [
+        f"SB56659.RACS_0940-04.beam17.round3.i.ch{channel:04d}-{channel:04d}.fits"
+        for channel in range(3)
+    ]
+    assert all(plane.exists() for plane in planes)
+    # The names remain flint parsable, so may be regrouped per channel across beams
+    assert len(transpose_and_sort_channel_images([planes, planes])) == 3
+
+    with pytest.raises(NamingException):
+        split_cube_into_planes(cube=Path(shutil.copy(cube, Path(tmpdir) / "bad.fits")))
 
 
 def test_transpose_and_sort_channel_images() -> None:

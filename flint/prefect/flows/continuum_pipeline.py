@@ -538,13 +538,13 @@ def process_science_fields(
 
     if field_options.coadd_cubes:
         with tags("cubes"):
-            cube_parset = create_convolve_linmos_cubes(
+            cube_results = create_convolve_linmos_cubes(
                 wsclean_results=wsclean_results,  # type: ignore
                 field_options=field_options,
                 current_round=(field_options.rounds if field_options.rounds else None),
                 additional_linmos_suffix_str="cube",
             )
-            archive_wait_for.append(cube_parset)
+            archive_wait_for.extend(cube_results)
 
     if field_options.stokes_v_imaging:
         with tags("stokes-v"):

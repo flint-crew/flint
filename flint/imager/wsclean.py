@@ -32,6 +32,7 @@ from capn_crunch import (
     options_to_dict,
 )
 from fitscube.combine_fits import combine_fits
+from fitscube.extract import ExtractOptions, extract_plane_from_cube, find_target_axis
 
 from flint.exceptions import (
     AttemptRerunException,
@@ -45,7 +46,9 @@ from flint.naming import (
     ProcessedNameComponents,
     create_image_cube_name,
     create_imaging_name_prefix,
+    create_path_from_processed_name_components,
     extract_components_from_name,
+    processed_ms_format,
     split_images,
 )
 from flint.options import (
@@ -418,6 +421,49 @@ def transpose_and_sort_channel_images(
     )
 
     return [list(channel_group) for channel_group in zip(*sorted_beams)]
+
+
+def split_cube_into_planes(cube: Path) -> list[Path]:
+    """Extract each channel of a FITS cube into its own image, named following the
+    flint processed name format so that the planes may be regrouped across beams
+    by ``transpose_and_sort_channel_images``.
+
+    Args:
+        cube (Path): The FITS cube to split apart
+
+    Returns:
+        list[Path]: The per-channel images extracted from ``cube``
+    """
+    components = processed_ms_format(in_name=cube)
+    if components is None:
+        msg = f"Expected a flint named cube. Got {cube=}"
+        raise NamingException(msg)
+
+    with fits.open(cube, memmap=True, lazy_load_hdus=True) as open_fits:
+        header = open_fits[0].header
+    channels = int(header[f"NAXIS{find_target_axis(header=header).axis}"])
+    logger.info(f"Splitting {cube} into {channels} planes")
+
+    def _plane_path(channel: int) -> Path:
+        # Only the flint name fields are retained, so a single cube per beam
+        # should be split at a time to avoid clobbering planes
+        plane_base = create_path_from_processed_name_components(
+            processed_name_components=components._replace(
+                channel_range=(channel, channel)
+            ),
+            parent_path=cube.parent,
+        )
+        return Path(f"{plane_base}.fits")
+
+    return [
+        extract_plane_from_cube(
+            fits_cube=cube,
+            extract_options=ExtractOptions(
+                channel_index=channel, output_path=_plane_path(channel), overwrite=True
+            ),
+        )
+        for channel in range(channels)
+    ]
 
 
 def get_wsclean_output_source_list_path(
