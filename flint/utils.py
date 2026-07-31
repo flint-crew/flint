@@ -635,7 +635,9 @@ def estimate_image_centre(image_path: Path) -> SkyCoord:
 
 
 def zip_folder(
-    in_path: Path, out_zip: Path | None = None, archive_format: str = "tar"
+    in_path: Path,
+    out_zip: Path | None = None,
+    archive_format: str = "tar",
 ) -> Path:
     """Zip a directory and remove the original.
 
@@ -643,7 +645,6 @@ def zip_folder(
         in_path (Path): The path that will be zipped up.
         out_zip (Path, optional): Name of the output file. A `archive_format` extension will be added by `shutil.make_archive`. Defaults to None.
         archive_format (str, optional): The format of the archive. See `shutil.make_archive`. Defaults to "tar".
-
     Returns:
         Path: the path of the compressed zipped folder
     """

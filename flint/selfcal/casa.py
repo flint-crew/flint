@@ -52,6 +52,91 @@ class GainCalOptions(BaseOptions):
     """Renormalise the distribution of the amplite gains so the mean is unity."""
 
 
+def check_for_valid_calibration_table(caltable_path: Path) -> bool:
+    """Basic checks to ensure that the calibration table
+    from CASAs gaincal is valid
+
+    Args:
+        caltable_path (Path): Table path to examine
+
+    Returns:
+        bool: Whether the input table appears to be a CASA solutions table from gaincal
+    """
+
+    if not caltable_path.exists() or not caltable_path.is_dir():
+        return False
+
+    logger.info(f"{caltable_path=}")
+
+    try:
+        with table(str(caltable_path)) as tab:
+            colnames = tab.colnames()
+            no_rows = len(tab)
+    except:  # noqa: E722
+        return False
+
+    expected_columns = [
+        "TIME",
+        "FIELD_ID",
+        "SPECTRAL_WINDOW_ID",
+        "ANTENNA1",
+        "ANTENNA2",
+        "INTERVAL",
+        "SCAN_NUMBER",
+        "OBSERVATION_ID",
+        "CPARAM",
+        "PARAMERR",
+        "FLAG",
+        "SNR",
+        "WEIGHT",
+    ]
+
+    all_columns_exist = all(col in colnames for col in expected_columns)
+
+    return no_rows >= 1 and all_columns_exist
+
+
+def _skippable_ms_copy_and_clean(
+    ms: MS, out_ms_path: Path, rename_ms: bool = False
+) -> bool:
+    """In some circumstances components of self-calibration may be
+    partway through before being restarted. This is to try to allow
+    continuing from that point if changes are known and operation modes
+    support. Critically:
+
+    - the input ms must not exist
+    - the output ms must exist
+    - renaming of the ms is active (as opposed to copying)
+    - DATA column exists
+
+    Args:
+        ms (MS): The target MS that was going to be self-calibrated
+        out_ms_path (Path): The expected MS output name
+        rename_ms (bool, optional): Whether the MS will simply be renamed. Defaults to False.
+
+    Raises:
+        ValueError: Raised when neither the input or output MS vsn not be found.
+
+    Returns:
+        bool: Indicates where previous self-calibration round has partly been attempted, and if it can be continued.
+    """
+    if not rename_ms or ms.path.exists():
+        return False
+
+    # If renaming is True that is an atomic operation, so should
+    # get past this.
+    if not out_ms_path.exists():
+        msg = f"Neither {ms.path=} nor {out_ms_path=} exists. No attempt to recover."
+        raise ValueError(msg)
+
+    # Need to make sure that the DATA column exists for
+    # subsequent gaincal task
+    with table(str(out_ms_path), ack=False, readonly=True) as tab:
+        column_names: list[str] = tab.colnames()
+
+    return "DATA" in column_names and "CORRECTED_DATA" not in column_names
+
+
 def copy_and_clean_ms_casagain(
     ms: MS, round: int = 1, verify: bool = True, rename_ms: bool = False
 ) -> MS:
@@ -80,13 +165,12 @@ def copy_and_clean_ms_casagain(
     logger.info(f"Output MS name will be {out_ms_path!s}.")
     logger.info(f"{mode_text} {ms.path} to {out_ms_path}.")
 
-    if out_ms_path.exists():
-        logger.warning(f"{out_ms_path} already exists. Removing it. ")
-        logger.warning(f"{ms.path=} {ms.path.exists()=}")
-        logger.warning(f"{out_ms_path=} {out_ms_path.exists()=}")
-        remove_files_folders(out_ms_path)
+    if _skippable_ms_copy_and_clean(
+        ms=ms, out_ms_path=out_ms_path, rename_ms=rename_ms
+    ):
+        ms = ms.with_options(path=out_ms_path, column="DATA")
 
-    if rename_ms:
+    elif rename_ms:
         if not ms.column:
             raise MSError(f"No column has been assigned: {ms}")
 
@@ -94,6 +178,12 @@ def copy_and_clean_ms_casagain(
             ms=ms, target=out_ms_path, corrected_data=ms.column, data="DATA"
         )
     else:
+        if out_ms_path.exists():
+            logger.warning(f"{out_ms_path} already exists. Removing it. ")
+            logger.warning(f"{ms.path=} {ms.path.exists()=}")
+            logger.warning(f"{out_ms_path=} {out_ms_path.exists()=}")
+            remove_files_folders(out_ms_path)
+
         copytree(ms.path, out_ms_path)
         # Because we can trust nothing, verify the
         # copy with rsync. On some lustre file systems (mostly seen on stonix)
@@ -230,6 +320,33 @@ def merge_spws_in_ms(casa_container: Path, ms_path: Path) -> Path:
     return ms_path
 
 
+def _process_gaincal_options(
+    gain_cal_options: GainCalOptions | None = None,
+    update_gain_cal_options: dict[str, Any] | None = None,
+) -> GainCalOptions:
+    """Helper to process and update GaincalOptions on initialise of self-calibration routine
+
+    Args:
+        gain_cal_options (GainCalOptions | None, optional): Any existing gaincal options. Defaults to None.
+        update_gain_cal_options (dict[str, Any] | None, optional): Overrides to provide the to input gaincal options or defaults. Defaults to None.
+
+    Returns:
+        GainCalOptions: options to use throughout gaincalibtaion
+    """
+    if gain_cal_options is None:
+        gain_cal_options = GainCalOptions()
+    if update_gain_cal_options:
+        logger.info(f"Updating gaincal options with: {update_gain_cal_options}")
+        gain_cal_options = gain_cal_options.with_options(**update_gain_cal_options)
+
+    return gain_cal_options
+
+
+# TODO: This gaincal applycal function should be refactored
+# with an eye towards removing side effects. A potential
+# rewrite might consider removal of archiving steps, and
+# returning all components in a Result object that can be
+# selectively passed over to something to archive
 def gaincal_applycal_ms(
     ms: MS,
     casa_container: Path,
@@ -237,7 +354,6 @@ def gaincal_applycal_ms(
     gain_cal_options: GainCalOptions | None = None,
     update_gain_cal_options: dict[str, Any] | None = None,
     archive_input_ms: bool = False,
-    raise_error_on_fail: bool = True,
     skip_selfcal: bool = False,
     rename_ms: bool = False,
     archive_cal_table: bool = False,
@@ -252,29 +368,33 @@ def gaincal_applycal_ms(
         gain_cal_options (Optional[GainCalOptions], optional): Options provided to gaincal. Defaults to None.
         update_gain_cal_options (Optional[Dict[str, Any]], optional): Update the gain_cal_options with these. Defaults to None.
         archive_input_ms (bool, optional): If True, the input measurement set will be compressed into a single file. Defaults to False.
-        raise_error_on_fail (bool, optional): If gaincal does not converge raise en error. If False and gain cal fails return the input ms. Defaults to True.
         skip_selfcal (bool, optional): Should this self-cal be skipped. If `True`, the a new MS is created but not calibrated the appropriate new name and returned.
         rename_ms (bool, optional): It `True` simply rename a MS and adjust columns appropriately (potentially deleting them) instead of copying the complete MS. If `True` `archive_input_ms` is ignored. Defaults to False.
         archive_cal_table (bool, optional): Archive the output calibration table in a tarball. Defaults to False.
 
     Raises:
-        GainCallError: Raised when raise_error_on_fail is True and gaincal does not converge.
+        GainCallError: Raised when no self-calibration solutions were found
 
     Returns:
         MS: The self-calibrated measurement set.
     """
+    # This function tries to ensure side-effects from failed attempts are recoverable
+    # which sometimes happens in some HPC environments. This is best effort. In summary
+    # if an existing calibration table exists, gain cal is not performed.
+    # The tables can be applied from DATA -> CORRECTED_DATA any number of times
+    # without any negative effects (other than overwriting CORRECTED_DATA). The
+    # final archiving of tables as the last step means the applysolutions can
+    # successfully find the tables.
+
     logger.info(f"Measurement set to be self-calibrated: ms={ms}")
 
     assert casa_container.exists(), f"{casa_container=} does not exist. "
 
-    if gain_cal_options is None:
-        gain_cal_options = GainCalOptions()
-    if update_gain_cal_options:
-        logger.info(f"Updating gaincal options with: {update_gain_cal_options}")
-        gain_cal_options = gain_cal_options.with_options(**update_gain_cal_options)
+    gain_cal_options = _process_gaincal_options(
+        gain_cal_options=gain_cal_options,
+        update_gain_cal_options=update_gain_cal_options,
+    )
 
-    # TODO: If the skip_selfcal is True we should just symlink, maybe?
-    # Pirates like easy things though.
     cal_ms = copy_and_clean_ms_casagain(ms=ms, round=round, rename_ms=rename_ms)
 
     # Archive straight after copying in case we skip the gaincal and return
@@ -298,29 +418,32 @@ def gaincal_applycal_ms(
             ms=cal_ms, channel_range=channel_range
         )
 
-        gaincal(
-            container=casa_container,
-            bind_dirs=(cal_ms.path.parent, cal_table.parent),
-            vis=str(cal_ms.path),
-            caltable=str(cal_table),
-            spw=spw_str,
-            solint=gain_cal_options.solint,
-            gaintype=gain_cal_options.gaintype,
-            minsnr=gain_cal_options.minsnr,
-            calmode=gain_cal_options.calmode,
-            selectdata=gain_cal_options.selectdata,
-            uvrange=gain_cal_options.uvrange,
-            solnorm=gain_cal_options.solnorm,
-        )
+        # This check attempts to avoid reduplication of work if already
+        # carried out. Trying to make this function pure with no side
+        # effects, matie
+        if check_for_valid_calibration_table(caltable_path=cal_table):
+            logger.warning(f"Found an earlier {cal_table=}. Not rerunning gaincal!")
+        else:
+            gaincal(
+                container=casa_container,
+                bind_dirs=(cal_ms.path.parent, cal_table.parent),
+                vis=str(cal_ms.path),
+                caltable=str(cal_table),
+                spw=spw_str,
+                solint=gain_cal_options.solint,
+                gaintype=gain_cal_options.gaintype,
+                minsnr=gain_cal_options.minsnr,
+                calmode=gain_cal_options.calmode,
+                selectdata=gain_cal_options.selectdata,
+                uvrange=gain_cal_options.uvrange,
+                solnorm=gain_cal_options.solnorm,
+            )
 
         if not cal_table.exists():
             logger.critical(
                 "The calibration table was not created. Likely gaincal failed. "
             )
-            if raise_error_on_fail:
-                raise GainCalError(f"Gaincal failed for {cal_ms.path}")
-            else:
-                return ms
+            raise GainCalError(f"Gaincal failed for {cal_ms.path}")
 
         spw_and_cal_tables.append((spw_str, cal_table))
 
@@ -329,6 +452,10 @@ def gaincal_applycal_ms(
     # the visibilities in the existing CORRECTED_DATA column,
     # not overwriting the entire column
     for idx, (spw_str, cal_table) in enumerate(spw_and_cal_tables):
+        # shoulod this be rerunning in again, from recovery of a
+        # dead worker, then this will simply reapply the solutions
+        # overwriting any that may already existing in the column.
+        # Some operations are lost, but no side effects, ya sea dog
         logger.info(
             f"Apply solutions {idx + 1} of {len(spw_and_cal_tables)}, {spw_str}"
         )
@@ -341,7 +468,11 @@ def gaincal_applycal_ms(
             flagbackup=False,
         )
 
-        if archive_cal_table:
+    # Only archive tables if application of solutions was successful. If
+    # we ought to make sure we don't potentially double up on work
+    if archive_cal_table:
+        logger.info("Archiving calibration tables")
+        for idx, (spw_str, cal_table) in enumerate(spw_and_cal_tables):
             zip_folder(in_path=cal_table)
 
     flag_versions_table = cal_ms.path.with_suffix(".ms.flagversions")
