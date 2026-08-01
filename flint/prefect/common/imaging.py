@@ -1139,6 +1139,7 @@ def create_convolve_linmos_cubes(
             holofile=field_options.holofile,
             cutoff=field_options.pb_cutoff,
             cleanup=True,
+            trim_linmos_fits=False,  # so image shapes across channels all the same
         ),
         suffix_str=linmos_suffix_str,
         holofile=holofile,
