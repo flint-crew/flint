@@ -114,7 +114,7 @@ def test_cube_split_and_recombine_roundtrip(tmpdir) -> None:
     per-channel parallel linmos does -- must keep the data and the WCS describing
     it in step. Guards against an axis rotation not matched by the header swap."""
     tmp_path = Path(tmpdir)
-    channels, shape = 3, (5, 7)
+    channels, shape = 3, (500, 700)
     images = [
         _write_channel_image(
             tmp_path / f"SB1234.RACS_0000-00.beam00.round1-{channel:04d}-image.fits",
