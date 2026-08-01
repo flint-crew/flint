@@ -1046,6 +1046,9 @@ def linmos_channel_groups_to_cubes(
     """Co-add beam images one channel at a time, in parallel, then stack the
     resulting mosaics back into image and weight cubes.
 
+    Trimming of the per-channel mosaics is always disabled, as each channel
+    would be trimmed to its own bounding box.
+
     Args:
         channel_groups (Collection[Collection[Path]]): For each channel, the beam images to co-add
         container (Path): Path to a yandasoft singularity container
@@ -1076,7 +1079,10 @@ def linmos_channel_groups_to_cubes(
             linmos_options=linmos_options.with_options(
                 stokesi_images=list(stokesi_groups[channel_idx])
                 if stokesi_groups is not None
-                else None
+                else None,
+                # Each channel would otherwise be trimmed to its own bounding box,
+                # leaving the planes on differing pixel grids and scrambling the cube
+                trim_linmos_fits=False,
             ),
             field_summary=field_summary,
             holofile=holofile,
