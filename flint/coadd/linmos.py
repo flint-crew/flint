@@ -11,6 +11,7 @@ import numpy as np
 from astropy.io import fits
 from capn_crunch import BaseOptions, add_options_to_parser, create_options_from_parser
 
+from flint.exceptions import ShapeMismatchError
 from flint.logging import logger
 from flint.naming import LinmosNames, create_linmos_names, extract_beam_from_name
 from flint.sclient import run_singularity_command
@@ -63,11 +64,11 @@ class BoundingBox(NamedTuple):
     xmin: int
     """Minimum x pixel"""
     xmax: int
-    """Maximum x pixel"""
+    """Maximum x pixel, exclusive (i.e. slice ready)"""
     ymin: int
     """Minimum y pixel"""
     ymax: int
-    """Maximum y pixel"""
+    """Maximum y pixel, exclusive (i.e. slice ready)"""
     original_shape: tuple[int, int]
     """The original shape of the image. If constructed against a cube this is the shape of a single plane."""
 
@@ -111,12 +112,17 @@ def _create_bound_box_plane(
     x_valid = np.any(image_valid, axis=1)
     y_valid = np.any(image_valid, axis=0)
 
-    # Now get the first and last index
+    # Now get the first and last index. The maxima are made exclusive so that
+    # slicing with them retains the last valid row/column
     xmin, xmax = np.where(x_valid)[0][[0, -1]]
     ymin, ymax = np.where(y_valid)[0][[0, -1]]
 
     return BoundingBox(
-        xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax, original_shape=image_data.shape[-2:]
+        xmin=int(xmin),
+        xmax=int(xmax) + 1,
+        ymin=int(ymin),
+        ymax=int(ymax) + 1,
+        original_shape=image_data.shape[-2:],
     )
 
 
@@ -150,30 +156,62 @@ def create_bound_box(image_data: np.ndarray, is_masked: bool = False) -> Boundin
         logger.info("No valid bounding box found. Constructing one for all pixels")
         return BoundingBox(
             xmin=0,
-            xmax=image_data.shape[-1] - 1,
+            xmax=image_data.shape[-2],
             ymin=0,
-            ymax=image_data.shape[-2] - 1,
+            ymax=image_data.shape[-1],
             original_shape=tuple(image_data.shape[-2:]),  # type: ignore
         )
-    elif len(bounding_boxes) == 1:
-        assert bounding_boxes[0] is not None, "This should not happen"
-        return bounding_boxes[0]
 
-    assert all([bb is not None for bb in bounding_boxes])
+    return _merge_bound_boxes(bounding_boxes=bounding_boxes)
 
-    logger.info(
-        f"Boounding boxes across {len(bounding_boxes)} constructed. Finsing limits. "
-    )
-    # The type ignores below are to avoid mypy believe bound_boxes could
-    # include None. The above checks should be sufficient
-    xmin = min([bb.xmin for bb in bounding_boxes])  # type: ignore
-    xmax = max([bb.xmax for bb in bounding_boxes])  # type: ignore
-    ymin = min([bb.ymin for bb in bounding_boxes])  # type: ignore
-    ymax = max([bb.ymax for bb in bounding_boxes])  # type: ignore
+
+def _merge_bound_boxes(bounding_boxes: Collection[BoundingBox]) -> BoundingBox:
+    """Construct the bounding box that encloses all input bounding boxes.
+
+    Args:
+        bounding_boxes (Collection[BoundingBox]): The boxes to merge together
+
+    Returns:
+        BoundingBox: The smallest box containing all inputs
+    """
+    logger.info(f"Merging {len(bounding_boxes)} bounding boxes")
+
+    original_shapes = {bb.original_shape[-2:] for bb in bounding_boxes}
+    if len(original_shapes) > 1:
+        msg = f"Bounding boxes constructed against differing shapes: {original_shapes=}"
+        raise ShapeMismatchError(msg)
 
     return BoundingBox(
-        xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax, original_shape=image_data.shape
+        xmin=min([bb.xmin for bb in bounding_boxes]),
+        xmax=max([bb.xmax for bb in bounding_boxes]),
+        ymin=min([bb.ymin for bb in bounding_boxes]),
+        ymax=max([bb.ymax for bb in bounding_boxes]),
+        original_shape=original_shapes.pop(),
     )
+
+
+def common_bound_box(images: Collection[Path]) -> BoundingBox:
+    """Construct the bounding box that encloses the valid pixels of every image.
+
+    Images are read one at a time so that a set of planes destined for a cube
+    may be trimmed onto a common pixel grid without holding the cube in memory.
+
+    Args:
+        images (Collection[Path]): The FITS images to consider
+
+    Returns:
+        BoundingBox: The box enclosing the valid pixels of all ``images``
+    """
+    logger.info(f"Constructing a common bounding box over {len(images)} images")
+
+    bounding_boxes = []
+    for image in images:
+        data = np.squeeze(fits.getdata(image))
+        # 0.0 is not a real number, and is how linmos denotes blanked pixels
+        data[data == 0.0] = np.nan
+        bounding_boxes.append(create_bound_box(image_data=data, is_masked=False))
+
+    return _merge_bound_boxes(bounding_boxes=bounding_boxes)
 
 
 class TrimImageResult(NamedTuple):
