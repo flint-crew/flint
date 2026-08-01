@@ -146,11 +146,11 @@ def create_bound_box(image_data: np.ndarray, is_masked: bool = False) -> Boundin
     reshaped_image_data = image_data.reshape((-1, *image_data.shape[-2:]))
     logger.info(f"New image shape {reshaped_image_data.shape} from {image_data.shape}")
 
-    bounding_boxes = [
+    maybe_bounding_boxes = [
         _create_bound_box_plane(image_data=image, is_masked=is_masked)
         for image in reshaped_image_data
     ]
-    bounding_boxes = [bb for bb in bounding_boxes if bb is not None]
+    bounding_boxes = [bb for bb in maybe_bounding_boxes if bb is not None]
 
     if len(bounding_boxes) == 0:
         logger.info("No valid bounding box found. Constructing one for all pixels")
