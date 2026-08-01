@@ -32,6 +32,7 @@ from capn_crunch import (
     options_to_dict,
 )
 from fitscube.combine_fits import combine_fits
+from fitscube.exceptions import TargetAxisMissingException
 from fitscube.extract import ExtractOptions, extract_plane_from_cube, find_target_axis
 
 from flint.exceptions import (
@@ -1070,6 +1071,16 @@ def rotate_cube(output_cube_path: str | Path, inplace: bool = True) -> Path:
     with fits.open(output_path, mode="readonly", memmap=True) as hdul:
         header = hdul[0].header.copy()
         data_cube = hdul[0].data.copy()
+
+    # Cubes formed from planes that were themselves cut from a rotated cube are
+    # already in the desired order, and rotating again would undo it
+    try:
+        if find_target_axis(header=header).axis == header["NAXIS"]:
+            logger.info(f"{output_path.name} is already (chan, pol, dec, ra)")
+            return output_path
+    except TargetAxisMissingException:
+        logger.warning(f"No frequency axis in {output_path.name}, not rotating")
+        return output_path
 
     # Swap axes in header
     tmp_header = header.copy()

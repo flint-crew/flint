@@ -22,7 +22,14 @@ from flint.calibrate.aocalibrate import (
     create_apply_solutions_cmd,
     select_aosolution_for_ms,
 )
-from flint.coadd.linmos import LinmosOptions, LinmosResult, linmos_images
+from flint.coadd.linmos import (
+    BoundingBox,
+    LinmosOptions,
+    LinmosResult,
+    common_bound_box,
+    linmos_images,
+    trim_fits_image,
+)
 from flint.convol import (
     BeamShape,
     convolve_cubes,
@@ -103,6 +110,7 @@ task_merge_image_sets_from_results = task(merge_image_sets_from_results)
 task_transpose_and_sort_channel_images = task(transpose_and_sort_channel_images)
 task_create_name_from_common_fields = task(create_name_from_common_fields)
 task_remove_files_folders = task(remove_files_folders)
+task_common_bound_box = task(common_bound_box)
 
 # Tasks below are extracting componented from earlier stages, or are
 # otherwise doing something important
@@ -113,6 +121,12 @@ FlagMS = TypeVar("FlagMS", MS, ApplySolutions)
 @task
 def task_get_channel_images_from_paths(paths: list[Path]) -> list[Path]:
     return [path for path in paths if "MFS" not in path.name]
+
+
+@task
+def task_trim_to_bound_box(image: Path, bounding_box: BoundingBox) -> Path:
+    """Trim an image to a bounding box shared with other images"""
+    return trim_fits_image(image_path=image, bounding_box=bounding_box).path
 
 
 @task
@@ -1046,8 +1060,9 @@ def linmos_channel_groups_to_cubes(
     """Co-add beam images one channel at a time, in parallel, then stack the
     resulting mosaics back into image and weight cubes.
 
-    Trimming of the per-channel mosaics is always disabled, as each channel
-    would be trimmed to its own bounding box.
+    Should ``linmos_options.trim_linmos_fits`` be set the trimming is deferred
+    until every channel has been co-added, so that a single bounding box may be
+    shared across the channels and the image and weight products.
 
     Args:
         channel_groups (Collection[Collection[Path]]): For each channel, the beam images to co-add
@@ -1089,6 +1104,19 @@ def linmos_channel_groups_to_cubes(
         )
         image_planes.append(task_getattr.submit(linmos_result, "image_fits"))
         weight_planes.append(task_getattr.submit(linmos_result, "weight_fits"))
+
+    if linmos_options.trim_linmos_fits:
+        # Passing the futures in is what forms the barrier - every channel has to
+        # be co-added before the box that all of them share can be known
+        bounding_box = task_common_bound_box.submit(images=image_planes)
+        image_planes = task_trim_to_bound_box.map(
+            image=image_planes,  # type: ignore
+            bounding_box=unmapped(bounding_box),  # type: ignore
+        )
+        weight_planes = task_trim_to_bound_box.map(
+            image=weight_planes,  # type: ignore
+            bounding_box=unmapped(bounding_box),  # type: ignore
+        )
 
     # Stack the per-channel mosaics back into image and weight cubes,
     # removing the per-channel mosaics once cubed.

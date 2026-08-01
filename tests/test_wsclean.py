@@ -90,12 +90,15 @@ def _write_channel_image(path: Path, channel: int, shape: tuple[int, int]) -> Pa
 
 def _assert_cube_matches_images(cube: Path, images: list[Path]) -> None:
     """Every channel of ``cube``, located via its own WCS, should hold the data
-    and the frequency of the matching image."""
+    and the frequency of the matching image, and the cube should be ordered
+    (chan, pol, dec, ra) as linmos expects."""
     with fits.open(cube) as hdul:
         header, data = hdul[0].header, hdul[0].data
 
     freq_axis = find_target_axis(header=header)
+    assert freq_axis.axis == header["NAXIS"]
     assert header[f"NAXIS{freq_axis.axis}"] == len(images)
+    assert data.shape[0] == len(images)
 
     for channel, image in enumerate(images):
         plane = np.take(data, channel, axis=data.ndim - freq_axis.axis).squeeze()
@@ -111,9 +114,7 @@ def test_cube_split_and_recombine_roundtrip(tmpdir) -> None:
     per-channel parallel linmos does -- must keep the data and the WCS describing
     it in step. Guards against an axis rotation not matched by the header swap."""
     tmp_path = Path(tmpdir)
-    # The cube must exceed 1800 pixels, else fitscube takes an in-memory path
-    # that promotes the cube to float64 and misplaces the float32 planes
-    channels, shape = 3, (26, 27)
+    channels, shape = 3, (5, 7)
     images = [
         _write_channel_image(
             tmp_path / f"SB1234.RACS_0000-00.beam00.round1-{channel:04d}-image.fits",
@@ -142,6 +143,31 @@ def test_cube_split_and_recombine_roundtrip(tmpdir) -> None:
         mode="image",
     )
     _assert_cube_matches_images(cube=field_cube, images=images)
+
+
+def test_rotate_cube_is_idempotent(tmpdir) -> None:
+    """A cube already ordered (chan, pol, dec, ra) must be left alone, else the
+    second pass of the per-channel linmos path would rotate it back"""
+    tmp_path = Path(tmpdir)
+    images = [
+        _write_channel_image(
+            tmp_path / f"SB1234.RACS_0000-00.beam00.round1-{channel:04d}-image.fits",
+            channel=channel,
+            shape=(5, 7),
+        )
+        for channel in range(3)
+    ]
+    cube = combine_images_to_cube(
+        images=images,
+        prefix=f"{tmp_path}/SB1234.RACS_0000-00.beam00.round1",
+        mode="image",
+    )
+
+    header, data = fits.getheader(cube), fits.getdata(cube)
+    rotate_cube(cube)
+
+    assert fits.getheader(cube) == header
+    assert np.array_equal(fits.getdata(cube), data)
 
 
 def test_combine_images_to_cube_shape_mismatch(tmpdir) -> None:
