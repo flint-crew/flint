@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 from prefect import Task, task, unmapped
 from prefect.artifacts import create_table_artifact
+from prefect.futures import PrefectFuture
 
 from flint.calibrate.aocalibrate import (
     ApplySolutions,
@@ -21,7 +22,14 @@ from flint.calibrate.aocalibrate import (
     create_apply_solutions_cmd,
     select_aosolution_for_ms,
 )
-from flint.coadd.linmos import LinmosOptions, LinmosResult, linmos_images
+from flint.coadd.linmos import (
+    BoundingBox,
+    LinmosOptions,
+    LinmosResult,
+    common_bound_box,
+    linmos_images,
+    trim_fits_image,
+)
 from flint.convol import (
     BeamShape,
     convolve_cubes,
@@ -39,6 +47,7 @@ from flint.imager.wsclean import (
     merge_image_sets,
     merge_image_sets_from_results,
     split_and_get_image_set,
+    split_cube_into_planes,
     transpose_and_sort_channel_images,
     wsclean_imager,
 )
@@ -64,7 +73,7 @@ from flint.naming import (
 )
 from flint.options import FieldOptions, SubtractFieldOptions
 from flint.peel.potato import potato_peel
-from flint.prefect.common.utils import upload_image_as_artifact
+from flint.prefect.common.utils import task_getattr, upload_image_as_artifact
 from flint.selfcal.casa import gaincal_applycal_ms
 from flint.source_finding.aegean import AegeanOutputs, run_bane_and_aegean
 from flint.summary import FieldSummary
@@ -101,6 +110,7 @@ task_merge_image_sets_from_results = task(merge_image_sets_from_results)
 task_transpose_and_sort_channel_images = task(transpose_and_sort_channel_images)
 task_create_name_from_common_fields = task(create_name_from_common_fields)
 task_remove_files_folders = task(remove_files_folders)
+task_common_bound_box = task(common_bound_box)
 
 # Tasks below are extracting componented from earlier stages, or are
 # otherwise doing something important
@@ -111,6 +121,20 @@ FlagMS = TypeVar("FlagMS", MS, ApplySolutions)
 @task
 def task_get_channel_images_from_paths(paths: list[Path]) -> list[Path]:
     return [path for path in paths if "MFS" not in path.name]
+
+
+@task
+def task_trim_to_bound_box(image: Path, bounding_box: BoundingBox) -> Path:
+    """Trim an image to a bounding box shared with other images"""
+    return trim_fits_image(image_path=image, bounding_box=bounding_box).path
+
+
+@task
+def task_split_cube_into_planes(cubes: Collection[Path]) -> list[Path]:
+    """Split the single cube of a beam into its per-channel planes"""
+    cube_list = list(cubes)
+    assert len(cube_list) == 1, f"Expected a single cube per beam, got {cube_list=}"
+    return split_cube_into_planes(cube=cube_list[0])
 
 
 @task
@@ -1024,13 +1048,99 @@ def task_convolve_linmos_to_fixed_shape(
     return linmos_result.with_options(image_fits=output_image_path)
 
 
+def linmos_channel_groups_to_cubes(
+    channel_groups: Collection[Collection[Path]],
+    container: Path,
+    linmos_options: LinmosOptions,
+    stokesi_channel_groups: Collection[Collection[Path]] | None = None,
+    field_summary: FieldSummary | None = None,
+    suffix_str: str | None = None,
+    holofile: Path | None = None,
+) -> list[PrefectFuture[Path]]:
+    """Co-add beam images one channel at a time, in parallel, then stack the
+    resulting mosaics back into image and weight cubes.
+
+    Should ``linmos_options.trim_linmos_fits`` be set the trimming is deferred
+    until every channel has been co-added, so that a single bounding box may be
+    shared across the channels and the image and weight products.
+
+    Args:
+        channel_groups (Collection[Collection[Path]]): For each channel, the beam images to co-add
+        container (Path): Path to a yandasoft singularity container
+        linmos_options (LinmosOptions): Options passed to each per-channel linmos
+        stokesi_channel_groups (Collection[Collection[Path]] | None, optional): For each channel, the Stokes I beam images used for the leakage correction. Defaults to None.
+        field_summary (FieldSummary | None, optional): Description of the field, used to get the ``pol_axis``. Defaults to None.
+        suffix_str (str | None, optional): Additional suffix added to the linmos and cube names. Defaults to None.
+        holofile (Path | None, optional): Holography file overriding the one in ``linmos_options``. Defaults to None.
+
+    Returns:
+        list[PrefectFuture[Path]]: The image and weight cubes being created
+    """
+    stokesi_groups = (
+        list(stokesi_channel_groups) if stokesi_channel_groups is not None else None
+    )
+    if stokesi_groups is not None:
+        assert len(stokesi_groups) == len(channel_groups), (
+            f"Have {len(channel_groups)} channels, but Stokes I has {len(stokesi_groups)}"
+        )
+
+    image_planes: list[PrefectFuture[Path]] = []
+    weight_planes: list[PrefectFuture[Path]] = []
+    for channel_idx, beam_images in enumerate(channel_groups):
+        linmos_result = task_linmos_images.submit(
+            image_list=list(beam_images),
+            container=container,
+            suffix_str=suffix_str,
+            linmos_options=linmos_options.with_options(
+                stokesi_images=list(stokesi_groups[channel_idx])
+                if stokesi_groups is not None
+                else None,
+                # Each channel would otherwise be trimmed to its own bounding box,
+                # leaving the planes on differing pixel grids and scrambling the cube
+                trim_linmos_fits=False,
+            ),
+            field_summary=field_summary,
+            holofile=holofile,
+        )
+        image_planes.append(task_getattr.submit(linmos_result, "image_fits"))
+        weight_planes.append(task_getattr.submit(linmos_result, "weight_fits"))
+
+    if linmos_options.trim_linmos_fits:
+        # Passing the futures in is what forms the barrier - every channel has to
+        # be co-added before the box that all of them share can be known
+        bounding_box = task_common_bound_box.submit(images=image_planes)
+        image_planes = task_trim_to_bound_box.map(
+            image=image_planes,  # type: ignore
+            bounding_box=unmapped(bounding_box),  # type: ignore
+        )
+        weight_planes = task_trim_to_bound_box.map(
+            image=weight_planes,  # type: ignore
+            bounding_box=unmapped(bounding_box),  # type: ignore
+        )
+
+    # Stack the per-channel mosaics back into image and weight cubes,
+    # removing the per-channel mosaics once cubed.
+    cube_prefix = task_create_name_from_common_fields.submit(
+        in_paths=image_planes, additional_suffixes=suffix_str
+    )
+    return [
+        task_combine_images_to_cube.submit(
+            images=planes,
+            prefix=cube_prefix,
+            mode=mode,
+            remove_original_images=True,
+        )
+        for planes, mode in ((image_planes, "image"), (weight_planes, "weight"))
+    ]
+
+
 def create_convolve_linmos_cubes(
     wsclean_results: Collection[WSCleanResult],
     field_options: FieldOptions,
     current_round: int | None = None,
     additional_linmos_suffix_str: str | None = "cube",
     holofile: Path | None = None,
-):
+) -> list[PrefectFuture[Path]]:
     suffixes = [f"round{current_round}" if current_round is not None else "noselfcal"]
     if additional_linmos_suffix_str:
         suffixes.insert(0, additional_linmos_suffix_str)
@@ -1045,20 +1155,36 @@ def create_convolve_linmos_cubes(
         mode=unmapped("image"),  # type: ignore
         beam_shapes=unmapped(beam_shapes),  # type: ignore
     )
+    # linmos co-adds a cube channel-by-channel serially, so split the beam cubes
+    # into planes and co-add each channel in parallel instead. Resolving here
+    # blocks until the convolutions above have completed.
+    beam_planes = task_split_cube_into_planes.map(
+        cubes=convolved_cubes  # type: ignore
+    )
+    channel_groups: list[list[Path]] = task_transpose_and_sort_channel_images.submit(
+        beam_channel_images=beam_planes  # type: ignore
+    ).result()
 
     assert field_options.yandasoft_container is not None
-    linmos_options = LinmosOptions(
-        holofile=field_options.holofile,
-        cutoff=field_options.pb_cutoff,
-    )
-    parset = task_linmos_images.submit(
-        image_list=convolved_cubes,  # type: ignore
+    cube_results = linmos_channel_groups_to_cubes(
+        channel_groups=channel_groups,
         container=field_options.yandasoft_container,
+        linmos_options=LinmosOptions(
+            holofile=field_options.holofile,
+            cutoff=field_options.pb_cutoff,
+            cleanup=True,
+            trim_linmos_fits=False,  # so image shapes across channels all the same
+        ),
         suffix_str=linmos_suffix_str,
-        linmos_options=linmos_options,
         holofile=holofile,
     )
-    return parset
+
+    # Remove the extracted planes once every cube has been formed
+    task_remove_files_folders.submit(
+        *[plane for beam_images in channel_groups for plane in beam_images],
+        wait_for=cube_results,
+    )
+    return cube_results
 
 
 @task

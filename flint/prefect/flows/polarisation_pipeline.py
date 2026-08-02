@@ -33,12 +33,10 @@ from flint.options import (
 )
 from flint.prefect.clusters import get_dask_runner
 from flint.prefect.common.imaging import (
-    task_combine_images_to_cube,
+    linmos_channel_groups_to_cubes,
     task_convolve_images,
-    task_create_name_from_common_fields,
     task_get_channel_images_from_paths,
     task_get_common_beam_from_image_set,
-    task_linmos_images,
     task_merge_image_sets,
     task_preprocess_askap_ms,
     task_remove_files_folders,
@@ -221,56 +219,29 @@ def process_science_fields_pol(
     i_channel_groups = stokes_channel_groups.get("i")
     force_remove_leakage: bool | None = None if i_channel_groups else False
 
+    assert pol_field_options.yandasoft_container is not None
     cube_results: list[PrefectFuture[Path]] = []
     all_input_images: list[Path] = []
     for stokes, channel_groups in stokes_channel_groups.items():
-        if i_channel_groups is not None:
-            assert len(i_channel_groups) == len(channel_groups), (
-                f"Stokes {stokes} has {len(channel_groups)} channels, "
-                f"but Stokes I has {len(i_channel_groups)}"
-            )
         with tags(f"stokes-{stokes}"):
-            image_planes: list[PrefectFuture[Path]] = []
-            weight_planes: list[PrefectFuture[Path]] = []
-            for channel_idx, beam_images in enumerate(channel_groups):
-                all_input_images.extend(beam_images)
-                linmos_options = LinmosOptions(
-                    holofile=pol_field_options.holofile,
-                    cutoff=pol_field_options.pb_cutoff,
-                    stokesi_images=i_channel_groups[channel_idx]
-                    if i_channel_groups is not None
-                    else None,
-                    force_remove_leakage=force_remove_leakage,
-                    trim_linmos_fits=pol_field_options.trim_linmos_fits,
-                    cleanup=True,
-                )
-                linmos_result = task_linmos_images.submit(
-                    image_list=beam_images,
+            all_input_images.extend(
+                [image for beam_images in channel_groups for image in beam_images]
+            )
+            cube_results.extend(
+                linmos_channel_groups_to_cubes(
+                    channel_groups=channel_groups,
                     container=pol_field_options.yandasoft_container,
-                    linmos_options=linmos_options,
+                    linmos_options=LinmosOptions(
+                        holofile=pol_field_options.holofile,
+                        cutoff=pol_field_options.pb_cutoff,
+                        force_remove_leakage=force_remove_leakage,
+                        trim_linmos_fits=pol_field_options.trim_linmos_fits,
+                        cleanup=True,
+                    ),
+                    stokesi_channel_groups=i_channel_groups,
                     field_summary=field_summary,
                 )
-                image_planes.append(task_getattr.submit(linmos_result, "image_fits"))
-                weight_planes.append(task_getattr.submit(linmos_result, "weight_fits"))
-
-            # Stack the per-channel mosaics back into image and weight cubes,
-            # removing the per-channel mosaics once cubed.
-            cube_prefix = task_create_name_from_common_fields.submit(
-                in_paths=image_planes
             )
-            image_cube = task_combine_images_to_cube.submit(
-                images=image_planes,
-                prefix=cube_prefix,
-                mode="image",
-                remove_original_images=True,
-            )
-            weight_cube = task_combine_images_to_cube.submit(
-                images=weight_planes,
-                prefix=cube_prefix,
-                mode="weight",
-                remove_original_images=True,
-            )
-            cube_results.extend([image_cube, weight_cube])
 
     # Remove the convolved per-beam channel images now that every cube is built.
     # Stokes I images are kept until here as they feed the Q/U leakage correction.

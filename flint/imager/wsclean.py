@@ -32,12 +32,15 @@ from capn_crunch import (
     options_to_dict,
 )
 from fitscube.combine_fits import combine_fits
+from fitscube.exceptions import TargetAxisMissingException
+from fitscube.extract import ExtractOptions, extract_plane_from_cube, find_target_axis
 
 from flint.exceptions import (
     AttemptRerunException,
     CleanDivergenceError,
     NamingException,
     NotSupportedError,
+    ShapeMismatchError,
 )
 from flint.logging import logger
 from flint.ms import MS, standardise_ms_to_list_ms
@@ -45,7 +48,9 @@ from flint.naming import (
     ProcessedNameComponents,
     create_image_cube_name,
     create_imaging_name_prefix,
+    create_path_from_processed_name_components,
     extract_components_from_name,
+    processed_ms_format,
     split_images,
 )
 from flint.options import (
@@ -231,6 +236,27 @@ def image_set_from_result(wsclean_result: WSCleanResult) -> ImageSet | None:
     return wsclean_result.image_set
 
 
+def assert_common_pixel_grid(images: Collection[Path]) -> None:
+    """Ensure a set of images all share the same spatial pixel grid.
+
+    ``fitscube`` writes each plane into the cube at a fixed byte offset, so
+    planes of differing shape are silently interleaved rather than rejected.
+
+    Args:
+        images (Collection[Path]): The images that will be stacked into a cube
+
+    Raises:
+        ShapeMismatchError: If the images do not share a common NAXIS1/NAXIS2
+    """
+    shapes = {
+        (header["NAXIS1"], header["NAXIS2"])
+        for header in (fits.getheader(image) for image in images)
+    }
+    if len(shapes) > 1:
+        msg = f"Images to be cubed have differing pixel grids: {shapes=}"
+        raise ShapeMismatchError(msg)
+
+
 def combine_images_to_cube(
     images: list[Path],
     prefix: str,
@@ -252,6 +278,8 @@ def combine_images_to_cube(
         ImageSet: Updated iamgeset describing the new outputs
     """
     logger.info("Combining subband images into fits cubes")
+
+    assert_common_pixel_grid(images=images)
 
     output_cube_name = create_image_cube_name(image_prefix=Path(prefix), mode=mode)
 
@@ -418,6 +446,49 @@ def transpose_and_sort_channel_images(
     )
 
     return [list(channel_group) for channel_group in zip(*sorted_beams)]
+
+
+def split_cube_into_planes(cube: Path) -> list[Path]:
+    """Extract each channel of a FITS cube into its own image, named following the
+    flint processed name format so that the planes may be regrouped across beams
+    by ``transpose_and_sort_channel_images``.
+
+    Args:
+        cube (Path): The FITS cube to split apart
+
+    Returns:
+        list[Path]: The per-channel images extracted from ``cube``
+    """
+    components = processed_ms_format(in_name=cube)
+    if components is None:
+        msg = f"Expected a flint named cube. Got {cube=}"
+        raise NamingException(msg)
+
+    with fits.open(cube, memmap=True, lazy_load_hdus=True) as open_fits:
+        header = open_fits[0].header
+    channels = int(header[f"NAXIS{find_target_axis(header=header).axis}"])
+    logger.info(f"Splitting {cube} into {channels} planes")
+
+    def _plane_path(channel: int) -> Path:
+        # Only the flint name fields are retained, so a single cube per beam
+        # should be split at a time to avoid clobbering planes
+        plane_base = create_path_from_processed_name_components(
+            processed_name_components=components._replace(
+                channel_range=(channel, channel)
+            ),
+            parent_path=cube.parent,
+        )
+        return Path(f"{plane_base}.fits")
+
+    return [
+        extract_plane_from_cube(
+            fits_cube=cube,
+            extract_options=ExtractOptions(
+                channel_index=channel, output_path=_plane_path(channel), overwrite=True
+            ),
+        )
+        for channel in range(channels)
+    ]
 
 
 def get_wsclean_output_source_list_path(
@@ -1001,6 +1072,16 @@ def rotate_cube(output_cube_path: str | Path, inplace: bool = True) -> Path:
         header = hdul[0].header.copy()
         data_cube = hdul[0].data.copy()
 
+    # Cubes formed from planes that were themselves cut from a rotated cube are
+    # already in the desired order, and rotating again would undo it
+    try:
+        if find_target_axis(header=header).axis == header["NAXIS"]:
+            logger.info(f"{output_path.name} is already (chan, pol, dec, ra)")
+            return output_path
+    except TargetAxisMissingException:
+        logger.warning(f"No frequency axis in {output_path.name}, not rotating")
+        return output_path
+
     # Swap axes in header
     tmp_header = header.copy()
     for a, b in ((3, 4), (4, 3)):
@@ -1009,11 +1090,13 @@ def rotate_cube(output_cube_path: str | Path, inplace: bool = True) -> Path:
         if f"CTYPE{b}" not in tmp_header:
             continue
 
-        header[f"CTYPE{a}"] = tmp_header[f"CTYPE{b}"]
-        header[f"CRPIX{a}"] = tmp_header[f"CRPIX{b}"]
-        header[f"CRVAL{a}"] = tmp_header[f"CRVAL{b}"]
-        header[f"CDELT{a}"] = tmp_header[f"CDELT{b}"]
-        header[f"CUNIT{a}"] = tmp_header[f"CUNIT{b}"]
+        for key in ("CTYPE", "CRPIX", "CRVAL", "CDELT", "CUNIT"):
+            # A key absent on the source axis (e.g. CUNIT on STOKES) has to be
+            # removed from the destination, else a stale value is left behind
+            if f"{key}{b}" in tmp_header:
+                header[f"{key}{a}"] = tmp_header[f"{key}{b}"]
+            else:
+                header.pop(f"{key}{a}", None)
 
     # Move data axis: (pol, chan, dec, ra) → (chan, pol, dec, ra)
     rotated_data = np.moveaxis(data_cube, 1, 0)

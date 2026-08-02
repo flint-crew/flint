@@ -20,10 +20,12 @@ from flint.coadd.linmos import (
     _get_holography_linmos_options,
     _get_image_weight_plane,
     _linmos_cleanup,
+    common_bound_box,
     create_bound_box,
     generate_weights_list_and_files,
     trim_fits_image,
 )
+from flint.exceptions import ShapeMismatchError
 from flint.naming import create_linmos_base_path
 
 
@@ -251,7 +253,7 @@ def test_trim_fits_while_blanking(tmp_path):
     trim_data = fits.getdata(out_fits)
     assert trim_hdr["CRPIX1"] == -10
     assert trim_hdr["CRPIX2"] == 10
-    assert trim_data.shape == (589, 479)
+    assert trim_data.shape == (590, 480)
     assert np.sum(trim_data == 0.0) == 0
 
 
@@ -272,7 +274,7 @@ def test_trim_fits(tmp_path):
     trim_data = fits.getdata(out_fits)
     assert trim_hdr["CRPIX1"] == -10
     assert trim_hdr["CRPIX2"] == 10
-    assert trim_data.shape == (589, 479)
+    assert trim_data.shape == (590, 480)
 
 
 def test_trim_fits_cube(tmp_path):
@@ -300,7 +302,7 @@ def test_trim_fits_cube(tmp_path):
     trim_data = fits.getdata(out_fits)
     assert trim_hdr["CRPIX1"] == -10
     assert trim_hdr["CRPIX2"] == 10
-    assert trim_data.shape == (12, 589, 479)  # type: ignore
+    assert trim_data.shape == (12, 590, 480)  # type: ignore
 
 
 def test_trim_fits_image_matching(tmp_path):
@@ -325,13 +327,60 @@ def test_trim_fits_image_matching(tmp_path):
     trim_data = fits.getdata(out_fits2)
     assert trim_hdr["CRPIX1"] == -10
     assert trim_hdr["CRPIX2"] == 10
-    assert trim_data.shape == (589, 479)
+    assert trim_data.shape == (590, 480)
 
     out_fits2 = tmp_dir / "example3.fits"
     create_fits_image(out_fits2, image_size=(300, 300))
 
     with pytest.raises(ValueError):
         trim_fits_image(image_path=out_fits2, bounding_box=og_trim.bounding_box)
+
+
+def test_common_bound_box(tmp_path):
+    """Planes destined for a cube have to be trimmed onto a single grid, so the
+    box has to be the union across them all"""
+    tmp_dir = tmp_path / "common_box"
+    tmp_dir.mkdir()
+
+    bounds = ((10, 600, 20, 500), (100, 200, 600, 800), (800, 888, 20, 500))
+    images = []
+    for index, (xmin, xmax, ymin, ymax) in enumerate(bounds):
+        data = np.zeros((1000, 1000))
+        data[xmin:xmax, ymin:ymax] = index + 1
+        images.append(tmp_dir / f"example{index}.fits")
+        # linmos blanks with 0.0, not NaN, which common_bound_box has to handle
+        fits.writeto(
+            images[-1],
+            data=data,
+            header=fits.header.Header({"CRPIX1": 10, "CRPIX2": 20}),
+        )
+
+    bb = common_bound_box(images=images)
+    assert bb == BoundingBox(
+        xmin=10, xmax=888, ymin=20, ymax=800, original_shape=(1000, 1000)
+    )
+
+    for image in images:
+        trim_fits_image(image_path=image, bounding_box=bb)
+
+    trimmed_shapes = {fits.getdata(image).shape for image in images}
+    assert trimmed_shapes == {(878, 780)}
+    assert {fits.getheader(image)["CRPIX1"] for image in images} == {-10}
+    assert {fits.getheader(image)["CRPIX2"] for image in images} == {10}
+
+
+def test_common_bound_box_shape_mismatch(tmp_path):
+    """Images on differing grids can not share a box"""
+    tmp_dir = tmp_path / "common_box_mismatch"
+    tmp_dir.mkdir()
+
+    images = []
+    for index, shape in enumerate(((100, 100), (100, 101))):
+        images.append(tmp_dir / f"example{index}.fits")
+        fits.writeto(images[-1], data=np.ones(shape))
+
+    with pytest.raises(ShapeMismatchError):
+        common_bound_box(images=images)
 
 
 def test_bounding_box():
@@ -344,9 +393,9 @@ def test_bounding_box():
 
     assert isinstance(bb, BoundingBox)
     assert bb.xmin == 10
-    assert bb.xmax == 599  # slices upper limit is not inclusive
+    assert bb.xmax == 600  # the maximum is exclusive, i.e. slice ready
     assert bb.ymin == 20
-    assert bb.ymax == 499  # slices upper limit no inclusive
+    assert bb.ymax == 500  # the maximum is exclusive, i.e. slice ready
 
 
 def test_bounding_box_none():
@@ -360,8 +409,8 @@ def test_bounding_box_none():
     assert isinstance(bb, BoundingBox)
     assert bb.xmin == 0
     assert bb.xmin == 0
-    assert bb.xmax == 999
-    assert bb.ymax == 999
+    assert bb.xmax == 1000
+    assert bb.ymax == 1000
 
 
 def test_bounding_box_cube():
@@ -376,9 +425,9 @@ def test_bounding_box_cube():
     bb = create_bound_box(image_data=data)
     assert isinstance(bb, BoundingBox)
     assert bb.xmin == 10
-    assert bb.xmax == 599
+    assert bb.xmax == 600
     assert bb.ymin == 20
-    assert bb.ymax == 499
+    assert bb.ymax == 500
 
 
 def test_bounding_box_cube_different_bounds():
@@ -397,9 +446,9 @@ def test_bounding_box_cube_different_bounds():
     bb = create_bound_box(image_data=data)
     assert isinstance(bb, BoundingBox)
     assert bb.xmin == 10
-    assert bb.xmax == 887
+    assert bb.xmax == 888
     assert bb.ymin == 20
-    assert bb.ymax == 799
+    assert bb.ymax == 800
 
 
 def test_bounding_box_with_mask():
@@ -411,6 +460,6 @@ def test_bounding_box_with_mask():
 
     assert isinstance(bb, BoundingBox)
     assert bb.xmin == 10
-    assert bb.xmax == 599  # slices upper limit is not inclusive
+    assert bb.xmax == 600  # the maximum is exclusive, i.e. slice ready
     assert bb.ymin == 20
-    assert bb.ymax == 499  # slices upper limit no inclusive
+    assert bb.ymax == 500  # the maximum is exclusive, i.e. slice ready

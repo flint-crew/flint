@@ -7,12 +7,16 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
+from astropy.io import fits
+from fitscube.extract import find_target_axis
 
 from flint.exceptions import (
     AttemptRerunException,
     CleanDivergenceError,
     NamingException,
+    ShapeMismatchError,
 )
 from flint.imager.wsclean import (
     ImageSet,
@@ -23,6 +27,7 @@ from flint.imager.wsclean import (
     _resolve_wsclean_key_value_to_cli_str,
     _wsclean_output_callback,
     combine_image_set_to_cube,
+    combine_images_to_cube,
     create_wsclean_cmd,
     create_wsclean_name_argument,
     get_parser,
@@ -32,6 +37,7 @@ from flint.imager.wsclean import (
     rename_wsclean_prefix_in_image_set,
     rotate_cube,
     split_and_get_image_set,
+    split_cube_into_planes,
     split_image_set,
     transpose_and_sort_channel_images,
 )
@@ -39,6 +45,184 @@ from flint.logging import logger
 from flint.naming import create_imaging_name_prefix
 from flint.options import MS
 from flint.utils import get_packaged_resource_path
+
+
+def _write_channel_image(path: Path, channel: int, shape: tuple[int, int]) -> Path:
+    """A wsclean-like single channel image, with each pixel uniquely valued so
+    that any scrambling of the data is detectable."""
+    ny, nx = shape
+    data = (
+        channel * 1000.0
+        + np.arange(ny)[:, None] * 10.0
+        + np.arange(nx)[None, :].astype(float)
+    )
+    header = fits.Header(
+        {
+            "BUNIT": "JY/BEAM",
+            "BMAJ": 0.01,
+            "BMIN": 0.01,
+            "BPA": 0.0,
+            "CTYPE1": "RA---SIN",
+            "CRVAL1": 180.0,
+            "CDELT1": -0.001,
+            "CRPIX1": 1.0,
+            "CUNIT1": "deg",
+            "CTYPE2": "DEC--SIN",
+            "CRVAL2": -30.0,
+            "CDELT2": 0.001,
+            "CRPIX2": 1.0,
+            "CUNIT2": "deg",
+            "CTYPE3": "FREQ",
+            "CRVAL3": 8.0e8 + channel * 1.0e6,
+            "CDELT3": 1.0e6,
+            "CRPIX3": 1.0,
+            "CUNIT3": "Hz",
+            "CTYPE4": "STOKES",
+            "CRVAL4": 1.0,
+            "CDELT4": 1.0,
+            "CRPIX4": 1.0,
+            "SPECSYS": "TOPOCENT",
+        }
+    )
+    fits.writeto(path, data=data[None, None].astype(np.float32), header=header)
+    return path
+
+
+def _assert_cube_matches_images(cube: Path, images: list[Path]) -> None:
+    """Every channel of ``cube``, located via its own WCS, should hold the data
+    and the frequency of the matching image, and the cube should be ordered
+    (chan, pol, dec, ra) as linmos expects."""
+    with fits.open(cube) as hdul:
+        header, data = hdul[0].header, hdul[0].data
+
+    freq_axis = find_target_axis(header=header)
+    assert freq_axis.axis == header["NAXIS"]
+    assert header[f"NAXIS{freq_axis.axis}"] == len(images)
+    assert data.shape[0] == len(images)
+
+    for channel, image in enumerate(images):
+        plane = np.take(data, channel, axis=data.ndim - freq_axis.axis).squeeze()
+        assert np.array_equal(plane, fits.getdata(image).squeeze()), channel
+        expected_freq = fits.getheader(image)["CRVAL3"]
+        assert freq_axis.crval + channel * freq_axis.cdelt == pytest.approx(
+            expected_freq
+        ), channel
+
+
+def test_cube_split_and_recombine_roundtrip(tmpdir) -> None:
+    """Splitting a beam cube into planes and cubing those planes again -- as the
+    per-channel parallel linmos does -- must keep the data and the WCS describing
+    it in step. Guards against an axis rotation not matched by the header swap."""
+    tmp_path = Path(tmpdir)
+    channels, shape = 3, (500, 700)
+    images = [
+        _write_channel_image(
+            tmp_path / f"SB1234.RACS_0000-00.beam00.round1-{channel:04d}-image.fits",
+            channel=channel,
+            shape=shape,
+        )
+        for channel in range(channels)
+    ]
+
+    beam_cube = combine_images_to_cube(
+        images=images,
+        prefix=f"{tmp_path}/SB1234.RACS_0000-00.beam00.round1",
+        mode="image",
+    )
+    _assert_cube_matches_images(cube=beam_cube, images=images)
+
+    planes = split_cube_into_planes(cube=beam_cube)
+    for plane, image in zip(planes, images):
+        assert np.array_equal(
+            fits.getdata(plane).squeeze(), fits.getdata(image).squeeze()
+        )
+
+    field_cube = combine_images_to_cube(
+        images=planes,
+        prefix=f"{tmp_path}/SB1234.RACS_0000-00.round1",
+        mode="image",
+    )
+    _assert_cube_matches_images(cube=field_cube, images=images)
+
+
+def test_rotate_cube_is_idempotent(tmpdir) -> None:
+    """A cube already ordered (chan, pol, dec, ra) must be left alone, else the
+    second pass of the per-channel linmos path would rotate it back"""
+    tmp_path = Path(tmpdir)
+    images = [
+        _write_channel_image(
+            tmp_path / f"SB1234.RACS_0000-00.beam00.round1-{channel:04d}-image.fits",
+            channel=channel,
+            shape=(5, 7),
+        )
+        for channel in range(3)
+    ]
+    cube = combine_images_to_cube(
+        images=images,
+        prefix=f"{tmp_path}/SB1234.RACS_0000-00.beam00.round1",
+        mode="image",
+    )
+
+    header, data = fits.getheader(cube), fits.getdata(cube)
+    rotate_cube(cube)
+
+    assert fits.getheader(cube) == header
+    assert np.array_equal(fits.getdata(cube), data)
+
+
+def test_combine_images_to_cube_shape_mismatch(tmpdir) -> None:
+    """Planes are written into the cube at fixed byte offsets, so differing
+    pixel grids must be rejected rather than silently scrambled."""
+    tmp_path = Path(tmpdir)
+    images = [
+        _write_channel_image(
+            tmp_path / f"SB1234.RACS_0000-00.beam00.round1-{channel:04d}-image.fits",
+            channel=channel,
+            shape=(5, 7) if channel == 0 else (5, 6),
+        )
+        for channel in range(2)
+    ]
+
+    with pytest.raises(ShapeMismatchError):
+        combine_images_to_cube(
+            images=images,
+            prefix=f"{tmp_path}/SB1234.RACS_0000-00.beam00.round1",
+            mode="image",
+        )
+
+
+def test_split_cube_into_planes(tmpdir) -> None:
+    """A cube should split into flint named planes that can be regrouped across beams"""
+    files = [
+        Path(
+            shutil.copy(
+                get_packaged_resource_path(
+                    package="flint.data.tests",
+                    filename=f"SB56659.RACS_0940-04.beam17.round3-000{i}-image.sub.fits",
+                ),
+                Path(tmpdir),
+            )
+        )
+        for i in range(3)
+    ]
+    cube = combine_images_to_cube(
+        images=files,
+        prefix=f"{tmpdir}/SB56659.RACS_0940-04.beam17.round3",
+        mode="image",
+    )
+
+    planes = split_cube_into_planes(cube=cube)
+
+    assert [plane.name for plane in planes] == [
+        f"SB56659.RACS_0940-04.beam17.round3.i.ch{channel:04d}-{channel:04d}.fits"
+        for channel in range(3)
+    ]
+    assert all(plane.exists() for plane in planes)
+    # The names remain flint parsable, so may be regrouped per channel across beams
+    assert len(transpose_and_sort_channel_images([planes, planes])) == 3
+
+    with pytest.raises(NamingException):
+        split_cube_into_planes(cube=Path(shutil.copy(cube, Path(tmpdir) / "bad.fits")))
 
 
 def test_transpose_and_sort_channel_images() -> None:
