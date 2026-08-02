@@ -78,7 +78,7 @@ dev = [
     "sphinx-autodoc-typehints",
     "sphinx-copybutton",
     "sphinx-autoapi",
-    "sphinx-argparse",
+    "sphinx-argparse>=0.6.0", # earlier versions break against sphinx 9
     "furo",
     "pytest-rerunfailures",
     "pytest-xdist",
