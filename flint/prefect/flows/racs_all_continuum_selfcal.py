@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TypeAlias
+from typing import Any, TypeAlias
 
 from capn_crunch import (
     add_options_to_parser,
@@ -266,7 +266,10 @@ def all_holography_available(
 
 
 @flow
-def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
+def process_racs_all_field(racs_all_options: RACSAllOptions) -> list[Any]:
+    # returned futures are resolved by prefect to fail the flow on task failure
+    terminal_futures: list[Any] = []
+
     # Any sanity checks will go in here, mateee
     _check_racs_all_options(racs_all_options=racs_all_options)
     output_science_path = _check_create_output_science_path(
@@ -321,6 +324,7 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
                 racs_all_options.high_holofile,
             ],
         )
+        terminal_futures.append(holography_path)
 
     ms_summaries: list = []
     imaging_results: dict[int, list[LoopFutures]] = {}
@@ -381,6 +385,7 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
                     ms_summaries=ms_summaries_for_beam,
                 )
             )
+            terminal_futures.append(wsclean_result)
 
     beam_summaries: list[BeamSummary] = []
     for loop_result in imaging_results[0]:
@@ -464,6 +469,7 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
                 imaging_results[current_round].append(
                     LoopFutures(mss=cal_mss, wsclean_result=wsclean_result)
                 )
+                terminal_futures.append(wsclean_result)
 
     if racs_all_options.yandasoft_container:
         if racs_all_options.coadd_cubes:
@@ -480,7 +486,7 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
                     for beam_result in imaging_results[cube_add_round]
                 ]
 
-                create_convolve_linmos_cubes(
+                linmos_cubes = create_convolve_linmos_cubes(
                     wsclean_results=cube_results,  # type: ignore
                     field_options=racs_all_options,
                     current_round=(
@@ -489,6 +495,7 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
                     additional_linmos_suffix_str="cube",
                     holofile=holography_path,
                 )
+                terminal_futures.extend(linmos_cubes)
 
         for selfcal_round, final_beam_imaging_results in imaging_results.items():
             additional_linmos_suffix = (
@@ -508,6 +515,7 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
             logger.info(
                 f"Self-cal round {selfcal_round}, number of parsets {len(parsets)}"
             )
+            terminal_futures.extend(parsets)
 
             if racs_all_options.aegean_container:
                 logger.info(f"Running aegean on round {selfcal_round}")
@@ -521,11 +529,17 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
                     round=selfcal_round if selfcal_round > 0 else None,
                 )
                 if selfcal_round in (0, racs_all_options.rounds):
-                    validation_items(
+                    val_results = validation_items(
                         field_summary=field_summary,
                         aegean_outputs=aegean_outputs,
                         reference_catalogue_directory=racs_all_options.reference_catalogue_directory,
                     )
+                    if val_results:
+                        terminal_futures.extend(val_results)
+
+    terminal_futures.append(field_summary)
+
+    return terminal_futures
 
 
 def setup_run_racs_all_field(

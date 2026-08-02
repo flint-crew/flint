@@ -211,7 +211,7 @@ def calibrate_bandpass_flow(
     bandpass_path: Path,
     split_path: Path,
     bandpass_options: BandpassOptions,
-) -> Path:
+) -> list[CalibrateCommand]:
     """Create and run the prefect flow to calibrate a set of bandpass measurement sets.
 
     The measurement sets that will be calibreated are expected to:
@@ -233,7 +233,7 @@ def calibrate_bandpass_flow(
         bandpass_options (BandpassOptions): Options that specify configurable of the bandpass processing.
 
     Returns:
-        Path: Directory that contains the extracted measurement sets and the ao-style gain solutions files.
+        list[CalibrateCommand]: The terminal calibration futures, returned so prefect fails the flow should any task fail.
     """
     assert bandpass_path.exists() and bandpass_path.is_dir(), (
         f"{bandpass_path!s} does not exist or is not a folder. "
@@ -262,7 +262,7 @@ def calibrate_bandpass_flow(
     model_path: Path = get_1934_model(mode="calibrate")
     source_name_prefix: str = "B1934-638"
 
-    run_bandpass_stage(
+    return run_bandpass_stage(
         bandpass_mss=bandpass_mss,
         output_split_bandpass_path=output_split_bandpass_path,
         bandpass_options=bandpass_options,
@@ -270,8 +270,6 @@ def calibrate_bandpass_flow(
         source_name_prefix=source_name_prefix,
         skip_rotation=True,
     )
-
-    return output_split_bandpass_path
 
 
 def setup_run_bandpass_flow(

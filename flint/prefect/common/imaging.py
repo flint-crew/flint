@@ -378,8 +378,9 @@ def task_wsclean_imager(
 
     ms: list[MS] = standardise_ms_to_list_ms(in_ms)
 
+    # copied as an unmapped dict is shared by reference across mapped runs
     update_wsclean_options = (
-        {} if update_wsclean_options is None else update_wsclean_options
+        {} if update_wsclean_options is None else dict(update_wsclean_options)
     )
 
     if fits_mask:

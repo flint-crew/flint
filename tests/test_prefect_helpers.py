@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from prefect import flow
+from prefect import flow, task
 from prefect.logging import disable_run_logger
 from prefect.testing.utilities import prefect_test_harness
 
@@ -25,3 +25,22 @@ def test_enable_loguru_support():
 
     with prefect_test_harness(), disable_run_logger():
         assert example_flow() == "JackSparrow"
+
+
+@task
+def _boom() -> None:
+    raise ValueError("kraken")
+
+
+@flow
+def _flow_returning_futures():
+    return [_boom.submit()]
+
+
+def test_failed_task_fails_flow():
+    """Prefect only fails a flow on a task failure if that task's future is
+    part of the flow return value. The flows all return their terminal futures
+    for this reason."""
+
+    with prefect_test_harness(), disable_run_logger():
+        assert _flow_returning_futures(return_state=True).is_failed()

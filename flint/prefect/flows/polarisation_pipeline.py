@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from capn_crunch import add_options_to_parser, create_options_from_parser
 from configargparse import ArgumentParser
@@ -54,7 +55,8 @@ from flint.prefect.common.utils import (
 def process_science_fields_pol(
     flint_ms_directory: Path,
     pol_field_options: PolFieldOptions,
-) -> None:
+) -> list[Any]:
+    # returned futures are resolved by prefect to fail the flow on task failure
     strategy = load_and_copy_strategy(
         output_split_science_path=flint_ms_directory,
         imaging_strategy=pol_field_options.imaging_strategy,
@@ -64,7 +66,7 @@ def process_science_fields_pol(
 
     if strategy is None:
         logger.info("No strategy provided. Returning.")
-        return
+        return []
 
     # Get some placeholder names
     science_mss = list(
@@ -133,7 +135,7 @@ def process_science_fields_pol(
 
     if pol_field_options.wsclean_container is None:
         logger.info("No wsclean container provided. Returning. ")
-        return
+        return [field_summary]
 
     polarisations: dict[str, str] = strategy.get("polarisation", {"total": {}})
 
@@ -245,10 +247,11 @@ def process_science_fields_pol(
 
     # Remove the convolved per-beam channel images now that every cube is built.
     # Stokes I images are kept until here as they feed the Q/U leakage correction.
-    task_remove_files_folders.submit(*all_input_images, wait_for=cube_results)
+    remove_result = task_remove_files_folders.submit(
+        *all_input_images, wait_for=cube_results
+    )
 
-    # wait for all cubes to be completed
-    _ = [cube_result.result() for cube_result in cube_results]
+    return [*cube_results, remove_result]
 
 
 def setup_run_process_science_field(

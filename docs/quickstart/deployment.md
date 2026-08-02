@@ -112,15 +112,15 @@ export POSTGRES_PORT=5432 # consider changing this if there is already an attach
 # to send prefect restful api messages.
 export PREFECT_API_URL="http://${POSTGRES_ADDR}:4200/api"
 export PREFECT_SERVER_API_HOST="127.0.0.1"
-export PREFECT_API_DATABASE_CONNECTION_URL="postgresql+asyncpg://$POSTGRES_USER:$POSTGRES_PASS@$POSTGRES_ADDR:5432/$POSTGRES_DB"
+export PREFECT_SERVER_DATABASE_CONNECTION_URL="postgresql+asyncpg://$POSTGRES_USER:$POSTGRES_PASS@$POSTGRES_ADDR:5432/$POSTGRES_DB"
 
 # These attempt to make prefect more scalable and robust to many, many workers
 export WEB_CONCURRENCY=12
-export PREFECT_SQLALCHEMY_POOL_SIZE=75
-export PREFECT_SQLALCHEMY_MAX_OVERFLOW=150
-export PREFECT_API_DATABASE_TIMEOUT=80
-export PREFECT_API_DATABASE_CONNECTION_TIMEOUT=90
-export PREFECT_SERVER_CSRF_PROTECTION_ENABLED=False
+export PREFECT_SERVER_DATABASE_SQLALCHEMY_POOL_SIZE=75
+export PREFECT_SERVER_DATABASE_SQLALCHEMY_MAX_OVERFLOW=150
+export PREFECT_SERVER_DATABASE_TIMEOUT=80
+export PREFECT_SERVER_DATABASE_CONNECTION_TIMEOUT=90
+export PREFECT_SERVER_API_CSRF_PROTECTION_ENABLED=False
 export PREFECT_HOME="$(pwd)/prefect"
 
 
@@ -146,6 +146,21 @@ out in place. For proper robustness this should be changed.
 
 Provided these two services start without throwing an error you should not be able to visit port 4200 of your
 server in a web browser to access the `prefect` web page.
+
+The older `PREFECT_API_DATABASE_*`, `PREFECT_SQLALCHEMY_*` and `PREFECT_SERVER_CSRF_PROTECTION_ENABLED`
+names remain valid aliases in `prefect` 3, but the names above are the canonical ones.
+
+### Upgrading an existing server from prefect 2
+
+The `prefect` 2 to 3 database migration is one-way. Snapshot the `postgres` database first,
+otherwise rolling back to `prefect<3` is not possible.
+
+1. Pause any deployment schedules
+2. Stop the `prefect` server (leave `postgres` running)
+3. Snapshot the database (e.g. `pg_dump`)
+4. Upgrade the environment (`uv sync`)
+5. `prefect server database upgrade -y` against the existing `postgres`
+6. Restart the server as above
 
 ## Running a `prefect` flow
 
@@ -215,6 +230,7 @@ export PREFECT_HOME="$(pwd)/prefect"
 export PREFECT_LOGGING_EXTRA_LOGGERS="flint,fixms"
 export PREFECT_LOGGING_LEVEL="INFO"
 export PREFECT_RESULTS_PERSIST_BY_DEFAULT=true
+export PREFECT_TASKS_DEFAULT_NO_CACHE=true
 ```
 
 A shortform description of the settings and their intent in a `flint` context are:
@@ -224,5 +240,6 @@ A shortform description of the settings and their intent in a `flint` context ar
 - `PREFECT_LOGGING_EXTRA_LOGGERS`: Specifies which `logging` instances the `prefect` stream-handler should be attached to. General these will be the module name, but this is by convention and not mandatory in python.
 - `PREFECT_LOGGING_LEVEL`: Which logging level should be captured and streamed to the `prefect` server
 - `PREFECT_RESULTS_PERSIST_BY_DEFAULT`: Store the result of each evaluated task to disk. Should a task result be needed later in a flow it can be retrieved from this cache. This is useful in instances where worker agents are unexpectedly killed, allowing for their results to be a simple lookup rather than recomputed.
+- `PREFECT_TASKS_DEFAULT_NO_CACHE`: Disable the `prefect` 3 default task cache policy. Many `flint` tasks are side-effecting (they zip, delete and archive on disk), so a cache hit is a skipped side effect rather than a saved computation. `flint` sets this itself in `flint.prefect.__init__`; it is listed here so the intent is visible and can be overridden.
 
 The usage of these variables are by no means mandatory, and can vary depending on the usage of `flint` and computing platform.

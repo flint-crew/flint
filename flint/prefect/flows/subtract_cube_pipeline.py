@@ -298,7 +298,10 @@ def flow_subtract_cube(
     subtract_field_options: SubtractFieldOptions,
     addmodel_subtract_field_options: AddModelSubtractFieldOptions,
     crystalball_subtract_field_options: CrystalBallOptions,
-) -> None:
+) -> list[Any]:
+    # returned futures are resolved by prefect to fail the flow on task failure
+    cube_results: list[Any] = []
+
     strategy = load_and_copy_strategy(
         output_split_science_path=science_path,
         imaging_strategy=subtract_field_options.imaging_strategy,
@@ -385,7 +388,7 @@ def flow_subtract_cube(
     # Fellow Captain Zic request, arrr
     if subtract_field_options.subtract_only:
         logger.info("The '--subtract-only' option has been specified. No imaging.")
-        return
+        return list(science_mss)
 
     if subtract_field_options.channelwise_image:
         with tags("channel-cube"):
@@ -432,16 +435,20 @@ def flow_subtract_cube(
                 mode="fitscube",
                 operation="subtractcube",
             )
-            task_combine_all_linmos_images.submit(
-                linmos_commands=channel_parset_list,
-                remove_original_images=subtract_field_options.fitscube_remove_original_images,
-                update_fits_cube_options=update_fits_cube_options,
+            cube_results.append(
+                task_combine_all_linmos_images.submit(
+                    linmos_commands=channel_parset_list,
+                    remove_original_images=subtract_field_options.fitscube_remove_original_images,
+                    update_fits_cube_options=update_fits_cube_options,
+                )
             )
-            task_combine_all_linmos_images.submit(
-                linmos_commands=channel_parset_list,
-                remove_original_images=subtract_field_options.fitscube_remove_original_images,
-                combine_weights=True,
-                update_fits_cube_options=update_fits_cube_options,
+            cube_results.append(
+                task_combine_all_linmos_images.submit(
+                    linmos_commands=channel_parset_list,
+                    remove_original_images=subtract_field_options.fitscube_remove_original_images,
+                    combine_weights=True,
+                    update_fits_cube_options=update_fits_cube_options,
+                )
             )
 
     if subtract_field_options.timestep_image:
@@ -488,21 +495,25 @@ def flow_subtract_cube(
                 mode="fitscube",
                 operation="subtractcube",
             )
-            task_combine_all_linmos_images.submit(
-                linmos_commands=scan_parset_list,
-                remove_original_images=subtract_field_options.fitscube_remove_original_images,
-                time_domain=True,
-                update_fits_cube_options=update_fits_cube_options,
+            cube_results.append(
+                task_combine_all_linmos_images.submit(
+                    linmos_commands=scan_parset_list,
+                    remove_original_images=subtract_field_options.fitscube_remove_original_images,
+                    time_domain=True,
+                    update_fits_cube_options=update_fits_cube_options,
+                )
             )
-            task_combine_all_linmos_images.submit(
-                linmos_commands=scan_parset_list,
-                remove_original_images=subtract_field_options.fitscube_remove_original_images,
-                combine_weights=True,
-                time_domain=True,
-                update_fits_cube_options=update_fits_cube_options,
+            cube_results.append(
+                task_combine_all_linmos_images.submit(
+                    linmos_commands=scan_parset_list,
+                    remove_original_images=subtract_field_options.fitscube_remove_original_images,
+                    combine_weights=True,
+                    time_domain=True,
+                    update_fits_cube_options=update_fits_cube_options,
+                )
             )
 
-    return
+    return cube_results if cube_results else list(science_mss)
 
 
 def setup_run_subtract_flow(
@@ -569,7 +580,7 @@ def cli() -> None:
     )
 
     if addmodel_subtract_field_options.addmodel_cluster_config is None:
-        addmodel_subtract_field_options.with_options(
+        addmodel_subtract_field_options = addmodel_subtract_field_options.with_options(
             addmodel_cluster_config=args.cluster_config
         )
 

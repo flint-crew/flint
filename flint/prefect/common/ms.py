@@ -93,8 +93,9 @@ def task_jolly_roger_tractor(
 
     # TODO: How should the columns be handled here? Do we want to
     # only update in place?
+    # copied as an unmapped dict is shared by reference across mapped runs
     update_tukey_tractor_options = (
-        update_tukey_tractor_options if update_tukey_tractor_options else {}
+        dict(update_tukey_tractor_options) if update_tukey_tractor_options else {}
     )
     data_column = ms.column
 

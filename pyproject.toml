@@ -32,12 +32,12 @@ dynamic = ["version"]
 dependencies = [
     "astropy>=6.1.3", # fixing until units change in 6.1.4 addressed in radio-beam
     "numpy>=2.0.0",
-    "pydantic<2.11", # prefect v2 seems unhappy with pydantic 2.11
+    "pydantic>=2",
     "scipy",
     "spython>=0.3.1",
     "matplotlib",
-    "prefect<3.0.0",
-    "prefect-dask>=0.2.4",
+    "prefect>=3.4.7",
+    "prefect-dask>=0.3.7",
     "dask-jobqueue",
     "RACS-tools>=4.2.1",
     "aegeantools==2.3.0",
@@ -52,7 +52,6 @@ dependencies = [
     "jolly-roger>=0.10.1",
     "capn-crunch>=1.1.0",
     "billiard",
-    "anyio<4.14.0", # Remain compatible with prefect 2.20
 ]
 
 [tool.hatch]
