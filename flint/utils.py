@@ -5,6 +5,7 @@ for general usage.
 from __future__ import annotations
 
 import datetime
+import importlib.resources
 import os
 import shutil
 import signal
@@ -431,12 +432,7 @@ def get_packaged_resource_path(package: str, filename: str) -> Path:
         Path: The absolute path to the packaged resource file
     """
     logger.info(f"Loading {package=} for {filename=}")
-    try:
-        import importlib_resources as importlib_resources
-    except ImportWarning:
-        from importlib import resources as importlib_resources
-
-    p = importlib_resources.files(package)
+    p = importlib.resources.files(package)
     logger.info(f"{p=}")
     full_path = Path(p) / filename  # type: ignore
 
