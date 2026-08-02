@@ -55,7 +55,7 @@ from flint.prefect.common.utils import (
 def process_science_fields_pol(
     flint_ms_directory: Path,
     pol_field_options: PolFieldOptions,
-) -> list[Any]:
+) -> list[PrefectFuture[Any]]:
     # returned futures are resolved by prefect to fail the flow on task failure
     strategy = load_and_copy_strategy(
         output_split_science_path=flint_ms_directory,

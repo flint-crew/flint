@@ -17,6 +17,7 @@ from capn_crunch import (
 )
 from configargparse import ArgumentParser
 from prefect import flow, tags, unmapped
+from prefect.futures import PrefectFuture
 
 from flint.catalogue import verify_reference_catalogues
 from flint.configuration import (
@@ -266,9 +267,11 @@ def all_holography_available(
 
 
 @flow
-def process_racs_all_field(racs_all_options: RACSAllOptions) -> list[Any]:
+def process_racs_all_field(
+    racs_all_options: RACSAllOptions,
+) -> list[PrefectFuture[Any]]:
     # returned futures are resolved by prefect to fail the flow on task failure
-    terminal_futures: list[Any] = []
+    terminal_futures: list[PrefectFuture[Any]] = []
 
     # Any sanity checks will go in here, mateee
     _check_racs_all_options(racs_all_options=racs_all_options)

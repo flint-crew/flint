@@ -13,6 +13,7 @@ from typing import Any
 from capn_crunch import add_options_to_parser, create_options_from_parser
 from configargparse import ArgumentParser
 from prefect import flow, tags, unmapped
+from prefect.futures import PrefectFuture
 
 from flint.calibrate.aocalibrate import find_existing_solutions
 from flint.catalogue import verify_reference_catalogues
@@ -150,7 +151,7 @@ def process_science_fields(
     split_path: Path,
     field_options: FieldOptions,
     bandpass_path: Path | None = None,
-) -> list[Any]:
+) -> list[PrefectFuture[Any]]:
     # returned futures are resolved by prefect to fail the flow on task failure
 
     # Verify no nasty incompatible options
@@ -177,7 +178,7 @@ def process_science_fields(
         field_options=field_options,
     )
 
-    archive_wait_for: list[Any] = []
+    archive_wait_for: list[PrefectFuture[Any]] = []
 
     strategy: Strategy | None = load_and_copy_strategy(
         output_split_science_path=output_split_science_path,

@@ -19,6 +19,7 @@ from capn_crunch import add_options_to_parser, create_options_from_parser
 from configargparse import ArgumentParser
 from fitscube.combine_fits import combine_fits
 from prefect import flow, tags, task, unmapped
+from prefect.futures import PrefectFuture
 
 from flint.coadd.linmos import LinmosResult
 from flint.configuration import get_options_from_strategy, load_and_copy_strategy
@@ -298,9 +299,9 @@ def flow_subtract_cube(
     subtract_field_options: SubtractFieldOptions,
     addmodel_subtract_field_options: AddModelSubtractFieldOptions,
     crystalball_subtract_field_options: CrystalBallOptions,
-) -> list[Any]:
+) -> list[PrefectFuture[Any] | MS]:
     # returned futures are resolved by prefect to fail the flow on task failure
-    cube_results: list[Any] = []
+    cube_results: list[PrefectFuture[Any] | MS] = []
 
     strategy = load_and_copy_strategy(
         output_split_science_path=science_path,
