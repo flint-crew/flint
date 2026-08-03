@@ -5,7 +5,7 @@ from typing import Any
 
 from capn_crunch import add_options_to_parser, create_options_from_parser
 from configargparse import ArgumentParser
-from prefect import flow, tags, unmapped
+from prefect import flow, tags
 from prefect.futures import PrefectFuture
 
 from flint.coadd.linmos import LinmosOptions
@@ -150,13 +150,11 @@ def process_science_fields_pol(
                         in_ms=science_ms,
                         wsclean_container=pol_field_options.wsclean_container,
                         make_cube_from_subbands=False,  # We will do this later
-                        update_wsclean_options=unmapped(
-                            get_options_from_strategy(
-                                strategy=strategy,
-                                operation="polarisation",
-                                mode="wsclean",
-                                polarisation=polarisation,
-                            )
+                        update_wsclean_options=get_options_from_strategy(
+                            strategy=strategy,
+                            operation="polarisation",
+                            mode="wsclean",
+                            polarisation=polarisation,
                         ),
                     )
                 )

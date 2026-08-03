@@ -376,7 +376,7 @@ def process_science_fields(
 
         if run_aegean:
             aegean_field_output = task_run_bane_and_aegean.submit(
-                image=parset, aegean_container=unmapped(field_options.aegean_container)
+                image=parset, aegean_container=field_options.aegean_container
             )  # type: ignore
             field_summary = task_update_field_summary.submit(
                 field_summary=field_summary,
@@ -525,7 +525,7 @@ def process_science_fields(
             if final_round and run_aegean and parsets_self:
                 aegean_outputs = task_run_bane_and_aegean.submit(
                     image=parsets_self[-1],
-                    aegean_container=unmapped(field_options.aegean_container),
+                    aegean_container=field_options.aegean_container,
                 )  # type: ignore
                 field_summary = task_update_field_summary.submit(
                     field_summary=field_summary,

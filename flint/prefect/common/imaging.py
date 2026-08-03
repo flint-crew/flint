@@ -271,6 +271,9 @@ def task_run_bane_and_aegean(
     else:
         raise ValueError(f"Unexpected type, have received {type(image)} for {image=}. ")
 
+    logger.info(
+        f"{aegean_container=} will be used to run BANE and Aegean on {image_path=}"
+    )
     aegean_outputs = run_bane_and_aegean(
         image=image_path,
         aegean_container=aegean_container,

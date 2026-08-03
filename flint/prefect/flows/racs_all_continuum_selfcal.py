@@ -370,7 +370,7 @@ def process_racs_all_field(
                 )
 
             wsclean_result = task_wsclean_imager.submit(
-                in_ms=tuple(preprocess_science_mss),
+                in_ms=preprocess_science_mss,
                 wsclean_container=racs_all_options.wsclean_container,
                 update_wsclean_options=unmapped(
                     get_options_from_strategy(
@@ -454,10 +454,10 @@ def process_racs_all_field(
                 fits_beam_mask = task_create_image_mask_model.submit(
                     image=beam_imaging_results.wsclean_result,
                     image_products=None,  # Mac works on apparent brightness
-                    update_masking_options=unmapped(update_masking_options),
+                    update_masking_options=update_masking_options,
                 )
                 wsclean_result = task_wsclean_imager.submit(
-                    in_ms=tuple(cal_mss),
+                    in_ms=cal_mss,
                     wsclean_container=racs_all_options.wsclean_container,
                     fits_mask=fits_beam_mask,
                     update_wsclean_options=unmapped(
@@ -524,7 +524,7 @@ def process_racs_all_field(
                 logger.info(f"Running aegean on round {selfcal_round}")
                 aegean_outputs = task_run_bane_and_aegean.submit(
                     image=parsets[-1],
-                    aegean_container=unmapped(racs_all_options.aegean_container),
+                    aegean_container=racs_all_options.aegean_container,
                 )  # type: ignore
                 field_summary = task_update_field_summary.submit(
                     field_summary=field_summary,
