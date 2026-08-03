@@ -370,7 +370,7 @@ def process_racs_all_field(
                 )
 
             wsclean_result = task_wsclean_imager.submit(
-                in_ms=tuple(preprocess_science_mss),
+                in_ms=preprocess_science_mss,
                 wsclean_container=racs_all_options.wsclean_container,
                 update_wsclean_options=get_options_from_strategy(
                     strategy=strategy,
@@ -455,7 +455,7 @@ def process_racs_all_field(
                     update_masking_options=update_masking_options,
                 )
                 wsclean_result = task_wsclean_imager.submit(
-                    in_ms=tuple(cal_mss),
+                    in_ms=cal_mss,
                     wsclean_container=racs_all_options.wsclean_container,
                     fits_mask=fits_beam_mask,
                     update_wsclean_options=get_options_from_strategy(
