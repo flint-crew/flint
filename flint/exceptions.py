@@ -47,6 +47,10 @@ class FrequencyMismatchError(FlintException):
     """Raised when there are differences in frequencies"""
 
 
+class ChannelDivisionError(FlintException):
+    """Raised when no wsclean channel division would make a usable cube"""
+
+
 class PhaseOutlierFitError(FlintException):
     """Raised when the phase outlier fit routine fails."""
 
