@@ -39,7 +39,74 @@ you run a `prefect` enabled workflow without these, `prefect` will automatically
 database and server processes to manage the workflow. This comes at a scalability cost though. Large workflows
 with many concurrent sets of independent workers may overwhelm the default shortlived set of services.
 
+To-date there have been two ways we have used to establish a `prefect` server instance. Note that in either case the server does not need to be located on the same machine/cluster as the workers used to perform the compute. The only requirement is that the compute workers can communicate with the `prefect` server over http. This may mean that appropriate firewall ingress/egress rules are added -- this is not something addressed here.
+
+### Deploying a Prefect self-hosted server with Docker
+
+These instructions are a subset of those on the official `prefect` docs page.
+
+`Docker` provides a simple mechanism of establishing a `prefect` self-hosted server. Copy the below into a `docker-compose.yaml` file:
+
+```yaml
+
+services:
+  postgres:
+    image: postgres:14
+    environment:
+      POSTGRES_USER: prefect
+      POSTGRES_PASSWORD: prefect
+      POSTGRES_DB: prefect
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prefect"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Single-node: services run in-process, no redis broker needed.
+  # Split out prefect-services + redis only when scaling the API past one replica.
+  prefect-server:
+    image: prefecthq/prefect:3-latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PREFECT_SERVER_DATABASE_CONNECTION_URL: postgresql+asyncpg://prefect:prefect@postgres:5432/prefect
+      PREFECT_SERVER_API_HOST: 0.0.0.0
+      PREFECT_SERVER_UI_API_URL: http://localhost:4200/api
+    command: prefect server start
+    ports:
+      - "4200:4200"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:4200/api/health', timeout=1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  postgres_data:
+
+```
+
+This `docker compose` configuration will start a `postgres` database service, then establish a `prefect` server configured to connect to it. Appropriate health checkers are also configured, which would restart components if needed.
+
+Note that you should update the database username and password from `prefect` to something more secure. Further, you may also need to update the `PREFECT_SERVER_UI_API_URL` replacing the `localhost` reference to the fully-resolved domain name of the machine hosting your prefect service.
+
+This configuration may be started with
+
+`docker compose up -d`
+
+and halted with
+
+`docker compose down`
+
+You will need to issue these commands while in the same directory as the `docker-compose.yaml` file constructed with the above. Further configuration changes could be made to allow additional processes, memory usage etc as needed.
+
 ### Deploying your own prefect server
+
+In instances where `docker` is not available the below may off an alternative. For better or worse, these scripts are historically this is what was used in early stages of `flint` development.
 
 If you want to have a scalable self-host solution there are two components that need to be established:
 
