@@ -267,7 +267,6 @@ def all_holography_available(
     return holo_output_path
 
 
-@flow
 def _apply_cube_division(
     update_wsclean_options: dict[Any, Any], cube_division: ChannelDivision
 ) -> dict[Any, Any]:
@@ -289,6 +288,7 @@ def _apply_cube_division(
     }
 
 
+@flow
 def process_racs_all_field(
     racs_all_options: RACSAllOptions,
 ) -> list[PrefectFuture[Any]]:
