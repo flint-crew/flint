@@ -14,6 +14,7 @@ from .conftest import which
 def test_no_unmapped_outside_map():
     """``unmapped`` is a ``tuple`` subclass that only ``Task.map`` unwraps. Passing it
     to ``Task.submit`` silently hands the annotation itself to the task function."""
+
     def is_unmapped(node: ast.expr) -> bool:
         return (
             isinstance(node, ast.Call)
