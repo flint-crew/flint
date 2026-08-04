@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from prefect import flow, task
 from prefect.logging import disable_run_logger
 from prefect.testing.utilities import prefect_test_harness
@@ -44,3 +46,34 @@ def test_failed_task_fails_flow():
 
     with prefect_test_harness(), disable_run_logger():
         assert _flow_returning_futures(return_state=True).is_failed()
+
+
+@task
+def _append_marker(marker: Path, name: str) -> str:
+    with marker.open("a") as file:
+        file.write(f"{name}\n")
+    return name
+
+
+@flow
+def _flow_repeating_a_task(marker: Path) -> None:
+    _append_marker.submit(marker, "beam00").result()
+    _append_marker.submit(marker, "beam00").result()
+
+
+def test_side_effect_not_repeated_within_flow_run(tmp_path):
+    """A killed dask worker makes dask recompute the tasks whose results it held,
+    which for flint means repeating a side effect. Persisted results turn that
+    repeat into a lookup, while the flow run id in the prefect cache policy keeps
+    a later flint run re-executing rather than skipping the work."""
+
+    marker = tmp_path / "side_effects.txt"
+    marker.touch()
+
+    with prefect_test_harness(), disable_run_logger():
+        _flow_repeating_a_task(marker)
+        assert marker.read_text().split() == ["beam00"]
+
+        # A new flow run has a new run id, so the side effect is not skipped
+        _flow_repeating_a_task(marker)
+        assert marker.read_text().split() == ["beam00", "beam00"]

@@ -230,7 +230,6 @@ export PREFECT_HOME="$(pwd)/prefect"
 export PREFECT_LOGGING_EXTRA_LOGGERS="flint,fixms"
 export PREFECT_LOGGING_LEVEL="INFO"
 export PREFECT_RESULTS_PERSIST_BY_DEFAULT=true
-export PREFECT_TASKS_DEFAULT_NO_CACHE=true
 ```
 
 A shortform description of the settings and their intent in a `flint` context are:
@@ -239,7 +238,6 @@ A shortform description of the settings and their intent in a `flint` context ar
 - `PREFECT_HOME`: The default location `prefect` should use to store settings, meta-data and persistent task results. On some systems there are strict quota limits on `$HOME`. Setting this to anhother location, such as the launch directory of a flow, might be of use.
 - `PREFECT_LOGGING_EXTRA_LOGGERS`: Specifies which `logging` instances the `prefect` stream-handler should be attached to. General these will be the module name, but this is by convention and not mandatory in python.
 - `PREFECT_LOGGING_LEVEL`: Which logging level should be captured and streamed to the `prefect` server
-- `PREFECT_RESULTS_PERSIST_BY_DEFAULT`: Store the result of each evaluated task to disk. Should a task result be needed later in a flow it can be retrieved from this cache. This is useful in instances where worker agents are unexpectedly killed, allowing for their results to be a simple lookup rather than recomputed.
-- `PREFECT_TASKS_DEFAULT_NO_CACHE`: Disable the `prefect` 3 default task cache policy. Many `flint` tasks are side-effecting (they zip, delete and archive on disk), so a cache hit is a skipped side effect rather than a saved computation. `flint` sets this itself in `flint.prefect.__init__`; it is listed here so the intent is visible and can be overridden.
+- `PREFECT_RESULTS_PERSIST_BY_DEFAULT`: Store the result of each evaluated task to disk. Should a task result be needed later in a flow it can be retrieved from this cache. This is useful in instances where worker agents are unexpectedly killed, allowing for their results to be a simple lookup rather than recomputed. `flint` sets this itself in `flint.prefect.__init__`; it is listed here so the intent is visible and can be overridden. Many `flint` tasks are side-effecting (they zip, delete and archive on disk), and re-running one is not free, so this is the setting that keeps a lost `dask` worker from repeating work that was already done. The `prefect` default cache policy includes the flow run ID, so a cache hit can only happen within a single flow run - a later `flint` run always re-executes.
 
 The usage of these variables are by no means mandatory, and can vary depending on the usage of `flint` and computing platform.
