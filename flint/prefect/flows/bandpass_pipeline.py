@@ -15,7 +15,7 @@ from collections.abc import Collection
 from pathlib import Path
 
 from capn_crunch import add_options_to_parser, create_options_from_parser
-from prefect import flow, task, unmapped
+from prefect import flow, unmapped
 
 from flint.bandpass import extract_correct_bandpass_pointing
 from flint.calibrate.aocalibrate import (
@@ -34,6 +34,7 @@ from flint.options import (
     MS,
     BandpassOptions,
 )
+from flint.prefect.caching import task
 from flint.prefect.clusters import get_dask_runner
 from flint.prefect.common.utils import upload_image_as_artifact
 from flint.sky_model import get_1934_model

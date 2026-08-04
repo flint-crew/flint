@@ -2,15 +2,13 @@ from __future__ import annotations
 
 import os
 
-# When a dask worker dies the results it held are lost, and dask recomputes the tasks
-# that made them - which for flint means repeating a side effect (recopying an MS,
-# reapplying a solution), usually onto outputs that already exist. Persisting results
-# lets prefect return the completed result instead of re-running the task.
+# Has to be set before anything imports `prefect`, which reads its settings once at
+# import time and ignores later changes to the environment. This package `__init__` is
+# the only place that reliably runs first, as importing any `flint.prefect` submodule
+# initialises it before running the submodule (and its own `import prefect`).
 #
-# prefect's default cache policy is INPUTS + TASK_SOURCE + RUN_ID, so a hit is only
-# possible within the same flow run. A new flint run has a new RUN_ID and so always
-# re-executes - a cache hit never silently skips a side effect across runs.
-#
-# Results are written to $PREFECT_HOME/storage, which every worker has to be able to
-# read. Set PREFECT_LOCAL_STORAGE_PATH if $HOME is not shared across the cluster.
+# Task results are persisted so that a `dask` worker death becomes a lookup rather than
+# a recomputed side effect - see `flint.prefect.caching`. Results are written to
+# $PREFECT_HOME/storage, which every worker has to be able to read; set
+# PREFECT_LOCAL_STORAGE_PATH if $HOME is not shared across the cluster.
 os.environ.setdefault("PREFECT_RESULTS_PERSIST_BY_DEFAULT", "true")

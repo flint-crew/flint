@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any, ParamSpec, TypeVar
 from uuid import UUID
 
-from prefect import task
 from prefect.artifacts import create_markdown_artifact
 
 from flint.archive import copy_sbid_files_archive, create_sbid_tar_archive
@@ -22,6 +21,7 @@ from flint.naming import (
     rename_linear_to_stokes,
 )
 from flint.options import ArchiveOptions
+from flint.prefect.caching import task
 from flint.summary import (
     create_beam_summary,
     create_field_summary,

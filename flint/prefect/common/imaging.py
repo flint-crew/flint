@@ -12,7 +12,7 @@ from typing import Any, Literal, ParamSpec, TypeVar
 
 import numpy as np
 import pandas as pd
-from prefect import Task, task, unmapped
+from prefect import Task, unmapped
 from prefect.artifacts import create_table_artifact
 from prefect.futures import PrefectFuture
 
@@ -73,6 +73,7 @@ from flint.naming import (
 )
 from flint.options import FieldOptions, SubtractFieldOptions
 from flint.peel.potato import potato_peel
+from flint.prefect.caching import task
 from flint.prefect.common.utils import task_getattr, upload_image_as_artifact
 from flint.selfcal.casa import gaincal_applycal_ms
 from flint.source_finding.aegean import AegeanOutputs, run_bane_and_aegean

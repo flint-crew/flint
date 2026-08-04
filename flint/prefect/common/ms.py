@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, ParamSpec, TypeVar
 
-from prefect import Task, task
+from prefect import Task
 
 from flint.imager.wsclean import WSCleanResult
 from flint.logging import logger
@@ -13,6 +13,7 @@ from flint.ms import describe_ms, subtract_model_from_data_column
 from flint.options import MS
 from flint.peel.jolly import jolly_roger_tractor
 from flint.predict.addmodel import AddModelOptions, add_model
+from flint.prefect.caching import task
 
 P = ParamSpec("P")
 R = TypeVar("R")

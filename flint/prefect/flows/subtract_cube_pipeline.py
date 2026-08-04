@@ -18,7 +18,7 @@ import numpy as np
 from capn_crunch import add_options_to_parser, create_options_from_parser
 from configargparse import ArgumentParser
 from fitscube.combine_fits import combine_fits
-from prefect import flow, tags, task, unmapped
+from prefect import flow, tags, unmapped
 from prefect.futures import PrefectFuture
 
 from flint.coadd.linmos import LinmosResult
@@ -40,6 +40,7 @@ from flint.options import (
     SubtractFieldOptions,
 )
 from flint.predict.crystalball import CrystalBallOptions
+from flint.prefect.caching import task
 from flint.prefect.clusters import get_dask_runner
 from flint.prefect.common.imaging import (
     task_common_beam_convolve_linmos,
