@@ -170,6 +170,29 @@ def test_rotate_cube_is_idempotent(tmpdir) -> None:
     assert np.array_equal(fits.getdata(cube), data)
 
 
+def test_rotate_cube_single_stokes_is_header_only(tmpdir) -> None:
+    """With a length-one stokes axis the bytes on disk do not move, so the
+    rotation must be done in the header without reading the cube in."""
+    cube = Path(tmpdir) / "single_stokes.fits"
+    data = np.arange(1 * 3 * 5 * 7, dtype=np.float32).reshape(1, 3, 5, 7)
+    header = fits.getheader(
+        _write_channel_image(Path(tmpdir) / "plane.fits", channel=0, shape=(5, 7))
+    )
+    fits.writeto(cube, data=data, header=header)
+
+    rotate_cube(cube)
+
+    with fits.open(cube) as hdul:
+        rotated_header, rotated_data = hdul[0].header, hdul[0].data
+
+    assert (rotated_header["NAXIS3"], rotated_header["NAXIS4"]) == (1, 3)
+    assert rotated_header["CTYPE3"] == "STOKES"
+    assert rotated_header["CTYPE4"] == "FREQ"
+    assert "CUNIT3" not in rotated_header
+    assert rotated_header["CUNIT4"] == "Hz"
+    assert np.array_equal(rotated_data, np.moveaxis(data, 1, 0))
+
+
 def test_combine_images_to_cube_shape_mismatch(tmpdir) -> None:
     """Planes are written into the cube at fixed byte offsets, so differing
     pixel grids must be rejected rather than silently scrambled."""

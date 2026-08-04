@@ -1067,10 +1067,7 @@ def rotate_cube(output_cube_path: str | Path, inplace: bool = True) -> Path:
         logger.warning(f"{output_cube_path=} does not appear to exist. Returning.")
         return Path(output_cube_path)
 
-    # Read original data and header
-    with fits.open(output_path, mode="readonly", memmap=True) as hdul:
-        header = hdul[0].header.copy()
-        data_cube = hdul[0].data.copy()
+    header = fits.getheader(output_path)
 
     # Cubes formed from planes that were themselves cut from a rotated cube are
     # already in the desired order, and rotating again would undo it
@@ -1098,7 +1095,20 @@ def rotate_cube(output_cube_path: str | Path, inplace: bool = True) -> Path:
             else:
                 header.pop(f"{key}{a}", None)
 
+    # Swapping a length-one axis leaves the byte order on disk unchanged, so the
+    # moveaxis is a contiguous view of the memmap and nothing is read into memory.
+    # Reading a whole cube in is enough to blow a worker's memory budget
+    if header["NAXIS"] == 4 and min(header["NAXIS3"], header["NAXIS4"]) == 1:
+        logger.info(f"Rotating {output_path.name} via a view of the memmap")
+        with fits.open(output_path, mode="update", memmap=True) as hdul:
+            hdul[0].data = np.moveaxis(hdul[0].data, 1, 0)
+            hdul[0].header = header
+            hdul.flush()
+        return output_path
+
     # Move data axis: (pol, chan, dec, ra) → (chan, pol, dec, ra)
+    with fits.open(output_path, mode="readonly", memmap=True) as hdul:
+        data_cube = hdul[0].data.copy()
     rotated_data = np.moveaxis(data_cube, 1, 0)
 
     if inplace:
