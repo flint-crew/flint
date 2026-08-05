@@ -91,7 +91,9 @@ def run_rmclean_3d(
     )
 
 
-def _phi_header(reference_header: fits.Header, phi_arr_radm2: np.ndarray) -> fits.Header:
+def _phi_header(
+    reference_header: fits.Header, phi_arr_radm2: np.ndarray
+) -> fits.Header:
     """Build a FDF cube header: the reference header's spatial WCS with the
     spectral axis replaced by a linear Faraday-depth axis."""
     header = WCS(reference_header).celestial.to_header()
@@ -123,7 +125,9 @@ def write_fdf_cube_to_fits(
         Path: ``output_path``
     """
     header = _phi_header(reference_header=reference_header, phi_arr_radm2=phi_arr_radm2)
-    fits.writeto(output_path, np.abs(fdf_cube).astype(np.float32), header, overwrite=True)
+    fits.writeto(
+        output_path, np.abs(fdf_cube).astype(np.float32), header, overwrite=True
+    )
     return output_path
 
 
@@ -140,6 +144,9 @@ def write_moment_maps_to_fits(
     debias_filter_size: int = 5,
 ) -> list[Path]:
     """Compute and write the mom0/mom1/mom2 Faraday moment maps of an FDF cube.
+    If ``debias`` is True, an additional debiased mom0/mom1/mom2 set (via
+    rm_lite's ``debias_fdf``) is written alongside the usual thresholded set,
+    suffixed ``.debiased`` -- not a replacement for it.
 
     Args:
         fdf_cube (np.ndarray): Complex FDF cube, shape (n_phi, ny, nx)
@@ -148,31 +155,54 @@ def write_moment_maps_to_fits(
         reference_header (fits.Header): Header to derive the spatial WCS from (e.g. the Stokes Q cube header)
         output_prefix (Path): Common prefix for the output files
         label (FDFLabel): Which FDF ``fdf_cube`` is ('dirty', 'clean', or 'model'), used to name the outputs
-        threshold (float | None, optional): Amplitude cut applied before computing the moments. Ignored if debias is True. Defaults to None.
-        debias (bool, optional): Debias mom0 via rm_lite's debias_fdf instead of thresholding. Requires lam_sq_0_m2. Defaults to False.
+        threshold (float | None, optional): Amplitude cut applied before computing the moments. Defaults to None.
+        debias (bool, optional): Also write a debiased mom0/mom1/mom2 set. Requires lam_sq_0_m2. Defaults to False.
         lam_sq_0_m2 (float | None, optional): Reference wavelength^2, required if debias is True. Defaults to None.
         debias_filter_size (int, optional): Median filter size (pixels) used by debiasing. Defaults to 5.
 
     Returns:
-        list[Path]: The three written moment-map paths (mom0, mom1, mom2)
+        list[Path]: The written moment-map paths: three (mom0, mom1, mom2), plus
+        three more (mom0.debiased, mom1.debiased, mom2.debiased) if debias is True
     """
+    header = WCS(reference_header).celestial.to_header()
+
+    def _write(moments, suffix: str) -> list[Path]:
+        written = []
+        for moment_name, moment_map in zip(
+            ("mom0", "mom1", "mom2"), (moments.mom0, moments.mom1, moments.mom2)
+        ):
+            output_path = Path(
+                f"{output_prefix}.fdf.{label}.{moment_name}{suffix}.fits"
+            )
+            fits.writeto(
+                output_path,
+                np.asarray(moment_map, dtype=np.float32),
+                header,
+                overwrite=True,
+            )
+            written.append(output_path)
+        return written
+
     moments = calc_faraday_moments(
         fdf_cube,
         phi_arr_radm2=phi_arr_radm2,
         fwhm_rmsf_radm2=fwhm_rmsf_radm2,
-        threshold=None if debias else threshold,
-        debias=debias,
-        lam_sq_0_m2=lam_sq_0_m2,
-        debias_filter_size=debias_filter_size,
+        threshold=threshold,
     )
-    header = WCS(reference_header).celestial.to_header()
-    output_paths = []
-    for moment_name, moment_map in zip(
-        ("mom0", "mom1", "mom2"), (moments.mom0, moments.mom1, moments.mom2)
-    ):
-        output_path = Path(f"{output_prefix}.fdf.{label}.{moment_name}.fits")
-        fits.writeto(output_path, np.asarray(moment_map, dtype=np.float32), header, overwrite=True)
-        output_paths.append(output_path)
+    output_paths = _write(moments, suffix="")
+
+    if debias:
+        debiased_moments = calc_faraday_moments(
+            fdf_cube,
+            phi_arr_radm2=phi_arr_radm2,
+            fwhm_rmsf_radm2=fwhm_rmsf_radm2,
+            threshold=None,
+            debias=True,
+            lam_sq_0_m2=lam_sq_0_m2,
+            debias_filter_size=debias_filter_size,
+        )
+        output_paths.extend(_write(debiased_moments, suffix=".debiased"))
+
     return output_paths
 
 
@@ -206,7 +236,9 @@ def write_stokes_i_fit_maps_to_fits(
     output_paths = []
     for key, data in stokes_i_maps.items():
         output_path = Path(f"{output_prefix}.{_STOKES_I_MAP_SUFFIXES[key]}.fits")
-        fits.writeto(output_path, np.asarray(data, dtype=np.float32), header, overwrite=True)
+        fits.writeto(
+            output_path, np.asarray(data, dtype=np.float32), header, overwrite=True
+        )
         output_paths.append(output_path)
     return output_paths
 
@@ -255,7 +287,9 @@ def rmsynth_and_write_products(
         stokes_i_cube=stokes_i_cube,
     )
 
-    run_clean = any(label in ("clean", "model") for label in (*cube_products, *moment_products))
+    run_clean = any(
+        label in ("clean", "model") for label in (*cube_products, *moment_products)
+    )
     clean_results = (
         run_rmclean_3d(rm_synth_results=synth_results, rmclean_options=rmclean_options)
         if run_clean
@@ -267,10 +301,23 @@ def rmsynth_and_write_products(
         fdf_sources["clean"] = clean_results.clean_fdf_cube
         fdf_sources["model"] = clean_results.model_fdf_cube
 
-    needed_labels = {*cube_products, *moment_products}
+    # Cubes written to zarr are stored chunk-by-chunk (one worker writing its
+    # own chunk directly) and so must NOT also be gathered to numpy here --
+    # only labels also needed for moments (small, cheap to gather) go through
+    # the numpy path below.
+    write_cubes_as_zarr = rmsynth_options.write_fdfs_to_zarr and bool(cube_products)
+    zarr_store_path = Path(f"{output_prefix}.fdf.zarr") if write_cubes_as_zarr else None
+    numpy_cube_labels = set() if write_cubes_as_zarr else set(cube_products)
+
+    needed_labels = numpy_cube_labels | set(moment_products)
     compute_targets: dict[str, dask.array.Array] = {
         label: fdf_sources[label] for label in needed_labels
     }
+    if write_cubes_as_zarr:
+        for label in cube_products:
+            compute_targets[f"zarr_{label}"] = fdf_sources[label].to_zarr(
+                str(zarr_store_path), component=label, overwrite=True, compute=False
+            )
     # stokes_i_alpha_error_map is None unless estimate_stokes_i_noise (or a
     # supplied Stokes I error) gives the fit something to propagate; the other
     # maps are None only if the Stokes I fit didn't run at all. Skip whichever
@@ -284,25 +331,33 @@ def rmsynth_and_write_products(
     stokes_i_maps = {k: v for k, v in stokes_i_maps.items() if v is not None}
     compute_targets.update(stokes_i_maps)
 
-    # Batch every lazy array needed by the requested products into a single
-    # dask.compute call: computing per-product in a loop would redo the shared
-    # synthesis/RM-CLEAN graph once per product instead of once total. Per
-    # rm-lite's dask parallelisation guide: the threaded scheduler suits the
-    # GIL-releasing NUFFT (dirty-only), but RM-CLEAN/Stokes-I fitting are
-    # GIL-bound Python loops that need the process scheduler -- unless a
-    # distributed Client is given, in which case it takes over entirely.
-    scheduler = dask_client if dask_client is not None else ("processes" if run_clean else "threads")
+    # Batch every lazy array/delayed write needed by the requested products
+    # into a single dask.compute call, including the zarr writes above:
+    # computing per-product in a loop would redo the shared synthesis/RM-CLEAN
+    # graph once per product instead of once total. Per rm-lite's dask
+    # parallelisation guide: the threaded scheduler suits the GIL-releasing
+    # NUFFT (dirty-only), but RM-CLEAN/Stokes-I fitting are GIL-bound Python
+    # loops that need the process scheduler -- unless a distributed Client is
+    # given, in which case it takes over entirely.
+    scheduler = (
+        dask_client
+        if dask_client is not None
+        else ("processes" if run_clean else "threads")
+    )
     compute_keys = list(compute_targets.keys())
     computed = dict(
         zip(
             compute_keys,
-            dask.compute(*(compute_targets[key] for key in compute_keys), scheduler=scheduler),
+            dask.compute(
+                *(compute_targets[key] for key in compute_keys), scheduler=scheduler
+            ),
         )
     )
 
     reference_header = fits.getheader(stokes_q_cube)
     clean_moment_threshold = (
-        rmclean_options.moment_threshold_snr * synth_results.theoretical_noise.fdf_error_noise
+        rmclean_options.moment_threshold_snr
+        * synth_results.theoretical_noise.fdf_error_noise
     )
     moment_thresholds: dict[FDFLabel, float | None] = {
         "dirty": None,
@@ -311,18 +366,22 @@ def rmsynth_and_write_products(
     }
 
     output_paths: list[Path] = []
-    for label in cube_products:
-        output_path = create_image_cube_name(
-            image_prefix=output_prefix, mode="fdf", suffix=label
-        )
-        output_paths.append(
-            write_fdf_cube_to_fits(
-                fdf_cube=computed[label],
-                phi_arr_radm2=synth_results.phi_arr_radm2,
-                reference_header=reference_header,
-                output_path=output_path,
+    if write_cubes_as_zarr:
+        assert zarr_store_path is not None
+        output_paths.append(zarr_store_path)
+    else:
+        for label in cube_products:
+            output_path = create_image_cube_name(
+                image_prefix=output_prefix, mode="fdf", suffix=label
             )
-        )
+            output_paths.append(
+                write_fdf_cube_to_fits(
+                    fdf_cube=computed[label],
+                    phi_arr_radm2=synth_results.phi_arr_radm2,
+                    reference_header=reference_header,
+                    output_path=output_path,
+                )
+            )
     for label in moment_products:
         output_paths.extend(
             write_moment_maps_to_fits(

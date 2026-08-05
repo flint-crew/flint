@@ -279,9 +279,11 @@ class RMSynthOptions(BaseOptions):
     n_error_samples: int = 1000
     """Monte-Carlo resamples used by compute_model_error"""
     debias_moments: bool = False
-    """Debias the mom0 (polarised intensity) moment map via rm_lite's debias_fdf, instead of a hard amplitude threshold. Requires lam_sq_0_m2 from the synthesis, so overrides any SNR threshold"""
+    """Also compute a debiased (via rm_lite's debias_fdf) mom0/mom1/mom2 set per requested FDF"""
     debias_filter_size: int = 5
     """Median filter size (pixels) used by mom0 debiasing"""
+    write_fdfs_to_zarr: bool = False
+    """Write requested FDF cubes (rmsynth_cube_products) as a chunked zarr store instead of FITS. Recommended for large cubes"""
     estimate_stokes_i_noise: bool = False
     """Derive a per-channel Stokes I error from the Stokes I cube when fitting the fractional-polarisation model"""
 

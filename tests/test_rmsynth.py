@@ -174,7 +174,9 @@ def test_rmsynth_with_stokes_i_writes_fit_maps(
         assert fits.getheader(alpha_error_path)["NAXIS"] == 2
 
 
-def test_rmsynth_debias_moments_runs(tmp_path: Path, qu_cubes: tuple[Path, Path]) -> None:
+def test_rmsynth_debias_moments_runs(
+    tmp_path: Path, qu_cubes: tuple[Path, Path]
+) -> None:
     stokes_q_cube, stokes_u_cube = qu_cubes
     output_prefix = tmp_path / "test_field"
 
@@ -189,11 +191,44 @@ def test_rmsynth_debias_moments_runs(tmp_path: Path, qu_cubes: tuple[Path, Path]
     )
 
     mom0_path = Path(f"{output_prefix}.fdf.clean.mom0.fits")
+    debiased_mom0_path = Path(f"{output_prefix}.fdf.clean.mom0.debiased.fits")
     assert mom0_path in output_paths
     assert mom0_path.exists()
+    assert debiased_mom0_path in output_paths
+    assert debiased_mom0_path.exists()
+    assert len(output_paths) == 6
 
 
-def test_rmsynth_no_products_is_noop(tmp_path: Path, qu_cubes: tuple[Path, Path]) -> None:
+def test_rmsynth_write_fdfs_to_zarr(
+    tmp_path: Path, qu_cubes: tuple[Path, Path]
+) -> None:
+    stokes_q_cube, stokes_u_cube = qu_cubes
+    output_prefix = tmp_path / "test_field"
+
+    output_paths = rmsynth_and_write_products(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        rmsynth_options=RMSynthOptions(write_fdfs_to_zarr=True),
+        rmclean_options=RMCleanOptions(),
+        cube_products=["dirty", "clean"],
+        moment_products=["clean"],
+        output_prefix=output_prefix,
+    )
+
+    zarr_store = Path(f"{output_prefix}.fdf.zarr")
+    assert zarr_store in output_paths
+    assert not list(tmp_path.glob("*.fdf.*.cube.fits"))
+
+    import zarr
+
+    group = zarr.open(str(zarr_store), mode="r")
+    assert set(group.keys()) == {"dirty", "clean"}
+    assert group["dirty"].shape[1:] == (NY, NX)
+
+
+def test_rmsynth_no_products_is_noop(
+    tmp_path: Path, qu_cubes: tuple[Path, Path]
+) -> None:
     stokes_q_cube, stokes_u_cube = qu_cubes
 
     output_paths = rmsynth_and_write_products(
