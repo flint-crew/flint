@@ -118,6 +118,8 @@ class WSCleanOptions(BaseOptions):
     """Threshold in Jy to stop cleaning"""
     channels_out: int = 4
     """Number of output channels"""
+    channel_division_frequencies: tuple[float, ...] | None = None
+    """Frequencies, in Hz, that divide the output channels into groups. Supplying ``channels_out - 1`` values fully specifies the output frequency grid, see ``flint.imager.channel_division``"""
     gain: float = 0.1
     """Cleaning gain, ratio of peak that will be subtracted in each iteration"""
     mgain: float = 0.7
@@ -890,7 +892,7 @@ def _resolve_wsclean_key_value_to_cli_str(key: str, value: Any) -> ResolvedCLIRe
     # Some wsclean options, if multiple values are provided, might need
     # to be join as a csv list. Others might want to be dumped in. Just
     # attempting to future proof (arguably needlessly).
-    options_to_comma_join = "multiscale-scales"
+    options_to_comma_join = ("multiscale-scales", "channel-division-frequencies")
     bind_dir_options = ("temp-dir",)
 
     logger.debug(f"{key=} {value=} {type(value)=}")

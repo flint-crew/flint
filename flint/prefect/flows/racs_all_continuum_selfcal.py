@@ -25,6 +25,7 @@ from flint.configuration import (
     get_options_from_strategy,
     load_and_copy_strategy,
 )
+from flint.imager.channel_division import ChannelDivision, channel_division_for_beams
 from flint.imager.wsclean import WSCleanResult
 from flint.logging import logger
 from flint.ms import MS, MSSummary, find_mss
@@ -266,6 +267,27 @@ def all_holography_available(
     return holo_output_path
 
 
+def _apply_cube_division(
+    update_wsclean_options: dict[Any, Any], cube_division: ChannelDivision
+) -> dict[Any, Any]:
+    """Replace the strategy channel division with a solved one. A division set
+    explicitly in the strategy wins, so a known good grid can be pinned."""
+    if update_wsclean_options.get("channel_division_frequencies") is not None:
+        logger.info(
+            "Strategy specifies channel_division_frequencies, not using the solved division"
+        )
+        return update_wsclean_options
+
+    logger.info(
+        f"Imaging with the solved channel division, {cube_division.channels_out=}"
+    )
+    return {
+        **update_wsclean_options,
+        "channels_out": cube_division.channels_out,
+        "channel_division_frequencies": cube_division.channel_division_frequencies,
+    }
+
+
 @flow
 def process_racs_all_field(
     racs_all_options: RACSAllOptions,
@@ -297,6 +319,15 @@ def process_racs_all_field(
         low_mss=low_band_mss, mid_mss=mid_band_mss, high_mss=high_band_mss
     )
     logger.info(f"Will be processing {len(science_mss_by_beam)} beams")
+
+    # Solved once for all beams, and before any imaging, so that a target that
+    # cannot make a compact cube fails the flow now instead of hours from now
+    cube_division: ChannelDivision | None = None
+    if racs_all_options.cube_channel_width:
+        cube_division = channel_division_for_beams(
+            mss_by_beam=science_mss_by_beam,
+            target_width=racs_all_options.cube_channel_width,
+        )
 
     dump_field_options_to_yaml(
         output_path=add_timestamp_to_path(
@@ -454,16 +485,22 @@ def process_racs_all_field(
                     image_products=None,  # Mac works on apparent brightness
                     update_masking_options=update_masking_options,
                 )
+                update_wsclean_options = get_options_from_strategy(
+                    strategy=strategy,
+                    mode="wsclean",
+                    round_info=current_round,
+                    operation="selfcal",
+                )
+                if final_round and cube_division is not None:
+                    update_wsclean_options = _apply_cube_division(
+                        update_wsclean_options=update_wsclean_options,
+                        cube_division=cube_division,
+                    )
                 wsclean_result = task_wsclean_imager.submit(
                     in_ms=cal_mss,
                     wsclean_container=racs_all_options.wsclean_container,
                     fits_mask=fits_beam_mask,
-                    update_wsclean_options=get_options_from_strategy(
-                        strategy=strategy,
-                        mode="wsclean",
-                        round_info=current_round,
-                        operation="selfcal",
-                    ),
+                    update_wsclean_options=update_wsclean_options,
                 )
                 imaging_results[current_round].append(
                     LoopFutures(mss=cal_mss, wsclean_result=wsclean_result)
