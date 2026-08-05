@@ -40,8 +40,10 @@ from flint.naming import (
     get_sbid_from_path,
 )
 from flint.options import (
+    PolFieldOptions,
     RACSAllOptions,
     dump_field_options_to_yaml,
+    pol_field_options_cli_class,
     racs_all_options_to_pol_field_options,
 )
 from flint.prefect.clusters import get_dask_runner
@@ -281,6 +283,7 @@ def all_holography_available(
 @flow
 def process_racs_all_field(
     racs_all_options: RACSAllOptions,
+    pol_field_options: PolFieldOptions | None = None,
 ) -> list[PrefectFuture[Any]]:
     # returned futures are resolved by prefect to fail the flow on task failure
     terminal_futures: list[PrefectFuture[Any]] = []
@@ -574,11 +577,14 @@ def process_racs_all_field(
 
     if racs_all_options.run_polarisation:
         with tags("polarisation"):
+            resolved_pol_field_options = (
+                pol_field_options
+                if pol_field_options is not None
+                else racs_all_options_to_pol_field_options(racs_all_options)
+            )
             pol_futures = process_science_fields_pol(
                 flint_ms_directory=output_science_path,
-                pol_field_options=racs_all_options_to_pol_field_options(
-                    racs_all_options
-                ),
+                pol_field_options=resolved_pol_field_options,
                 cube_division=pol_cube_division,
             )
             terminal_futures.extend(pol_futures)
@@ -589,13 +595,16 @@ def process_racs_all_field(
 
 
 def setup_run_racs_all_field(
-    cluster_config: Path, racs_all_options: RACSAllOptions
+    cluster_config: Path,
+    racs_all_options: RACSAllOptions,
+    pol_field_options: PolFieldOptions | None = None,
 ) -> None:
     """The main launch script for the RACS-All processing flow
 
     Args:
         cluster_config (Path): Path to the dask configuration yaml file to define the cluster
         racs_all_options (RACSAllOptions): Options around the processing of RACS-All field
+        pol_field_options (PolFieldOptions | None, optional): Options for the polarisation imaging pipeline, used if ``racs_all_options.run_polarisation`` is set. Derived from ``racs_all_options`` if not provided. Defaults to None.
     """
 
     low_sbid = get_sbid_from_path(path=racs_all_options.low_data)
@@ -604,7 +613,7 @@ def setup_run_racs_all_field(
 
     process_racs_all_field.with_options(
         name=f"RACS All -- {low_sbid}", task_runner=dask_task_runner
-    )(racs_all_options=racs_all_options)
+    )(racs_all_options=racs_all_options, pol_field_options=pol_field_options)
 
 
 def get_parser() -> ArgumentParser:
@@ -628,6 +637,11 @@ def get_parser() -> ArgumentParser:
     )
 
     parser = add_options_to_parser(parser=parser, options_class=RACSAllOptions)
+    parser = add_options_to_parser(
+        parser=parser,
+        options_class=pol_field_options_cli_class(RACSAllOptions),
+        description="Polarisation processing options",
+    )
 
     return parser
 
@@ -640,9 +654,14 @@ def cli() -> None:
     racs_all_options = create_options_from_parser(
         parser_namespace=args, options_class=RACSAllOptions
     )
+    pol_field_options = create_options_from_parser(
+        parser_namespace=args, options_class=PolFieldOptions
+    )
 
     setup_run_racs_all_field(
-        cluster_config=args.cluster_config, racs_all_options=racs_all_options
+        cluster_config=args.cluster_config,
+        racs_all_options=racs_all_options,
+        pol_field_options=pol_field_options,
     )
 
 

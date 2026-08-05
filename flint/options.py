@@ -17,6 +17,7 @@ import yaml
 from astropy.coordinates import EarthLocation, SkyCoord
 from astropy.time import Time
 from capn_crunch import BaseOptions
+from pydantic import create_model
 
 from flint.exceptions import MSError
 from flint.logging import logger
@@ -313,12 +314,36 @@ class RACSAllOptions(BaseOptions):
 def racs_all_options_to_pol_field_options(
     racs_all_options: RACSAllOptions,
 ) -> PolFieldOptions:
-    """Build a ``PolFieldOptions`` from the fields of ``RACSAllOptions`` that share
-    a name and meaning between the two (containers, beam/pb cutoffs, etc). Fields
-    that only exist on ``PolFieldOptions`` are left at their default."""
+    """Build a default ``PolFieldOptions`` from the fields of ``RACSAllOptions`` that
+    share a name and meaning between the two (containers, beam/pb cutoffs, etc).
+    Fields that only exist on ``PolFieldOptions`` are left at their default. Used
+    when a caller does not supply its own ``PolFieldOptions`` (e.g. calling the
+    racs-all flow directly rather than through its CLI, where every
+    ``PolFieldOptions`` field is exposed)."""
     shared_fields = set(RACSAllOptions.model_fields) & set(PolFieldOptions.model_fields)
     return PolFieldOptions(
         **{name: getattr(racs_all_options, name) for name in shared_fields}
+    )
+
+
+def pol_field_options_cli_class(
+    racs_all_options_class: type[RACSAllOptions] = RACSAllOptions,
+) -> type[PolFieldOptions]:
+    """Build a ``PolFieldOptions`` subclass containing only the fields not already
+    present on ``RACSAllOptions``, so it can be added to the same CLI parser without
+    duplicate flags for the fields the two share. Every current and future
+    ``PolFieldOptions`` field is exposed on the CLI this way, either through this
+    class or through ``RACSAllOptions`` itself for the shared ones."""
+    overlap = set(racs_all_options_class.model_fields) & set(
+        PolFieldOptions.model_fields
+    )
+    unique_fields = {
+        name: (field.annotation, field)
+        for name, field in PolFieldOptions.model_fields.items()
+        if name not in overlap
+    }
+    return create_model(
+        "PolFieldOptionsCLI", __base__=PolFieldOptions.__base__, **unique_fields
     )
 
 
