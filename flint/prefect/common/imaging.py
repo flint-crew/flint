@@ -12,7 +12,7 @@ from typing import Any, Literal, ParamSpec, TypeVar
 
 import numpy as np
 import pandas as pd
-from prefect import Task, task, unmapped
+from prefect import Task, unmapped
 from prefect.artifacts import create_table_artifact
 from prefect.futures import PrefectFuture
 
@@ -73,6 +73,7 @@ from flint.naming import (
 )
 from flint.options import FieldOptions, SubtractFieldOptions
 from flint.peel.potato import potato_peel
+from flint.prefect.caching import task
 from flint.prefect.common.utils import task_getattr, upload_image_as_artifact
 from flint.selfcal.casa import gaincal_applycal_ms
 from flint.source_finding.aegean import AegeanOutputs, run_bane_and_aegean
@@ -271,6 +272,9 @@ def task_run_bane_and_aegean(
     else:
         raise ValueError(f"Unexpected type, have received {type(image)} for {image=}. ")
 
+    logger.info(
+        f"{aegean_container=} will be used to run BANE and Aegean on {image_path=}"
+    )
     aegean_outputs = run_bane_and_aegean(
         image=image_path,
         aegean_container=aegean_container,
@@ -378,8 +382,9 @@ def task_wsclean_imager(
 
     ms: list[MS] = standardise_ms_to_list_ms(in_ms)
 
+    # copied as an unmapped dict is shared by reference across mapped runs
     update_wsclean_options = (
-        {} if update_wsclean_options is None else update_wsclean_options
+        {} if update_wsclean_options is None else dict(update_wsclean_options)
     )
 
     if fits_mask:

@@ -15,7 +15,7 @@ from collections.abc import Collection
 from pathlib import Path
 
 from capn_crunch import add_options_to_parser, create_options_from_parser
-from prefect import flow, task, unmapped
+from prefect import flow, unmapped
 
 from flint.bandpass import extract_correct_bandpass_pointing
 from flint.calibrate.aocalibrate import (
@@ -34,6 +34,7 @@ from flint.options import (
     MS,
     BandpassOptions,
 )
+from flint.prefect.caching import task
 from flint.prefect.clusters import get_dask_runner
 from flint.prefect.common.utils import upload_image_as_artifact
 from flint.sky_model import get_1934_model
@@ -211,7 +212,7 @@ def calibrate_bandpass_flow(
     bandpass_path: Path,
     split_path: Path,
     bandpass_options: BandpassOptions,
-) -> Path:
+) -> list[CalibrateCommand]:
     """Create and run the prefect flow to calibrate a set of bandpass measurement sets.
 
     The measurement sets that will be calibreated are expected to:
@@ -233,7 +234,7 @@ def calibrate_bandpass_flow(
         bandpass_options (BandpassOptions): Options that specify configurable of the bandpass processing.
 
     Returns:
-        Path: Directory that contains the extracted measurement sets and the ao-style gain solutions files.
+        list[CalibrateCommand]: The terminal calibration futures, returned so prefect fails the flow should any task fail.
     """
     assert bandpass_path.exists() and bandpass_path.is_dir(), (
         f"{bandpass_path!s} does not exist or is not a folder. "
@@ -262,7 +263,7 @@ def calibrate_bandpass_flow(
     model_path: Path = get_1934_model(mode="calibrate")
     source_name_prefix: str = "B1934-638"
 
-    run_bandpass_stage(
+    return run_bandpass_stage(
         bandpass_mss=bandpass_mss,
         output_split_bandpass_path=output_split_bandpass_path,
         bandpass_options=bandpass_options,
@@ -270,8 +271,6 @@ def calibrate_bandpass_flow(
         source_name_prefix=source_name_prefix,
         skip_rotation=True,
     )
-
-    return output_split_bandpass_path
 
 
 def setup_run_bandpass_flow(

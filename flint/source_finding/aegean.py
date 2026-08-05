@@ -156,6 +156,10 @@ def run_bane_and_aegean(
 
     bane_command_str = _get_bane_command(image=image, bane_options=bane_options)
 
+    logger.info(
+        f"Running BANE and Aegean on {image=}. This will use the container {aegean_container=}."
+    )
+
     bind_dir = [image.absolute().parent]
     run_singularity_command(
         image=aegean_container,

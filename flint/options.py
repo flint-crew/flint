@@ -300,6 +300,8 @@ class RACSAllOptions(BaseOptions):
     """Rename MSs throughout rounds of imaging and self-cal instead of creating copies. This will delete data-columns throughout. """
     coadd_cubes: bool = False
     """Co-add cubes formed throughout imaging together. Cubes will be smoothed channel-wise to a common resolution. Only performed on final set of images"""
+    cube_channel_width: float | None = None
+    """Desired width, in Hz, of each plane of the final cube. The wsclean channel division is solved for this target so the cube has a single linear frequency axis, overriding the strategy ``channels_out`` in the final round. See ``flint.imager.channel_division``"""
     holofile: Path | None = None
     """The oath to a concatenated holography FITS file that contains low-, mid- and high-band cubes"""
 

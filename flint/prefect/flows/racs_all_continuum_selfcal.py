@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TypeAlias
+from typing import Any, TypeAlias
 
 from capn_crunch import (
     add_options_to_parser,
@@ -17,6 +17,7 @@ from capn_crunch import (
 )
 from configargparse import ArgumentParser
 from prefect import flow, tags, unmapped
+from prefect.futures import PrefectFuture
 
 from flint.catalogue import verify_reference_catalogues
 from flint.configuration import (
@@ -24,6 +25,7 @@ from flint.configuration import (
     get_options_from_strategy,
     load_and_copy_strategy,
 )
+from flint.imager.channel_division import ChannelDivision, channel_division_for_beams
 from flint.imager.wsclean import WSCleanResult
 from flint.logging import logger
 from flint.ms import MS, MSSummary, find_mss
@@ -265,8 +267,34 @@ def all_holography_available(
     return holo_output_path
 
 
+def _apply_cube_division(
+    update_wsclean_options: dict[Any, Any], cube_division: ChannelDivision
+) -> dict[Any, Any]:
+    """Replace the strategy channel division with a solved one. A division set
+    explicitly in the strategy wins, so a known good grid can be pinned."""
+    if update_wsclean_options.get("channel_division_frequencies") is not None:
+        logger.info(
+            "Strategy specifies channel_division_frequencies, not using the solved division"
+        )
+        return update_wsclean_options
+
+    logger.info(
+        f"Imaging with the solved channel division, {cube_division.channels_out=}"
+    )
+    return {
+        **update_wsclean_options,
+        "channels_out": cube_division.channels_out,
+        "channel_division_frequencies": cube_division.channel_division_frequencies,
+    }
+
+
 @flow
-def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
+def process_racs_all_field(
+    racs_all_options: RACSAllOptions,
+) -> list[PrefectFuture[Any]]:
+    # returned futures are resolved by prefect to fail the flow on task failure
+    terminal_futures: list[PrefectFuture[Any]] = []
+
     # Any sanity checks will go in here, mateee
     _check_racs_all_options(racs_all_options=racs_all_options)
     output_science_path = _check_create_output_science_path(
@@ -291,6 +319,15 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
         low_mss=low_band_mss, mid_mss=mid_band_mss, high_mss=high_band_mss
     )
     logger.info(f"Will be processing {len(science_mss_by_beam)} beams")
+
+    # Solved once for all beams, and before any imaging, so that a target that
+    # cannot make a compact cube fails the flow now instead of hours from now
+    cube_division: ChannelDivision | None = None
+    if racs_all_options.cube_channel_width:
+        cube_division = channel_division_for_beams(
+            mss_by_beam=science_mss_by_beam,
+            target_width=racs_all_options.cube_channel_width,
+        )
 
     dump_field_options_to_yaml(
         output_path=add_timestamp_to_path(
@@ -321,6 +358,7 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
                 racs_all_options.high_holofile,
             ],
         )
+        terminal_futures.append(holography_path)
 
     ms_summaries: list = []
     imaging_results: dict[int, list[LoopFutures]] = {}
@@ -363,15 +401,13 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
                 )
 
             wsclean_result = task_wsclean_imager.submit(
-                in_ms=tuple(preprocess_science_mss),
+                in_ms=preprocess_science_mss,
                 wsclean_container=racs_all_options.wsclean_container,
-                update_wsclean_options=unmapped(
-                    get_options_from_strategy(
-                        strategy=strategy,
-                        mode="wsclean",
-                        round_info=0,
-                        operation="selfcal",
-                    )
+                update_wsclean_options=get_options_from_strategy(
+                    strategy=strategy,
+                    mode="wsclean",
+                    round_info=0,
+                    operation="selfcal",
                 ),
             )
             imaging_results[0].append(
@@ -381,6 +417,7 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
                     ms_summaries=ms_summaries_for_beam,
                 )
             )
+            terminal_futures.append(wsclean_result)
 
     beam_summaries: list[BeamSummary] = []
     for loop_result in imaging_results[0]:
@@ -446,24 +483,29 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
                 fits_beam_mask = task_create_image_mask_model.submit(
                     image=beam_imaging_results.wsclean_result,
                     image_products=None,  # Mac works on apparent brightness
-                    update_masking_options=unmapped(update_masking_options),
+                    update_masking_options=update_masking_options,
                 )
+                update_wsclean_options = get_options_from_strategy(
+                    strategy=strategy,
+                    mode="wsclean",
+                    round_info=current_round,
+                    operation="selfcal",
+                )
+                if final_round and cube_division is not None:
+                    update_wsclean_options = _apply_cube_division(
+                        update_wsclean_options=update_wsclean_options,
+                        cube_division=cube_division,
+                    )
                 wsclean_result = task_wsclean_imager.submit(
-                    in_ms=tuple(cal_mss),
+                    in_ms=cal_mss,
                     wsclean_container=racs_all_options.wsclean_container,
                     fits_mask=fits_beam_mask,
-                    update_wsclean_options=unmapped(
-                        get_options_from_strategy(
-                            strategy=strategy,
-                            mode="wsclean",
-                            round_info=current_round,
-                            operation="selfcal",
-                        )
-                    ),
+                    update_wsclean_options=update_wsclean_options,
                 )
                 imaging_results[current_round].append(
                     LoopFutures(mss=cal_mss, wsclean_result=wsclean_result)
                 )
+                terminal_futures.append(wsclean_result)
 
     if racs_all_options.yandasoft_container:
         if racs_all_options.coadd_cubes:
@@ -480,7 +522,7 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
                     for beam_result in imaging_results[cube_add_round]
                 ]
 
-                create_convolve_linmos_cubes(
+                linmos_cubes = create_convolve_linmos_cubes(
                     wsclean_results=cube_results,  # type: ignore
                     field_options=racs_all_options,
                     current_round=(
@@ -489,6 +531,7 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
                     additional_linmos_suffix_str="cube",
                     holofile=holography_path,
                 )
+                terminal_futures.extend(linmos_cubes)
 
         for selfcal_round, final_beam_imaging_results in imaging_results.items():
             additional_linmos_suffix = (
@@ -508,12 +551,13 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
             logger.info(
                 f"Self-cal round {selfcal_round}, number of parsets {len(parsets)}"
             )
+            terminal_futures.extend(parsets)
 
             if racs_all_options.aegean_container:
                 logger.info(f"Running aegean on round {selfcal_round}")
                 aegean_outputs = task_run_bane_and_aegean.submit(
                     image=parsets[-1],
-                    aegean_container=unmapped(racs_all_options.aegean_container),
+                    aegean_container=racs_all_options.aegean_container,
                 )  # type: ignore
                 field_summary = task_update_field_summary.submit(
                     field_summary=field_summary,
@@ -521,11 +565,17 @@ def process_racs_all_field(racs_all_options: RACSAllOptions) -> None:
                     round=selfcal_round if selfcal_round > 0 else None,
                 )
                 if selfcal_round in (0, racs_all_options.rounds):
-                    validation_items(
+                    val_results = validation_items(
                         field_summary=field_summary,
                         aegean_outputs=aegean_outputs,
                         reference_catalogue_directory=racs_all_options.reference_catalogue_directory,
                     )
+                    if val_results:
+                        terminal_futures.extend(val_results)
+
+    terminal_futures.append(field_summary)
+
+    return terminal_futures
 
 
 def setup_run_racs_all_field(

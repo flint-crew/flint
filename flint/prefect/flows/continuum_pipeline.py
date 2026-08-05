@@ -13,6 +13,7 @@ from typing import Any
 from capn_crunch import add_options_to_parser, create_options_from_parser
 from configargparse import ArgumentParser
 from prefect import flow, tags, unmapped
+from prefect.futures import PrefectFuture
 
 from flint.calibrate.aocalibrate import find_existing_solutions
 from flint.catalogue import verify_reference_catalogues
@@ -150,7 +151,9 @@ def process_science_fields(
     split_path: Path,
     field_options: FieldOptions,
     bandpass_path: Path | None = None,
-) -> None:
+) -> list[PrefectFuture[Any]]:
+    # returned futures are resolved by prefect to fail the flow on task failure
+
     # Verify no nasty incompatible options
     _check_field_options(field_options=field_options)
 
@@ -175,7 +178,7 @@ def process_science_fields(
         field_options=field_options,
     )
 
-    archive_wait_for: list[Any] = []
+    archive_wait_for: list[PrefectFuture[Any]] = []
 
     strategy: Strategy | None = load_and_copy_strategy(
         output_split_science_path=output_split_science_path,
@@ -260,11 +263,11 @@ def process_science_fields(
         logger.info(
             f"No imaging will be performed, as requested by {field_options.no_imaging=}"
         )
-        return
+        return list(preprocess_science_mss)
 
     if field_options.wsclean_container is None:
         logger.info("No wsclean container provided. Returning. ")
-        return
+        return list(preprocess_science_mss)
 
     if field_options.potato_container:
         # The call into potato peel task has two potential update option keywords.
@@ -373,7 +376,7 @@ def process_science_fields(
 
         if run_aegean:
             aegean_field_output = task_run_bane_and_aegean.submit(
-                image=parset, aegean_container=unmapped(field_options.aegean_container)
+                image=parset, aegean_container=field_options.aegean_container
             )  # type: ignore
             field_summary = task_update_field_summary.submit(
                 field_summary=field_summary,
@@ -383,11 +386,13 @@ def process_science_fields(
             archive_wait_for.append(field_summary)
 
             if run_validation and field_options.reference_catalogue_directory:
-                validation_items(
+                val_results = validation_items(
                     field_summary=field_summary,
                     aegean_outputs=aegean_field_output,
                     reference_catalogue_directory=field_options.reference_catalogue_directory,
                 )
+                if val_results:
+                    archive_wait_for.extend(val_results)
 
     # Set up the default value should the user activated mask option is not set
     fits_beam_masks = None
@@ -501,9 +506,11 @@ def process_science_fields(
 
             # Do source finding on the last round of self-cal'ed images
             if round == field_options.rounds and run_aegean:
-                task_run_bane_and_aegean.map(
-                    image=wsclean_results,
-                    aegean_container=unmapped(field_options.aegean_container),
+                archive_wait_for.extend(
+                    task_run_bane_and_aegean.map(
+                        image=wsclean_results,
+                        aegean_container=unmapped(field_options.aegean_container),
+                    )
                 )
 
             parsets_self: None | list[LinmosResult] = None  # Without could be unbound
@@ -518,7 +525,7 @@ def process_science_fields(
             if final_round and run_aegean and parsets_self:
                 aegean_outputs = task_run_bane_and_aegean.submit(
                     image=parsets_self[-1],
-                    aegean_container=unmapped(field_options.aegean_container),
+                    aegean_container=field_options.aegean_container,
                 )  # type: ignore
                 field_summary = task_update_field_summary.submit(
                     field_summary=field_summary,
@@ -534,7 +541,8 @@ def process_science_fields(
                         aegean_outputs=aegean_outputs,
                         reference_catalogue_directory=field_options.reference_catalogue_directory,
                     )
-                    archive_wait_for.append(val_results)
+                    if val_results:
+                        archive_wait_for.extend(val_results)
 
     if field_options.coadd_cubes:
         with tags("cubes"):
@@ -558,6 +566,7 @@ def process_science_fields(
                 fits_mask=fits_beam_masks,
                 wait_for=wsclean_results,  # Ensure that measurement sets are doubled up during imaging
             )
+            archive_wait_for.extend(wsclean_results)
             if field_options.yandasoft_container:
                 parsets = create_convol_linmos_images(
                     wsclean_results=wsclean_results,
@@ -578,7 +587,7 @@ def process_science_fields(
         update_archive_options = get_options_from_strategy(
             strategy=strategy, mode="archive", round_info=0, operation="selfcal"
         )
-        task_archive_sbid.submit(
+        archive_sbid = task_archive_sbid.submit(
             science_folder_path=output_split_science_path,
             archive_path=field_options.sbid_archive_path,
             copy_path=field_options.sbid_copy_path,
@@ -586,6 +595,9 @@ def process_science_fields(
             update_archive_options=update_archive_options,
             wait_for=archive_wait_for,
         )
+        archive_wait_for.append(archive_sbid)
+
+    return archive_wait_for
 
 
 def setup_run_process_science_field(
