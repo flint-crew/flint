@@ -13,9 +13,25 @@ import numpy as np
 from astropy.io import fits
 from astropy.wcs import WCS
 from dask.distributed import Client
-from rm_lite.tools_3d.rmclean import RMClean3DResults, run_rmclean_from_synth
-from rm_lite.tools_3d.rmsynth import RMSynth3DResults, rmsynth_3d_from_fits
-from rm_lite.utils.synthesis import calc_faraday_moments
+
+# finufft's PyPI wheel vendors its own libomp.dylib (macOS) rather than
+# linking the environment's shared one; having both loaded aborts the
+# process with "OMP: Error #15: Initializing libomp.dylib, but found
+# libomp.dylib already initialized." as soon as anything else (e.g.
+# casacore) has already initialised an OpenMP runtime in the process. Must
+# be set before finufft/rm_lite are imported -- this module is the first
+# place in flint-pol that imports them.
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
+from rm_lite.tools_3d.rmclean import (  # noqa: E402
+    RMClean3DResults,
+    run_rmclean_from_synth,
+)
+from rm_lite.tools_3d.rmsynth import (  # noqa: E402
+    RMSynth3DResults,
+    rmsynth_3d_from_fits,
+)
+from rm_lite.utils.synthesis import calc_faraday_moments  # noqa: E402
 
 from flint.logging import logger
 from flint.naming import create_image_cube_name
@@ -334,11 +350,12 @@ def rmsynth_and_write_products(
     # Batch every lazy array/delayed write needed by the requested products
     # into a single dask.compute call, including the zarr writes above:
     # computing per-product in a loop would redo the shared synthesis/RM-CLEAN
-    # graph once per product instead of once total. Per rm-lite's dask
-    # parallelisation guide: the threaded scheduler suits the GIL-releasing
-    # NUFFT (dirty-only), but RM-CLEAN/Stokes-I fitting are GIL-bound Python
-    # loops that need the process scheduler -- unless a distributed Client is
-    # given, in which case it takes over entirely.
+    # graph once per product instead of once total.
+    #
+    # Per rm-lite's dask parallelisation guide: the threaded scheduler suits
+    # the GIL-releasing NUFFT (dirty-only), but RM-CLEAN/Stokes-I fitting are
+    # GIL-bound Python loops that need the process scheduler -- unless a
+    # distributed Client is given, in which case it takes over entirely.
     scheduler = (
         dask_client
         if dask_client is not None
