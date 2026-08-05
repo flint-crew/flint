@@ -30,12 +30,15 @@ from flint.naming import (
 )
 from flint.options import (
     PolFieldOptions,
+    RMCleanOptions,
+    RMSynthOptions,
     dump_field_options_to_yaml,
 )
 from flint.prefect.clusters import get_dask_runner
 from flint.prefect.common.imaging import (
     linmos_channel_groups_to_cubes,
     task_convolve_images,
+    task_create_name_from_common_fields,
     task_get_channel_images_from_paths,
     task_get_common_beam_from_image_set,
     task_merge_image_sets,
@@ -45,6 +48,7 @@ from flint.prefect.common.imaging import (
     task_transpose_and_sort_channel_images,
     task_wsclean_imager,
 )
+from flint.prefect.common.rmsynth import task_rmsynth_and_write_products
 from flint.prefect.common.utils import (
     task_create_field_summary,
     task_getattr,
@@ -221,27 +225,28 @@ def process_science_fields_pol(
 
     assert pol_field_options.yandasoft_container is not None
     cube_results: list[PrefectFuture[Path]] = []
+    stokes_image_cubes: dict[str, PrefectFuture[Path]] = {}
     all_input_images: list[Path] = []
     for stokes, channel_groups in stokes_channel_groups.items():
         with tags(f"stokes-{stokes}"):
             all_input_images.extend(
                 [image for beam_images in channel_groups for image in beam_images]
             )
-            cube_results.extend(
-                linmos_channel_groups_to_cubes(
-                    channel_groups=channel_groups,
-                    container=pol_field_options.yandasoft_container,
-                    linmos_options=LinmosOptions(
-                        holofile=pol_field_options.holofile,
-                        cutoff=pol_field_options.pb_cutoff,
-                        force_remove_leakage=force_remove_leakage,
-                        trim_linmos_fits=pol_field_options.trim_linmos_fits,
-                        cleanup=True,
-                    ),
-                    stokesi_channel_groups=i_channel_groups,
-                    field_summary=field_summary,
-                )
+            stokes_cubes = linmos_channel_groups_to_cubes(
+                channel_groups=channel_groups,
+                container=pol_field_options.yandasoft_container,
+                linmos_options=LinmosOptions(
+                    holofile=pol_field_options.holofile,
+                    cutoff=pol_field_options.pb_cutoff,
+                    force_remove_leakage=force_remove_leakage,
+                    trim_linmos_fits=pol_field_options.trim_linmos_fits,
+                    cleanup=True,
+                ),
+                stokesi_channel_groups=i_channel_groups,
+                field_summary=field_summary,
             )
+            stokes_image_cubes[stokes] = stokes_cubes[0]
+            cube_results.extend(stokes_cubes)
 
     # Remove the convolved per-beam channel images now that every cube is built.
     # Stokes I images are kept until here as they feed the Q/U leakage correction.
@@ -249,7 +254,39 @@ def process_science_fields_pol(
         *all_input_images, wait_for=cube_results
     )
 
-    return [*cube_results, remove_result]
+    rmsynth_result: PrefectFuture[list[Path]] | None = None
+    if pol_field_options.run_rmsynth:
+        assert "q" in stokes_image_cubes and "u" in stokes_image_cubes, (
+            "run_rmsynth requires the 'linear' polarisation (Stokes Q/U) to have been imaged"
+        )
+        # Mirrors the i_channel_groups leakage-correction gating above: use
+        # Stokes I if it was imaged, otherwise skip the fractional-pol correction.
+        stokes_i_cube = stokes_image_cubes.get("i")
+        rmsynth_options = RMSynthOptions(
+            **get_options_from_strategy(
+                strategy=strategy, operation="rmsynth", mode="rmsynth"
+            )
+        )
+        rmclean_options = RMCleanOptions(
+            **get_options_from_strategy(
+                strategy=strategy, operation="rmsynth", mode="rmclean"
+            )
+        )
+        output_prefix = task_create_name_from_common_fields.submit(
+            in_paths=(stokes_image_cubes["q"], stokes_image_cubes["u"])
+        )
+        rmsynth_result = task_rmsynth_and_write_products.submit(
+            stokes_q_cube=stokes_image_cubes["q"],
+            stokes_u_cube=stokes_image_cubes["u"],
+            stokes_i_cube=stokes_i_cube,
+            rmsynth_options=rmsynth_options,
+            rmclean_options=rmclean_options,
+            cube_products=pol_field_options.rmsynth_cube_products,
+            moment_products=pol_field_options.rmsynth_moment_products,
+            output_prefix=output_prefix,
+        )
+
+    return [*cube_results, remove_result, *([rmsynth_result] if rmsynth_result else [])]
 
 
 def setup_run_process_science_field(

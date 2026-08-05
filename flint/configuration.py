@@ -18,7 +18,12 @@ from flint.imager.wsclean import WSCleanOptions
 from flint.logging import logger
 from flint.masking import MaskingOptions
 from flint.naming import add_timestamp_to_path
-from flint.options import ArchiveOptions, FitsCubeOptions
+from flint.options import (
+    ArchiveOptions,
+    FitsCubeOptions,
+    RMCleanOptions,
+    RMSynthOptions,
+)
 from flint.peel.potato import PotatoPeelOptions
 from flint.selfcal.casa import GainCalOptions
 from flint.source_finding.aegean import AegeanOptions, BANEOptions
@@ -33,7 +38,7 @@ from flint.source_finding.aegean import AegeanOptions, BANEOptions
 # Known headers must **always** be present in the strategy file
 KNOWN_HEADERS = ("defaults", "version")
 # Known options are optional, but if present must be in the correct format
-KNOWN_OPERATIONS = ("selfcal", "stokesv", "subtractcube", "polarisation")
+KNOWN_OPERATIONS = ("selfcal", "stokesv", "subtractcube", "polarisation", "rmsynth")
 FORMAT_VERSION = 0.2
 MODE_OPTIONS_MAPPING = {
     "wsclean": WSCleanOptions,
@@ -45,6 +50,8 @@ MODE_OPTIONS_MAPPING = {
     "potatopeel": PotatoPeelOptions,
     "fitscube": FitsCubeOptions,
     "tukeytractor": TukeyTractorOptions,
+    "rmsynth": RMSynthOptions,
+    "rmclean": RMCleanOptions,
 }
 POLARISATION_MAPPING = {
     "total": "i",

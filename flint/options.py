@@ -10,7 +10,7 @@ hold stateful properties throughout the flint codebase.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol
 
 import numpy as np
 import yaml
@@ -236,6 +236,65 @@ class PolFieldOptions(BaseOptions):
     """Path to a FLINT imaging yaml file that contains settings to use throughout imaging"""
     sbid_copy_path: Path | None = None
     """Path that final processed products will be copied into. If None no copying of file products is performed. See ArchiveOptions. """
+    run_rmsynth: bool = False
+    """Run RM-synthesis (and optionally RM-CLEAN) on the Stokes Q/U cubes once created. Requires 'linear' to have been imaged."""
+    rmsynth_cube_products: list[Literal["dirty", "clean", "model"]] = []
+    """Which Faraday dispersion function (FDF) cubes to write as FITS. 'dirty' is the raw FDF (no RM-CLEAN needed). 'clean'/'model' are RM-CLEAN's cleaned/clean-component FDF (RM-CLEAN is run if either is requested). Empty by default, as these cubes are large."""
+    rmsynth_moment_products: list[Literal["dirty", "clean", "model"]] = ["clean"]
+    """Which FDF(s) to compute Faraday moment maps (mom0=polarised intensity, mom1=mean Faraday depth, mom2=Faraday depth dispersion) from. 'clean' is the usual choice; 'dirty' moments are noise-biased; 'model' moments describe just the clean components."""
+
+
+class RMSynthOptions(BaseOptions):
+    """Options controlling ``rm_lite.tools_3d.rmsynth.rmsynth_3d_from_fits``.
+
+    Defined here rather than in ``flint.rmsynth`` so that strategy validation
+    (``flint.configuration``) does not need to import ``rm_lite``, an optional
+    dependency.
+    """
+
+    phi_max_radm2: float | None = None
+    """Maximum Faraday depth to synthesise, in rad/m^2"""
+    d_phi_radm2: float | None = None
+    """Faraday depth resolution, in rad/m^2"""
+    n_samples: float | None = 10.0
+    """Number of samples across the RMSF"""
+    weight_type: Literal["variance", "natural", "uniform", "uniform_lsq", "briggs"] = (
+        "variance"
+    )
+    """Per-channel weighting scheme used during RM-synthesis"""
+    robust: float | None = None
+    """Briggs robust parameter, required if weight_type is 'briggs'"""
+    nufft_nthreads: int = 1
+    """finufft OpenMP threads per dask chunk"""
+    target_chunk_mb: float = 256
+    """Target per-chunk memory footprint, in MB, when reading the Q/U cubes"""
+    fit_order: int = 2
+    """Stokes I fractional-polarisation fit order; negative iterates orders and picks the best by AIC"""
+    fit_function: Literal["log", "linear"] = "log"
+    """Stokes I fit function: 'log' is a power law, 'linear' is a polynomial"""
+    stokes_i_snr_cut: float | None = 5.0
+    """Below this frequency-averaged Stokes I SNR a pixel falls back to a flat model. None fits every pixel"""
+    estimate_stokes_i_noise: bool = False
+    """Derive a per-channel Stokes I error from the Stokes I cube when fitting the fractional-polarisation model"""
+
+
+class RMCleanOptions(BaseOptions):
+    """Options controlling ``rm_lite.tools_3d.rmclean.run_rmclean_from_synth``.
+    See ``RMSynthOptions`` for why this lives here rather than ``flint.rmsynth``.
+    """
+
+    auto_mask: float = 7
+    """Masking threshold in SNR, scaled by the theoretical FDF noise"""
+    auto_threshold: float = 1
+    """Cleaning threshold in SNR, scaled by the theoretical FDF noise"""
+    max_iter: int = 100_000
+    """Maximum CLEAN iterations"""
+    gain: float = 0.1
+    """CLEAN loop gain"""
+    moment_threshold_snr: float = 5.0
+    """SNR cut (times the theoretical FDF noise) applied before computing Faraday moment maps"""
+    multiscale: bool = False
+    """Use multiscale RM-CLEAN, which can recover Faraday-thick structure"""
 
 
 class RACSAllOptions(BaseOptions):
