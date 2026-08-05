@@ -304,6 +304,22 @@ class RACSAllOptions(BaseOptions):
     """Desired width, in Hz, of each plane of the final cube. The wsclean channel division is solved for this target so the cube has a single linear frequency axis, overriding the strategy ``channels_out`` in the final round. See ``flint.imager.channel_division``"""
     holofile: Path | None = None
     """The oath to a concatenated holography FITS file that contains low-, mid- and high-band cubes"""
+    run_polarisation: bool = False
+    """Whether to run the polarisation imaging pipeline on the final round of calibrated measurement sets"""
+    pol_cube_channel_width: float | None = None
+    """Desired width, in Hz, of each plane of the polarisation cubes. Solved for independently of ``cube_channel_width``, as the polarisation strategy may use a different channelisation. See ``flint.imager.channel_division``"""
+
+
+def racs_all_options_to_pol_field_options(
+    racs_all_options: RACSAllOptions,
+) -> PolFieldOptions:
+    """Build a ``PolFieldOptions`` from the fields of ``RACSAllOptions`` that share
+    a name and meaning between the two (containers, beam/pb cutoffs, etc). Fields
+    that only exist on ``PolFieldOptions`` are left at their default."""
+    shared_fields = set(RACSAllOptions.model_fields) & set(PolFieldOptions.model_fields)
+    return PolFieldOptions(
+        **{name: getattr(racs_all_options, name) for name in shared_fields}
+    )
 
 
 def dump_field_options_to_yaml(

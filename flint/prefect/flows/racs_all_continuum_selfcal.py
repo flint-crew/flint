@@ -25,7 +25,11 @@ from flint.configuration import (
     get_options_from_strategy,
     load_and_copy_strategy,
 )
-from flint.imager.channel_division import ChannelDivision, channel_division_for_beams
+from flint.imager.channel_division import (
+    ChannelDivision,
+    apply_cube_division,
+    channel_division_for_beams,
+)
 from flint.imager.wsclean import WSCleanResult
 from flint.logging import logger
 from flint.ms import MS, MSSummary, find_mss
@@ -38,6 +42,7 @@ from flint.naming import (
 from flint.options import (
     RACSAllOptions,
     dump_field_options_to_yaml,
+    racs_all_options_to_pol_field_options,
 )
 from flint.prefect.clusters import get_dask_runner
 from flint.prefect.common.imaging import (
@@ -60,6 +65,7 @@ from flint.prefect.common.utils import (
     task_update_field_summary,
     task_update_with_options,
 )
+from flint.prefect.flows.polarisation_pipeline import process_science_fields_pol
 from flint.summary import BeamSummary
 
 MSsByBeam: TypeAlias = tuple[tuple[MS, ...], ...]
@@ -115,6 +121,11 @@ def _check_racs_all_options(racs_all_options: RACSAllOptions) -> None:
         ):
             raise ValueError(
                 "Unable to create linmos cubes without a yandasoft container"
+            )
+    if racs_all_options.run_polarisation:
+        if not racs_all_options.yandasoft_container:
+            raise ValueError(
+                "Unable to run polarisation imaging without a yandasoft container"
             )
 
     # For the moment we make sure that this is provided. Can consider moving to mandatory argument in
@@ -267,27 +278,6 @@ def all_holography_available(
     return holo_output_path
 
 
-def _apply_cube_division(
-    update_wsclean_options: dict[Any, Any], cube_division: ChannelDivision
-) -> dict[Any, Any]:
-    """Replace the strategy channel division with a solved one. A division set
-    explicitly in the strategy wins, so a known good grid can be pinned."""
-    if update_wsclean_options.get("channel_division_frequencies") is not None:
-        logger.info(
-            "Strategy specifies channel_division_frequencies, not using the solved division"
-        )
-        return update_wsclean_options
-
-    logger.info(
-        f"Imaging with the solved channel division, {cube_division.channels_out=}"
-    )
-    return {
-        **update_wsclean_options,
-        "channels_out": cube_division.channels_out,
-        "channel_division_frequencies": cube_division.channel_division_frequencies,
-    }
-
-
 @flow
 def process_racs_all_field(
     racs_all_options: RACSAllOptions,
@@ -327,6 +317,15 @@ def process_racs_all_field(
         cube_division = channel_division_for_beams(
             mss_by_beam=science_mss_by_beam,
             target_width=racs_all_options.cube_channel_width,
+        )
+
+    # Polarisation may use a different channelisation to the self-cal cube, so it
+    # is solved independently from the same beam frequency lists
+    pol_cube_division: ChannelDivision | None = None
+    if racs_all_options.run_polarisation and racs_all_options.pol_cube_channel_width:
+        pol_cube_division = channel_division_for_beams(
+            mss_by_beam=science_mss_by_beam,
+            target_width=racs_all_options.pol_cube_channel_width,
         )
 
     dump_field_options_to_yaml(
@@ -492,7 +491,7 @@ def process_racs_all_field(
                     operation="selfcal",
                 )
                 if final_round and cube_division is not None:
-                    update_wsclean_options = _apply_cube_division(
+                    update_wsclean_options = apply_cube_division(
                         update_wsclean_options=update_wsclean_options,
                         cube_division=cube_division,
                     )
@@ -572,6 +571,17 @@ def process_racs_all_field(
                     )
                     if val_results:
                         terminal_futures.extend(val_results)
+
+    if racs_all_options.run_polarisation:
+        with tags("polarisation"):
+            pol_futures = process_science_fields_pol(
+                flint_ms_directory=output_science_path,
+                pol_field_options=racs_all_options_to_pol_field_options(
+                    racs_all_options
+                ),
+                cube_division=pol_cube_division,
+            )
+            terminal_futures.extend(pol_futures)
 
     terminal_futures.append(field_summary)
 

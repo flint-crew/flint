@@ -15,6 +15,7 @@ from flint.configuration import (
     load_and_copy_strategy,
 )
 from flint.exceptions import MSError
+from flint.imager.channel_division import ChannelDivision, apply_cube_division
 from flint.imager.wsclean import (
     ImageSet,
     WSCleanResult,
@@ -55,6 +56,7 @@ from flint.prefect.common.utils import (
 def process_science_fields_pol(
     flint_ms_directory: Path,
     pol_field_options: PolFieldOptions,
+    cube_division: ChannelDivision | None = None,
 ) -> list[PrefectFuture[Any]]:
     # returned futures are resolved by prefect to fail the flow on task failure
     strategy = load_and_copy_strategy(
@@ -145,17 +147,23 @@ def process_science_fields_pol(
         _image_sets = []
         with tags(f"polarisation-{polarisation}"):
             for science_ms in science_mss:
+                update_wsclean_options = get_options_from_strategy(
+                    strategy=strategy,
+                    operation="polarisation",
+                    mode="wsclean",
+                    polarisation=polarisation,
+                )
+                if cube_division is not None:
+                    update_wsclean_options = apply_cube_division(
+                        update_wsclean_options=update_wsclean_options,
+                        cube_division=cube_division,
+                    )
                 wsclean_result: PrefectFuture[WSCleanResult] = (
                     task_wsclean_imager.submit(
                         in_ms=science_ms,
                         wsclean_container=pol_field_options.wsclean_container,
                         make_cube_from_subbands=False,  # We will do this later
-                        update_wsclean_options=get_options_from_strategy(
-                            strategy=strategy,
-                            operation="polarisation",
-                            mode="wsclean",
-                            polarisation=polarisation,
-                        ),
+                        update_wsclean_options=update_wsclean_options,
                     )
                 )
                 _image_set: PrefectFuture[ImageSet] = task_getattr.submit(
