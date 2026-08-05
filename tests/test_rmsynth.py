@@ -53,6 +53,28 @@ def _make_qu_cubes(tmp_path: Path) -> tuple[Path, Path]:
     return q_path, u_path
 
 
+def _make_i_cube(tmp_path: Path) -> Path:
+    """Write a synthetic Stokes I FITS cube (power-law spectrum + noise)
+    matching the Q/U cube's WCS."""
+    freq_hz = np.linspace(700e6, 1300e6, N_CHAN)
+    i_spec = (freq_hz / freq_hz[0]) ** -0.7
+    rng = np.random.default_rng(1)
+    i_cube = np.repeat(i_spec[:, None, None], NY, axis=1).repeat(NX, axis=2)
+    i_cube = (i_cube + rng.normal(0, 1e-3, i_cube.shape)).astype(np.float32)
+
+    wcs = WCS(naxis=3)
+    wcs.wcs.ctype = ["RA---SIN", "DEC--SIN", "FREQ"]
+    wcs.wcs.crval = [180.0, -30.0, freq_hz[0]]
+    wcs.wcs.crpix = [NX / 2, NY / 2, 1]
+    wcs.wcs.cdelt = [-1e-3, 1e-3, freq_hz[1] - freq_hz[0]]
+    wcs.wcs.cunit = ["deg", "deg", "Hz"]
+    header = wcs.to_header()
+
+    i_path = tmp_path / "stokesi.fits"
+    fits.writeto(i_path, i_cube, header, overwrite=True)
+    return i_path
+
+
 @pytest.fixture
 def qu_cubes(tmp_path: Path) -> tuple[Path, Path]:
     return _make_qu_cubes(tmp_path)
@@ -117,6 +139,58 @@ def test_rmsynth_dirty_only_skips_rmclean(
     assert len(output_paths) == 1
     assert output_paths[0].exists()
     assert not list(tmp_path.glob("*.mom*.fits"))
+
+
+def test_rmsynth_with_stokes_i_writes_fit_maps(
+    tmp_path: Path, qu_cubes: tuple[Path, Path]
+) -> None:
+    stokes_q_cube, stokes_u_cube = qu_cubes
+    stokes_i_cube = _make_i_cube(tmp_path)
+    output_prefix = tmp_path / "test_field"
+
+    output_paths = rmsynth_and_write_products(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        stokes_i_cube=stokes_i_cube,
+        rmsynth_options=RMSynthOptions(estimate_stokes_i_noise=True),
+        rmclean_options=RMCleanOptions(),
+        cube_products=[],
+        moment_products=["dirty"],
+        output_prefix=output_prefix,
+    )
+
+    for suffix in ("ref_flux", "alpha", "model_order"):
+        fit_map_path = Path(f"{output_prefix}.stokesi.{suffix}.fits")
+        assert fit_map_path in output_paths
+        assert fit_map_path.exists()
+        assert fits.getheader(fit_map_path)["NAXIS"] == 2
+
+    # alpha_error is only produced when rm-lite actually has a Stokes I noise
+    # estimate to propagate -- assert we never crash either way, and if it
+    # was produced, it's a valid written 2D map.
+    alpha_error_path = Path(f"{output_prefix}.stokesi.alpha_error.fits")
+    if alpha_error_path in output_paths:
+        assert alpha_error_path.exists()
+        assert fits.getheader(alpha_error_path)["NAXIS"] == 2
+
+
+def test_rmsynth_debias_moments_runs(tmp_path: Path, qu_cubes: tuple[Path, Path]) -> None:
+    stokes_q_cube, stokes_u_cube = qu_cubes
+    output_prefix = tmp_path / "test_field"
+
+    output_paths = rmsynth_and_write_products(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        rmsynth_options=RMSynthOptions(debias_moments=True),
+        rmclean_options=RMCleanOptions(),
+        cube_products=[],
+        moment_products=["clean"],
+        output_prefix=output_prefix,
+    )
+
+    mom0_path = Path(f"{output_prefix}.fdf.clean.mom0.fits")
+    assert mom0_path in output_paths
+    assert mom0_path.exists()
 
 
 def test_rmsynth_no_products_is_noop(tmp_path: Path, qu_cubes: tuple[Path, Path]) -> None:

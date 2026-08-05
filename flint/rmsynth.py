@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Literal
 
@@ -11,6 +12,7 @@ import dask
 import numpy as np
 from astropy.io import fits
 from astropy.wcs import WCS
+from dask.distributed import Client
 from rm_lite.tools_3d.rmclean import RMClean3DResults, run_rmclean_from_synth
 from rm_lite.tools_3d.rmsynth import RMSynth3DResults, rmsynth_3d_from_fits
 from rm_lite.utils.synthesis import calc_faraday_moments
@@ -46,6 +48,8 @@ def run_rmsynth_3d(
             "fit_function": rmsynth_options.fit_function,
             "stokes_i_snr_cut": rmsynth_options.stokes_i_snr_cut,
             "estimate_stokes_i_noise": rmsynth_options.estimate_stokes_i_noise,
+            "compute_model_error": rmsynth_options.compute_model_error,
+            "n_error_samples": rmsynth_options.n_error_samples,
         }
         if stokes_i_cube is not None
         else {}
@@ -131,6 +135,9 @@ def write_moment_maps_to_fits(
     output_prefix: Path,
     label: FDFLabel,
     threshold: float | None = None,
+    debias: bool = False,
+    lam_sq_0_m2: float | None = None,
+    debias_filter_size: int = 5,
 ) -> list[Path]:
     """Compute and write the mom0/mom1/mom2 Faraday moment maps of an FDF cube.
 
@@ -141,7 +148,10 @@ def write_moment_maps_to_fits(
         reference_header (fits.Header): Header to derive the spatial WCS from (e.g. the Stokes Q cube header)
         output_prefix (Path): Common prefix for the output files
         label (FDFLabel): Which FDF ``fdf_cube`` is ('dirty', 'clean', or 'model'), used to name the outputs
-        threshold (float | None, optional): Amplitude cut applied before computing the moments. Defaults to None.
+        threshold (float | None, optional): Amplitude cut applied before computing the moments. Ignored if debias is True. Defaults to None.
+        debias (bool, optional): Debias mom0 via rm_lite's debias_fdf instead of thresholding. Requires lam_sq_0_m2. Defaults to False.
+        lam_sq_0_m2 (float | None, optional): Reference wavelength^2, required if debias is True. Defaults to None.
+        debias_filter_size (int, optional): Median filter size (pixels) used by debiasing. Defaults to 5.
 
     Returns:
         list[Path]: The three written moment-map paths (mom0, mom1, mom2)
@@ -150,7 +160,10 @@ def write_moment_maps_to_fits(
         fdf_cube,
         phi_arr_radm2=phi_arr_radm2,
         fwhm_rmsf_radm2=fwhm_rmsf_radm2,
-        threshold=threshold,
+        threshold=None if debias else threshold,
+        debias=debias,
+        lam_sq_0_m2=lam_sq_0_m2,
+        debias_filter_size=debias_filter_size,
     )
     header = WCS(reference_header).celestial.to_header()
     output_paths = []
@@ -159,6 +172,41 @@ def write_moment_maps_to_fits(
     ):
         output_path = Path(f"{output_prefix}.fdf.{label}.{moment_name}.fits")
         fits.writeto(output_path, np.asarray(moment_map, dtype=np.float32), header, overwrite=True)
+        output_paths.append(output_path)
+    return output_paths
+
+
+_STOKES_I_MAP_SUFFIXES = {
+    "stokes_i_ref_flux": "stokesi.ref_flux",
+    "stokes_i_alpha": "stokesi.alpha",
+    "stokes_i_alpha_error": "stokesi.alpha_error",
+    "stokes_i_model_order": "stokesi.model_order",
+}
+
+
+def write_stokes_i_fit_maps_to_fits(
+    stokes_i_maps: dict[str, np.ndarray],
+    reference_header: fits.Header,
+    output_prefix: Path,
+) -> list[Path]:
+    """Write the per-pixel Stokes I fractional-polarisation fit maps: the fitted
+    reference flux, spectral index (alpha) and its error, and the fitted
+    polynomial order. Cheap 2D maps, always written when a Stokes I cube is used
+    and rm-lite actually returned that particular map (e.g. ``alpha_error`` is
+    only produced if a Stokes I noise estimate was available).
+
+    Args:
+        stokes_i_maps (dict[str, np.ndarray]): Already-computed maps, keyed by
+            one of ``_STOKES_I_MAP_SUFFIXES``'s keys.
+
+    Returns:
+        list[Path]: The written map paths, one per entry in ``stokes_i_maps``
+    """
+    header = WCS(reference_header).celestial.to_header()
+    output_paths = []
+    for key, data in stokes_i_maps.items():
+        output_path = Path(f"{output_prefix}.{_STOKES_I_MAP_SUFFIXES[key]}.fits")
+        fits.writeto(output_path, np.asarray(data, dtype=np.float32), header, overwrite=True)
         output_paths.append(output_path)
     return output_paths
 
@@ -172,6 +220,7 @@ def rmsynth_and_write_products(
     moment_products: list[FDFLabel],
     output_prefix: Path,
     stokes_i_cube: Path | None = None,
+    dask_client: Client | None = None,
 ) -> list[Path]:
     """Run RM-synthesis (and RM-CLEAN if needed) and write the requested output products.
 
@@ -184,6 +233,7 @@ def rmsynth_and_write_products(
         moment_products (list[FDFLabel]): Which FDF(s) to compute Faraday moment maps from
         output_prefix (Path): Common prefix for the output files
         stokes_i_cube (Path | None, optional): Path to a Stokes I FITS cube for the fractional-polarisation correction. Defaults to None.
+        dask_client (Client | None, optional): A distributed Client (e.g. the one backing a Prefect ``DaskTaskRunner``) to compute across, rather than just the local worker. Defaults to None.
 
     Returns:
         list[Path]: Every FITS path written
@@ -191,6 +241,12 @@ def rmsynth_and_write_products(
     if not cube_products and not moment_products:
         logger.info("No RM-synthesis products requested, skipping.")
         return []
+
+    if os.environ.get("OMP_NUM_THREADS") != "1":
+        logger.warning(
+            "OMP_NUM_THREADS is not set to '1'. rm-lite's dask parallelisation guide "
+            "warns this oversubscribes cores when combined with Dask-level parallelism."
+        )
 
     synth_results = run_rmsynth_3d(
         stokes_q_cube=stokes_q_cube,
@@ -211,12 +267,37 @@ def rmsynth_and_write_products(
         fdf_sources["clean"] = clean_results.clean_fdf_cube
         fdf_sources["model"] = clean_results.model_fdf_cube
 
+    needed_labels = {*cube_products, *moment_products}
+    compute_targets: dict[str, dask.array.Array] = {
+        label: fdf_sources[label] for label in needed_labels
+    }
+    # stokes_i_alpha_error_map is None unless estimate_stokes_i_noise (or a
+    # supplied Stokes I error) gives the fit something to propagate; the other
+    # maps are None only if the Stokes I fit didn't run at all. Skip whichever
+    # are None rather than feeding them to dask.compute/FITS writers.
+    stokes_i_maps = {
+        "stokes_i_ref_flux": synth_results.stokes_i_ref_flux_map,
+        "stokes_i_alpha": synth_results.stokes_i_alpha_map,
+        "stokes_i_alpha_error": synth_results.stokes_i_alpha_error_map,
+        "stokes_i_model_order": synth_results.stokes_i_model_order_map,
+    }
+    stokes_i_maps = {k: v for k, v in stokes_i_maps.items() if v is not None}
+    compute_targets.update(stokes_i_maps)
+
     # Batch every lazy array needed by the requested products into a single
     # dask.compute call: computing per-product in a loop would redo the shared
-    # synthesis/RM-CLEAN graph once per product instead of once total.
-    needed_labels = {*cube_products, *moment_products}
+    # synthesis/RM-CLEAN graph once per product instead of once total. Per
+    # rm-lite's dask parallelisation guide: the threaded scheduler suits the
+    # GIL-releasing NUFFT (dirty-only), but RM-CLEAN/Stokes-I fitting are
+    # GIL-bound Python loops that need the process scheduler -- unless a
+    # distributed Client is given, in which case it takes over entirely.
+    scheduler = dask_client if dask_client is not None else ("processes" if run_clean else "threads")
+    compute_keys = list(compute_targets.keys())
     computed = dict(
-        zip(needed_labels, dask.compute(*(fdf_sources[label] for label in needed_labels)))
+        zip(
+            compute_keys,
+            dask.compute(*(compute_targets[key] for key in compute_keys), scheduler=scheduler),
+        )
     )
 
     reference_header = fits.getheader(stokes_q_cube)
@@ -252,6 +333,18 @@ def rmsynth_and_write_products(
                 output_prefix=output_prefix,
                 label=label,
                 threshold=moment_thresholds[label],
+                debias=rmsynth_options.debias_moments,
+                lam_sq_0_m2=synth_results.lam_sq_0_m2,
+                debias_filter_size=rmsynth_options.debias_filter_size,
+            )
+        )
+
+    if stokes_i_maps:
+        output_paths.extend(
+            write_stokes_i_fit_maps_to_fits(
+                stokes_i_maps={key: computed[key] for key in stokes_i_maps},
+                reference_header=reference_header,
+                output_prefix=output_prefix,
             )
         )
 

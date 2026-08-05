@@ -274,6 +274,14 @@ class RMSynthOptions(BaseOptions):
     """Stokes I fit function: 'log' is a power law, 'linear' is a polynomial"""
     stokes_i_snr_cut: float | None = 5.0
     """Below this frequency-averaged Stokes I SNR a pixel falls back to a flat model. None fits every pixel"""
+    compute_model_error: bool = False
+    """Monte-Carlo the Stokes I fit's per-pixel model error via n_error_samples resamples. Only used if a Stokes I cube is given"""
+    n_error_samples: int = 1000
+    """Monte-Carlo resamples used by compute_model_error"""
+    debias_moments: bool = False
+    """Debias the mom0 (polarised intensity) moment map via rm_lite's debias_fdf, instead of a hard amplitude threshold. Requires lam_sq_0_m2 from the synthesis, so overrides any SNR threshold"""
+    debias_filter_size: int = 5
+    """Median filter size (pixels) used by mom0 debiasing"""
     estimate_stokes_i_noise: bool = False
     """Derive a per-channel Stokes I error from the Stokes I cube when fitting the fractional-polarisation model"""
 
