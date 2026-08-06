@@ -1101,11 +1101,21 @@ def rotate_cube(output_cube_path: str | Path, inplace: bool = True) -> Path:
     # moveaxis is a contiguous view of the memmap and nothing is read into memory.
     # Reading a whole cube in is enough to blow a worker's memory budget
     if header["NAXIS"] == 4 and min(header["NAXIS3"], header["NAXIS4"]) == 1:
-        logger.info(f"Rotating {output_path.name} via a view of the memmap")
-        with fits.open(output_path, mode="update", memmap=True) as hdul:
-            hdul[0].data = np.moveaxis(hdul[0].data, 1, 0)
-            hdul[0].header = header
-            hdul.flush()
+        logger.info(f"Rotating {output_path.name} via a header rewrite only")
+        original_header = fits.getheader(output_path)
+        original_header_string = original_header.tostring()
+        new_header_string = header.tostring()
+        logger.info(
+            f"Old header length {len(original_header_string)} bytes, new header length {len(new_header_string)} bytes"
+        )
+        assert len(original_header_string) == len(new_header_string), (
+            f"Header length mismatch: {len(original_header_string)} != {len(new_header_string)}. "
+            "This should not happen, and indicates a bug in the header rotation code."
+        )
+        logger.info("Writing new header to FITS cube in place")
+        with open(output_path, mode="r+b") as f:
+            f.write(new_header_string.encode("ascii"))
+
         return output_path
 
     # Move data axis: (pol, chan, dec, ra) → (chan, pol, dec, ra)
