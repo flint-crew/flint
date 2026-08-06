@@ -265,6 +265,7 @@ def combine_images_to_cube(
     mode: str,
     remove_original_images: bool = False,
     inplace: bool = True,
+    invalidate_zeros: bool = False,
 ) -> Path:
     """Combine wsclean subband channel images into a cube. Each collection attribute
     of the input `image_set` will be inspected. The MFS images will be ignored.
@@ -276,6 +277,8 @@ def combine_images_to_cube(
         remove_original_images (bool, optional): If True, images that went into the cube are removed. Defaults to False.
         inplace (bool, optional): If True, modify the file in-place. If False, write to a temporary file and
         then replace the original. Default True
+        invalidate_zeros (bool, optional): If True, any zero-valued pixels in the cube will be set to NaN. This is useful for linmos co-addition. Defaults to False.
+
     Returns:
         ImageSet: Updated iamgeset describing the new outputs
     """
@@ -286,7 +289,9 @@ def combine_images_to_cube(
     output_cube_name = create_image_cube_name(image_prefix=Path(prefix), mode=mode)
 
     logger.info(f"Combining {len(images)} images. {images=}")
-    freqs = combine_fits(file_list=images, out_cube=output_cube_name)
+    freqs = combine_fits(
+        file_list=images, out_cube=output_cube_name, invalidate_zeros=invalidate_zeros
+    )
     rotate_cube(output_cube_name, inplace=inplace)
 
     # Write out the hdu to preserve the beam table constructed in fitscube
