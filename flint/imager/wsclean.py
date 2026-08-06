@@ -22,7 +22,7 @@ from collections.abc import Collection
 from glob import glob
 from numbers import Number
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, Literal, NamedTuple
 
 import numpy as np
 from astropy.io import fits
@@ -31,7 +31,8 @@ from capn_crunch import (
     create_options_from_parser,
     options_to_dict,
 )
-from fitscube.combine_fits import combine_fits
+from fitscube.bounding_box import BoundingBox
+from fitscube.combine_fits import combine_fits, compress_cube
 from fitscube.exceptions import TargetAxisMissingException
 from fitscube.extract import ExtractOptions, extract_plane_from_cube, find_target_axis
 
@@ -207,6 +208,10 @@ class WSCleanOptions(BaseOptions):
     # Options below here are not added to wsclean command
     flint_make_cube_inplace: bool = True
     """Rotate the cube for the linmos axis ordering in place, or do it via a temporary file that then gets deleted. Good thing to turn off when getting weird OSErrors on file writing"""
+    flint_make_cube_compress: bool = False
+    """Gzip-compress the subband cube once formed. Defaults to False."""
+    flint_make_cube_compress_method: Literal["gzip", "pgzip"] = "pgzip"
+    """The compression backend to use when ``flint_make_cube_compress`` is set. Defaults to 'pgzip'."""
     flint_no_log_wsclean_output: bool = False
     """If True do not log the wsclean output"""
 
@@ -266,6 +271,9 @@ def combine_images_to_cube(
     remove_original_images: bool = False,
     inplace: bool = True,
     invalidate_zeros: bool = False,
+    bounding_box: bool | BoundingBox = False,
+    compress: bool = False,
+    compress_method: Literal["gzip", "pgzip"] = "pgzip",
 ) -> Path:
     """Combine wsclean subband channel images into a cube. Each collection attribute
     of the input `image_set` will be inspected. The MFS images will be ignored.
@@ -278,6 +286,9 @@ def combine_images_to_cube(
         inplace (bool, optional): If True, modify the file in-place. If False, write to a temporary file and
         then replace the original. Default True
         invalidate_zeros (bool, optional): If True, any zero-valued pixels in the cube will be set to NaN. This is useful for linmos co-addition. Defaults to False.
+        bounding_box (bool | BoundingBox, optional): Trim the cube to the common bounding box of valid pixels across `images`. Pass a pre-computed `BoundingBox` to reuse a box shared with another cube (e.g. weights). Defaults to False.
+        compress (bool, optional): Gzip-compress the cube once written. Defaults to False.
+        compress_method (Literal["gzip", "pgzip"], optional): Compression backend used when `compress` is set. Defaults to "pgzip".
 
     Returns:
         ImageSet: Updated iamgeset describing the new outputs
@@ -290,7 +301,10 @@ def combine_images_to_cube(
 
     logger.info(f"Combining {len(images)} images. {images=}")
     freqs = combine_fits(
-        file_list=images, out_cube=output_cube_name, invalidate_zeros=invalidate_zeros
+        file_list=images,
+        out_cube=output_cube_name,
+        invalidate_zeros=invalidate_zeros,
+        bounding_box=bounding_box,
     )
     rotate_cube(output_cube_name, inplace=inplace)
 
@@ -302,6 +316,9 @@ def combine_images_to_cube(
 
     if remove_original_images:
         remove_files_folders(*images)
+
+    if compress:
+        output_cube_name = compress_cube(output_cube_name, method=compress_method)
 
     return output_cube_name
 
@@ -1151,6 +1168,8 @@ def combine_image_set_to_cube(
     image_set: ImageSet,
     remove_original_images: bool = False,
     inplace: bool = True,
+    compress: bool = False,
+    compress_method: Literal["gzip", "pgzip"] = "pgzip",
 ) -> ImageSet:
     """Combine wsclean subband channel images into a cube. Each collection attribute
     of the input `image_set` will be inspected. The MFS images will be ignored.
@@ -1162,6 +1181,8 @@ def combine_image_set_to_cube(
         remove_original_images (bool, optional): If True, images that went into the cube are removed. Defaults to False.
         inplace (bool, optional): If True, modify the file in-place. If False, write to a temporary file and
         then replace the original. Default True
+        compress (bool, optional): Gzip-compress each cube once written. Defaults to False.
+        compress_method (Literal["gzip", "pgzip"], optional): Compression backend used when `compress` is set. Defaults to "pgzip".
 
     Returns:
         ImageSet: Updated iamgeset describing the new outputs
@@ -1205,6 +1226,11 @@ def combine_image_set_to_cube(
 
         output_freqs_name = Path(output_cube_name).with_suffix(".freqs_Hz.txt")
         np.savetxt(output_freqs_name, freqs.to("Hz").value)
+
+        if compress:
+            output_cube_name = compress_cube(
+                Path(output_cube_name), method=compress_method
+            )
 
         image_set_dict[mode] = [Path(output_cube_name)] + [
             image for image in image_set_dict[mode] if image not in subband_images
@@ -1385,6 +1411,8 @@ def run_wsclean_imager(
             image_set=image_set,
             remove_original_images=True,
             inplace=wsclean_result.options.flint_make_cube_inplace,
+            compress=wsclean_result.options.flint_make_cube_compress,
+            compress_method=wsclean_result.options.flint_make_cube_compress_method,
         )
 
     image_set = rename_wsclean_prefix_in_image_set(input_image_set=image_set)
