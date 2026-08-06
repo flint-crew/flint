@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Collection
 from pathlib import Path
-from typing import Any, Literal, ParamSpec, TypeVar
+from typing import Any, ParamSpec, TypeVar
 
 import numpy as np
 import pandas as pd
@@ -32,10 +32,8 @@ from flint.coadd.linmos import (
 )
 from flint.convol import (
     BeamShape,
-    convolve_cubes,
     convolve_images,
     get_common_beam,
-    get_cube_common_beam,
 )
 from flint.flagging import flag_ms_aoflagger
 from flint.imager.wsclean import (
@@ -554,92 +552,24 @@ task_get_common_beam_from_results: Task[P, R] = task(get_common_beam_from_result
 
 
 @task
-def task_get_cube_common_beam(
-    wsclean_results: Collection[WSCleanResult],
-    cutoff: float = 25,
-) -> list[BeamShape]:
-    """Compute a common beam size  for input cubes.
+def task_split_beam_cube_into_planes(wsclean_result: WSCleanResult) -> list[Path]:
+    """Split a per-beam wsclean image cube into its per-channel planes, ready
+    to be convolved individually rather than as a whole cube.
 
     Args:
-        wsclean_results (Collection[WSCleanResult]): Input images whose restoring beam properties will be considered
-        cutoff (float, optional): Major axis larger than this valur, in arcseconds, will be ignored. Defaults to 25.
+        wsclean_result (WSCleanResult): Output of wsclean whose image cube will be split
 
     Returns:
-        List[BeamShape]: The final convolving beam size to be used per channel in cubes
-    """
-
-    images_to_consider: list[Path] = []
-
-    # TODO: This should support other image types
-    for wsclean_result in wsclean_results:
-        if wsclean_result.image_set is None:
-            logger.warning(
-                f"No image_set for {wsclean_result.ms} found. Has imager finished?"
-            )
-            continue
-        images_to_consider.extend(wsclean_result.image_set.image)
-
-    images_to_consider = get_fits_cube_from_paths(paths=images_to_consider)
-
-    logger.info(
-        f"Considering {len(images_to_consider)} images across {len(wsclean_results)} outputs. "
-    )
-
-    beam_shapes = get_cube_common_beam(cube_paths=images_to_consider, cutoff=cutoff)
-
-    return beam_shapes
-
-
-@task
-def task_convolve_cube(
-    wsclean_result: WSCleanResult,
-    beam_shapes: list[BeamShape],
-    cutoff: float = 60,
-    mode: Literal["image"] = "image",
-    convol_suffix_str: str = "conv",
-) -> Collection[Path]:
-    """Convolve images to a specified resolution
-
-    Args:
-        wsclean_result (WSCleanResult): Collection of output images from wsclean that will be convolved
-        beam_shapes (BeamShape): The shape images will be convolved to
-        cutoff (float, optional): Maximum major beam axis an image is allowed to have before it will not be convolved. Defaults to 60.
-        convol_suffix_str (str, optional): The suffix added to the convolved images. Defaults to 'conv'.
-
-    Returns:
-        Collection[Path]: Path to the output images that have been convolved.
+        list[Path]: The per-channel planes extracted from the image cube
     """
     assert wsclean_result.image_set is not None, (
         f"{wsclean_result.ms} has no attached image_set."
     )
 
-    supported_modes = ("image",)
-    logger.info(f"Extracting {mode}")
-    if mode == "image":
-        image_paths = list(wsclean_result.image_set.image)
-    else:
-        raise ValueError(f"{mode=} is not supported. Known modes are {supported_modes}")
+    cube_paths = get_fits_cube_from_paths(paths=list(wsclean_result.image_set.image))
+    assert len(cube_paths) == 1, f"Expected a single image cube, got {cube_paths=}"
 
-    logger.info(f"Extracting cubes from image_set {mode=}")
-    image_paths = get_fits_cube_from_paths(paths=image_paths)
-
-    # It is possible depending on how aggressively cleaning image products are deleted that these
-    # some cleaning products (e.g. residuals) do not exist. There are a number of ways one could consider
-    # handling this. The pirate in me feels like less is more, so an error will be enough. Keeping
-    # things simple and avoiding the problem is probably the better way of dealing with this
-    # situation. In time this would mean that we inspect and handle conflicting pipeline options.
-    assert image_paths is not None, (
-        f"{image_paths=} for {mode=} and {wsclean_result.image_set=}"
-    )
-
-    logger.info(f"Will convolve {image_paths}")
-
-    return convolve_cubes(
-        cube_paths=image_paths,
-        beam_shapes=beam_shapes,
-        cutoff=cutoff,
-        convol_suffix=convol_suffix_str,
-    )
+    return split_cube_into_planes(cube=cube_paths[0])
 
 
 def convolve_image_set(
@@ -1151,28 +1081,33 @@ def create_convolve_linmos_cubes(
         suffixes.insert(0, additional_linmos_suffix_str)
     linmos_suffix_str = ".".join(suffixes)
 
-    beam_shapes = task_get_cube_common_beam.submit(
-        wsclean_results=wsclean_results, cutoff=field_options.beam_cutoff
-    )
-    convolved_cubes = task_convolve_cube.map(
-        wsclean_result=wsclean_results,  # type: ignore
-        cutoff=field_options.beam_cutoff,
-        mode=unmapped("image"),  # type: ignore
-        beam_shapes=unmapped(beam_shapes),  # type: ignore
-    )
     # linmos co-adds a cube channel-by-channel serially, so split the beam cubes
-    # into planes and co-add each channel in parallel instead. Resolving here
-    # blocks until the convolutions above have completed.
-    beam_planes = task_split_cube_into_planes.map(
-        cubes=convolved_cubes  # type: ignore
-    )
+    # into planes and co-add each channel in parallel instead. Splitting before
+    # convolving means each channel is convolved as a single 2D plane rather
+    # than pulling the whole per-beam cube into memory for a 3D convolution.
+    beam_planes = task_split_beam_cube_into_planes.map(wsclean_result=wsclean_results)  # type: ignore
     channel_groups: list[list[Path]] = task_transpose_and_sort_channel_images.submit(
         beam_channel_images=beam_planes  # type: ignore
     ).result()
 
+    beam_shapes = task_get_common_beam_from_images.map(
+        image_paths=channel_groups,  # type: ignore
+        cutoff=unmapped(field_options.beam_cutoff),  # type: ignore
+    )
+    convolved_channel_groups: list[list[Path]] = task_convolve_images.map(
+        image_paths=channel_groups,  # type: ignore
+        beam_shape=beam_shapes,  # type: ignore
+        cutoff=unmapped(field_options.beam_cutoff),  # type: ignore
+    ).result()
+
+    # The unconvolved planes have been superseded by convolved_channel_groups
+    task_remove_files_folders.submit(
+        *[plane for beam_images in channel_groups for plane in beam_images]
+    )
+
     assert field_options.yandasoft_container is not None
     cube_results = linmos_channel_groups_to_cubes(
-        channel_groups=channel_groups,
+        channel_groups=convolved_channel_groups,
         container=field_options.yandasoft_container,
         linmos_options=LinmosOptions(
             holofile=field_options.holofile,
@@ -1184,9 +1119,9 @@ def create_convolve_linmos_cubes(
         holofile=holofile,
     )
 
-    # Remove the extracted planes once every cube has been formed
+    # Remove the convolved planes once every cube has been formed
     task_remove_files_folders.submit(
-        *[plane for beam_images in channel_groups for plane in beam_images],
+        *[plane for beam_images in convolved_channel_groups for plane in beam_images],
         wait_for=cube_results,
     )
     return cube_results
