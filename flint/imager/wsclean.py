@@ -1089,7 +1089,7 @@ def rotate_cube(output_cube_path: str | Path, inplace: bool = True) -> Path:
         if f"CTYPE{b}" not in tmp_header:
             continue
 
-        for key in ("CTYPE", "CRPIX", "CRVAL", "CDELT", "CUNIT"):
+        for key in ("NAXIS", "CTYPE", "CRPIX", "CRVAL", "CDELT", "CUNIT"):
             # A key absent on the source axis (e.g. CUNIT on STOKES) has to be
             # removed from the destination, else a stale value is left behind
             if f"{key}{b}" in tmp_header:
