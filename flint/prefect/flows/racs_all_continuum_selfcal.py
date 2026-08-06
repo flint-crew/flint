@@ -400,15 +400,22 @@ def process_racs_all_field(
                     update_potato_peel_options=unmapped(potato_peel_options),
                 )
 
+            update_wsclean_options = get_options_from_strategy(
+                strategy=strategy,
+                mode="wsclean",
+                round_info=0,
+                operation="selfcal",
+            )
+            if cube_division is not None:
+                update_wsclean_options = _apply_cube_division(
+                    update_wsclean_options=update_wsclean_options,
+                    cube_division=cube_division,
+                )
+
             wsclean_result = task_wsclean_imager.submit(
                 in_ms=preprocess_science_mss,
                 wsclean_container=racs_all_options.wsclean_container,
-                update_wsclean_options=get_options_from_strategy(
-                    strategy=strategy,
-                    mode="wsclean",
-                    round_info=0,
-                    operation="selfcal",
-                ),
+                update_wsclean_options=update_wsclean_options,
             )
             imaging_results[0].append(
                 LoopFutures(
@@ -491,7 +498,7 @@ def process_racs_all_field(
                     round_info=current_round,
                     operation="selfcal",
                 )
-                if final_round and cube_division is not None:
+                if cube_division is not None:
                     update_wsclean_options = _apply_cube_division(
                         update_wsclean_options=update_wsclean_options,
                         cube_division=cube_division,
