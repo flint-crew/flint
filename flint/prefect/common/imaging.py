@@ -1058,6 +1058,7 @@ def linmos_channel_groups_to_cubes(
             mode=mode,
             remove_original_images=True,
             bounding_box=bounding_box,
+            invalidate_zeros=True,
             compress=compress,
             compress_method=compress_method,
         )
