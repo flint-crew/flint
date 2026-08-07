@@ -19,6 +19,7 @@ from flint.calibrate.aocalibrate import find_existing_solutions
 from flint.catalogue import verify_reference_catalogues
 from flint.coadd.linmos import LinmosResult
 from flint.configuration import (
+    FitsCubeOptions,
     Strategy,
     get_options_from_strategy,
     load_and_copy_strategy,
@@ -297,8 +298,8 @@ def process_science_fields(
         )
 
     # Some preprocessing stages (temporarily) modify the MS name.
-    # Run the field summary here to avoid attemptign to read at
-    # poor timem when MS is renamed, ya see dog
+    # Run the field summary here to avoid attempting to read at
+    # poor time when MS is renamed, ya see dog
     field_summary = task_create_field_summary.submit(
         mss=preprocess_science_mss,
         cal_sbid_path=bandpass_path,
@@ -309,6 +310,13 @@ def process_science_fields(
     # The stokes-v mss are updated throughout the self-calibration loop
     # as the file names change
     stokes_v_mss = preprocess_science_mss
+
+    update_fitscube_options = get_options_from_strategy(
+        strategy=strategy,
+        operation="selfcal",
+        mode="fitscube",
+    )
+
     wsclean_results = task_wsclean_imager.map(
         in_ms=preprocess_science_mss,
         wsclean_container=field_options.wsclean_container,
@@ -320,6 +328,7 @@ def process_science_fields(
                 operation="selfcal",
             )
         ),
+        update_fitscube_options=unmapped(update_fitscube_options),
     )  # type: ignore
 
     wsclean_results = (
@@ -493,6 +502,7 @@ def process_science_fields(
                 wsclean_container=field_options.wsclean_container,
                 fits_mask=fits_beam_masks,
                 update_wsclean_options=unmapped(update_wsclean_options),
+                update_fitscube_options=unmapped(update_fitscube_options),
             )
             wsclean_results = (
                 task_add_model_source_list_to_ms.map(
@@ -545,12 +555,14 @@ def process_science_fields(
                         archive_wait_for.extend(val_results)
 
     if field_options.coadd_cubes:
+        fitscube_options = FitsCubeOptions().with_options(**update_fitscube_options)
         with tags("cubes"):
             cube_results = create_convolve_linmos_cubes(
                 wsclean_results=wsclean_results,  # type: ignore
                 field_options=field_options,
                 current_round=(field_options.rounds if field_options.rounds else None),
                 additional_linmos_suffix_str="cube",
+                fitscube_options=fitscube_options,
             )
             archive_wait_for.extend(cube_results)
 
@@ -564,6 +576,7 @@ def process_science_fields(
                 wsclean_container=field_options.wsclean_container,
                 update_wsclean_options=unmapped(stokes_v_wsclean_options),
                 fits_mask=fits_beam_masks,
+                update_fitscube_options=unmapped(update_fitscube_options),
                 wait_for=wsclean_results,  # Ensure that measurement sets are doubled up during imaging
             )
             archive_wait_for.extend(wsclean_results)

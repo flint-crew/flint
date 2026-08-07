@@ -31,7 +31,6 @@ from capn_crunch import (
     create_options_from_parser,
     options_to_dict,
 )
-from fitscube.bounding_box import BoundingBox
 from fitscube.combine_fits import combine_fits, compress_cube
 from fitscube.exceptions import TargetAxisMissingException
 from fitscube.extract import ExtractOptions, extract_plane_from_cube, find_target_axis
@@ -56,6 +55,7 @@ from flint.naming import (
 )
 from flint.options import (
     BaseOptions,
+    FitsCubeOptions,
 )
 from flint.sclient import run_singularity_command
 from flint.utils import (
@@ -206,12 +206,6 @@ class WSCleanOptions(BaseOptions):
     taper_gaussian: float | None = None
     """The size of a Gaussian function applied to the weights, assuming units of arcseconds. Defaults to None. """
     # Options below here are not added to wsclean command
-    flint_make_cube_inplace: bool = True
-    """Rotate the cube for the linmos axis ordering in place, or do it via a temporary file that then gets deleted. Good thing to turn off when getting weird OSErrors on file writing"""
-    flint_make_cube_compress: bool = False
-    """Gzip-compress the subband cube once formed. Defaults to False."""
-    flint_make_cube_compress_method: Literal["gzip", "pgzip"] = "pgzip"
-    """The compression backend to use when ``flint_make_cube_compress`` is set. Defaults to 'pgzip'."""
     flint_no_log_wsclean_output: bool = False
     """If True do not log the wsclean output"""
 
@@ -268,12 +262,7 @@ def combine_images_to_cube(
     images: list[Path],
     prefix: str,
     mode: str,
-    remove_original_images: bool = False,
-    inplace: bool = True,
-    invalidate_zeros: bool = False,
-    bounding_box: bool | BoundingBox = False,
-    compress: bool = False,
-    compress_method: Literal["gzip", "pgzip"] = "pgzip",
+    fitscube_options: FitsCubeOptions,
 ) -> Path:
     """Combine wsclean subband channel images into a cube. Each collection attribute
     of the input `image_set` will be inspected. The MFS images will be ignored.
@@ -281,17 +270,13 @@ def combine_images_to_cube(
     A output file name will be generated based on the  prefix and mode (e.g. `image`, `residual`, `psf`, `dirty`).
 
     Args:
-        image_set (ImageSet): Collection of wsclean image productds
-        remove_original_images (bool, optional): If True, images that went into the cube are removed. Defaults to False.
-        inplace (bool, optional): If True, modify the file in-place. If False, write to a temporary file and
-        then replace the original. Default True
-        invalidate_zeros (bool, optional): If True, any zero-valued pixels in the cube will be set to NaN. This is useful for linmos co-addition. Defaults to False.
-        bounding_box (bool | BoundingBox, optional): Trim the cube to the common bounding box of valid pixels across `images`. Pass a pre-computed `BoundingBox` to reuse a box shared with another cube (e.g. weights). Defaults to False.
-        compress (bool, optional): Gzip-compress the cube once written. Defaults to False.
-        compress_method (Literal["gzip", "pgzip"], optional): Compression backend used when `compress` is set. Defaults to "pgzip".
+        images (list[Path]): The images to combine into a cube
+        prefix (str): The prefix of the images to combine
+        mode (str): The type of images to combine, e.g. `image`, `residual`, `psf`, `dirty`
+        fitscube_options (FitsCubeOptions): Options to control the cube creation
 
     Returns:
-        ImageSet: Updated iamgeset describing the new outputs
+        Path: The path to the created FITS cube
     """
     logger.info("Combining subband images into fits cubes")
 
@@ -303,10 +288,10 @@ def combine_images_to_cube(
     freqs = combine_fits(
         file_list=images,
         out_cube=output_cube_name,
-        invalidate_zeros=invalidate_zeros,
-        bounding_box=bounding_box,
+        invalidate_zeros=fitscube_options.invalidate_zeros,
+        bounding_box=fitscube_options.bounding_box,
     )
-    rotate_cube(output_cube_name, inplace=inplace)
+    rotate_cube(output_cube_name, inplace=fitscube_options.inplace)
 
     # Write out the hdu to preserve the beam table constructed in fitscube
     logger.info(f"Writing {output_cube_name=}")
@@ -314,11 +299,13 @@ def combine_images_to_cube(
     output_freqs_name = output_cube_name.with_suffix(".freqs_Hz.txt")
     np.savetxt(output_freqs_name, freqs.to("Hz").value)
 
-    if remove_original_images:
+    if fitscube_options.remove_original_images:
         remove_files_folders(*images)
 
-    if compress:
-        output_cube_name = compress_cube(output_cube_name, method=compress_method)
+    if fitscube_options.compress:
+        output_cube_name = compress_cube(
+            output_cube_name, method=fitscube_options.compress_method
+        )
 
     return output_cube_name
 
@@ -1300,6 +1287,7 @@ def run_wsclean_imager(
     wsclean_result: WSCleanResult,
     container: Path,
     make_cube_from_subbands: bool = True,
+    fitscube_options: FitsCubeOptions | None = None,
 ) -> ImageSet:
     """Run a provided wsclean command. Optionally will clean up files,
     including the dirty beams, psfs and other assorted things.
@@ -1407,12 +1395,14 @@ def run_wsclean_imager(
         image_set = image_set.with_options(source_list=source_list_path)
 
     if make_cube_from_subbands:
+        if not fitscube_options:
+            fitscube_options = FitsCubeOptions()
         image_set = combine_image_set_to_cube(
             image_set=image_set,
-            remove_original_images=True,
-            inplace=wsclean_result.options.flint_make_cube_inplace,
-            compress=wsclean_result.options.flint_make_cube_compress,
-            compress_method=wsclean_result.options.flint_make_cube_compress_method,
+            remove_original_images=fitscube_options.remove_original_images,
+            inplace=fitscube_options.inplace,
+            compress=fitscube_options.compress,
+            compress_method=fitscube_options.compress_method,
         )
 
     image_set = rename_wsclean_prefix_in_image_set(input_image_set=image_set)
@@ -1426,6 +1416,7 @@ def wsclean_imager(
     ms: Path | MS | tuple[MS | Path, ...] | list[MS | Path],
     wsclean_container: Path,
     update_wsclean_options: dict[str, Any] | None = None,
+    update_fitscube_options: dict[str, Any] | None = None,
     make_cube_from_subbands: bool = True,
 ) -> WSCleanResult:
     """Create and run a wsclean imager command against a measurement set.
@@ -1451,6 +1442,11 @@ def wsclean_imager(
         logger.info("Updatting wsclean options with user-provided items. ")
         wsclean_options = wsclean_options.with_options(**update_wsclean_options)
 
+    fitscube_options = FitsCubeOptions()
+    if update_fitscube_options:
+        logger.info("Updatting fitscube options with user-provided items. ")
+        fitscube_options = fitscube_options.with_options(**update_fitscube_options)
+
     if isinstance(wsclean_options.temp_dir, str):
         logger.info(f"Resolving potential expansion for {wsclean_options.temp_dir=}")
         temp_dir = parse_environment_variables(wsclean_options.temp_dir)
@@ -1468,6 +1464,7 @@ def wsclean_imager(
     image_set = run_wsclean_imager(
         wsclean_result=wsclean_result,
         container=wsclean_container,
+        fitscube_options=fitscube_options,
         make_cube_from_subbands=make_cube_from_subbands,
     )
 

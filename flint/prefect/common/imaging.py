@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Collection
 from pathlib import Path
-from typing import Any, Literal, ParamSpec, TypeVar
+from typing import Any, ParamSpec, TypeVar
 
 import numpy as np
 import pandas as pd
@@ -67,7 +67,7 @@ from flint.naming import (
     get_beam_resolution_str,
     get_fits_cube_from_paths,
 )
-from flint.options import FieldOptions, SubtractFieldOptions
+from flint.options import FieldOptions, FitsCubeOptions, SubtractFieldOptions
 from flint.peel.potato import potato_peel
 from flint.prefect.caching import task
 from flint.prefect.common.utils import task_getattr, upload_image_as_artifact
@@ -348,6 +348,7 @@ def task_wsclean_imager(
     in_ms: ApplySolutions | MS | tuple[MS, ...],
     wsclean_container: Path,
     update_wsclean_options: dict[str, Any] | None = None,
+    update_fitscube_options: dict[str, Any] | None = None,
     fits_mask: FITSMaskNames | None = None,
     channel_range: tuple[int, int] | None = None,
     scan_range: tuple[int, int] | None = None,
@@ -395,6 +396,7 @@ def task_wsclean_imager(
         wsclean_container=wsclean_container,
         update_wsclean_options=update_wsclean_options,
         make_cube_from_subbands=make_cube_from_subbands,
+        update_fitscube_options=update_fitscube_options,
     )
 
 
@@ -979,12 +981,11 @@ def linmos_channel_groups_to_cubes(
     channel_groups: Collection[Collection[Path]],
     container: Path,
     linmos_options: LinmosOptions,
+    fitscube_options: FitsCubeOptions,
     stokesi_channel_groups: Collection[Collection[Path]] | None = None,
     field_summary: FieldSummary | None = None,
     suffix_str: str | None = None,
     holofile: Path | None = None,
-    compress: bool = False,
-    compress_method: Literal["gzip", "pgzip"] = "pgzip",
 ) -> list[PrefectFuture[Path]]:
     """Co-add beam images one channel at a time, in parallel, then stack the
     resulting mosaics back into image and weight cubes.
@@ -1002,8 +1003,7 @@ def linmos_channel_groups_to_cubes(
         field_summary (FieldSummary | None, optional): Description of the field, used to get the ``pol_axis``. Defaults to None.
         suffix_str (str | None, optional): Additional suffix added to the linmos and cube names. Defaults to None.
         holofile (Path | None, optional): Holography file overriding the one in ``linmos_options``. Defaults to None.
-        compress (bool, optional): Gzip-compress the image and weight cubes once written. Defaults to False.
-        compress_method (Literal["gzip", "pgzip"], optional): Compression backend used when `compress` is set. Defaults to "pgzip".
+        fitscube_options (FitsCubeOptions, optional): Options for controlling the FITS cube creation. Defaults to None.
 
     Returns:
         list[PrefectFuture[Path]]: The image and weight cubes being created
@@ -1056,11 +1056,7 @@ def linmos_channel_groups_to_cubes(
             images=planes,
             prefix=cube_prefix,
             mode=mode,
-            remove_original_images=True,
-            bounding_box=bounding_box,
-            invalidate_zeros=True,
-            compress=compress,
-            compress_method=compress_method,
+            fitscube_options=fitscube_options.with_options(bounding_box=bounding_box),
         )
         for planes, mode in ((image_planes, "image"), (weight_planes, "weight"))
     ]
@@ -1069,6 +1065,7 @@ def linmos_channel_groups_to_cubes(
 def create_convolve_linmos_cubes(
     wsclean_results: Collection[WSCleanResult],
     field_options: FieldOptions,
+    fitscube_options: FitsCubeOptions,
     current_round: int | None = None,
     additional_linmos_suffix_str: str | None = "cube",
     holofile: Path | None = None,
@@ -1112,6 +1109,7 @@ def create_convolve_linmos_cubes(
             cleanup=True,
             trim_linmos_fits=False,  # so image shapes across channels all the same
         ),
+        fitscube_options=fitscube_options,
         suffix_str=linmos_suffix_str,
         holofile=holofile,
     )
