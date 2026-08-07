@@ -128,7 +128,7 @@ def test_cube_split_and_recombine_roundtrip(tmpdir) -> None:
         images=images,
         prefix=f"{tmp_path}/SB1234.RACS_0000-00.beam00.round1",
         mode="image",
-        fitscube_options=FitsCubeOptions(),
+        fitscube_options=FitsCubeOptions(invalidate_zeros=False),
     )
     _assert_cube_matches_images(cube=beam_cube, images=images)
 
@@ -142,7 +142,7 @@ def test_cube_split_and_recombine_roundtrip(tmpdir) -> None:
         images=planes,
         prefix=f"{tmp_path}/SB1234.RACS_0000-00.round1",
         mode="image",
-        fitscube_options=FitsCubeOptions(),
+        fitscube_options=FitsCubeOptions(invalidate_zeros=False),
     )
     _assert_cube_matches_images(cube=field_cube, images=images)
 
@@ -163,7 +163,7 @@ def test_rotate_cube_is_idempotent(tmpdir) -> None:
         images=images,
         prefix=f"{tmp_path}/SB1234.RACS_0000-00.beam00.round1",
         mode="image",
-        fitscube_options=FitsCubeOptions(),
+        fitscube_options=FitsCubeOptions(invalidate_zeros=False),
     )
 
     header, data = fits.getheader(cube), fits.getdata(cube)
