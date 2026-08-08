@@ -571,9 +571,22 @@ def process_racs_all_field(
                     for beam_result in imaging_results[cube_add_round]
                 ]
 
+                from flint.options import FitsCubeOptions
+
+                fits_cube_options = FitsCubeOptions()
+
+                fits_cube_options = fits_cube_options.with_options(
+                    invalidate_zeros=True,
+                    bounding_box=True,
+                    compress=True,
+                    compress_method="pgzip",
+                    remove_originals=True,
+                )
+
                 linmos_cubes = create_convolve_linmos_cubes(
                     wsclean_results=cube_results,  # type: ignore
                     field_options=racs_all_options,
+                    fits_cube_options=fits_cube_options,
                     current_round=(
                         racs_all_options.rounds if racs_all_options.rounds else None
                     ),
