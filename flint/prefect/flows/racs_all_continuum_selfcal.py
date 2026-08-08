@@ -579,7 +579,7 @@ def process_racs_all_field(
                     invalidate_zeros=True,
                     compress=True,
                     compress_method="pgzip",
-                    remove_originals=True,
+                    remove_original_images=True,
                 )
 
                 linmos_cubes = create_convolve_linmos_cubes(

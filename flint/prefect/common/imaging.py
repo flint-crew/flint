@@ -1037,14 +1037,15 @@ def linmos_channel_groups_to_cubes(
         image_planes.append(task_getattr.submit(linmos_result, "image_fits"))
         weight_planes.append(task_getattr.submit(linmos_result, "weight_fits"))
 
-    bounding_box: bool | PrefectFuture[BoundingBox] = False
+    # Needs to be resolved for FITSCubeOption to validate
+    bounding_box: bool | BoundingBox = False
     if linmos_options.trim_linmos_fits or fitscube_options.bounding_box is True:
         # Passing the futures in is what forms the barrier - every channel has to
         # be co-added before the box that all of them share can be known. The same
         # box is then reused for both cubes so they stay on the same pixel grid.
         bounding_box = task_get_common_bounding_box.submit(
             file_list=image_planes, invalidate_zeros=True
-        )
+        ).result()
 
     # Stack the per-channel mosaics back into image and weight cubes,
     # removing the per-channel mosaics once cubed.
