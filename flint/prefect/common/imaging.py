@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Collection
 from pathlib import Path
-from typing import Any, ParamSpec, TypeVar
+from typing import Any, Literal, ParamSpec, TypeVar
 
 import numpy as np
 import pandas as pd
@@ -986,6 +986,8 @@ def linmos_channel_groups_to_cubes(
     field_summary: FieldSummary | None = None,
     suffix_str: str | None = None,
     holofile: Path | None = None,
+    compress: bool = False,
+    compress_method: Literal["gzip", "pgzip"] = "pgzip",
 ) -> list[PrefectFuture[Path]]:
     """Co-add beam images one channel at a time, in parallel, then stack the
     resulting mosaics back into image and weight cubes.
