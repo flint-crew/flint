@@ -585,7 +585,7 @@ def process_racs_all_field(
                 linmos_cubes = create_convolve_linmos_cubes(
                     wsclean_results=cube_results,  # type: ignore
                     field_options=racs_all_options,
-                    fits_cube_options=fits_cube_options,
+                    fitscube_options=fits_cube_options,
                     current_round=(
                         racs_all_options.rounds if racs_all_options.rounds else None
                     ),
