@@ -348,6 +348,12 @@ def process_racs_all_field(
         mode="fitscube",
         operation="selfcal",
     )
+    # The per-round, per-beam cube produced by task_wsclean_imager below is
+    # always split into planes by create_convolve_linmos_cubes further down
+    # (via the coadd_cubes block), so it must never be compressed regardless
+    # of what the strategy file requests. Only the final co-added cube built
+    # at the coadd_cubes block honours the configured `compress` value.
+    selfcal_round_fitscube_options = {**update_fitscube_options, "compress": False}
 
     # Ya sea dog, we will only be handling CASDA measurementsets for the moment.
     # We will consider bandpass applications later
@@ -423,7 +429,7 @@ def process_racs_all_field(
                 in_ms=preprocess_science_mss,
                 wsclean_container=racs_all_options.wsclean_container,
                 update_wsclean_options=update_wsclean_options,
-                update_fitscube_options=update_fitscube_options,
+                update_fitscube_options=selfcal_round_fitscube_options,
             )
             imaging_results[0].append(
                 LoopFutures(
@@ -516,7 +522,7 @@ def process_racs_all_field(
                     wsclean_container=racs_all_options.wsclean_container,
                     fits_mask=fits_beam_mask,
                     update_wsclean_options=update_wsclean_options,
-                    update_fitscube_options=update_fitscube_options,
+                    update_fitscube_options=selfcal_round_fitscube_options,
                 )
                 imaging_results[current_round].append(
                     LoopFutures(mss=cal_mss, wsclean_result=wsclean_result)

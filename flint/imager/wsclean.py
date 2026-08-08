@@ -476,7 +476,22 @@ def split_cube_into_planes(cube: Path) -> list[Path]:
 
     Returns:
         list[Path]: The per-channel images extracted from ``cube``
+
+    Raises:
+        NotSupportedError: If ``cube`` is gzip-compressed. Splitting reopens
+            the cube once per channel, and astropy cannot memmap a gzip file,
+            so each reopen decompresses the entire cube into memory. Set
+            ``FitsCubeOptions.compress=False`` for cubes that get split.
     """
+    if cube.suffix == ".gz":
+        msg = (
+            f"{cube=} is gzip-compressed and cannot be split into planes: "
+            "astropy cannot memmap a compressed FITS file, so each of the "
+            "per-channel reads would decompress the whole cube into memory. "
+            "Disable FitsCubeOptions.compress for cubes that will be split."
+        )
+        raise NotSupportedError(msg)
+
     components = processed_ms_format(in_name=cube)
     if components is None:
         msg = f"Expected a flint named cube. Got {cube=}"

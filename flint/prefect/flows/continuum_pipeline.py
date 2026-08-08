@@ -316,6 +316,12 @@ def process_science_fields(
         operation="selfcal",
         mode="fitscube",
     )
+    # The per-round, per-beam cube produced here is always split into planes
+    # by create_convolve_linmos_cubes (see below), so it must never be
+    # compressed regardless of what the strategy file requests. Only the
+    # final co-added cube built from update_fitscube_options further down
+    # honours the configured `compress` value.
+    selfcal_round_fitscube_options = {**update_fitscube_options, "compress": False}
 
     wsclean_results = task_wsclean_imager.map(
         in_ms=preprocess_science_mss,
@@ -328,7 +334,7 @@ def process_science_fields(
                 operation="selfcal",
             )
         ),
-        update_fitscube_options=unmapped(update_fitscube_options),
+        update_fitscube_options=unmapped(selfcal_round_fitscube_options),
     )  # type: ignore
 
     wsclean_results = (
@@ -502,7 +508,7 @@ def process_science_fields(
                 wsclean_container=field_options.wsclean_container,
                 fits_mask=fits_beam_masks,
                 update_wsclean_options=unmapped(update_wsclean_options),
-                update_fitscube_options=unmapped(update_fitscube_options),
+                update_fitscube_options=unmapped(selfcal_round_fitscube_options),
             )
             wsclean_results = (
                 task_add_model_source_list_to_ms.map(
