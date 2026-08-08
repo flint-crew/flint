@@ -17,6 +17,7 @@ import yaml
 from astropy.coordinates import EarthLocation, SkyCoord
 from astropy.time import Time
 from capn_crunch import BaseOptions
+from fitscube.bounding_box import BoundingBox
 
 from flint.exceptions import MSError
 from flint.logging import logger
@@ -375,7 +376,7 @@ class FitsCubeOptions(BaseOptions):
     """Container of opptions used to combine images into a single cube using the `fitscube` package.
     This is particularly useful to manage the larger concatenations."""
 
-    bounding_box: bool = False
+    bounding_box: bool | BoundingBox = False
     """Whether to attempt to trim images when combining"""
     max_workers: int = 4
     """The number of concurrent workers (readers/writers) that are permitted at a time"""

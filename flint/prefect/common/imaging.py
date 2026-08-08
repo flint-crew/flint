@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Collection
 from pathlib import Path
-from typing import Any, Literal, ParamSpec, TypeVar
+from typing import Any, ParamSpec, TypeVar
 
 import numpy as np
 import pandas as pd
@@ -986,8 +986,6 @@ def linmos_channel_groups_to_cubes(
     field_summary: FieldSummary | None = None,
     suffix_str: str | None = None,
     holofile: Path | None = None,
-    compress: bool = False,
-    compress_method: Literal["gzip", "pgzip"] = "pgzip",
 ) -> list[PrefectFuture[Path]]:
     """Co-add beam images one channel at a time, in parallel, then stack the
     resulting mosaics back into image and weight cubes.
@@ -1001,11 +999,11 @@ def linmos_channel_groups_to_cubes(
         channel_groups (Collection[Collection[Path]]): For each channel, the beam images to co-add
         container (Path): Path to a yandasoft singularity container
         linmos_options (LinmosOptions): Options passed to each per-channel linmos
+        fitscube_options (FitsCubeOptions, optional): Options for controlling the FITS cube creation. Defaults to None.
         stokesi_channel_groups (Collection[Collection[Path]] | None, optional): For each channel, the Stokes I beam images used for the leakage correction. Defaults to None.
         field_summary (FieldSummary | None, optional): Description of the field, used to get the ``pol_axis``. Defaults to None.
         suffix_str (str | None, optional): Additional suffix added to the linmos and cube names. Defaults to None.
         holofile (Path | None, optional): Holography file overriding the one in ``linmos_options``. Defaults to None.
-        fitscube_options (FitsCubeOptions, optional): Options for controlling the FITS cube creation. Defaults to None.
 
     Returns:
         list[PrefectFuture[Path]]: The image and weight cubes being created
@@ -1109,7 +1107,7 @@ def create_convolve_linmos_cubes(
             holofile=field_options.holofile,
             cutoff=field_options.pb_cutoff,
             cleanup=True,
-            trim_linmos_fits=False,  # so image shapes across channels all the same
+            trim_linmos_fits=True,  # This is handled explicitly in linmos_channel_groups_to_cubes, so set to True here to avoid trimming each channel individually
         ),
         fitscube_options=fitscube_options,
         suffix_str=linmos_suffix_str,

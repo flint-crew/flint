@@ -577,7 +577,6 @@ def process_racs_all_field(
 
                 fits_cube_options = fits_cube_options.with_options(
                     invalidate_zeros=True,
-                    bounding_box=True,
                     compress=True,
                     compress_method="pgzip",
                     remove_originals=True,
