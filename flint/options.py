@@ -17,7 +17,6 @@ import yaml
 from astropy.coordinates import EarthLocation, SkyCoord
 from astropy.time import Time
 from capn_crunch import BaseOptions
-from fitscube.bounding_box import BoundingBox
 
 from flint.exceptions import MSError
 from flint.logging import logger
@@ -376,7 +375,7 @@ class FitsCubeOptions(BaseOptions):
     """Container of opptions used to combine images into a single cube using the `fitscube` package.
     This is particularly useful to manage the larger concatenations."""
 
-    bounding_box: bool | BoundingBox = False
+    bounding_box: bool = True
     """Whether to attempt to trim images when combining"""
     max_workers: int = 4
     """The number of concurrent workers (readers/writers) that are permitted at a time"""
@@ -386,7 +385,7 @@ class FitsCubeOptions(BaseOptions):
     """Gzip-compress the output cube once written"""
     compress_method: Literal["gzip", "pgzip"] = "pgzip"
     """The compression backend to use when ``compress`` is set"""
-    remove_original_images: bool = False
+    remove_original_images: bool = True
     """Remove the images that go into forming the fitscube"""
     inplace: bool = True
     """If True, modify the file in-place. If False, write to a temporary file and then replace the original. Default True"""
