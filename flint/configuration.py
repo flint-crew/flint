@@ -356,6 +356,50 @@ def get_options_from_strategy(
     return options
 
 
+def get_selfcal_round_fitscube_options(
+    strategy: Strategy | None | Path,
+    operation: str,
+    current_round: int,
+    final_round: bool,
+) -> dict[str, Any]:
+    """Fetch round-scoped ``fitscube`` options, forcing `compress` off on
+    any round that is not the final one.
+
+    The per-round, per-beam cube produced during self-calibration is always
+    split into per-channel planes when cubes are later co-added across beams
+    (see ``flint.imager.wsclean.split_cube_into_planes``), and that split
+    cannot run on a compressed cube. Only the final round's cube feeds the
+    terminal, un-split co-added cube, so `compress` is only ever honoured
+    there.
+
+    Args:
+        strategy (Union[Strategy,None,Path]): A loaded strategy file, or None/Path.
+        operation (str): The operation scope to draw from, e.g. "selfcal".
+        current_round (int): The self-calibration round these options are for.
+        final_round (bool): Whether `current_round` is the last round.
+
+    Returns:
+        dict[str, Any]: Fitscube option overrides, with `compress` forced
+            to `False` unless `final_round` is `True`.
+    """
+    options = get_options_from_strategy(
+        strategy=strategy,
+        operation=operation,
+        mode="fitscube",
+        round_info=current_round,
+    )
+    if not final_round and options.get("compress"):
+        logger.warning(
+            f"{current_round=} requests compress=True, but only the final "
+            "round's cube may be compressed since earlier rounds are always "
+            "split into planes when co-adding cubes. Ignoring and using "
+            "compress=False for this round."
+        )
+        options = {**options, "compress": False}
+
+    return options
+
+
 def verify_configuration(input_strategy: Strategy, raise_on_error: bool = True) -> bool:
     """Perform basic checks on the configuration file
 

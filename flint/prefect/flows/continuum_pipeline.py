@@ -22,6 +22,7 @@ from flint.configuration import (
     FitsCubeOptions,
     Strategy,
     get_options_from_strategy,
+    get_selfcal_round_fitscube_options,
     load_and_copy_strategy,
 )
 from flint.logging import logger
@@ -311,17 +312,12 @@ def process_science_fields(
     # as the file names change
     stokes_v_mss = preprocess_science_mss
 
-    update_fitscube_options = get_options_from_strategy(
+    round0_fitscube_options = get_selfcal_round_fitscube_options(
         strategy=strategy,
         operation="selfcal",
-        mode="fitscube",
+        current_round=0,
+        final_round=field_options.rounds == 0,
     )
-    # The per-round, per-beam cube produced here is always split into planes
-    # by create_convolve_linmos_cubes (see below), so it must never be
-    # compressed regardless of what the strategy file requests. Only the
-    # final co-added cube built from update_fitscube_options further down
-    # honours the configured `compress` value.
-    selfcal_round_fitscube_options = {**update_fitscube_options, "compress": False}
 
     wsclean_results = task_wsclean_imager.map(
         in_ms=preprocess_science_mss,
@@ -334,7 +330,7 @@ def process_science_fields(
                 operation="selfcal",
             )
         ),
-        update_fitscube_options=unmapped(selfcal_round_fitscube_options),
+        update_fitscube_options=unmapped(round0_fitscube_options),
     )  # type: ignore
 
     wsclean_results = (
@@ -503,12 +499,18 @@ def process_science_fields(
                 operation="selfcal",
                 round_info=current_round,
             )
+            round_fitscube_options = get_selfcal_round_fitscube_options(
+                strategy=strategy,
+                operation="selfcal",
+                current_round=current_round,
+                final_round=final_round,
+            )
             wsclean_results = task_wsclean_imager.map(
                 in_ms=cal_mss,
                 wsclean_container=field_options.wsclean_container,
                 fits_mask=fits_beam_masks,
                 update_wsclean_options=unmapped(update_wsclean_options),
-                update_fitscube_options=unmapped(selfcal_round_fitscube_options),
+                update_fitscube_options=unmapped(round_fitscube_options),
             )
             wsclean_results = (
                 task_add_model_source_list_to_ms.map(
@@ -561,7 +563,15 @@ def process_science_fields(
                         archive_wait_for.extend(val_results)
 
     if field_options.coadd_cubes:
-        fitscube_options = FitsCubeOptions().with_options(**update_fitscube_options)
+        final_round_fitscube_options = get_options_from_strategy(
+            strategy=strategy,
+            operation="selfcal",
+            mode="fitscube",
+            round_info=field_options.rounds if field_options.rounds else 0,
+        )
+        fitscube_options = FitsCubeOptions().with_options(
+            **final_round_fitscube_options
+        )
         with tags("cubes"):
             cube_results = create_convolve_linmos_cubes(
                 wsclean_results=wsclean_results,  # type: ignore

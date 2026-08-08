@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import filecmp
+import logging
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,7 @@ from flint.configuration import (
     get_image_options_from_yaml,
     get_options_from_strategy,
     get_selfcal_options_from_yaml,
+    get_selfcal_round_fitscube_options,
     load_strategy_yaml,
     verify_configuration,
     write_strategy_to_yaml,
@@ -395,6 +397,46 @@ def test_max_round_override(package_strategy):
     )
     assert isinstance(opts, dict)
     assert opts["data_column"] == "TheLastRoundIs3"
+
+
+def test_get_selfcal_round_fitscube_options_final_round(package_strategy):
+    # a final round should honour a configured compress=True as-is
+    opts = get_selfcal_round_fitscube_options(
+        strategy=package_strategy,
+        operation="selfcal",
+        current_round=2,
+        final_round=True,
+    )
+    assert opts["compress"] is True
+
+
+def test_get_selfcal_round_fitscube_options_non_final_round_forces_off(
+    package_strategy, caplog
+):
+    # a non-final round must never compress, since its cube is always split
+    # into planes when co-added, regardless of what the strategy requests
+    with caplog.at_level(logging.WARNING, logger="flint"):
+        opts = get_selfcal_round_fitscube_options(
+            strategy=package_strategy,
+            operation="selfcal",
+            current_round=1,
+            final_round=False,
+        )
+    assert opts["compress"] is False
+    assert "compress=True" in caplog.text
+
+
+def test_get_selfcal_round_fitscube_options_no_compress_no_warning(strategy, caplog):
+    # nothing to warn about if compress was never requested in the first place
+    with caplog.at_level(logging.WARNING, logger="flint"):
+        opts = get_selfcal_round_fitscube_options(
+            strategy=strategy,
+            operation="selfcal",
+            current_round=0,
+            final_round=False,
+        )
+    assert opts.get("compress", False) is False
+    assert "compress=True" not in caplog.text
 
 
 def test_empty_options(package_strategy):

@@ -23,6 +23,7 @@ from flint.catalogue import verify_reference_catalogues
 from flint.configuration import (
     Strategy,
     get_options_from_strategy,
+    get_selfcal_round_fitscube_options,
     load_and_copy_strategy,
 )
 from flint.imager.channel_division import ChannelDivision, channel_division_for_beams
@@ -343,17 +344,12 @@ def process_racs_all_field(
     )
     logger.info(f"Remove this later {strategy=}")
 
-    update_fitscube_options = get_options_from_strategy(
+    round0_fitscube_options = get_selfcal_round_fitscube_options(
         strategy=strategy,
-        mode="fitscube",
         operation="selfcal",
+        current_round=0,
+        final_round=racs_all_options.rounds == 0,
     )
-    # The per-round, per-beam cube produced by task_wsclean_imager below is
-    # always split into planes by create_convolve_linmos_cubes further down
-    # (via the coadd_cubes block), so it must never be compressed regardless
-    # of what the strategy file requests. Only the final co-added cube built
-    # at the coadd_cubes block honours the configured `compress` value.
-    selfcal_round_fitscube_options = {**update_fitscube_options, "compress": False}
 
     # Ya sea dog, we will only be handling CASDA measurementsets for the moment.
     # We will consider bandpass applications later
@@ -429,7 +425,7 @@ def process_racs_all_field(
                 in_ms=preprocess_science_mss,
                 wsclean_container=racs_all_options.wsclean_container,
                 update_wsclean_options=update_wsclean_options,
-                update_fitscube_options=selfcal_round_fitscube_options,
+                update_fitscube_options=round0_fitscube_options,
             )
             imaging_results[0].append(
                 LoopFutures(
@@ -517,12 +513,18 @@ def process_racs_all_field(
                         update_wsclean_options=update_wsclean_options,
                         cube_division=cube_division,
                     )
+                round_fitscube_options = get_selfcal_round_fitscube_options(
+                    strategy=strategy,
+                    operation="selfcal",
+                    current_round=current_round,
+                    final_round=final_round,
+                )
                 wsclean_result = task_wsclean_imager.submit(
                     in_ms=cal_mss,
                     wsclean_container=racs_all_options.wsclean_container,
                     fits_mask=fits_beam_mask,
                     update_wsclean_options=update_wsclean_options,
-                    update_fitscube_options=selfcal_round_fitscube_options,
+                    update_fitscube_options=round_fitscube_options,
                 )
                 imaging_results[current_round].append(
                     LoopFutures(mss=cal_mss, wsclean_result=wsclean_result)
@@ -586,8 +588,14 @@ def process_racs_all_field(
                     for beam_result in imaging_results[cube_add_round]
                 ]
 
+                final_round_fitscube_options = get_options_from_strategy(
+                    strategy=strategy,
+                    operation="selfcal",
+                    mode="fitscube",
+                    round_info=cube_add_round,
+                )
                 fits_cube_options = FitsCubeOptions(compress=True).with_options(
-                    **update_fitscube_options
+                    **final_round_fitscube_options
                 )
 
                 linmos_cubes = create_convolve_linmos_cubes(

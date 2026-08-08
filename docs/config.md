@@ -67,17 +67,19 @@ As a general rule, the following hierarchy is used to set a value for a given op
 
 Note that not all options are available in all of the above locations.
 
-### `fitscube` options are not round-scoped
+### `fitscube`
 
-Unlike `wsclean`, `gaincal` and `masking`, none of the `fitscube` lookups pass
-`round_info` — every `FitsCubeOptions` field (`bounding_box`, `max_workers`,
-`invalidate_zeros`, `compress`, `compress_method`, `remove_original_images`,
-`inplace`) is set once from `defaults` (or the
-`selfcal`/`stokesv`/`subtractcube`/`polarisation` operation block) and applies
-to every round alike. There is no way to give round 1 different `fitscube`
-settings to round 3 via the strategy file.
+In the self-cal flows (`continuum_pipeline`, `racs_all_continuum_selfcal`),
+`fitscube` options are looked up per round like `wsclean`/`gaincal`/
+`masking`: `selfcal.<round>.fitscube` in the strategy file overrides
+`defaults.fitscube` for that round — with one deliberate exception,
+`compress` (see below).
 
-### `compress`
+`subtract_cube_pipeline` and `polarisation_pipeline` are not self-cal pipelines so
+a single value from `defaults` (or the `subtractcube`/`polarisation` operation block) is
+used throughout.
+
+#### `compress`
 
 `FitsCubeOptions.compress` gzip-compresses a finished cube. Compression is
 only safe for a cube that is never reopened later in the pipeline: `astropy`
@@ -85,13 +87,16 @@ cannot memmap a gzip file, so reading one back decompresses the whole cube
 into memory, and `split_cube_into_planes` refuses to run on a compressed cube
 for exactly this reason (see `flint.imager.wsclean.split_cube_into_planes`).
 
-The self-cal flows (`continuum_pipeline`, `racs_all_continuum_selfcal`) always
-split each round's per-beam cube when co-adding cubes across beams, so those
-flows hardcode `compress=False` for every round regardless of what the
-strategy file requests. Only the final, co-added cube written once at the end
-of the self-cal loop honours a `compress: true` set under `defaults.fitscube`
-(or the `selfcal` operation block). Setting `compress: true` there does not
-enable compression on the intermediate per-round cubes.
+In the self-cal flows, every round's per-beam cube gets split into planes
+when co-adding cubes across beams — including the last self-cal round's,
+since that is exactly the cube co-adding starts from. So `compress` cannot
+simply follow the usual per-round lookup: `get_selfcal_round_fitscube_options`
+(`flint.configuration`) always forces `compress=False` for a round's
+per-beam cube, and only the separate, terminal co-added cube written once at
+the very end of the self-cal loop honours `compress: true` set under
+`defaults.fitscube` (or a `selfcal.<round>.fitscube` override for that final
+round). If you set `compress: true` for a non-final round, it is ignored and
+a warning is logged — it can never take effect there.
 
 ## Configuration based settings in Python API
 
