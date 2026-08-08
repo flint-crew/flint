@@ -1038,7 +1038,7 @@ def linmos_channel_groups_to_cubes(
         weight_planes.append(task_getattr.submit(linmos_result, "weight_fits"))
 
     bounding_box: bool | PrefectFuture[BoundingBox] = False
-    if linmos_options.trim_linmos_fits:
+    if linmos_options.trim_linmos_fits or fitscube_options.bounding_box is True:
         # Passing the futures in is what forms the barrier - every channel has to
         # be co-added before the box that all of them share can be known. The same
         # box is then reused for both cubes so they stay on the same pixel grid.
