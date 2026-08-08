@@ -31,6 +31,7 @@ from capn_crunch import (
     create_options_from_parser,
     options_to_dict,
 )
+from fitscube.bounding_box import BoundingBox
 from fitscube.combine_fits import combine_fits, compress_cube
 from fitscube.exceptions import TargetAxisMissingException
 from fitscube.extract import ExtractOptions, extract_plane_from_cube, find_target_axis
@@ -263,6 +264,7 @@ def combine_images_to_cube(
     prefix: str,
     mode: str,
     fitscube_options: FitsCubeOptions,
+    bounding_box: bool | BoundingBox | None = None,
 ) -> Path:
     """Combine wsclean subband channel images into a cube. Each collection attribute
     of the input `image_set` will be inspected. The MFS images will be ignored.
@@ -274,6 +276,9 @@ def combine_images_to_cube(
         prefix (str): The prefix of the images to combine
         mode (str): The type of images to combine, e.g. `image`, `residual`, `psf`, `dirty`
         fitscube_options (FitsCubeOptions): Options to control the cube creation
+        bounding_box (bool | BoundingBox | None, optional): Overrides ``fitscube_options.bounding_box``
+        when given. Used to force a box shared with another cube (e.g. weights) rather than
+        letting fitscube compute one for this cube alone. Defaults to None.
 
     Returns:
         Path: The path to the created FITS cube
@@ -289,7 +294,9 @@ def combine_images_to_cube(
         file_list=images,
         out_cube=output_cube_name,
         invalidate_zeros=fitscube_options.invalidate_zeros,
-        bounding_box=fitscube_options.bounding_box,
+        bounding_box=fitscube_options.bounding_box
+        if bounding_box is None
+        else bounding_box,
     )
     rotate_cube(output_cube_name, inplace=fitscube_options.inplace)
 

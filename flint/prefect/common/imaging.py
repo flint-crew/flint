@@ -12,6 +12,7 @@ from typing import Any, ParamSpec, TypeVar
 
 import numpy as np
 import pandas as pd
+from fitscube.bounding_box import BoundingBox, get_common_bounding_box
 from prefect import Task, unmapped
 from prefect.artifacts import create_table_artifact
 from prefect.futures import PrefectFuture
@@ -106,6 +107,7 @@ task_merge_image_sets_from_results = task(merge_image_sets_from_results)
 task_transpose_and_sort_channel_images = task(transpose_and_sort_channel_images)
 task_create_name_from_common_fields = task(create_name_from_common_fields)
 task_remove_files_folders = task(remove_files_folders)
+task_get_common_bounding_box = task(get_common_bounding_box)
 
 # Tasks below are extracting componented from earlier stages, or are
 # otherwise doing something important
@@ -988,8 +990,10 @@ def linmos_channel_groups_to_cubes(
     """Co-add beam images one channel at a time, in parallel, then stack the
     resulting mosaics back into image and weight cubes.
 
-    Should ``fitscube_options.bounding_box`` be True, fitscube trims each cube
-    to its own common bounding box of valid pixels while writing it.
+    Should ``fitscube_options.bounding_box`` be True, the common bounding box
+    of valid pixels is computed once every channel has been co-added and is
+    passed into the cube assembly so fitscube trims both the image and weight
+    cubes to the same shared pixel grid while writing them.
 
     Args:
         channel_groups (Collection[Collection[Path]]): For each channel, the beam images to co-add
@@ -1033,10 +1037,17 @@ def linmos_channel_groups_to_cubes(
         image_planes.append(task_getattr.submit(linmos_result, "image_fits"))
         weight_planes.append(task_getattr.submit(linmos_result, "weight_fits"))
 
+    bounding_box: bool | PrefectFuture[BoundingBox] = False
+    if fitscube_options.bounding_box:
+        # Passing the future in is what forms the barrier - every channel has to
+        # be co-added before the box that all of them share can be known. The same
+        # box is then reused for both cubes so they stay on the same pixel grid.
+        bounding_box = task_get_common_bounding_box.submit(
+            file_list=image_planes, invalidate_zeros=fitscube_options.invalidate_zeros
+        )
+
     # Stack the per-channel mosaics back into image and weight cubes,
-    # removing the per-channel mosaics once cubed. fitscube computes its own
-    # bounding box per cube when fitscube_options.bounding_box is True, rather
-    # than flint pre-computing one shared box across both cubes.
+    # removing the per-channel mosaics once cubed.
     cube_prefix = task_create_name_from_common_fields.submit(
         in_paths=image_planes, additional_suffixes=suffix_str
     )
@@ -1046,6 +1057,7 @@ def linmos_channel_groups_to_cubes(
             prefix=cube_prefix,
             mode=mode,
             fitscube_options=fitscube_options,
+            bounding_box=bounding_box,
         )
         for planes, mode in ((image_planes, "image"), (weight_planes, "weight"))
     ]
