@@ -515,31 +515,6 @@ def process_racs_all_field(
                 terminal_futures.append(wsclean_result)
 
     if racs_all_options.yandasoft_container:
-        if racs_all_options.coadd_cubes:
-            with tags("cubes"):
-                cube_add_round = racs_all_options.rounds
-                cube_add_round = racs_all_options.rounds
-
-                assert cube_add_round is not None, (
-                    f"{racs_all_options.rounds=}, but needs to be positive"
-                )
-
-                cube_results = [
-                    beam_result.wsclean_result
-                    for beam_result in imaging_results[cube_add_round]
-                ]
-
-                linmos_cubes = create_convolve_linmos_cubes(
-                    wsclean_results=cube_results,  # type: ignore
-                    field_options=racs_all_options,
-                    current_round=(
-                        racs_all_options.rounds if racs_all_options.rounds else None
-                    ),
-                    additional_linmos_suffix_str="cube",
-                    holofile=holography_path,
-                )
-                terminal_futures.extend(linmos_cubes)
-
         for selfcal_round, final_beam_imaging_results in imaging_results.items():
             additional_linmos_suffix = (
                 "noselfcal" if selfcal_round == 0 else f"round{selfcal_round}"
@@ -579,6 +554,33 @@ def process_racs_all_field(
                     )
                     if val_results:
                         terminal_futures.extend(val_results)
+
+        # There are some blocking calls in the cube coadding, so do it
+        # as late as possible, ya sea rat
+        if racs_all_options.coadd_cubes:
+            with tags("cubes"):
+                cube_add_round = racs_all_options.rounds
+                cube_add_round = racs_all_options.rounds
+
+                assert cube_add_round is not None, (
+                    f"{racs_all_options.rounds=}, but needs to be positive"
+                )
+
+                cube_results = [
+                    beam_result.wsclean_result
+                    for beam_result in imaging_results[cube_add_round]
+                ]
+
+                linmos_cubes = create_convolve_linmos_cubes(
+                    wsclean_results=cube_results,  # type: ignore
+                    field_options=racs_all_options,
+                    current_round=(
+                        racs_all_options.rounds if racs_all_options.rounds else None
+                    ),
+                    additional_linmos_suffix_str="cube",
+                    holofile=holography_path,
+                )
+                terminal_futures.extend(linmos_cubes)
 
     terminal_futures.append(field_summary)
 

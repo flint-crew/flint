@@ -230,7 +230,7 @@ class PolFieldOptions(BaseOptions):
     """Specify the final beamsize of linmos field images in (arcsec, arcsec, deg)"""
     pb_cutoff: float = 0.1
     """Primary beam attenuation cutoff to use during linmos"""
-    trim_linmos_fits: bool = False
+    trim_linmos_fits: bool = True
     """Trim the linmos fits files to remove the padding that is added. If True, the output fits files will be smaller but might be different shapes"""
     imaging_strategy: Path | None = None
     """Path to a FLINT imaging yaml file that contains settings to use throughout imaging"""
@@ -452,6 +452,10 @@ class FitsCubeOptions(BaseOptions):
     """The number of concurrent workers (readers/writers) that are permitted at a time"""
     invalidate_zeros: bool = True
     """Set pixels whose values are exactly 0.0 to not-a-number (nan)"""
+    compress: bool = False
+    """Gzip-compress the output cube once written"""
+    compress_method: Literal["gzip", "pgzip"] = "pgzip"
+    """The compression backend to use when ``compress`` is set"""
 
 
 class MSSummary(BaseOptions):
