@@ -1037,6 +1037,8 @@ def linmos_channel_groups_to_cubes(
         image_planes.append(task_getattr.submit(linmos_result, "image_fits"))
         weight_planes.append(task_getattr.submit(linmos_result, "weight_fits"))
 
+    # NOTE: I think we ought to consider letting fitscube work out the bounding box size internally,
+    # and avoid having to construct it here. It would only allow FITSCubeOptions.bounding_box to be a bool only
     # Needs to be resolved for FITSCubeOption to validate
     bounding_box: bool | BoundingBox = False
     if linmos_options.trim_linmos_fits or fitscube_options.bounding_box is True:
