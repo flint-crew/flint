@@ -17,7 +17,7 @@ import dask
 import numpy as np
 from capn_crunch import add_options_to_parser, create_options_from_parser
 from configargparse import ArgumentParser
-from fitscube.combine_fits import combine_fits
+from fitscube.combine_fits import combine_fits, compress_cube
 from prefect import flow, tags, unmapped
 from prefect.futures import PrefectFuture
 
@@ -264,6 +264,12 @@ def task_combine_all_linmos_images(
                 f"{image=} does not exist, but it should"
             )
             image.unlink()
+
+    if fits_cube_options.compress:
+        output_cube_path = compress_cube(
+            output_cube_path, method=fits_cube_options.compress_method
+        )
+
     return Path(output_cube_path)
 
 
