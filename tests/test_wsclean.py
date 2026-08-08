@@ -43,7 +43,7 @@ from flint.imager.wsclean import (
 )
 from flint.logging import logger
 from flint.naming import create_imaging_name_prefix
-from flint.options import MS
+from flint.options import MS, FitsCubeOptions
 from flint.utils import get_packaged_resource_path
 
 
@@ -128,6 +128,7 @@ def test_cube_split_and_recombine_roundtrip(tmpdir) -> None:
         images=images,
         prefix=f"{tmp_path}/SB1234.RACS_0000-00.beam00.round1",
         mode="image",
+        fitscube_options=FitsCubeOptions(invalidate_zeros=False),
     )
     _assert_cube_matches_images(cube=beam_cube, images=images)
 
@@ -141,6 +142,7 @@ def test_cube_split_and_recombine_roundtrip(tmpdir) -> None:
         images=planes,
         prefix=f"{tmp_path}/SB1234.RACS_0000-00.round1",
         mode="image",
+        fitscube_options=FitsCubeOptions(invalidate_zeros=False),
     )
     _assert_cube_matches_images(cube=field_cube, images=images)
 
@@ -161,6 +163,7 @@ def test_rotate_cube_is_idempotent(tmpdir) -> None:
         images=images,
         prefix=f"{tmp_path}/SB1234.RACS_0000-00.beam00.round1",
         mode="image",
+        fitscube_options=FitsCubeOptions(invalidate_zeros=False),
     )
 
     header, data = fits.getheader(cube), fits.getdata(cube)
@@ -211,6 +214,7 @@ def test_combine_images_to_cube_shape_mismatch(tmpdir) -> None:
             images=images,
             prefix=f"{tmp_path}/SB1234.RACS_0000-00.beam00.round1",
             mode="image",
+            fitscube_options=FitsCubeOptions(),
         )
 
 
@@ -232,6 +236,7 @@ def test_split_cube_into_planes(tmpdir) -> None:
         images=files,
         prefix=f"{tmpdir}/SB56659.RACS_0940-04.beam17.round3",
         mode="image",
+        fitscube_options=FitsCubeOptions(),
     )
 
     planes = split_cube_into_planes(cube=cube)

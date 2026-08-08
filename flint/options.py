@@ -117,8 +117,6 @@ class SubtractFieldOptions(BaseOptions):
     """Perform channel-wise imaing of the residuals"""
     max_intervals: int = 500
     """The maximum number of scans/channels to consider"""
-    fitscube_remove_original_images: bool = False
-    """Remove the images that go into forming the fitscube"""
 
 
 class FieldOptions(BaseOptions):
@@ -387,6 +385,10 @@ class FitsCubeOptions(BaseOptions):
     """Gzip-compress the output cube once written"""
     compress_method: Literal["gzip", "pgzip"] = "pgzip"
     """The compression backend to use when ``compress`` is set"""
+    remove_original_images: bool = False
+    """Remove the images that go into forming the fitscube"""
+    inplace: bool = True
+    """If True, modify the file in-place. If False, write to a temporary file and then replace the original. Default True"""
 
 
 class MSSummary(BaseOptions):
