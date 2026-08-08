@@ -190,30 +190,6 @@ def _merge_bound_boxes(bounding_boxes: Collection[BoundingBox]) -> BoundingBox:
     )
 
 
-def common_bound_box(images: Collection[Path]) -> BoundingBox:
-    """Construct the bounding box that encloses the valid pixels of every image.
-
-    Images are read one at a time so that a set of planes destined for a cube
-    may be trimmed onto a common pixel grid without holding the cube in memory.
-
-    Args:
-        images (Collection[Path]): The FITS images to consider
-
-    Returns:
-        BoundingBox: The box enclosing the valid pixels of all ``images``
-    """
-    logger.info(f"Constructing a common bounding box over {len(images)} images")
-
-    bounding_boxes = []
-    for image in images:
-        data = np.squeeze(fits.getdata(image))
-        # 0.0 is not a real number, and is how linmos denotes blanked pixels
-        data[data == 0.0] = np.nan
-        bounding_boxes.append(create_bound_box(image_data=data, is_masked=False))
-
-    return _merge_bound_boxes(bounding_boxes=bounding_boxes)
-
-
 class TrimImageResult(NamedTuple):
     """The constructed path and the bounding box"""
 
