@@ -543,3 +543,46 @@ def test_polarisation_options(package_strategy_polarisation):
         polarisation="circular",
     )
     assert circular_options["pol"] == "v"
+
+
+def test_polarisation_fitscube_sibling_mode(package_strategy_polarisation) -> None:
+    """A mode (e.g. fitscube) may sit directly under the polarisation operation,
+    as a sibling of the total/linear/circular polarisation types, and should
+    verify cleanly rather than being mistaken for an unsupported polarisation."""
+    strategy = package_strategy_polarisation
+    # exercise the sibling-key path directly, not just the defaults-inherited
+    # fitscube options, so a regression to the old "every key is a polarisation"
+    # validation would actually be caught here
+    strategy["polarisation"]["fitscube"] = {
+        "compress": True,
+        "compress_method": "gzip",
+    }
+
+    verify_configuration(input_strategy=strategy)
+
+    fitscube_options = get_options_from_strategy(
+        strategy=strategy,
+        operation="polarisation",
+        mode="fitscube",
+    )
+    assert fitscube_options["compress"]
+    assert fitscube_options["compress_method"] == "gzip"
+
+
+def test_verify_polarisation_catches_bad_override(
+    package_strategy_polarisation,
+) -> None:
+    """verify_configuration must check the actual per-polarisation override, not
+    just the defaults, else a bad field nested under a polarisation type would
+    silently pass verification."""
+    strategy = package_strategy_polarisation
+    verify_configuration(input_strategy=strategy)
+
+    strategy["polarisation"]["linear"]["wsclean"]["ThisDoesNotExist"] = "123"
+    with pytest.raises(ValueError):
+        verify_configuration(input_strategy=strategy)
+
+    strategy["polarisation"]["linear"]["wsclean"].pop("ThisDoesNotExist")
+    strategy["polarisation"]["ThisIsNotAPolarisationOrMode"] = {}
+    with pytest.raises(ValueError):
+        verify_configuration(input_strategy=strategy)
