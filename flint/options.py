@@ -228,8 +228,6 @@ class PolFieldOptions(BaseOptions):
     """Specify the final beamsize of linmos field images in (arcsec, arcsec, deg)"""
     pb_cutoff: float = 0.1
     """Primary beam attenuation cutoff to use during linmos"""
-    trim_linmos_fits: bool = True
-    """Trim the linmos fits files to remove the padding that is added. If True, the output fits files will be smaller but might be different shapes"""
     imaging_strategy: Path | None = None
     """Path to a FLINT imaging yaml file that contains settings to use throughout imaging"""
     sbid_copy_path: Path | None = None

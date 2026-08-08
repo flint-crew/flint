@@ -245,7 +245,6 @@ def process_science_fields_pol(
                         holofile=pol_field_options.holofile,
                         cutoff=pol_field_options.pb_cutoff,
                         force_remove_leakage=force_remove_leakage,
-                        trim_linmos_fits=pol_field_options.trim_linmos_fits,
                         cleanup=True,
                     ),
                     stokesi_channel_groups=i_channel_groups,

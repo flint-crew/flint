@@ -308,11 +308,15 @@ def test_combine_images_to_cube_bounding_box_override_forces_shared_grid(
         fitscube_options=FitsCubeOptions(bounding_box=True),
     )
 
-    assert fits.getdata(image_cube).shape == fits.getdata(weight_cube).shape == (
-        3,
-        1,
-        6,
-        6,
+    assert (
+        fits.getdata(image_cube).shape
+        == fits.getdata(weight_cube).shape
+        == (
+            3,
+            1,
+            6,
+            6,
+        )
     )
     assert fits.getdata(independent_weight_cube).shape[-2:] == (8, 8)
 

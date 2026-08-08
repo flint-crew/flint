@@ -36,6 +36,7 @@ from flint.naming import (
     get_sbid_from_path,
 )
 from flint.options import (
+    FitsCubeOptions,
     RACSAllOptions,
     dump_field_options_to_yaml,
 )
@@ -342,6 +343,12 @@ def process_racs_all_field(
     )
     logger.info(f"Remove this later {strategy=}")
 
+    update_fitscube_options = get_options_from_strategy(
+        strategy=strategy,
+        mode="fitscube",
+        operation="selfcal",
+    )
+
     # Ya sea dog, we will only be handling CASDA measurementsets for the moment.
     # We will consider bandpass applications later
     _ensure_all_casda_format(mss_by_beams=science_mss_by_beam)
@@ -416,6 +423,7 @@ def process_racs_all_field(
                 in_ms=preprocess_science_mss,
                 wsclean_container=racs_all_options.wsclean_container,
                 update_wsclean_options=update_wsclean_options,
+                update_fitscube_options=update_fitscube_options,
             )
             imaging_results[0].append(
                 LoopFutures(
@@ -508,6 +516,7 @@ def process_racs_all_field(
                     wsclean_container=racs_all_options.wsclean_container,
                     fits_mask=fits_beam_mask,
                     update_wsclean_options=update_wsclean_options,
+                    update_fitscube_options=update_fitscube_options,
                 )
                 imaging_results[current_round].append(
                     LoopFutures(mss=cal_mss, wsclean_result=wsclean_result)
@@ -571,15 +580,8 @@ def process_racs_all_field(
                     for beam_result in imaging_results[cube_add_round]
                 ]
 
-                from flint.options import FitsCubeOptions
-
-                fits_cube_options = FitsCubeOptions()
-
-                fits_cube_options = fits_cube_options.with_options(
-                    invalidate_zeros=True,
-                    compress=True,
-                    compress_method="pgzip",
-                    remove_original_images=True,
+                fits_cube_options = FitsCubeOptions(compress=True).with_options(
+                    **update_fitscube_options
                 )
 
                 linmos_cubes = create_convolve_linmos_cubes(

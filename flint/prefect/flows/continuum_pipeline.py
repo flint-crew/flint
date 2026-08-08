@@ -571,12 +571,15 @@ def process_science_fields(
             stokes_v_wsclean_options = get_options_from_strategy(
                 strategy=strategy, mode="wsclean", operation="stokesv"
             )
+            stokes_v_fitscube_options = get_options_from_strategy(
+                strategy=strategy, mode="fitscube", operation="stokesv"
+            )
             wsclean_results = task_wsclean_imager.map(
                 in_ms=stokes_v_mss,
                 wsclean_container=field_options.wsclean_container,
                 update_wsclean_options=unmapped(stokes_v_wsclean_options),
                 fits_mask=fits_beam_masks,
-                update_fitscube_options=unmapped(update_fitscube_options),
+                update_fitscube_options=unmapped(stokes_v_fitscube_options),
                 wait_for=wsclean_results,  # Ensure that measurement sets are doubled up during imaging
             )
             archive_wait_for.extend(wsclean_results)
