@@ -721,9 +721,7 @@ def test_create_wsclean_name_argument(ms_example):
         wsclean_options=wsclean_options_3, ms=ms
     )
 
-    assert f"{parent}/SB39400.RACS_0635-31.beam0.small.i.pol" == str(
-        name_argument_path
-    )
+    assert f"{parent}/SB39400.RACS_0635-31.beam0.small.i.pol" == str(name_argument_path)
 
 
 def test_create_wsclean_name_argument_with_list_mss(ms_example) -> None:

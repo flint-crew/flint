@@ -102,10 +102,12 @@ def process_science_fields_pol(
         ]
 
         if not any(from_flint_list) and not any(from_casda_list):
-            raise MSError("No valid MeasurementSets found! Data must be calibrated first.")
+            msg = "No valid MeasurementSets found! Data must be calibrated first."
+            raise MSError(msg)
 
         if any(from_flint_list) and any(from_casda_list):
-            raise MSError("Cannot mix Flint-processed and CASDA-provided MeasurementSets!")
+            msg = "Cannot mix Flint-processed and CASDA-provided MeasurementSets!"
+            raise MSError(msg)
 
         if any(from_casda_list):
             assert all(from_casda_list), (
