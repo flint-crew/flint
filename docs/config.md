@@ -94,14 +94,14 @@ planes to co-add across beams. Earlier rounds' per-beam cubes are discarded
 once the next round starts and are never split. So `compress` cannot simply
 follow the usual per-round lookup: `get_selfcal_round_fitscube_options`
 (`flint.configuration`) only forces `compress=False` for the final round's
-per-beam cube; every other round's `fitscube` options — including
-`compress` — are drawn from the strategy file exactly as written, with no
+per-beam cube; every other round's `fitscube` options, including
+`compress`, are drawn from the strategy file exactly as written, with no
 overriding. The separate, co-added cube produced by
 `create_convolve_linmos_cubes` at the end of the loop is unaffected by this
 and honours `compress: true` set under
 `defaults.fitscube` (or a `selfcal.<round>.fitscube` override for the final
 round) as normal. If you set `compress: true` for the final round's per-beam
-cube, it is ignored and a warning is logged — it can never take effect there.
+cube, it is ignored and a warning is logged.
 
 ## Configuration based settings in Python API
 
