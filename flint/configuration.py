@@ -362,15 +362,11 @@ def get_selfcal_round_fitscube_options(
     current_round: int,
     final_round: bool,
 ) -> dict[str, Any]:
-    """Fetch round-scoped ``fitscube`` options, forcing `compress` off on
-    any round that is not the final one.
-
-    The per-round, per-beam cube produced during self-calibration is always
-    split into per-channel planes when cubes are later co-added across beams
-    (see ``flint.imager.wsclean.split_cube_into_planes``), and that split
-    cannot run on a compressed cube. Only the final round's cube feeds the
-    terminal, un-split co-added cube, so `compress` is only ever honoured
-    there.
+    """Fetch round-scoped ``fitscube`` options, forcing `compress` off on the
+    final round of self-calibration. These per-beam cubes could be split into
+    individual planes for per-plane linmos, and additional compression breaks
+    the splitting process. So `compress` is only ever honoured for rounds
+    of self-calibration where the per-beam cubes are not combined.
 
     Args:
         strategy (Union[Strategy,None,Path]): A loaded strategy file, or None/Path.
@@ -388,12 +384,11 @@ def get_selfcal_round_fitscube_options(
         mode="fitscube",
         round_info=current_round,
     )
-    if not final_round and options.get("compress"):
+    if final_round and options.get("compress"):
         logger.warning(
-            f"{current_round=} requests compress=True, but only the final "
-            "round's cube may be compressed since earlier rounds are always "
-            "split into planes when co-adding cubes. Ignoring and using "
-            "compress=False for this round."
+            f"{current_round=} requests compress=True, but since {final_round=} "
+            " then these cubes may be split into individual planes for subsequent co-addition. "
+            "Setting compress=False for this round."
         )
         options = {**options, "compress": False}
 
