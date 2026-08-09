@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, TypeAlias
+from typing import Any
 
 from capn_crunch import (
     add_options_to_parser,
@@ -33,7 +33,7 @@ from flint.imager.channel_division import (
 )
 from flint.imager.wsclean import WSCleanResult
 from flint.logging import logger
-from flint.ms import MS, MSSummary, find_mss
+from flint.ms import MS, MSsByBeam, MSSummary, find_mss
 from flint.naming import (
     CASDANameComponents,
     add_timestamp_to_path,
@@ -71,8 +71,6 @@ from flint.prefect.common.utils import (
 )
 from flint.prefect.flows.polarisation_pipeline import process_science_fields_pol
 from flint.summary import BeamSummary
-
-MSsByBeam: TypeAlias = tuple[tuple[MS, ...], ...]
 
 
 @dataclass
@@ -619,10 +617,19 @@ def process_racs_all_field(
                 if pol_field_options is not None
                 else racs_all_options_to_pol_field_options(racs_all_options)
             )
+            # Hand down the final round's per-beam self-calibrated MSs directly, rather
+            # than having the polarisation flow rediscover MSs by globbing the output
+            # directory. These are still Prefect futures - passing them here is what
+            # makes prefect wait for the self-cal loop to finish before imaging starts.
+            final_round_mss_by_beam: MSsByBeam = tuple(
+                tuple(beam_result.mss)
+                for beam_result in imaging_results[racs_all_options.rounds]
+            )
             pol_futures = process_science_fields_pol(
                 flint_ms_directory=output_science_path,
                 pol_field_options=resolved_pol_field_options,
                 cube_division=pol_cube_division,
+                mss_by_beam=final_round_mss_by_beam,
             )
             terminal_futures.extend(pol_futures)
 

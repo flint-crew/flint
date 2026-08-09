@@ -209,6 +209,8 @@ class WSCleanOptions(BaseOptions):
     # Options below here are not added to wsclean command
     flint_no_log_wsclean_output: bool = False
     """If True do not log the wsclean output"""
+    flint_name_suffix: str | None = None
+    """An additional trailing token appended to the constructed wsclean ``-name``, e.g. to disambiguate outputs from different pipelines imaging the same measurement set"""
 
 
 class WSCleanResult(BaseOptions):
@@ -878,6 +880,7 @@ def create_wsclean_name_argument(
         pol=pol,
         channel_range=channel_range,
         scan_range=scan_range,
+        name_suffix=wsclean_options_dict.get("flint_name_suffix"),
     )
 
     # Now resolve the directory part

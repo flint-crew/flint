@@ -21,7 +21,7 @@ from flint.imager.wsclean import (
     WSCleanResult,
 )
 from flint.logging import logger
-from flint.ms import find_mss
+from flint.ms import MSsByBeam, find_mss
 from flint.naming import (
     CASDANameComponents,
     ProcessedNameComponents,
@@ -52,12 +52,17 @@ from flint.prefect.common.utils import (
     task_getattr,
 )
 
+# Marks images/cubes produced by this pipeline so they don't clash with the
+# continuum self-cal flow's own Stokes I/V products for the same MS/beam.
+POL_NAME_SUFFIX = "pol"
+
 
 @flow(name="Flint Polarisation Pipeline")
 def process_science_fields_pol(
     flint_ms_directory: Path,
     pol_field_options: PolFieldOptions,
     cube_division: ChannelDivision | None = None,
+    mss_by_beam: MSsByBeam | None = None,
 ) -> list[PrefectFuture[Any]]:
     # returned futures are resolved by prefect to fail the flow on task failure
     strategy = load_and_copy_strategy(
@@ -71,56 +76,68 @@ def process_science_fields_pol(
         logger.info("No strategy provided. Returning.")
         return []
 
-    # Get some placeholder names
-    science_mss = list(
-        find_mss(
-            mss_parent_path=flint_ms_directory,
-            expected_ms_count=pol_field_options.expected_ms,
-            data_column=strategy["defaults"].get("data_column", "DATA"),
-        )
-    )
-    # Check if MSs have been processed by Flint or have been provided by CASDA
-    from_flint_list = [
-        isinstance(extract_components_from_name(ms.path), ProcessedNameComponents)
-        for ms in science_mss
-    ]
-    from_casda_list = [
-        isinstance(extract_components_from_name(ms.path), CASDANameComponents)
-        for ms in science_mss
-    ]
-
-    if not any(from_flint_list) and not any(from_casda_list):
-        raise MSError("No valid MeasurementSets found! Data must be calibrated first.")
-
-    if any(from_flint_list) and any(from_casda_list):
-        raise MSError("Cannot mix Flint-processed and CASDA-provided MeasurementSets!")
-
-    if any(from_casda_list):
-        assert all(from_casda_list), (
-            "Some MeasurementSets are from Flint, some are from CASDA"
-        )
-        logger.info("Data are from CASDA, need to apply FixMS")
-        if pol_field_options.casa_container is None:
-            msg = "We need to apply FixMS to CASDA-provided data, but no CASA container provided"
-            raise MSError(msg)
-
-        corrected_mss = []
-        for ms in science_mss:
-            corrected_ms = task_preprocess_askap_ms.submit(
-                ms=ms,
+    if mss_by_beam is not None:
+        # Already Flint-processed, self-calibrated MSs handed down by the calling
+        # flow (e.g. the RACS-All continuum flow). No need to rediscover them on
+        # disk or check whether they are CASDA-provided.
+        logger.info("Using the measurement sets supplied by the calling flow")
+        resolved_mss_by_beam: MSsByBeam = mss_by_beam
+    else:
+        # Get some placeholder names
+        science_mss = list(
+            find_mss(
+                mss_parent_path=flint_ms_directory,
+                expected_ms_count=pol_field_options.expected_ms,
                 data_column=strategy["defaults"].get("data_column", "DATA"),
-                skip_rotation=False,
-                fix_stokes_factor=True,
-                apply_ms_transform=True,
-                casa_container=pol_field_options.casa_container,
-                rename=True,
             )
-            corrected_mss.append(corrected_ms)
-
-        assert len(corrected_mss) == len(science_mss), (
-            "Number of corrected MSs does not match number of input MSs"
         )
-        science_mss = corrected_mss
+        # Check if MSs have been processed by Flint or have been provided by CASDA
+        from_flint_list = [
+            isinstance(extract_components_from_name(ms.path), ProcessedNameComponents)
+            for ms in science_mss
+        ]
+        from_casda_list = [
+            isinstance(extract_components_from_name(ms.path), CASDANameComponents)
+            for ms in science_mss
+        ]
+
+        if not any(from_flint_list) and not any(from_casda_list):
+            raise MSError("No valid MeasurementSets found! Data must be calibrated first.")
+
+        if any(from_flint_list) and any(from_casda_list):
+            raise MSError("Cannot mix Flint-processed and CASDA-provided MeasurementSets!")
+
+        if any(from_casda_list):
+            assert all(from_casda_list), (
+                "Some MeasurementSets are from Flint, some are from CASDA"
+            )
+            logger.info("Data are from CASDA, need to apply FixMS")
+            if pol_field_options.casa_container is None:
+                msg = "We need to apply FixMS to CASDA-provided data, but no CASA container provided"
+                raise MSError(msg)
+
+            corrected_mss = []
+            for ms in science_mss:
+                corrected_ms = task_preprocess_askap_ms.submit(
+                    ms=ms,
+                    data_column=strategy["defaults"].get("data_column", "DATA"),
+                    skip_rotation=False,
+                    fix_stokes_factor=True,
+                    apply_ms_transform=True,
+                    casa_container=pol_field_options.casa_container,
+                    rename=True,
+                )
+                corrected_mss.append(corrected_ms)
+
+            assert len(corrected_mss) == len(science_mss), (
+                "Number of corrected MSs does not match number of input MSs"
+            )
+            science_mss = corrected_mss
+
+        # Each beam is a single MS when discovered this way (one SBID/band per directory)
+        resolved_mss_by_beam = tuple((ms,) for ms in science_mss)
+
+    science_mss = [ms for beam_mss in resolved_mss_by_beam for ms in beam_mss]
 
     field_summary = task_create_field_summary.submit(
         mss=science_mss,
@@ -147,13 +164,14 @@ def process_science_fields_pol(
     for polarisation in polarisations.keys():
         _image_sets = []
         with tags(f"polarisation-{polarisation}"):
-            for science_ms in science_mss:
+            for beam_mss in resolved_mss_by_beam:
                 update_wsclean_options = get_options_from_strategy(
                     strategy=strategy,
                     operation="polarisation",
                     mode="wsclean",
                     polarisation=polarisation,
                 )
+                update_wsclean_options["flint_name_suffix"] = POL_NAME_SUFFIX
                 if cube_division is not None:
                     update_wsclean_options = apply_cube_division(
                         update_wsclean_options=update_wsclean_options,
@@ -161,7 +179,7 @@ def process_science_fields_pol(
                     )
                 wsclean_result: PrefectFuture[WSCleanResult] = (
                     task_wsclean_imager.submit(
-                        in_ms=science_ms,
+                        in_ms=beam_mss,
                         wsclean_container=pol_field_options.wsclean_container,
                         make_cube_from_subbands=False,  # We will do this later
                         update_wsclean_options=update_wsclean_options,
@@ -258,6 +276,7 @@ def process_science_fields_pol(
                     stokesi_channel_groups=i_channel_groups,
                     field_summary=field_summary,
                     fitscube_options=fitscube_options,
+                    suffix_str=POL_NAME_SUFFIX,
                 )
             )
 
