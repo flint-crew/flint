@@ -70,6 +70,11 @@ defaults:
       - .*png
       - .*csv
       - testing_for_sparrow.csv
+  fitscube:
+    bounding_box: true
+    remove_original_images: true
+    compress: true
+    compress_method: pgzip
 
 selfcal:
   0:

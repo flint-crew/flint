@@ -117,8 +117,6 @@ class SubtractFieldOptions(BaseOptions):
     """Perform channel-wise imaing of the residuals"""
     max_intervals: int = 500
     """The maximum number of scans/channels to consider"""
-    fitscube_remove_original_images: bool = False
-    """Remove the images that go into forming the fitscube"""
 
 
 class FieldOptions(BaseOptions):
@@ -230,8 +228,6 @@ class PolFieldOptions(BaseOptions):
     """Specify the final beamsize of linmos field images in (arcsec, arcsec, deg)"""
     pb_cutoff: float = 0.1
     """Primary beam attenuation cutoff to use during linmos"""
-    trim_linmos_fits: bool = True
-    """Trim the linmos fits files to remove the padding that is added. If True, the output fits files will be smaller but might be different shapes"""
     imaging_strategy: Path | None = None
     """Path to a FLINT imaging yaml file that contains settings to use throughout imaging"""
     sbid_copy_path: Path | None = None
@@ -446,7 +442,7 @@ class FitsCubeOptions(BaseOptions):
     """Container of opptions used to combine images into a single cube using the `fitscube` package.
     This is particularly useful to manage the larger concatenations."""
 
-    bounding_box: bool = False
+    bounding_box: bool = True
     """Whether to attempt to trim images when combining"""
     max_workers: int = 4
     """The number of concurrent workers (readers/writers) that are permitted at a time"""
@@ -456,6 +452,10 @@ class FitsCubeOptions(BaseOptions):
     """Gzip-compress the output cube once written"""
     compress_method: Literal["gzip", "pgzip"] = "pgzip"
     """The compression backend to use when ``compress`` is set"""
+    remove_original_images: bool = True
+    """Remove the images that go into forming the fitscube"""
+    inplace: bool = True
+    """If True, modify the file in-place. If False, write to a temporary file and then replace the original. Default True"""
 
 
 class MSSummary(BaseOptions):

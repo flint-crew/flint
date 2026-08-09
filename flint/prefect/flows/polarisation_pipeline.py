@@ -29,6 +29,7 @@ from flint.naming import (
     get_sbid_from_path,
 )
 from flint.options import (
+    FitsCubeOptions,
     PolFieldOptions,
     RMCleanOptions,
     RMSynthOptions,
@@ -224,6 +225,15 @@ def process_science_fields_pol(
     force_remove_leakage: bool | None = None if i_channel_groups else False
 
     assert pol_field_options.yandasoft_container is not None
+
+    fitscube_options = FitsCubeOptions().with_options(
+        **get_options_from_strategy(
+            strategy=strategy,
+            operation="polarisation",
+            mode="fitscube",
+        )
+    )
+
     cube_results: list[PrefectFuture[Path]] = []
     stokes_image_cubes: dict[str, PrefectFuture[Path]] = {}
     all_input_images: list[Path] = []
@@ -239,11 +249,11 @@ def process_science_fields_pol(
                     holofile=pol_field_options.holofile,
                     cutoff=pol_field_options.pb_cutoff,
                     force_remove_leakage=force_remove_leakage,
-                    trim_linmos_fits=pol_field_options.trim_linmos_fits,
                     cleanup=True,
                 ),
                 stokesi_channel_groups=i_channel_groups,
                 field_summary=field_summary,
+                fitscube_options=fitscube_options,
             )
             stokes_image_cubes[stokes] = stokes_cubes[0]
             cube_results.extend(stokes_cubes)

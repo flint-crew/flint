@@ -363,6 +363,45 @@ def get_options_from_strategy(
     return options
 
 
+def get_selfcal_round_fitscube_options(
+    strategy: Strategy | None | Path,
+    operation: str,
+    current_round: int,
+    final_round: bool,
+) -> dict[str, Any]:
+    """Fetch round-scoped ``fitscube`` options, forcing `compress` off on the
+    final round of self-calibration. These per-beam cubes could be split into
+    individual planes for per-plane linmos, and additional compression breaks
+    the splitting process. So `compress` is only ever honoured for rounds
+    of self-calibration where the per-beam cubes are not combined.
+
+    Args:
+        strategy (Union[Strategy,None,Path]): A loaded strategy file, or None/Path.
+        operation (str): The operation scope to draw from, e.g. "selfcal".
+        current_round (int): The self-calibration round these options are for.
+        final_round (bool): Whether `current_round` is the last round.
+
+    Returns:
+        dict[str, Any]: Fitscube option overrides, with `compress` forced
+            to `False` when `final_round` is `True`.
+    """
+    options = get_options_from_strategy(
+        strategy=strategy,
+        operation=operation,
+        mode="fitscube",
+        round_info=current_round,
+    )
+    if final_round and options.get("compress"):
+        logger.warning(
+            f"{current_round=} requests compress=True, but since {final_round=} "
+            " then these cubes may be split into individual planes for subsequent co-addition. "
+            "Setting compress=False for this round."
+        )
+        options = {**options, "compress": False}
+
+    return options
+
+
 def verify_configuration(input_strategy: Strategy, raise_on_error: bool = True) -> bool:
     """Perform basic checks on the configuration file
 
@@ -443,25 +482,49 @@ def verify_configuration(input_strategy: Strategy, raise_on_error: bool = True) 
 
     if "polarisation" in input_strategy:
         _supported_polarisations = tuple(POLARISATION_MAPPING.keys())
-        polarisations = input_strategy["polarisation"].keys()
-        for polarisation in polarisations:
-            if polarisation not in _supported_polarisations:
-                errors.append(f"{polarisation=} not in {_supported_polarisations}. ")
-            for mode in input_strategy["polarisation"][polarisation]:
+        for key in input_strategy["polarisation"]:
+            if key in _supported_polarisations:
+                # A polarisation type (e.g. total/linear/circular) containing modes
+                # (e.g. wsclean) that are scoped to that polarisation
+                for mode in input_strategy["polarisation"][key]:
+                    try:
+                        options = get_options_from_strategy(
+                            strategy=input_strategy,
+                            operation="polarisation",
+                            mode=mode,
+                            polarisation=key,
+                        )
+                        try:
+                            _ = MODE_OPTIONS_MAPPING[mode](**options)
+                        except TypeError as typeerror:
+                            errors.append(
+                                f"{mode=} mode in polarisation={key!r} incorrectly formed. {typeerror} "
+                            )
+                    except Exception as exception:
+                        errors.append(f"{exception}")
+            elif key in MODE_OPTIONS_MAPPING:
+                # A mode (e.g. fitscube) applied across all polarisations, sitting
+                # directly under the polarisation operation rather than nested
+                # inside a polarisation type
                 try:
                     options = get_options_from_strategy(
                         strategy=input_strategy,
                         operation="polarisation",
-                        mode=mode,
+                        mode=key,
                     )
                     try:
-                        _ = MODE_OPTIONS_MAPPING[mode](**options)
+                        _ = MODE_OPTIONS_MAPPING[key](**options)
                     except TypeError as typeerror:
                         errors.append(
-                            f"{mode=} mode in {round_info=} incorrectly formed. {typeerror} "
+                            f"{key=} mode in operation='polarisation' incorrectly formed. {typeerror} "
                         )
                 except Exception as exception:
                     errors.append(f"{exception}")
+            else:
+                errors.append(
+                    f"{key=} is not a supported polarisation {_supported_polarisations} "
+                    f"or mode {tuple(MODE_OPTIONS_MAPPING.keys())} under 'polarisation'. "
+                )
 
     test_operations = KNOWN_OPERATIONS
     for operation in test_operations:
