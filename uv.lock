@@ -166,7 +166,7 @@ dependencies = [
     { name = "configargparse" },
     { name = "crystalball" },
     { name = "dask-jobqueue" },
-    { name = "fitscube" },
+    { name = "fitscube", extra = ["pgzip"] },
     { name = "jolly-roger" },
     { name = "matplotlib" },
     { name = "numpy" },
@@ -217,7 +217,7 @@ requires-dist = [
     { name = "configargparse", specifier = ">=1.7" },
     { name = "crystalball", specifier = ">=0.4.3" },
     { name = "dask-jobqueue" },
-    { name = "fitscube", specifier = ">=2.4.1" },
+    { name = "fitscube", extras = ["pgzip"], specifier = ">=2.5.0" },
     { name = "fixms", marker = "extra == 'casa'", specifier = ">=0.4.0" },
     { name = "furo", marker = "extra == 'dev'" },
     { name = "isort", marker = "extra == 'dev'" },
@@ -1191,7 +1191,7 @@ wheels = [
 
 [[package]]
 name = "fitscube"
-version = "2.4.1"
+version = "2.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "astropy" },
@@ -1199,9 +1199,14 @@ dependencies = [
     { name = "radio-beam" },
     { name = "tqdm" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/fb/d4/06982031bdda5e5479971aad0f99b372f9cab9e615357d6dea1ae3ace92f/fitscube-2.4.1.tar.gz", hash = "sha256:53c74190cd46bc9577b59465d0bbd739643ca456f9d6fc6106d4dd6bfad3c7f7", size = 696383, upload-time = "2026-08-04T07:47:39.477Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/cc/a9/6dcae85ded6bfce8fad7955db9c5586053564086102cc718f88190090853/fitscube-2.5.0.tar.gz", hash = "sha256:f7627f131ecea0869939dbeb1d93321f295771b8426ae357e9e0a856f12040d1", size = 790605, upload-time = "2026-08-06T13:20:56.961Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/83/9c/b17f7422aa8ad43b20cee0f1b8a8c64de6a1aafed03e939bbdafd76151ac/fitscube-2.4.1-py3-none-any.whl", hash = "sha256:bb7f8c7a5a9ce30dfd31bb719fe076e2086884abe68cfc4d3e94bc6386d99619", size = 28506, upload-time = "2026-08-04T07:47:37.813Z" },
+    { url = "https://files.pythonhosted.org/packages/15/9e/5a2b8dd374a78e9214dea4a5391838c78c9e61eee5843f082931ee834208/fitscube-2.5.0-py3-none-any.whl", hash = "sha256:c9a2b0db147e4ad7b3301a3046c4831a991c750d92de1469d3126b9669a50a8b", size = 29255, upload-time = "2026-08-06T13:20:55.396Z" },
+]
+
+[package.optional-dependencies]
+pgzip = [
+    { name = "pgzip" },
 ]
 
 [[package]]
@@ -2484,6 +2489,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/b8/b0/a36c468d2d0dec62ddea7c5e4177e93abb12f48ac90f09f24d0581c5189f/pendulum-3.2.0-pp311-pypy311_pp73-musllinux_1_1_x86_64.whl", hash = "sha256:5cd956d4176afc7bfe8a91bf3f771b46ff8d326f6c5bf778eb5010eb742ebba6", size = 561884, upload-time = "2026-01-30T11:22:19.671Z" },
     { url = "https://files.pythonhosted.org/packages/c5/4d/dad105261898907bf806cabca53d3878529a9fa2c0d5d7f95f2035246fc2/pendulum-3.2.0-pp311-pypy311_pp73-win_amd64.whl", hash = "sha256:39ef129d7b90aab49708645867abdd207b714ba7bff12dae549975b0aca09716", size = 261236, upload-time = "2026-01-30T11:22:21.059Z" },
     { url = "https://files.pythonhosted.org/packages/02/fb/d65db067a67df7252f18b0cb7420dda84078b9e8bfb375215469c14a50be/pendulum-3.2.0-py3-none-any.whl", hash = "sha256:f3a9c18a89b4d9ef39c5fa6a78722aaff8d5be2597c129a3b16b9f40a561acf3", size = 114111, upload-time = "2026-01-30T11:22:22.361Z" },
+]
+
+[[package]]
+name = "pgzip"
+version = "0.4.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/1a/19/22405f889aea5b1cd8cea39124c6c53aac63fc2f0088a374b726d771a6a9/pgzip-0.4.0.tar.gz", hash = "sha256:91f6526f0c6e1f6c2d3522707777e5843fad7c791401745593fd01bd869b7a05", size = 80565, upload-time = "2025-12-23T00:21:26.641Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f8/59/445da026e3c4dbcba202419303412b51a761947d2ca3a48deaf0c6b33731/pgzip-0.4.0-py3-none-any.whl", hash = "sha256:41e44c03a9f1bbbd390dd6b6e37a11484113f8c159a049fa81cd8a9ddde82a21", size = 13081, upload-time = "2025-12-23T00:21:25.547Z" },
 ]
 
 [[package]]

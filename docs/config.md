@@ -67,6 +67,42 @@ As a general rule, the following hierarchy is used to set a value for a given op
 
 Note that not all options are available in all of the above locations.
 
+### `fitscube`
+
+In the self-cal flows (`continuum_pipeline`, `racs_all_continuum_selfcal`),
+`fitscube` options are looked up per round like `wsclean`/`gaincal`/
+`masking`: `selfcal.<round>.fitscube` in the strategy file overrides
+`defaults.fitscube` for that round — with one deliberate exception,
+`compress` (see below).
+
+`subtract_cube_pipeline` and `polarisation_pipeline` are not self-cal pipelines so
+a single value from `defaults` (or the `subtractcube`/`polarisation` operation block) is
+used throughout.
+
+#### `compress`
+
+`FitsCubeOptions.compress` gzip-compresses a finished cube. Compression is
+only safe for a cube that is never reopened later in the pipeline: `astropy`
+cannot memmap a gzip file, so reading one back decompresses the whole cube
+into memory, and `split_cube_into_planes` refuses to run on a compressed cube
+for exactly this reason (see `flint.imager.wsclean.split_cube_into_planes`).
+
+In the self-cal flows, each round reassigns the `wsclean_results` variable to
+that round's own output, so only the **final** round's per-beam cube survives
+the loop and feeds `create_convolve_linmos_cubes`, which splits it into
+planes to co-add across beams. Earlier rounds' per-beam cubes are discarded
+once the next round starts and are never split. So `compress` cannot simply
+follow the usual per-round lookup: `get_selfcal_round_fitscube_options`
+(`flint.configuration`) only forces `compress=False` for the final round's
+per-beam cube; every other round's `fitscube` options, including
+`compress`, are drawn from the strategy file exactly as written, with no
+overriding. The separate, co-added cube produced by
+`create_convolve_linmos_cubes` at the end of the loop is unaffected by this
+and honours `compress: true` set under
+`defaults.fitscube` (or a `selfcal.<round>.fitscube` override for the final
+round) as normal. If you set `compress: true` for the final round's per-beam
+cube, it is ignored and a warning is logged.
+
 ## Configuration based settings in Python API
 
 Most settings within `flint` are stored in immutable option classes, e.g.
