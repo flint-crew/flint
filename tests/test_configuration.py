@@ -407,23 +407,33 @@ def test_get_selfcal_round_fitscube_options_final_round(package_strategy):
         current_round=2,
         final_round=True,
     )
-    assert opts["compress"] is True
+    assert opts["compress"] is False
 
 
 def test_get_selfcal_round_fitscube_options_non_final_round_forces_off(
     package_strategy, caplog
 ):
-    # a non-final round must never compress, since its cube is always split
-    # into planes when co-added, regardless of what the strategy requests
+    """A final round cube must never be compressed, as it will be split into planes for co-addition.
+    So if a non-final round requests compress=True, it is ignored and a warning is logged."""
     with caplog.at_level(logging.WARNING, logger="flint"):
         opts = get_selfcal_round_fitscube_options(
             strategy=package_strategy,
             operation="selfcal",
             current_round=1,
-            final_round=False,
+            final_round=True,
         )
     assert opts["compress"] is False
     assert "compress=True" in caplog.text
+
+    # The early rounds do not need to be disabled, so the value of True does not need
+    # to be modified
+    opts = get_selfcal_round_fitscube_options(
+        strategy=package_strategy,
+        operation="selfcal",
+        current_round=1,
+        final_round=False,
+    )
+    assert opts["compress"] is True
 
 
 def test_get_selfcal_round_fitscube_options_no_compress_no_warning(strategy, caplog):
