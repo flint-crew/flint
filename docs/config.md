@@ -87,16 +87,19 @@ cannot memmap a gzip file, so reading one back decompresses the whole cube
 into memory, and `split_cube_into_planes` refuses to run on a compressed cube
 for exactly this reason (see `flint.imager.wsclean.split_cube_into_planes`).
 
-In the self-cal flows, every round's per-beam cube gets split into planes
-when co-adding cubes across beams — including the last self-cal round's,
-since that is exactly the cube co-adding starts from. So `compress` cannot
-simply follow the usual per-round lookup: `get_selfcal_round_fitscube_options`
-(`flint.configuration`) always forces `compress=False` for a round's
-per-beam cube, and only the separate, terminal co-added cube written once at
-the very end of the self-cal loop honours `compress: true` set under
-`defaults.fitscube` (or a `selfcal.<round>.fitscube` override for that final
-round). If you set `compress: true` for a non-final round, it is ignored and
-a warning is logged — it can never take effect there.
+In the self-cal flows, `wsclean_results` is overwritten on every round, so
+only the **final** round's per-beam cube survives the loop and feeds
+`create_convolve_linmos_cubes`, which splits it into planes to co-add across
+beams. Earlier rounds' per-beam cubes are discarded once the next round
+starts and are never split. So `compress` cannot simply follow the usual
+per-round lookup: `get_selfcal_round_fitscube_options` (`flint.configuration`)
+forces `compress=False` on the final round's per-beam cube only; non-final
+rounds honour whatever `compress` value the strategy file requests. The
+separate, co-added cube produced by `create_convolve_linmos_cubes` at the end
+of the loop is unaffected by this and honours `compress: true` set under
+`defaults.fitscube` (or a `selfcal.<round>.fitscube` override for the final
+round) as normal. If you set `compress: true` for the final round's per-beam
+cube, it is ignored and a warning is logged — it can never take effect there.
 
 ## Configuration based settings in Python API
 

@@ -376,7 +376,7 @@ def get_selfcal_round_fitscube_options(
 
     Returns:
         dict[str, Any]: Fitscube option overrides, with `compress` forced
-            to `False` unless `final_round` is `True`.
+            to `False` when `final_round` is `True`.
     """
     options = get_options_from_strategy(
         strategy=strategy,
