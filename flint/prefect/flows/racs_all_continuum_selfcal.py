@@ -41,8 +41,8 @@ from flint.naming import (
     get_sbid_from_path,
 )
 from flint.options import (
-    PolFieldOptions,
     FitsCubeOptions,
+    PolFieldOptions,
     RACSAllOptions,
     dump_field_options_to_yaml,
     pol_field_options_cli_class,
