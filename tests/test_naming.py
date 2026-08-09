@@ -283,10 +283,12 @@ def test_create_imaging_name_prefix():
 
 
 def test_get_cube_fits_from_paths():
-    """Identify the files that contain the cube field and are fits"""
+    """Identify the files that contain the cube field and are fits, including
+    gzip-compressed cubes produced when FitsCubeOptions.compress is set"""
     files = [
         "SB63789.EMU_1743-51.beam03.round4.i.image.cube.fits",
         "SB63789.EMU_1743-51.beam03.round4.i.image.cube.other.fields.fits",
+        "SB63789.EMU_1743-51.beam03.round4.i.image.cube.compressed.fits.gz",
         "SB63789.EMU_1743-51.beam03.round4.i.MFS.image.optimal.conv.fits",
         "SB63789.EMU_1743-51.beam03.round4.i.MFS.residual.optimal.conv.fits",
         "SB63789.EMU_1743-51.beam03.round4.i.MFS.image.fits",
@@ -296,10 +298,13 @@ def test_get_cube_fits_from_paths():
 
     cube_files = get_fits_cube_from_paths(paths=files)
 
-    assert len(cube_files) == 2
+    assert len(cube_files) == 3
     assert cube_files[0] == Path("SB63789.EMU_1743-51.beam03.round4.i.image.cube.fits")
     assert cube_files[1] == Path(
         "SB63789.EMU_1743-51.beam03.round4.i.image.cube.other.fields.fits"
+    )
+    assert cube_files[2] == Path(
+        "SB63789.EMU_1743-51.beam03.round4.i.image.cube.compressed.fits.gz"
     )
 
 

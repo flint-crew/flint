@@ -10,6 +10,7 @@ from typing import Any
 import numpy as np
 import pytest
 from astropy.io import fits
+from fitscube.bounding_box import get_common_bounding_box
 from fitscube.extract import find_target_axis
 
 from flint.exceptions import (
@@ -43,19 +44,27 @@ from flint.imager.wsclean import (
 )
 from flint.logging import logger
 from flint.naming import create_imaging_name_prefix
-from flint.options import MS
+from flint.options import MS, FitsCubeOptions
 from flint.utils import get_packaged_resource_path
 
 
-def _write_channel_image(path: Path, channel: int, shape: tuple[int, int]) -> Path:
+def _write_channel_image(
+    path: Path, channel: int, shape: tuple[int, int], nan_border: int = 0
+) -> Path:
     """A wsclean-like single channel image, with each pixel uniquely valued so
-    that any scrambling of the data is detectable."""
+    that any scrambling of the data is detectable. A ``nan_border`` pixels wide
+    border of NaNs may be added to exercise bounding-box trimming."""
     ny, nx = shape
     data = (
         channel * 1000.0
         + np.arange(ny)[:, None] * 10.0
         + np.arange(nx)[None, :].astype(float)
     )
+    if nan_border:
+        data[:nan_border, :] = np.nan
+        data[-nan_border:, :] = np.nan
+        data[:, :nan_border] = np.nan
+        data[:, -nan_border:] = np.nan
     header = fits.Header(
         {
             "BUNIT": "JY/BEAM",
@@ -128,6 +137,9 @@ def test_cube_split_and_recombine_roundtrip(tmpdir) -> None:
         images=images,
         prefix=f"{tmp_path}/SB1234.RACS_0000-00.beam00.round1",
         mode="image",
+        fitscube_options=FitsCubeOptions(
+            invalidate_zeros=False, remove_original_images=False
+        ),
     )
     _assert_cube_matches_images(cube=beam_cube, images=images)
 
@@ -141,6 +153,7 @@ def test_cube_split_and_recombine_roundtrip(tmpdir) -> None:
         images=planes,
         prefix=f"{tmp_path}/SB1234.RACS_0000-00.round1",
         mode="image",
+        fitscube_options=FitsCubeOptions(invalidate_zeros=False),
     )
     _assert_cube_matches_images(cube=field_cube, images=images)
 
@@ -161,6 +174,7 @@ def test_rotate_cube_is_idempotent(tmpdir) -> None:
         images=images,
         prefix=f"{tmp_path}/SB1234.RACS_0000-00.beam00.round1",
         mode="image",
+        fitscube_options=FitsCubeOptions(invalidate_zeros=False),
     )
 
     header, data = fits.getheader(cube), fits.getdata(cube)
@@ -211,7 +225,100 @@ def test_combine_images_to_cube_shape_mismatch(tmpdir) -> None:
             images=images,
             prefix=f"{tmp_path}/SB1234.RACS_0000-00.beam00.round1",
             mode="image",
+            fitscube_options=FitsCubeOptions(),
         )
+
+
+def test_combine_images_to_cube_bounding_box_trims(tmpdir) -> None:
+    """fitscube_options.bounding_box=True should trim the NaN border shared
+    by every channel down to the smallest common valid-pixel extent."""
+    tmp_path = Path(tmpdir)
+    images = [
+        _write_channel_image(
+            tmp_path / f"SB1234.RACS_0000-00.beam00.round1-{channel:04d}-image.fits",
+            channel=channel,
+            shape=(10, 10),
+            nan_border=2,
+        )
+        for channel in range(3)
+    ]
+
+    cube = combine_images_to_cube(
+        images=images,
+        prefix=f"{tmp_path}/SB1234.RACS_0000-00.beam00.round1",
+        mode="image",
+        fitscube_options=FitsCubeOptions(bounding_box=True),
+    )
+
+    data = fits.getdata(cube)
+    assert data.shape[-2:] == (6, 6)
+    assert np.isfinite(data).all()
+
+
+def test_combine_images_to_cube_bounding_box_override_forces_shared_grid(
+    tmpdir,
+) -> None:
+    """A caller-supplied ``bounding_box`` must override fitscube_options.bounding_box
+    so two cubes built from differently-padded inputs (e.g. image and weight
+    planes) can still be forced onto an identical pixel grid."""
+    tmp_path = Path(tmpdir)
+    narrow_border_images = [
+        _write_channel_image(
+            tmp_path / f"SB1234.RACS_0000-00.beam00.round1-{channel:04d}-image.fits",
+            channel=channel,
+            shape=(10, 10),
+            nan_border=2,
+        )
+        for channel in range(3)
+    ]
+    wide_border_images = [
+        _write_channel_image(
+            tmp_path / f"SB1234.RACS_0000-00.beam00.round1-{channel:04d}-weight.fits",
+            channel=channel,
+            shape=(10, 10),
+            nan_border=1,
+        )
+        for channel in range(3)
+    ]
+
+    shared_box = get_common_bounding_box(file_list=narrow_border_images)
+
+    image_cube = combine_images_to_cube(
+        images=narrow_border_images,
+        prefix=f"{tmp_path}/SB1234.RACS_0000-00.beam00.round1",
+        mode="image",
+        fitscube_options=FitsCubeOptions(bounding_box=False),
+        bounding_box=shared_box,
+    )
+    weight_cube = combine_images_to_cube(
+        images=wide_border_images,
+        prefix=f"{tmp_path}/SB1234.RACS_0000-00.beam00.round1",
+        mode="weight",
+        fitscube_options=FitsCubeOptions(
+            bounding_box=False, remove_original_images=False
+        ),
+        bounding_box=shared_box,
+    )
+
+    # Left independent, the wide-border cube would trim to (8, 8), not (6, 6)
+    independent_weight_cube = combine_images_to_cube(
+        images=wide_border_images,
+        prefix=f"{tmp_path}/SB1234.RACS_0000-00.beam00.round1.independent",
+        mode="weight",
+        fitscube_options=FitsCubeOptions(bounding_box=True),
+    )
+
+    assert (
+        fits.getdata(image_cube).shape
+        == fits.getdata(weight_cube).shape
+        == (
+            3,
+            1,
+            6,
+            6,
+        )
+    )
+    assert fits.getdata(independent_weight_cube).shape[-2:] == (8, 8)
 
 
 def test_split_cube_into_planes(tmpdir) -> None:
@@ -232,6 +339,7 @@ def test_split_cube_into_planes(tmpdir) -> None:
         images=files,
         prefix=f"{tmpdir}/SB56659.RACS_0940-04.beam17.round3",
         mode="image",
+        fitscube_options=FitsCubeOptions(),
     )
 
     planes = split_cube_into_planes(cube=cube)
