@@ -566,6 +566,8 @@ def process_racs_all_field(
                     aegean_outputs=aegean_outputs,
                     round=selfcal_round if selfcal_round > 0 else None,
                 )
+                terminal_futures.append(field_summary)
+
                 if selfcal_round in (0, racs_all_options.rounds):
                     val_results = validation_items(
                         field_summary=field_summary,
@@ -620,6 +622,11 @@ def process_racs_all_field(
                 if pol_field_options is not None
                 else racs_all_options_to_pol_field_options(racs_all_options)
             )
+            resolved_pol_field_options = resolved_pol_field_options.with_options(
+                holofile=holography_path.result()
+                if isinstance(holography_path, PrefectFuture)
+                else holography_path
+            )
             # Hand down the final round's per-beam self-calibrated MSs directly, rather
             # than having the polarisation flow rediscover MSs by globbing the output
             # directory. These are still Prefect futures - passing them here is what
@@ -643,8 +650,6 @@ def process_racs_all_field(
                 mss_by_beam=final_round_mss_by_beam,
             )
             terminal_futures.extend(pol_futures)
-
-    terminal_futures.append(field_summary)
 
     return terminal_futures
 
