@@ -632,7 +632,7 @@ def process_racs_all_field(
             # directory. These are still Prefect futures - passing them here is what
             # makes prefect wait for the self-cal loop to finish before imaging starts.
             final_round_mss_by_beam: MSsByBeam = tuple(
-                tuple(beam_result.mss)
+                tuple([ms.result() for ms in beam_result.mss])
                 for beam_result in imaging_results[racs_all_options.rounds]
             )
             low_sbid = get_sbid_from_path(path=racs_all_options.low_data)
