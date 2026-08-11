@@ -141,6 +141,9 @@ def process_science_fields_pol(
 
     science_mss = [ms for beam_mss in resolved_mss_by_beam for ms in beam_mss]
 
+    logger.info(f"{science_mss=}")
+    logger.info(f"{pol_field_options.holofile=}")
+
     field_summary = task_create_field_summary.submit(
         mss=science_mss,
         holography_path=pol_field_options.holofile,
