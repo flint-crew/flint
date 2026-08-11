@@ -648,6 +648,7 @@ def process_racs_all_field(
                 pol_field_options=resolved_pol_field_options,
                 cube_division=pol_cube_division,
                 mss_by_beam=final_round_mss_by_beam,
+                wait_for=terminal_futures,
             )
             terminal_futures.extend(pol_futures)
 
