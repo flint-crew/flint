@@ -17,6 +17,7 @@ from capn_crunch import (
 )
 from configargparse import ArgumentParser
 from prefect import flow, tags, unmapped
+from prefect.context import get_run_context
 from prefect.futures import PrefectFuture
 
 from flint.catalogue import verify_reference_catalogues
@@ -288,7 +289,7 @@ def process_racs_all_field(
     # returned futures are resolved by prefect to fail the flow on task failure
     terminal_futures: list[PrefectFuture[Any]] = []
     # Get the current run context to examine, provide to sub-flows
-    # run_context = get_run_context()
+    run_context = get_run_context()
 
     # Any sanity checks will go in here, mateee
     _check_racs_all_options(racs_all_options=racs_all_options)
@@ -634,28 +635,32 @@ def process_racs_all_field(
                 tuple([ms.result() for ms in beam_result.mss])
                 for beam_result in imaging_results[racs_all_options.rounds]
             )
-            # low_sbid = get_sbid_from_path(path=racs_all_options.low_data)
+            low_sbid = get_sbid_from_path(path=racs_all_options.low_data)
 
             # sub-flows do no inherit the task runner, they use the specified
             # running in their decorator flow argument. Overwrite it here with
             # the current runner
-            # pol_futures = process_science_fields_pol.with_options(
-            #     task_runner=run_context.task_runner,
-            #     name=f"RACS All polarisation -- {low_sbid}",
-            # )(
-            #     flint_ms_directory=output_science_path,
-            #     pol_field_options=resolved_pol_field_options,
-            #     cube_division=pol_cube_division,
-            #     mss_by_beam=final_round_mss_by_beam,
-            #     wait_for=terminal_futures,
-            # )
+            from prefect_dask import DaskTaskRunner
 
-            pol_futures = process_science_fields_pol.fn(
+            sub_flow_runner = DaskTaskRunner(address=run_context.task_runner.address)  # type: ignore
+
+            pol_futures = process_science_fields_pol.with_options(
+                task_runner=sub_flow_runner,
+                name=f"RACS All polarisation -- {low_sbid}",
+            )(
                 flint_ms_directory=output_science_path,
                 pol_field_options=resolved_pol_field_options,
                 cube_division=pol_cube_division,
                 mss_by_beam=final_round_mss_by_beam,
+                wait_for=terminal_futures,
             )
+
+            # pol_futures = process_science_fields_pol.fn(
+            #     flint_ms_directory=output_science_path,
+            #     pol_field_options=resolved_pol_field_options,
+            #     cube_division=pol_cube_division,
+            #     mss_by_beam=final_round_mss_by_beam,
+            # )
 
             terminal_futures.extend(pol_futures)
 
