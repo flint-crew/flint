@@ -642,7 +642,10 @@ def process_racs_all_field(
             # the current runner
             from prefect_dask import DaskTaskRunner
 
-            sub_flow_runner = DaskTaskRunner(address=run_context.task_runner.address)  # type: ignore
+            sub_flow_runner = DaskTaskRunner(
+                cluster_class=run_context.task_runner.cluster_class,
+                cluster_kwargs=run_context.task_runner.cluster_kwargs,
+            )
 
             pol_futures = process_science_fields_pol.with_options(
                 task_runner=sub_flow_runner,
