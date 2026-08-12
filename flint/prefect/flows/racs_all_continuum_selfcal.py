@@ -645,6 +645,7 @@ def process_racs_all_field(
             sub_flow_runner = DaskTaskRunner(
                 cluster_class=run_context.task_runner.cluster_class,
                 cluster_kwargs=run_context.task_runner.cluster_kwargs,
+                adapt_kwargs=run_context.task_runner.adapt_kwargs,
             )
 
             pol_futures = process_science_fields_pol.with_options(
