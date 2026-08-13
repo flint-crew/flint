@@ -356,6 +356,16 @@ def merge_image_sets(
 
     logger.info(f"Merged image set: {image_set_dict=}")
 
+    source_lists = image_set_dict.get("source_list", None)
+    if (
+        source_lists is not None
+        and isinstance(source_lists, list)
+        and len(source_lists) > 1
+    ):
+        msg = f"Multiple source lists found in merged image set: {source_lists}. Only the first will be used."
+        logger.warning(msg)
+        image_set_dict["source_list"] = source_lists[0]
+
     return ImageSet(**image_set_dict)
 
 
