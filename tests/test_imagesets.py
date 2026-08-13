@@ -186,3 +186,16 @@ def test_split_and_get_image_set(example_image_set: ImageSet) -> None:
     )
 
     assert len(results) == len(example_image_set.image)
+
+
+def test_split_and_get_image_set_loop(example_image_set: ImageSet) -> None:
+    """Split a image set into separate images based on the file name"""
+    # Tracing down an error when developing racs-all pipeline. More tests are ok.
+    for stokes in "qu":
+        results = split_and_get_image_set(
+            image_set=example_image_set,
+            get=stokes,
+            by="pol",
+            mode="image",
+        )
+        assert len(results) == 24
