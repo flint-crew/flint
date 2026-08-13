@@ -1013,6 +1013,49 @@ def test_merge_image_sets():
     assert isinstance(merged.psf[0], Path)
 
 
+def test_merge_image_sets_with_source_list():
+    """Test merging image sets. The source list property of the ImageSet is not
+    a list type."""
+    source_list = get_wsclean_output_source_list_path(name_path="JackSparrow", pol="i")
+
+    image_set = get_wsclean_output_names(
+        prefix="JackSparrow", subbands=4, include_mfs=False
+    )
+    image_set = image_set.with_options(source_list=source_list)
+
+    image_set2 = get_wsclean_output_names(
+        prefix="JackSparrow", subbands=4, include_mfs=False
+    )
+    image_set2 = image_set2.with_options(source_list=source_list)
+
+    merged = merge_image_sets(image_sets=[image_set, image_set2])
+
+    assert isinstance(merged, ImageSet)
+    assert merged.prefix == "JackSparrow"
+    assert merged.source_list is not None
+    assert merged.source_list == source_list
+
+    assert merged.image is not None
+    assert len(merged.image) == 8
+    assert isinstance(merged.image[0], Path)
+
+    assert merged.dirty is not None
+    assert len(merged.dirty) == 8
+    assert isinstance(merged.dirty[0], Path)
+
+    assert merged.model is not None
+    assert len(merged.model) == 8
+    assert isinstance(merged.model[0], Path)
+
+    assert merged.residual is not None
+    assert len(merged.residual) == 8
+    assert isinstance(merged.residual[0], Path)
+
+    assert merged.psf is not None
+    assert len(merged.psf) == 8
+    assert isinstance(merged.psf[0], Path)
+
+
 def test_split_image_set():
     ms = Path("SB1234.FieldNme.beam00.round4.ms")
     i_prefix = create_imaging_name_prefix(ms, pol="i")
