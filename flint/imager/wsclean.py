@@ -880,7 +880,7 @@ def create_wsclean_name_argument(
         pol=pol,
         channel_range=channel_range,
         scan_range=scan_range,
-        name_suffix=wsclean_options_dict.get("flint_name_suffix"),
+        project=wsclean_options_dict.get("flint_name_suffix"),
     )
 
     # Now resolve the directory part

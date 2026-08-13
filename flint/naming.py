@@ -275,7 +275,7 @@ def create_imaging_name_prefix(
     pol: str | None = None,
     channel_range: tuple[int, int] | None = None,
     scan_range: tuple[int, int] | None = None,
-    name_suffix: str | None = None,
+    project: str | None = None,
 ) -> str:
     """Given a measurement set and a polarisation, create the naming prefix to be used
     by some imager
@@ -285,21 +285,31 @@ def create_imaging_name_prefix(
         pol (Optional[str], optional): Whether a polarsation is being considered. Defaults to None.
         channel_range (Optional[Tuple[int,int]], optional): The channel range that is going to be imaged. Defaults to none.
         scan_range (Optional[Tuple[int,int]], optional): The scan range that is going to be imaged. Defaults to none.
-        name_suffix (Optional[str], optional): An additional trailing token appended to the name, e.g. to disambiguate which pipeline produced the image. Defaults to None.
+        project (Optional[str], optional): The project name to include in the naming. Defaults to None.
 
     Returns:
         str: The constructed string name
     """
 
-    names = [ms_path.stem]
+    name = ms_path.stem
+    processed_name_components = processed_ms_format(in_name=name)
+    if project is not None:
+        assert processed_name_components is not None, (
+            f"Processed name format failed for {name=}"
+        )
+        processed_name_components = processed_name_components._replace(project=project)
+        name = create_path_from_processed_name_components(
+            processed_name_components=processed_name_components
+        ).name
+
+    names = [name]
+
     if pol is not None:
         names.append(f"{pol.lower()}")
     if channel_range is not None:
         names.append(f"ch{channel_range[0]:04}-{channel_range[1]:04}")
     if scan_range is not None:
         names.append(f"scan{scan_range[0]:04}-{scan_range[1]:04}")
-    if name_suffix is not None:
-        names.append(name_suffix)
 
     return ".".join(names)
 
