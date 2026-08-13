@@ -234,6 +234,45 @@ def test_create_path_from_process_named_components_with_scan_range():
     assert ex == out
 
 
+def test_create_path_from_process_named_components_with_project() -> None:
+    """Make sure we can create a name that includes a project field.
+    The one makes sure we can go full circle"""
+    parent = Path("Jacccckkkk/Sparrow")
+    ex = parent / Path(
+        "SB39400.RACS_0000-123.project-pirates.beam33.spw234.round3.i.ch0123-567444.scan0000-0123"
+    )
+    pcn = processed_ms_format(in_name=ex)
+    assert pcn is not None
+    assert pcn.project == "pirates"
+    out = create_path_from_processed_name_components(
+        processed_name_components=pcn, parent_path=parent
+    )
+    assert ex == out
+
+    parent = Path("Jacccckkkk/Sparrow")
+    ex = parent / Path(
+        "SB39400.RACS_0000-123.project-pirates.round3.i.ch0123-0444.scan1234-1236"
+    )
+    pcn = processed_ms_format(in_name=ex)
+    assert pcn is not None
+    assert pcn.project == "pirates"
+    out = create_path_from_processed_name_components(
+        processed_name_components=pcn, parent_path=parent
+    )
+    assert ex == out
+
+    parent = Path("Jacccckkkk/Sparrow")
+    ex = parent / Path("SB39400.RACS_0000-123.project-pirates.round3.scan1234-1236")
+    pcn = processed_ms_format(in_name=ex)
+    assert pcn is not None
+    assert pcn.project == "pirates"
+
+    out = create_path_from_processed_name_components(
+        processed_name_components=pcn, parent_path=parent
+    )
+    assert ex == out
+
+
 def test_processed_name_components_with_scan():
     """See if the scan regex for the processed name behaves"""
     parent = Path("Jacccckkkk/Sparrow")

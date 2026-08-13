@@ -545,6 +545,8 @@ class ProcessedNameComponents(NamedTuple):
     """The sbid of the observation"""
     field: str
     """The name of the field extracted"""
+    project: str | None = None
+    """A specialised project name that might be encoded in the file name. This is not always present. """
     beam: str | None = None
     """The beam of the observation processed"""
     spw: str | None = None
@@ -581,6 +583,7 @@ def processed_ms_format(
     regex = re.compile(
         r"^SB(?P<sbid>[0-9]+)"
         r"\.(?P<field>[^.]+)"
+        r"((\.project-(?P<project>[a-zA-Z0-9]+))?)"
         r"((\.beam(?P<beam>[0-9]+))?)"
         r"((\.spw(?P<spw>[0-9]+))?)"
         r"((\.round(?P<round>[0-9]+))?)"
@@ -606,6 +609,7 @@ def processed_ms_format(
     return ProcessedNameComponents(
         sbid=groups["sbid"],
         field=groups["field"],
+        project=groups["project"],
         beam=groups["beam"],
         spw=groups["spw"],
         round=groups["round"],
@@ -635,6 +639,8 @@ def create_path_from_processed_name_components(
         components.append(f"SB{processed_name_components.sbid}")
     if processed_name_components.field is not None:
         components.append(processed_name_components.field)
+    if processed_name_components.project is not None:
+        components.append(f"project-{processed_name_components.project}")
     if processed_name_components.beam is not None:
         components.append(f"beam{int(processed_name_components.beam):02d}")
     if processed_name_components.spw is not None:
