@@ -578,7 +578,7 @@ def _rename_wsclean_title(name_str: str) -> str:
     """Identify the wsclean-appended properties suffix at the end of a file
     name and rewrite it with `.` separators instead of `-`.
 
-    The suffix's fields (polarisation, sub-band/MFS index, multiscale term,
+    The suffix's fields (polarisation, sub-band/MFS index, timestep,
     image type) are captured by name and the dot-separated replacement is
     built directly from those fields.
 
@@ -610,7 +610,7 @@ def _rename_wsclean_title(name_str: str) -> str:
     search_re = (
         r"(?:-(?P<pol>i|q|u|v|xx|xy|yx|yy))?"
         r"(?:-(?P<mfs>MFS)|-(?P<chidx>(?<!ch[0-9]{4}-)[0-9]{4}))?"
-        r"(?:-(?P<term>t[0-9]{5}))?"
+        r"(?:-(?P<time>t[0-9]{5}))?"
         r"-(?P<image_type>image|dirty|model|residual|psf)(?=\.fits$|$)"
     )
     match_re = re.compile(search_re)
@@ -624,15 +624,44 @@ def _rename_wsclean_title(name_str: str) -> str:
     # Build the dot-separated suffix from the named fields (pol, channel
     # index, image type) rather than the raw matched text.
     groups = result.groupdict()
+
+    # The base case
+
+    from capn_crunch import options_to_dict
+
+    from flint.naming import (
+        create_path_from_processed_name_components,
+        processed_ms_format,
+    )
+
+    pcn_names = processed_ms_format(Path(name_str))
+    assert pcn_names is not None, "Unable to form a flint style name"
+    pcn_dict = options_to_dict(input_options=pcn_names)
+
+    if groups["pol"] is not None:
+        pcn_dict["pol"] = groups["pol"]
+    if groups["chidx"] is not None:
+        chan_idx = int(groups["chidx"])
+        pcn_dict["channel_range"] = (chan_idx, chan_idx + 1)
+    if groups["time"] is not None:
+        time_idx = int(groups["time"])
+        pcn_dict["scan_range"] = (time_idx, time_idx + 1)
+
+    pcn_names = ProcessedNameComponents(**pcn_dict)
+
+    name_str = create_path_from_processed_name_components(
+        processed_name_components=pcn_names, parent_path=Path(name_str).parent
+    ).name
+    # Get rid of the components already handled
     fields = (
-        groups["pol"],
-        groups["mfs"] or groups["chidx"],
-        groups["term"],
+        groups["mfs"],
         groups["image_type"],
     )
+
+    new_suffix = "." + ".".join(field for field in fields if field)
     new_suffix = "." + ".".join(field for field in fields if field)
 
-    name = name_str.replace(result[0], new_suffix)
+    name = name_str + new_suffix + ".fits"
 
     return name
 
