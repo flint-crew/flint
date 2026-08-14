@@ -616,6 +616,33 @@ def test_regex_stokes_wsclean_title():
     assert _rename_wsclean_title(name_str=name) == out_name
 
 
+@pytest.mark.parametrize(
+    "project",
+    [
+        "pol",
+        "image",
+        "dirty",
+        "model",
+        "residual",
+        "psf",
+        "MFS",
+        "i",
+        "q",
+        "jack",
+        "sparrow",
+    ],
+)
+def test_rename_wsclean_title_project_field_collision(project: str):
+    """The `project` field is a free-form token (e.g. `.project-<name>.`) that sits
+    ahead of the wsclean-appended suffix in the file name. If a project name happens
+    to collide with a reserved wsclean token (an image type, MFS, or a pol letter),
+    the wsclean suffix search must not match inside the project token instead of the
+    real trailing suffix."""
+    ex = f"SB56289.RACS_1041+18.project-{project}.beam15.round1.i-0000-image.fits"
+    out_ex = f"SB56289.RACS_1041+18.project-{project}.beam15.round1.i.0000.image.fits"
+    assert _rename_wsclean_title(name_str=ex) == out_ex
+
+
 def test_rename_wsclean_title_qu_joint_pol():
     """The join_polarizations 'qu' tag should be folded into a single-letter
     pol field per wsclean's own per-image -Q/-U suffix, for both per-channel
