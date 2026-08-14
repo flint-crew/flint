@@ -1089,22 +1089,15 @@ def create_wsclean_cmd(
 
 
 def rotate_cube(output_cube_path: str | Path, inplace: bool = True) -> Path:
-    """
-    Rotate the FITS cube axes to a shape of (chan, pol, dec, ra)
-    which is what yandasoft linmos tasks expect.
+    """Rotate the FITS cube axes to a shape of (chan, pol, dec, ra)
+    # which is what yandasoft linmos tasks expect.
 
-    Parameters
-    ----------
-    output_cube_path : str | Path
-        Path to the FITS cube to rotate.
-    inplace : bool, optional
-        If True, modify the file in-place. If False, write to a temporary file and
-        then replace the original. Default True
+    Args:
+        output_cube_path (str | Path): Path to the FITS cube to rotate.
+        inplace (bool, optional): If True, modify the file in-place. If False, write to a temporary file and then replace the original. Defaults to True.
 
-    Returns
-    -------
-    Path
-        Path to the rotated FITS cube.
+    Returns:
+        Path: Path to the rotated FITS cube.
     """
     output_path = Path(output_cube_path)
     logger.info(f"Rotating FITS axes of {output_path.name}")
