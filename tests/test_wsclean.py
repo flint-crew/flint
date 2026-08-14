@@ -616,6 +616,23 @@ def test_regex_stokes_wsclean_title():
     assert _rename_wsclean_title(name_str=name) == out_name
 
 
+def test_rename_wsclean_title_qu_joint_pol():
+    """The join_polarizations 'qu' tag should be folded into a single-letter
+    pol field per wsclean's own per-image -Q/-U suffix, for both per-channel
+    and MFS outputs."""
+    ex = "SB56289.RACS_1041+18.beam15.round1.qu-0000-Q-image.fits"
+    out_ex = "SB56289.RACS_1041+18.beam15.round1.q.0000.image.fits"
+    assert _rename_wsclean_title(name_str=ex) == out_ex
+
+    ex = "SB56289.RACS_1041+18.beam15.round1.qu-0000-U-image.fits"
+    out_ex = "SB56289.RACS_1041+18.beam15.round1.u.0000.image.fits"
+    assert _rename_wsclean_title(name_str=ex) == out_ex
+
+    ex = "SB56289.RACS_1041+18.beam15.round1.qu-MFS-Q-residual.fits"
+    out_ex = "SB56289.RACS_1041+18.beam15.round1.q.MFS.residual.fits"
+    assert _rename_wsclean_title(name_str=ex) == out_ex
+
+
 def test_combine_subbands_to_cube(tmpdir):
     """Load in example fits images to combine into a cube"""
     files = [

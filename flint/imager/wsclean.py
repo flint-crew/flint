@@ -579,8 +579,11 @@ def _rename_wsclean_title(name_str: str) -> str:
     the wsclean appended properties string within a file and replace
     the `-` separator with a `.`.
 
-    A simple replace of all `-` with `.` may not be ideal if the
-    character has been used on purpose.
+    Rather than blindly swapping every `-` for `.` across the matched
+    span, the wsclean-appended fields (polarisation, sub-band/MFS index,
+    multiscale term, image type) are captured by name and the replacement
+    is rebuilt from those fields directly. This avoids relying on the
+    matched span containing only `-` characters that are safe to swap.
 
     Args:
         name_str (str): The name that will be extracted and modified
@@ -592,9 +595,9 @@ def _rename_wsclean_title(name_str: str) -> str:
     # The following should replace the .qu with .q or .u whilst removing the -Q and -U
     logger.info(f"Renaming {name_str=} for qu components if necessary")
     name_str = re.sub(
-        r"(\.qu)-([^-]+)-?([QU])?(\-(psf|image|dirty|model|residual)\.fits)",
+        r"(\.qu)-(?P<chan>[^-]+)-?(?P<qu_pol>[QU])?(?P<tail>-(?:psf|image|dirty|model|residual)\.fits)",
         lambda m: (
-            f".{m.group(3).lower() if m.group(3) else 'q'}-{m.group(2)}{m.group(4)}"
+            f".{m['qu_pol'].lower() if m['qu_pol'] else 'q'}-{m['chan']}{m['tail']}"
         ),
         name_str,
     )
@@ -604,7 +607,12 @@ def _rename_wsclean_title(name_str: str) -> str:
     # SB57516.RACS_0929-81.beam35.round4.i.ch0287-0288-image.fits
     # would be inadvertently picked up and replaced. The [0-9]{4}
     # we are testing for are the channel indicator when --channel-out is used
-    search_re = r"(-(i|q|u|v|xx|xy|yx|yy))?(-(MFS|(?<!ch[0-9]{4}-)[0-9]{4}))?(-t[0-9]{5})?-(image|dirty|model|residual|psf)"
+    search_re = (
+        r"(?:-(?P<pol>i|q|u|v|xx|xy|yx|yy))?"
+        r"(?:-(?P<mfs>MFS)|-(?P<chidx>(?<!ch[0-9]{4}-)[0-9]{4}))?"
+        r"(?:-(?P<term>t[0-9]{5}))?"
+        r"-(?P<image_type>image|dirty|model|residual|psf)"
+    )
     match_re = re.compile(search_re)
 
     logger.info(f"Searching {name_str=} for wsclean added filename components")
@@ -613,7 +621,19 @@ def _rename_wsclean_title(name_str: str) -> str:
     if result is None:
         return name_str
 
-    name = name_str.replace(result[0], result[0].replace("-", "."))
+    # Map each wsclean-named component onto its flint-processed name field
+    # (pol, channel index, image type) and rebuild the dot-separated form
+    # from those fields, rather than replacing every `-` in the matched span.
+    groups = result.groupdict()
+    fields = (
+        groups["pol"],
+        groups["mfs"] or groups["chidx"],
+        groups["term"],
+        groups["image_type"],
+    )
+    new_suffix = "." + ".".join(field for field in fields if field)
+
+    name = name_str.replace(result[0], new_suffix)
 
     return name
 
