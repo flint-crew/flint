@@ -356,6 +356,16 @@ def merge_image_sets(
 
     logger.info(f"Merged image set: {image_set_dict=}")
 
+    source_lists = image_set_dict.get("source_list", None)
+    if (
+        source_lists is not None
+        and isinstance(source_lists, list)
+        and len(source_lists) > 1
+    ):
+        msg = f"Multiple source lists found in merged image set: {source_lists}. Only the first will be used."
+        logger.warning(msg)
+        image_set_dict["source_list"] = source_lists[0]
+
     return ImageSet(**image_set_dict)
 
 
@@ -880,7 +890,7 @@ def create_wsclean_name_argument(
         pol=pol,
         channel_range=channel_range,
         scan_range=scan_range,
-        name_suffix=wsclean_options_dict.get("flint_name_suffix"),
+        project=wsclean_options_dict.get("flint_name_suffix"),
     )
 
     # Now resolve the directory part
@@ -1079,22 +1089,15 @@ def create_wsclean_cmd(
 
 
 def rotate_cube(output_cube_path: str | Path, inplace: bool = True) -> Path:
-    """
-    Rotate the FITS cube axes to a shape of (chan, pol, dec, ra)
-    which is what yandasoft linmos tasks expect.
+    """Rotate the FITS cube axes to a shape of (chan, pol, dec, ra)
+    # which is what yandasoft linmos tasks expect.
 
-    Parameters
-    ----------
-    output_cube_path : str | Path
-        Path to the FITS cube to rotate.
-    inplace : bool, optional
-        If True, modify the file in-place. If False, write to a temporary file and
-        then replace the original. Default True
+    Args:
+        output_cube_path (str | Path): Path to the FITS cube to rotate.
+        inplace (bool, optional): If True, modify the file in-place. If False, write to a temporary file and then replace the original. Defaults to True.
 
-    Returns
-    -------
-    Path
-        Path to the rotated FITS cube.
+    Returns:
+        Path: Path to the rotated FITS cube.
     """
     output_path = Path(output_cube_path)
     logger.info(f"Rotating FITS axes of {output_path.name}")

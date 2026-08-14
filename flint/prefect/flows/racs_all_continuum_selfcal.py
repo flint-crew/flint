@@ -659,13 +659,6 @@ def process_racs_all_field(
                 wait_for=terminal_futures,
             )
 
-            # pol_futures = process_science_fields_pol.fn(
-            #     flint_ms_directory=output_science_path,
-            #     pol_field_options=resolved_pol_field_options,
-            #     cube_division=pol_cube_division,
-            #     mss_by_beam=final_round_mss_by_beam,
-            # )
-
             terminal_futures.extend(pol_futures)
 
     return terminal_futures
