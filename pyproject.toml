@@ -7,7 +7,8 @@ build-backend = "hatchling.build"
 [project]
 name = "askap-flint"
 authors = [
-    {name="Tim Galvin", email="tim.galvin@csiro.au"}
+    {name="Tim Galvin", email="tim.galvin@csiro.au"},
+    {name="Alec Thomson", email="alec.thomson@skao.int"}
 ]
 description = "Pipeline for ASKAP processing, and profit along the way"
 readme = "README.md"
