@@ -593,9 +593,20 @@ def test_regex_rename_wsclean_title():
 
     # wsclean's own bare per-channel index (no flint ch<lo>-<hi> range) must still
     # be dot-converted rather than left as a stray hyphen - regression test for the
-    # negative lookbehind typo that previously left this as `i-0000-image`
+    # negative lookbehind typo that previously left this as `i-0000-image`. It is
+    # also reformatted into flint's ch<lo>-<hi> range so it parses back out as a
+    # proper channel_range rather than an ambiguous bare index.
     ex = "SB56289.RACS_1041+18.beam00.round1.i-0000-image.fits"
-    out_ex = "SB56289.RACS_1041+18.beam00.round1.i.0000.image.fits"
+    out_ex = "SB56289.RACS_1041+18.beam00.round1.i.ch0000-0001.image.fits"
+    assert _rename_wsclean_title(name_str=ex) == out_ex
+
+
+def test_regex_rename_wsclean_title_timestep():
+    """wsclean's own `-t00005` timestep suffix (from interval-based imaging) must
+    be folded into flint's scan<lo>-<hi> range convention, not left as a bare
+    index or mislabelled as a multiscale term."""
+    ex = "SB56289.RACS_1041+18.beam00.round1.i-0000-t00005-image.fits"
+    out_ex = "SB56289.RACS_1041+18.beam00.round1.i.ch0000-0001.scan0005-0006.image.fits"
     assert _rename_wsclean_title(name_str=ex) == out_ex
 
 
@@ -639,7 +650,7 @@ def test_rename_wsclean_title_project_field_collision(project: str):
     the wsclean suffix search must not match inside the project token instead of the
     real trailing suffix."""
     ex = f"SB56289.RACS_1041+18.project-{project}.beam15.round1.i-0000-image.fits"
-    out_ex = f"SB56289.RACS_1041+18.project-{project}.beam15.round1.i.0000.image.fits"
+    out_ex = f"SB56289.RACS_1041+18.project-{project}.beam15.round1.i.ch0000-0001.image.fits"
     assert _rename_wsclean_title(name_str=ex) == out_ex
 
 
@@ -648,11 +659,11 @@ def test_rename_wsclean_title_qu_joint_pol():
     pol field per wsclean's own per-image -Q/-U suffix, for both per-channel
     and MFS outputs."""
     ex = "SB56289.RACS_1041+18.beam15.round1.qu-0000-Q-image.fits"
-    out_ex = "SB56289.RACS_1041+18.beam15.round1.q.0000.image.fits"
+    out_ex = "SB56289.RACS_1041+18.beam15.round1.q.ch0000-0001.image.fits"
     assert _rename_wsclean_title(name_str=ex) == out_ex
 
     ex = "SB56289.RACS_1041+18.beam15.round1.qu-0000-U-image.fits"
-    out_ex = "SB56289.RACS_1041+18.beam15.round1.u.0000.image.fits"
+    out_ex = "SB56289.RACS_1041+18.beam15.round1.u.ch0000-0001.image.fits"
     assert _rename_wsclean_title(name_str=ex) == out_ex
 
     ex = "SB56289.RACS_1041+18.beam15.round1.qu-MFS-Q-residual.fits"

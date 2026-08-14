@@ -578,9 +578,13 @@ def _rename_wsclean_title(name_str: str) -> str:
     """Identify the wsclean-appended properties suffix at the end of a file
     name and rewrite it with `.` separators instead of `-`.
 
-    The suffix's fields (polarisation, sub-band/MFS index, multiscale term,
+    The suffix's fields (polarisation, sub-band/MFS index, timestep,
     image type) are captured by name and the dot-separated replacement is
-    built directly from those fields.
+    built directly from those fields. The sub-band and timestep indices are
+    reformatted as flint's canonical ``ch<lo>-<hi>``/``scan<lo>-<hi>`` ranges
+    (exclusive upper bound) rather than the bare wsclean index, so that
+    ``ProcessedNameComponents.channel_range``/``scan_range`` parse them
+    consistently with every other flint-named path.
 
     Args:
         name_str (str): The name that will be extracted and modified
@@ -610,7 +614,7 @@ def _rename_wsclean_title(name_str: str) -> str:
     search_re = (
         r"(?:-(?P<pol>i|q|u|v|xx|xy|yx|yy))?"
         r"(?:-(?P<mfs>MFS)|-(?P<chidx>(?<!ch[0-9]{4}-)[0-9]{4}))?"
-        r"(?:-(?P<term>t[0-9]{5}))?"
+        r"(?:-(?P<time>t[0-9]{5}))?"
         r"-(?P<image_type>image|dirty|model|residual|psf)(?=\.fits$|$)"
     )
     match_re = re.compile(search_re)
@@ -622,12 +626,26 @@ def _rename_wsclean_title(name_str: str) -> str:
         return name_str
 
     # Build the dot-separated suffix from the named fields (pol, channel
-    # index, image type) rather than the raw matched text.
+    # index, timestep, image type) rather than the raw matched text. The
+    # channel/timestep index is reformatted into flint's ch<lo>-<hi>/
+    # scan<lo>-<hi> range convention (exclusive upper bound) so it parses
+    # back out as a proper ProcessedNameComponents.channel_range/scan_range
+    # instead of the ambiguous bare wsclean index.
     groups = result.groupdict()
+    chan_field = (
+        f"ch{int(groups['chidx']):04d}-{int(groups['chidx']) + 1:04d}"
+        if groups["chidx"]
+        else groups["mfs"]
+    )
+    time_field = (
+        f"scan{int(groups['time'][1:]):04d}-{int(groups['time'][1:]) + 1:04d}"
+        if groups["time"]
+        else None
+    )
     fields = (
         groups["pol"],
-        groups["mfs"] or groups["chidx"],
-        groups["term"],
+        chan_field,
+        time_field,
         groups["image_type"],
     )
     new_suffix = "." + ".".join(field for field in fields if field)
