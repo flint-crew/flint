@@ -586,6 +586,7 @@ def processed_ms_format(
         r"((\.round(?P<round>[0-9]+))?)"
         r"((\.(?P<pol>(i|q|u|v|xx|yy|xy|yx)+))?)"
         r"((\.ch(?P<chl>([0-9]+))-(?P<chh>([0-9]+)))?)"
+        r"((\.(?P<chidx>[0-9]{4}))?)"
         r"((\.scan(?P<scanl>([0-9]+))-(?P<scanh>([0-9]+)))?)"
     )
     results = regex.match(in_name)
@@ -598,7 +599,15 @@ def processed_ms_format(
 
     logger.debug(f"Matched groups are: {groups}")
 
-    channel_range = (int(groups["chl"]), int(groups["chh"])) if groups["chl"] else None
+    # chidx catches wsclean's own bare per-channel index (e.g. ``.0000``), used
+    # when channels are imaged individually without being grouped into a flint
+    # ch<lo>-<hi> range (see _rename_wsclean_title)
+    if groups["chl"]:
+        channel_range = (int(groups["chl"]), int(groups["chh"]))
+    elif groups["chidx"]:
+        channel_range = (int(groups["chidx"]), int(groups["chidx"]))
+    else:
+        channel_range = None
     scan_range = (
         (int(groups["scanl"]), int(groups["scanh"])) if groups["scanl"] else None
     )

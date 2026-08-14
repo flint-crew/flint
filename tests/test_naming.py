@@ -831,6 +831,23 @@ def test_formatted_name_components_wchannelrange():
     assert components.channel_range == (100, 1009)
 
 
+def test_formatted_name_components_wchannelidx():
+    """wsclean's own bare per-channel index (e.g. produced when channels are
+    imaged individually without a flint ch<lo>-<hi> range) should still resolve
+    to a usable channel_range - regression test for the "No channel range in
+    path" crash in transpose_and_sort_channel_images."""
+    ex = "SB56289.RACS_1041+18.beam00.round1.i.0000.image.conv.fits"
+
+    components = processed_ms_format(in_name=ex)
+    assert isinstance(components, ProcessedNameComponents)
+    assert components.sbid == "56289"
+    assert components.field == "RACS_1041+18"
+    assert components.beam == "00"
+    assert components.round == "1"
+    assert components.pol == "i"
+    assert components.channel_range == (0, 0)
+
+
 def test_formatted_name_components_wround():
     ex = "SB39400.RACS_0635-31.beam33.round1-MFS-image.conv.fits"
 

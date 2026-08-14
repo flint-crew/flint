@@ -387,6 +387,26 @@ def test_transpose_and_sort_channel_images() -> None:
         )
 
 
+def test_transpose_and_sort_channel_images_wsclean_raw_index() -> None:
+    """When channels are imaged individually without being grouped into a flint
+    ch<lo>-<hi> range, images only carry wsclean's own bare per-channel index
+    (e.g. ``.0000``). This must still be sortable/groupable rather than
+    raising - regression test for the "No channel range in path" crash."""
+    base = "SB56289.RACS_1041+18.beam{beam:02d}.round1.i.{idx:04d}.image.conv.fits"
+
+    def beam_list(beam: int, order: list[int]) -> list[Path]:
+        return [Path(base.format(beam=beam, idx=idx)) for idx in order]
+
+    beam_channel_images = [beam_list(0, [0, 1, 2]), beam_list(1, [2, 0, 1])]
+
+    channel_groups = transpose_and_sort_channel_images(beam_channel_images)
+
+    assert len(channel_groups) == 3
+    for idx, group in enumerate(channel_groups):
+        assert len(group) == 2
+        assert all(f".{idx:04d}.image" in str(p) for p in group)
+
+
 def test_get_cli_parser() -> None:
     """capn_crunch was throwing error over duplicated options being added to
     the argpase object. No conflicting options means the parser should just
@@ -569,6 +589,13 @@ def test_regex_rename_wsclean_title():
 
     ex = "SB39400.RACS_0635-31.beam33.i.ch109-110-i-MFS-image"
     out_ex = "SB39400.RACS_0635-31.beam33.i.ch109-110.i.MFS.image"
+    assert _rename_wsclean_title(name_str=ex) == out_ex
+
+    # wsclean's own bare per-channel index (no flint ch<lo>-<hi> range) must still
+    # be dot-converted rather than left as a stray hyphen - regression test for the
+    # negative lookbehind typo that previously left this as `i-0000-image`
+    ex = "SB56289.RACS_1041+18.beam00.round1.i-0000-image.fits"
+    out_ex = "SB56289.RACS_1041+18.beam00.round1.i.0000.image.fits"
     assert _rename_wsclean_title(name_str=ex) == out_ex
 
 
