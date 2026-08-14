@@ -320,8 +320,8 @@ def test_create_imaging_name_prefix():
     name = create_imaging_name_prefix(ms_path=ms.path, scan_range=(234, 2345))
     assert name == "SB63789.EMU_1743-51.beam03.round4.scan0234-2345"
 
-    name = create_imaging_name_prefix(ms_path=ms.path, pol="i", name_suffix="pol")
-    assert name == "SB63789.EMU_1743-51.beam03.round4.i.pol"
+    name = create_imaging_name_prefix(ms_path=ms.path, pol="i", project="pol")
+    assert name == "SB63789.EMU_1743-51.project-pol.beam03.round4.i"
 
 
 def test_get_cube_fits_from_paths():

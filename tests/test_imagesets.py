@@ -11,178 +11,51 @@ from flint.imager.wsclean import ImageSet, split_and_get_image_set
 
 @pytest.fixture
 def example_image_set() -> ImageSet:
-    """Fixture for an example ImageSet object"""
+    """Fixture for an example ImageSet object, reflecting the naming produced by a
+    joint Stokes Q/U wsclean run once it has gone through
+    ``rename_wsclean_prefix_in_image_set`` - wsclean's own per-image ``-Q``/``-U``
+    tag is folded into a single-letter ``pol`` field per image (see
+    ``_rename_wsclean_title``), rather than every image sharing the joint ``qu`` tag."""
+    base = "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1"
+    channels = [f"{i:04d}" for i in range(23)] + ["MFS"]
     return ImageSet(
-        prefix="/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu",
+        prefix=f"{base}.qu",
         image=[
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0000-Q.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0001-Q.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0002-Q.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0003-Q.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0004-Q.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0005-Q.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0006-Q.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0007-Q.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0008-Q.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0009-Q.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0010-Q.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0011-Q.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0012-Q.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0013-Q.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0014-Q.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0015-Q.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0016-Q.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0017-Q.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0018-Q.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0019-Q.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0020-Q.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0021-Q.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0022-Q.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-MFS-Q.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0000-U.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0001-U.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0002-U.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0003-U.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0004-U.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0005-U.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0006-U.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0007-U.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0008-U.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0009-U.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0010-U.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0011-U.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0012-U.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0013-U.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0014-U.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0015-U.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0016-U.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0017-U.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0018-U.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0019-U.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0020-U.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0021-U.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-0022-U.image.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-MFS-U.image.fits"
-            ),
+            PosixPath(f"{base}.{stokes}.{chan}.image.fits")
+            for stokes in ("q", "u")
+            for chan in channels
         ],
         psf=None,
         dirty=None,
         model=None,
         residual=[
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-MFS-Q.residual.fits"
-            ),
-            PosixPath(
-                "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1.qu-MFS-U.residual.fits"
-            ),
+            PosixPath(f"{base}.{stokes}.MFS.residual.fits") for stokes in ("q", "u")
         ],
         source_list=None,
     )
 
 
 def test_split_and_get_image_set(example_image_set: ImageSet) -> None:
-    """Split a image set into separate images based on the file name"""
-    # Tracing down an error when developing racs-all pipeline. More tests are ok.
+    """Split an image set and return the images matching a single Stokes, once
+    wsclean's own per-image Q/U tag has been folded into the pol field"""
     results = split_and_get_image_set(
         image_set=example_image_set,
-        get="qu",
+        get="q",
         by="pol",
         mode="image",
     )
 
-    assert len(results) == len(example_image_set.image)
+    assert len(results) == 24
+
+
+def test_split_and_get_image_set_loop(example_image_set: ImageSet) -> None:
+    """Split an image set into separate images based on the file name"""
+    # Tracing down an error when developing racs-all pipeline. More tests are ok.
+    for stokes in "qu":
+        results = split_and_get_image_set(
+            image_set=example_image_set,
+            get=stokes,
+            by="pol",
+            mode="image",
+        )
+        assert len(results) == 24
