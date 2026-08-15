@@ -650,7 +650,9 @@ def test_rename_wsclean_title_project_field_collision(project: str):
     the wsclean suffix search must not match inside the project token instead of the
     real trailing suffix."""
     ex = f"SB56289.RACS_1041+18.project-{project}.beam15.round1.i-0000-image.fits"
-    out_ex = f"SB56289.RACS_1041+18.project-{project}.beam15.round1.i.ch0000-0001.image.fits"
+    out_ex = (
+        f"SB56289.RACS_1041+18.project-{project}.beam15.round1.i.ch0000-0001.image.fits"
+    )
     assert _rename_wsclean_title(name_str=ex) == out_ex
 
 
