@@ -295,6 +295,7 @@ def combine_images_to_cube(
     freqs = combine_fits(
         file_list=images,
         out_cube=output_cube_name,
+        max_workers=fitscube_options.max_workers,
         invalidate_zeros=fitscube_options.invalidate_zeros,
         bounding_box=fitscube_options.bounding_box
         if bounding_box is None
