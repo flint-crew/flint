@@ -48,7 +48,7 @@ dependencies = [
     "scikit-image",
     "pandas",
     "ConfigArgParse>=1.7",
-    "fitscube[pgzip]>=2.5.0",
+    "fitscube[pgzip]>=2.5.1",
     "astroquery>=0.4.8.dev0",
     "crystalball>=0.4.3",
     "jolly-roger>=0.10.1",
