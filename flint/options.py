@@ -17,6 +17,7 @@ import yaml
 from astropy.coordinates import EarthLocation, SkyCoord
 from astropy.time import Time
 from capn_crunch import BaseOptions
+from pydantic import create_model
 
 from flint.exceptions import MSError
 from flint.logging import logger
@@ -369,6 +370,46 @@ class RACSAllOptions(BaseOptions):
     """Desired width, in Hz, of each plane of the final cube. The wsclean channel division is solved for this target so the cube has a single linear frequency axis, overriding the strategy ``channels_out`` in the final round. See ``flint.imager.channel_division``"""
     holofile: Path | None = None
     """The oath to a concatenated holography FITS file that contains low-, mid- and high-band cubes"""
+    run_polarisation: bool = False
+    """Whether to run the polarisation imaging pipeline on the final round of calibrated measurement sets"""
+    pol_cube_channel_width: float | None = None
+    """Desired width, in Hz, of each plane of the polarisation cubes. Solved for independently of ``cube_channel_width``, as the polarisation strategy may use a different channelisation. See ``flint.imager.channel_division``"""
+
+
+def racs_all_options_to_pol_field_options(
+    racs_all_options: RACSAllOptions,
+) -> PolFieldOptions:
+    """Build a default ``PolFieldOptions`` from the fields of ``RACSAllOptions`` that
+    share a name and meaning between the two (containers, beam/pb cutoffs, etc).
+    Fields that only exist on ``PolFieldOptions`` are left at their default. Used
+    when a caller does not supply its own ``PolFieldOptions`` (e.g. calling the
+    racs-all flow directly rather than through its CLI, where every
+    ``PolFieldOptions`` field is exposed)."""
+    shared_fields = set(RACSAllOptions.model_fields) & set(PolFieldOptions.model_fields)
+    return PolFieldOptions(
+        **{name: getattr(racs_all_options, name) for name in shared_fields}
+    )
+
+
+def pol_field_options_cli_class(
+    racs_all_options_class: type[RACSAllOptions] = RACSAllOptions,
+) -> type[PolFieldOptions]:
+    """Build a ``PolFieldOptions`` subclass containing only the fields not already
+    present on ``RACSAllOptions``, so it can be added to the same CLI parser without
+    duplicate flags for the fields the two share. Every current and future
+    ``PolFieldOptions`` field is exposed on the CLI this way, either through this
+    class or through ``RACSAllOptions`` itself for the shared ones."""
+    overlap = set(racs_all_options_class.model_fields) & set(
+        PolFieldOptions.model_fields
+    )
+    unique_fields = {
+        name: (field.annotation, field)
+        for name, field in PolFieldOptions.model_fields.items()
+        if name not in overlap
+    }
+    return create_model(
+        "PolFieldOptionsCLI", __base__=PolFieldOptions.__base__, **unique_fields
+    )
 
 
 def dump_field_options_to_yaml(
@@ -456,6 +497,8 @@ class FitsCubeOptions(BaseOptions):
     """Remove the images that go into forming the fitscube"""
     inplace: bool = True
     """If True, modify the file in-place. If False, write to a temporary file and then replace the original. Default True"""
+    create_blanks: bool = True
+    """Have fitscube re-grid the input frequencies onto a tolerant regular grid before writing."""
 
 
 class MSSummary(BaseOptions):

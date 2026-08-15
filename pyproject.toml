@@ -1,12 +1,14 @@
 [build-system]
-requires = ["hatchling", "hatch-vcs"]
+# Pin hatchling for hynek/build-and-inspect-python-package@v2
+requires = ["hatchling<1.32", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 
 [project]
 name = "askap-flint"
 authors = [
-    {name="Tim Galvin", email="tim.galvin@csiro.au"}
+    {name="Tim Galvin", email="tim.galvin@csiro.au"},
+    {name="Alec Thomson", email="alec.thomson@skao.int"}
 ]
 description = "Pipeline for ASKAP processing, and profit along the way"
 readme = "README.md"
@@ -46,7 +48,7 @@ dependencies = [
     "scikit-image",
     "pandas",
     "ConfigArgParse>=1.7",
-    "fitscube[pgzip]>=2.5.0",
+    "fitscube[pgzip]>=2.5.1",
     "astroquery>=0.4.8.dev0",
     "crystalball>=0.4.3",
     "jolly-roger>=0.10.1",

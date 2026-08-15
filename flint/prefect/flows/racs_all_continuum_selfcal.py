@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, TypeAlias
+from typing import Any
 
 from capn_crunch import (
     add_options_to_parser,
@@ -17,6 +17,7 @@ from capn_crunch import (
 )
 from configargparse import ArgumentParser
 from prefect import flow, tags, unmapped
+from prefect.context import get_run_context
 from prefect.futures import PrefectFuture
 
 from flint.catalogue import verify_reference_catalogues
@@ -26,10 +27,14 @@ from flint.configuration import (
     get_selfcal_round_fitscube_options,
     load_and_copy_strategy,
 )
-from flint.imager.channel_division import ChannelDivision, channel_division_for_beams
+from flint.imager.channel_division import (
+    ChannelDivision,
+    apply_cube_division,
+    channel_division_for_beams,
+)
 from flint.imager.wsclean import WSCleanResult
 from flint.logging import logger
-from flint.ms import MS, MSSummary, find_mss
+from flint.ms import MS, MSsByBeam, MSSummary, find_mss
 from flint.naming import (
     CASDANameComponents,
     add_timestamp_to_path,
@@ -38,8 +43,11 @@ from flint.naming import (
 )
 from flint.options import (
     FitsCubeOptions,
+    PolFieldOptions,
     RACSAllOptions,
     dump_field_options_to_yaml,
+    pol_field_options_cli_class,
+    racs_all_options_to_pol_field_options,
 )
 from flint.prefect.clusters import get_dask_runner
 from flint.prefect.common.imaging import (
@@ -62,9 +70,8 @@ from flint.prefect.common.utils import (
     task_update_field_summary,
     task_update_with_options,
 )
+from flint.prefect.flows.polarisation_pipeline import process_science_fields_pol
 from flint.summary import BeamSummary
-
-MSsByBeam: TypeAlias = tuple[tuple[MS, ...], ...]
 
 
 @dataclass
@@ -117,6 +124,11 @@ def _check_racs_all_options(racs_all_options: RACSAllOptions) -> None:
         ):
             raise ValueError(
                 "Unable to create linmos cubes without a yandasoft container"
+            )
+    if racs_all_options.run_polarisation:
+        if not racs_all_options.yandasoft_container:
+            raise ValueError(
+                "Unable to run polarisation imaging without a yandasoft container"
             )
 
     # For the moment we make sure that this is provided. Can consider moving to mandatory argument in
@@ -269,33 +281,15 @@ def all_holography_available(
     return holo_output_path
 
 
-def _apply_cube_division(
-    update_wsclean_options: dict[Any, Any], cube_division: ChannelDivision
-) -> dict[Any, Any]:
-    """Replace the strategy channel division with a solved one. A division set
-    explicitly in the strategy wins, so a known good grid can be pinned."""
-    if update_wsclean_options.get("channel_division_frequencies") is not None:
-        logger.info(
-            "Strategy specifies channel_division_frequencies, not using the solved division"
-        )
-        return update_wsclean_options
-
-    logger.info(
-        f"Imaging with the solved channel division, {cube_division.channels_out=}"
-    )
-    return {
-        **update_wsclean_options,
-        "channels_out": cube_division.channels_out,
-        "channel_division_frequencies": cube_division.channel_division_frequencies,
-    }
-
-
 @flow
 def process_racs_all_field(
     racs_all_options: RACSAllOptions,
+    pol_field_options: PolFieldOptions | None = None,
 ) -> list[PrefectFuture[Any]]:
     # returned futures are resolved by prefect to fail the flow on task failure
     terminal_futures: list[PrefectFuture[Any]] = []
+    # Get the current run context to examine, provide to sub-flows
+    run_context = get_run_context()
 
     # Any sanity checks will go in here, mateee
     _check_racs_all_options(racs_all_options=racs_all_options)
@@ -329,6 +323,15 @@ def process_racs_all_field(
         cube_division = channel_division_for_beams(
             mss_by_beam=science_mss_by_beam,
             target_width=racs_all_options.cube_channel_width,
+        )
+
+    # Polarisation may use a different channelisation to the self-cal cube, so it
+    # is solved independently from the same beam frequency lists
+    pol_cube_division: ChannelDivision | None = None
+    if racs_all_options.run_polarisation and racs_all_options.pol_cube_channel_width:
+        pol_cube_division = channel_division_for_beams(
+            mss_by_beam=science_mss_by_beam,
+            target_width=racs_all_options.pol_cube_channel_width,
         )
 
     dump_field_options_to_yaml(
@@ -416,7 +419,7 @@ def process_racs_all_field(
                 operation="selfcal",
             )
             if cube_division is not None:
-                update_wsclean_options = _apply_cube_division(
+                update_wsclean_options = apply_cube_division(
                     update_wsclean_options=update_wsclean_options,
                     cube_division=cube_division,
                 )
@@ -509,7 +512,7 @@ def process_racs_all_field(
                     operation="selfcal",
                 )
                 if cube_division is not None:
-                    update_wsclean_options = _apply_cube_division(
+                    update_wsclean_options = apply_cube_division(
                         update_wsclean_options=update_wsclean_options,
                         cube_division=cube_division,
                     )
@@ -563,6 +566,8 @@ def process_racs_all_field(
                     aegean_outputs=aegean_outputs,
                     round=selfcal_round if selfcal_round > 0 else None,
                 )
+                terminal_futures.append(field_summary)
+
                 if selfcal_round in (0, racs_all_options.rounds):
                     val_results = validation_items(
                         field_summary=field_summary,
@@ -610,19 +615,66 @@ def process_racs_all_field(
                 )
                 terminal_futures.extend(linmos_cubes)
 
-    terminal_futures.append(field_summary)
+    if racs_all_options.run_polarisation:
+        with tags("polarisation"):
+            resolved_pol_field_options = (
+                pol_field_options
+                if pol_field_options is not None
+                else racs_all_options_to_pol_field_options(racs_all_options)
+            )
+            resolved_pol_field_options = resolved_pol_field_options.with_options(
+                holofile=holography_path.result()
+                if isinstance(holography_path, PrefectFuture)
+                else holography_path
+            )
+            # Hand down the final round's per-beam self-calibrated MSs directly, rather
+            # than having the polarisation flow rediscover MSs by globbing the output
+            # directory. These are still Prefect futures - passing them here is what
+            # makes prefect wait for the self-cal loop to finish before imaging starts.
+            final_round_mss_by_beam: MSsByBeam = tuple(
+                tuple([ms.result() for ms in beam_result.mss])
+                for beam_result in imaging_results[racs_all_options.rounds]
+            )
+            low_sbid = get_sbid_from_path(path=racs_all_options.low_data)
+
+            # sub-flows do no inherit the task runner, they use the specified
+            # running in their decorator flow argument. Overwrite it here with
+            # the current runner
+            from prefect_dask import DaskTaskRunner
+
+            sub_flow_runner = DaskTaskRunner(
+                cluster_class=run_context.task_runner.cluster_class,
+                cluster_kwargs=run_context.task_runner.cluster_kwargs,
+                adapt_kwargs=run_context.task_runner.adapt_kwargs,
+            )
+
+            pol_futures = process_science_fields_pol.with_options(
+                task_runner=sub_flow_runner,
+                name=f"RACS All polarisation -- {low_sbid}",
+            )(
+                flint_ms_directory=output_science_path,
+                pol_field_options=resolved_pol_field_options,
+                cube_division=pol_cube_division,
+                mss_by_beam=final_round_mss_by_beam,
+                wait_for=terminal_futures,
+            )
+
+            terminal_futures.extend(pol_futures)
 
     return terminal_futures
 
 
 def setup_run_racs_all_field(
-    cluster_config: Path, racs_all_options: RACSAllOptions
+    cluster_config: Path,
+    racs_all_options: RACSAllOptions,
+    pol_field_options: PolFieldOptions | None = None,
 ) -> None:
     """The main launch script for the RACS-All processing flow
 
     Args:
         cluster_config (Path): Path to the dask configuration yaml file to define the cluster
         racs_all_options (RACSAllOptions): Options around the processing of RACS-All field
+        pol_field_options (PolFieldOptions | None, optional): Options for the polarisation imaging pipeline, used if ``racs_all_options.run_polarisation`` is set. Derived from ``racs_all_options`` if not provided. Defaults to None.
     """
 
     low_sbid = get_sbid_from_path(path=racs_all_options.low_data)
@@ -631,7 +683,7 @@ def setup_run_racs_all_field(
 
     process_racs_all_field.with_options(
         name=f"RACS All -- {low_sbid}", task_runner=dask_task_runner
-    )(racs_all_options=racs_all_options)
+    )(racs_all_options=racs_all_options, pol_field_options=pol_field_options)
 
 
 def get_parser() -> ArgumentParser:
@@ -655,6 +707,11 @@ def get_parser() -> ArgumentParser:
     )
 
     parser = add_options_to_parser(parser=parser, options_class=RACSAllOptions)
+    parser = add_options_to_parser(
+        parser=parser,
+        options_class=pol_field_options_cli_class(RACSAllOptions),
+        description="Polarisation processing options",
+    )
 
     return parser
 
@@ -667,9 +724,14 @@ def cli() -> None:
     racs_all_options = create_options_from_parser(
         parser_namespace=args, options_class=RACSAllOptions
     )
+    pol_field_options = create_options_from_parser(
+        parser_namespace=args, options_class=PolFieldOptions
+    )
 
     setup_run_racs_all_field(
-        cluster_config=args.cluster_config, racs_all_options=racs_all_options
+        cluster_config=args.cluster_config,
+        racs_all_options=racs_all_options,
+        pol_field_options=pol_field_options,
     )
 
 

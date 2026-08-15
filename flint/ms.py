@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from curses.ascii import controlnames
 from os import PathLike
 from pathlib import Path
-from typing import cast
+from typing import TypeAlias, cast
 
 import astropy.units as u
 import numpy as np
@@ -1015,6 +1015,10 @@ def rename_ms_and_columns_for_selfcal(
     )
 
     return ms.with_options(path=target, column=data)
+
+
+MSsByBeam: TypeAlias = tuple[tuple[MS, ...], ...]
+"""Per-beam groups of MS (e.g. one group per beam, each containing the MS/s that make up that beam)"""
 
 
 def find_mss(

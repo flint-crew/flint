@@ -22,7 +22,7 @@ from collections.abc import Collection
 from glob import glob
 from numbers import Number
 from pathlib import Path
-from typing import Any, Literal, NamedTuple
+from typing import Any, NamedTuple
 
 import numpy as np
 from astropy.io import fits
@@ -209,6 +209,8 @@ class WSCleanOptions(BaseOptions):
     # Options below here are not added to wsclean command
     flint_no_log_wsclean_output: bool = False
     """If True do not log the wsclean output"""
+    flint_name_suffix: str | None = None
+    """An additional trailing token appended to the constructed wsclean ``-name``, e.g. to disambiguate outputs from different pipelines imaging the same measurement set"""
 
 
 class WSCleanResult(BaseOptions):
@@ -293,10 +295,12 @@ def combine_images_to_cube(
     freqs = combine_fits(
         file_list=images,
         out_cube=output_cube_name,
+        max_workers=fitscube_options.max_workers,
         invalidate_zeros=fitscube_options.invalidate_zeros,
         bounding_box=fitscube_options.bounding_box
         if bounding_box is None
         else bounding_box,
+        create_blanks=fitscube_options.create_blanks,
     )
     rotate_cube(output_cube_name, inplace=fitscube_options.inplace)
 
@@ -353,6 +357,16 @@ def merge_image_sets(
     image_set_dict["prefix"] = prefix
 
     logger.info(f"Merged image set: {image_set_dict=}")
+
+    source_lists = image_set_dict.get("source_list", None)
+    if (
+        source_lists is not None
+        and isinstance(source_lists, list)
+        and len(source_lists) > 1
+    ):
+        msg = f"Multiple source lists found in merged image set: {source_lists}. Only the first will be used."
+        logger.warning(msg)
+        image_set_dict["source_list"] = source_lists[0]
 
     return ImageSet(**image_set_dict)
 
@@ -563,12 +577,16 @@ def get_wsclean_output_source_list_path(
 
 
 def _rename_wsclean_title(name_str: str) -> str:
-    """Construct and apply a regular expression that aims to identify
-    the wsclean appended properties string within a file and replace
-    the `-` separator with a `.`.
+    """Identify the wsclean-appended properties suffix at the end of a file
+    name and rewrite it with `.` separators instead of `-`.
 
-    A simple replace of all `-` with `.` may not be ideal if the
-    character has been used on purpose.
+    The suffix's fields (polarisation, sub-band/MFS index, timestep,
+    image type) are captured by name and the dot-separated replacement is
+    built directly from those fields. The sub-band and timestep indices are
+    reformatted as flint's canonical ``ch<lo>-<hi>``/``scan<lo>-<hi>`` ranges
+    (exclusive upper bound) rather than the bare wsclean index, so that
+    ``ProcessedNameComponents.channel_range``/``scan_range`` parse them
+    consistently with every other flint-named path.
 
     Args:
         name_str (str): The name that will be extracted and modified
@@ -580,9 +598,9 @@ def _rename_wsclean_title(name_str: str) -> str:
     # The following should replace the .qu with .q or .u whilst removing the -Q and -U
     logger.info(f"Renaming {name_str=} for qu components if necessary")
     name_str = re.sub(
-        r"(\.qu)-([^-]+)-?([QU])?(\-(psf|image|dirty|model|residual)\.fits)",
+        r"(\.qu)-(?P<chan>[^-]+)-?(?P<qu_pol>[QU])?(?P<tail>-(?:psf|image|dirty|model|residual)\.fits)",
         lambda m: (
-            f".{m.group(3).lower() if m.group(3) else 'q'}-{m.group(2)}{m.group(4)}"
+            f".{m['qu_pol'].lower() if m['qu_pol'] else 'q'}-{m['chan']}{m['tail']}"
         ),
         name_str,
     )
@@ -591,8 +609,16 @@ def _rename_wsclean_title(name_str: str) -> str:
     # sure that the ch0000-0001 field is not captured. For example:
     # SB57516.RACS_0929-81.beam35.round4.i.ch0287-0288-image.fits
     # would be inadvertently picked up and replaced. The [0-9]{4}
-    # we are testing for are the channel indicator when --channel-out is used
-    search_re = r"(-(i|q|u|v|xx|xy|yx|yy))?(-(MFS|(<!ch[0-9]{4}-[0-9]{4})[0-9]{4}))?(-t[0-9]{5})?-(image|dirty|model|residual|psf)"
+    # we are testing for are the channel indicator when --channel-out is used.
+    # The trailing look ahead anchors the image type to the end of the name
+    # (before an optional .fits) so that a project field matching a reserved
+    # word, e.g. .project-image., is not picked up instead.
+    search_re = (
+        r"(?:-(?P<pol>i|q|u|v|xx|xy|yx|yy))?"
+        r"(?:-(?P<mfs>MFS)|-(?P<chidx>(?<!ch[0-9]{4}-)[0-9]{4}))?"
+        r"(?:-(?P<time>t[0-9]{5}))?"
+        r"-(?P<image_type>image|dirty|model|residual|psf)(?=\.fits$|$)"
+    )
     match_re = re.compile(search_re)
 
     logger.info(f"Searching {name_str=} for wsclean added filename components")
@@ -601,7 +627,32 @@ def _rename_wsclean_title(name_str: str) -> str:
     if result is None:
         return name_str
 
-    name = name_str.replace(result[0], result[0].replace("-", "."))
+    # Build the dot-separated suffix from the named fields (pol, channel
+    # index, timestep, image type) rather than the raw matched text. The
+    # channel/timestep index is reformatted into flint's ch<lo>-<hi>/
+    # scan<lo>-<hi> range convention (exclusive upper bound) so it parses
+    # back out as a proper ProcessedNameComponents.channel_range/scan_range
+    # instead of the ambiguous bare wsclean index.
+    groups = result.groupdict()
+    chan_field = (
+        f"ch{int(groups['chidx']):04d}-{int(groups['chidx']) + 1:04d}"
+        if groups["chidx"]
+        else groups["mfs"]
+    )
+    time_field = (
+        f"scan{int(groups['time'][1:]):04d}-{int(groups['time'][1:]) + 1:04d}"
+        if groups["time"]
+        else None
+    )
+    fields = (
+        groups["pol"],
+        chan_field,
+        time_field,
+        groups["image_type"],
+    )
+    new_suffix = "." + ".".join(field for field in fields if field)
+
+    name = name_str.replace(result[0], new_suffix)
 
     return name
 
@@ -878,6 +929,7 @@ def create_wsclean_name_argument(
         pol=pol,
         channel_range=channel_range,
         scan_range=scan_range,
+        project=wsclean_options_dict.get("flint_name_suffix"),
     )
 
     # Now resolve the directory part
@@ -1076,22 +1128,15 @@ def create_wsclean_cmd(
 
 
 def rotate_cube(output_cube_path: str | Path, inplace: bool = True) -> Path:
-    """
-    Rotate the FITS cube axes to a shape of (chan, pol, dec, ra)
-    which is what yandasoft linmos tasks expect.
+    """Rotate the FITS cube axes to a shape of (chan, pol, dec, ra)
+    # which is what yandasoft linmos tasks expect.
 
-    Parameters
-    ----------
-    output_cube_path : str | Path
-        Path to the FITS cube to rotate.
-    inplace : bool, optional
-        If True, modify the file in-place. If False, write to a temporary file and
-        then replace the original. Default True
+    Args:
+        output_cube_path (str | Path): Path to the FITS cube to rotate.
+        inplace (bool, optional): If True, modify the file in-place. If False, write to a temporary file and then replace the original. Defaults to True.
 
-    Returns
-    -------
-    Path
-        Path to the rotated FITS cube.
+    Returns:
+        Path: Path to the rotated FITS cube.
     """
     output_path = Path(output_cube_path)
     logger.info(f"Rotating FITS axes of {output_path.name}")
@@ -1175,10 +1220,7 @@ def rotate_cube(output_cube_path: str | Path, inplace: bool = True) -> Path:
 
 def combine_image_set_to_cube(
     image_set: ImageSet,
-    remove_original_images: bool = False,
-    inplace: bool = True,
-    compress: bool = False,
-    compress_method: Literal["gzip", "pgzip"] = "pgzip",
+    fitscube_options: FitsCubeOptions,
 ) -> ImageSet:
     """Combine wsclean subband channel images into a cube. Each collection attribute
     of the input `image_set` will be inspected. The MFS images will be ignored.
@@ -1187,11 +1229,7 @@ def combine_image_set_to_cube(
 
     Args:
         image_set (ImageSet): Collection of wsclean image productds
-        remove_original_images (bool, optional): If True, images that went into the cube are removed. Defaults to False.
-        inplace (bool, optional): If True, modify the file in-place. If False, write to a temporary file and
-        then replace the original. Default True
-        compress (bool, optional): Gzip-compress each cube once written. Defaults to False.
-        compress_method (Literal["gzip", "pgzip"], optional): Compression backend used when `compress` is set. Defaults to "pgzip".
+        fitscube_options (FitsCubeOptions): Options to control the cube creation, forwarded to ``combine_images_to_cube`` for each mode
 
     Returns:
         ImageSet: Updated iamgeset describing the new outputs
@@ -1219,34 +1257,16 @@ def combine_image_set_to_cube(
             logger.info(f"Not enough subband images for {mode=}, not creating a cube")
             continue
 
-        output_cube_name = create_image_cube_name(
-            image_prefix=Path(image_set.prefix), mode=mode
+        output_cube_name = combine_images_to_cube(
+            images=subband_images,
+            prefix=str(image_set.prefix),
+            mode=mode,
+            fitscube_options=fitscube_options,
         )
 
-        logger.info(f"Combining {len(subband_images)} images. {subband_images=}")
-        freqs = combine_fits(
-            file_list=subband_images, out_cube=output_cube_name, create_blanks=True
-        )
-
-        rotate_cube(output_cube_name, inplace=inplace)
-
-        # Write out the hdu to preserve the beam table constructed in fitscube
-        logger.info(f"Writing {output_cube_name=}")
-
-        output_freqs_name = Path(output_cube_name).with_suffix(".freqs_Hz.txt")
-        np.savetxt(output_freqs_name, freqs.to("Hz").value)
-
-        if compress:
-            output_cube_name = compress_cube(
-                Path(output_cube_name), method=compress_method
-            )
-
-        image_set_dict[mode] = [Path(output_cube_name)] + [
+        image_set_dict[mode] = [output_cube_name] + [
             image for image in image_set_dict[mode] if image not in subband_images
         ]
-
-        if remove_original_images:
-            remove_files_folders(*subband_images)
 
     return ImageSet(**image_set_dict)
 
@@ -1421,10 +1441,7 @@ def run_wsclean_imager(
             fitscube_options = FitsCubeOptions()
         image_set = combine_image_set_to_cube(
             image_set=image_set,
-            remove_original_images=fitscube_options.remove_original_images,
-            inplace=fitscube_options.inplace,
-            compress=fitscube_options.compress,
-            compress_method=fitscube_options.compress_method,
+            fitscube_options=fitscube_options,
         )
 
     image_set = rename_wsclean_prefix_in_image_set(input_image_set=image_set)
