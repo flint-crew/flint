@@ -692,14 +692,18 @@ def test_combine_subbands_to_cube(tmpdir):
     )
 
     new_image_set = combine_image_set_to_cube(
-        image_set=image_set, remove_original_images=False
+        image_set=image_set,
+        fitscube_options=FitsCubeOptions(remove_original_images=False),
     )
 
     assert new_image_set.prefix == image_set.prefix
     assert len(new_image_set.image) == 1
 
     with pytest.raises(TypeError):
-        _ = combine_image_set_to_cube(image_set=files, remove_original_images=False)  # type: ignore
+        _ = combine_image_set_to_cube(
+            image_set=files,  # type: ignore
+            fitscube_options=FitsCubeOptions(remove_original_images=False),
+        )
 
 
 def test_combine_subbands_to_cube2(tmpdir):
@@ -723,7 +727,8 @@ def test_combine_subbands_to_cube2(tmpdir):
     )
 
     new_image_set = combine_image_set_to_cube(
-        image_set=image_set, remove_original_images=True
+        image_set=image_set,
+        fitscube_options=FitsCubeOptions(remove_original_images=True),
     )
     assert all([not file.exists() for file in files])
     assert new_image_set.prefix == image_set.prefix

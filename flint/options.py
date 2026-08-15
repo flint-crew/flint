@@ -428,6 +428,8 @@ class FitsCubeOptions(BaseOptions):
     """Remove the images that go into forming the fitscube"""
     inplace: bool = True
     """If True, modify the file in-place. If False, write to a temporary file and then replace the original. Default True"""
+    create_blanks: bool = True
+    """Have fitscube re-grid the input frequencies onto a tolerant regular grid before writing."""
 
 
 class MSSummary(BaseOptions):

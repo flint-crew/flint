@@ -22,7 +22,7 @@ from collections.abc import Collection
 from glob import glob
 from numbers import Number
 from pathlib import Path
-from typing import Any, Literal, NamedTuple
+from typing import Any, NamedTuple
 
 import numpy as np
 from astropy.io import fits
@@ -299,6 +299,7 @@ def combine_images_to_cube(
         bounding_box=fitscube_options.bounding_box
         if bounding_box is None
         else bounding_box,
+        create_blanks=fitscube_options.create_blanks,
     )
     rotate_cube(output_cube_name, inplace=fitscube_options.inplace)
 
@@ -1218,10 +1219,7 @@ def rotate_cube(output_cube_path: str | Path, inplace: bool = True) -> Path:
 
 def combine_image_set_to_cube(
     image_set: ImageSet,
-    remove_original_images: bool = False,
-    inplace: bool = True,
-    compress: bool = False,
-    compress_method: Literal["gzip", "pgzip"] = "pgzip",
+    fitscube_options: FitsCubeOptions,
 ) -> ImageSet:
     """Combine wsclean subband channel images into a cube. Each collection attribute
     of the input `image_set` will be inspected. The MFS images will be ignored.
@@ -1230,11 +1228,7 @@ def combine_image_set_to_cube(
 
     Args:
         image_set (ImageSet): Collection of wsclean image productds
-        remove_original_images (bool, optional): If True, images that went into the cube are removed. Defaults to False.
-        inplace (bool, optional): If True, modify the file in-place. If False, write to a temporary file and
-        then replace the original. Default True
-        compress (bool, optional): Gzip-compress each cube once written. Defaults to False.
-        compress_method (Literal["gzip", "pgzip"], optional): Compression backend used when `compress` is set. Defaults to "pgzip".
+        fitscube_options (FitsCubeOptions): Options to control the cube creation, forwarded to ``combine_images_to_cube`` for each mode
 
     Returns:
         ImageSet: Updated iamgeset describing the new outputs
@@ -1262,34 +1256,16 @@ def combine_image_set_to_cube(
             logger.info(f"Not enough subband images for {mode=}, not creating a cube")
             continue
 
-        output_cube_name = create_image_cube_name(
-            image_prefix=Path(image_set.prefix), mode=mode
+        output_cube_name = combine_images_to_cube(
+            images=subband_images,
+            prefix=str(image_set.prefix),
+            mode=mode,
+            fitscube_options=fitscube_options,
         )
 
-        logger.info(f"Combining {len(subband_images)} images. {subband_images=}")
-        freqs = combine_fits(
-            file_list=subband_images, out_cube=output_cube_name, create_blanks=True
-        )
-
-        rotate_cube(output_cube_name, inplace=inplace)
-
-        # Write out the hdu to preserve the beam table constructed in fitscube
-        logger.info(f"Writing {output_cube_name=}")
-
-        output_freqs_name = Path(output_cube_name).with_suffix(".freqs_Hz.txt")
-        np.savetxt(output_freqs_name, freqs.to("Hz").value)
-
-        if compress:
-            output_cube_name = compress_cube(
-                Path(output_cube_name), method=compress_method
-            )
-
-        image_set_dict[mode] = [Path(output_cube_name)] + [
+        image_set_dict[mode] = [output_cube_name] + [
             image for image in image_set_dict[mode] if image not in subband_images
         ]
-
-        if remove_original_images:
-            remove_files_folders(*subband_images)
 
     return ImageSet(**image_set_dict)
 
@@ -1464,10 +1440,7 @@ def run_wsclean_imager(
             fitscube_options = FitsCubeOptions()
         image_set = combine_image_set_to_cube(
             image_set=image_set,
-            remove_original_images=fitscube_options.remove_original_images,
-            inplace=fitscube_options.inplace,
-            compress=fitscube_options.compress,
-            compress_method=fitscube_options.compress_method,
+            fitscube_options=fitscube_options,
         )
 
     image_set = rename_wsclean_prefix_in_image_set(input_image_set=image_set)
