@@ -300,6 +300,10 @@ class RACSAllOptions(BaseOptions):
     """Desired width, in Hz, of each plane of the final cube. The wsclean channel division is solved for this target so the cube has a single linear frequency axis, overriding the strategy ``channels_out`` in the final round. See ``flint.imager.channel_division``"""
     holofile: Path | None = None
     """The oath to a concatenated holography FITS file that contains low-, mid- and high-band cubes"""
+    run_skymodel_calibration: bool = False
+    """Whether to run a phase-only self-calibration round (round 0) against a sky-model predicted from a reference catalogue, independently per band, before imaging. Ties the low-, mid- and high-band data to a common external phase reference. Requires calibrate_container and casa_container to be set."""
+    calibrate_container: Path | None = None
+    """Path to the singularity calibrate container, required by run_skymodel_calibration for the addmodel prediction step"""
 
 
 def dump_field_options_to_yaml(

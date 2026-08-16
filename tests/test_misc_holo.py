@@ -7,6 +7,8 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from astropy import units as u
+from astropy.coordinates import SkyCoord
 from astropy.io import fits
 
 from flint.misc.holo import (
@@ -21,6 +23,7 @@ from flint.misc.holo import (
     get_parser,
     load_and_sort_cubes,
     map_frequencies_to_channels,
+    sample_beam_attenuation,
 )
 from flint.utils import get_packaged_resource_path
 
@@ -170,3 +173,80 @@ def test_make_fits_cube_info(example_cube_fits) -> None:
 def test_get_parser() -> None:
     """A dumb tester for the argument parser"""
     _ = get_parser()
+
+
+def _make_holo_cube(path: Path) -> Path:
+    """A small synthetic 5D (beam, stokes, freq, dec, ra) holography cube,
+    with beam 1's Stokes I response peaking at the reference pixel and
+    decreasing linearly with frequency."""
+    nbeam, nstokes, nfreq, ny, nx = 2, 2, 4, 5, 5
+    data = np.zeros((nbeam, nstokes, nfreq, ny, nx), dtype=np.float32)
+    for chan in range(nfreq):
+        data[1, 0, chan, 2, 2] = 1.0 - 0.1 * chan
+
+    # Mirrors the keys/ordering of a real ASKAP holography cube header
+    header = fits.Header()
+    header["SIMPLE"] = True
+    header["BITPIX"] = -32
+    header["NAXIS"] = 5
+    header["NAXIS1"] = nx
+    header["NAXIS2"] = ny
+    header["NAXIS3"] = nfreq
+    header["NAXIS4"] = nstokes
+    header["NAXIS5"] = nbeam
+    header["EXTEND"] = True
+    header["CTYPE1"] = "RA---SIN"
+    header["CRVAL1"] = 180.0
+    header["CDELT1"] = -0.01
+    header["CRPIX1"] = 3.0
+    header["CTYPE2"] = "DEC--SIN"
+    header["CRVAL2"] = -30.0
+    header["CDELT2"] = 0.01
+    header["CRPIX2"] = 3.0
+    header["CTYPE3"] = "FREQ"
+    header["CRVAL3"] = 900e6
+    header["CDELT3"] = 1e6
+    header["CRPIX3"] = 1.0
+    header["CTYPE4"] = "STOKES"
+    header["CRPIX4"] = 1.0
+    header["CDELT4"] = 1.0
+    header["CRVAL4"] = 1.0
+    header["CTYPE5"] = "BEAM"
+    header["CRVAL5"] = 0.0
+    header["CDELT5"] = 1.0
+    header["CRPIX5"] = 1.0
+    header["EQUINOX"] = 2000.0
+    header["RADESYS"] = "FK5"
+    header["LONPOLE"] = 180.0
+    header["LATPOLE"] = 0.0
+    header["SPECSYS"] = "TOPOCENT"
+
+    cube_path = path / "holo.fits"
+    fits.PrimaryHDU(data=data, header=header).writeto(cube_path)
+    return cube_path
+
+
+def test_sample_beam_attenuation(tmp_path) -> None:
+    """Interpolate a holography cube's own frequency grid onto arbitrary freqs"""
+    holofile = _make_holo_cube(tmp_path)
+    position = SkyCoord(ra=180.0 * u.deg, dec=-30.0 * u.deg)
+    freqs = np.array([900e6, 901e6, 902e6, 903e6]) * u.Hz
+
+    atten = sample_beam_attenuation(
+        holofile=holofile, beam=1, position=position, freqs=freqs
+    )
+
+    # bilinear, so a tiny sub-pixel offset from the WCS solve is expected
+    np.testing.assert_allclose(atten, [1.0, 0.9, 0.8, 0.7], atol=1e-2)
+
+
+def test_sample_beam_attenuation_outside_cube_raises(tmp_path) -> None:
+    """A position well outside the cube's small footprint should raise"""
+    holofile = _make_holo_cube(tmp_path)
+    position = SkyCoord(ra=180.0 * u.deg, dec=10.0 * u.deg)
+    freqs = np.array([900e6]) * u.Hz
+
+    with pytest.raises(ValueError):
+        sample_beam_attenuation(
+            holofile=holofile, beam=1, position=position, freqs=freqs
+        )

@@ -10,12 +10,16 @@ from socket import gethostname
 
 import billiard
 import numpy as np
+from astropy import units as u
+from astropy.coordinates import SkyCoord
 from astropy.io import fits
 from astropy.wcs import WCS
+from astropy.wcs.utils import skycoord_to_pixel
 from capn_crunch import BaseOptions, add_options_to_parser, create_options_from_parser
 from numpy.typing import NDArray
 from reproject import reproject_interp
 from reproject.mosaicking import find_optimal_celestial_wcs
+from scipy.ndimage import map_coordinates
 
 from flint.logging import logger
 
@@ -61,6 +65,55 @@ def get_freq_axis(header: fits.Header) -> NDArray[np.floating]:
 def celestial_wcs_from_header(header: fits.Header) -> WCS:
     """Extract just the celestial (RA/Dec) 2D WCS from a 5D FITS header."""
     return WCS(header).celestial
+
+
+def sample_beam_attenuation(
+    holofile: Path,
+    beam: int,
+    position: SkyCoord,
+    freqs: u.Quantity,
+    stokes: int = 0,
+) -> NDArray[np.floating]:
+    """Sample the measured ASKAP holography primary-beam response for a
+    single beam and sky position: bilinearly interpolated at the sky
+    position, then linearly interpolated in frequency onto `freqs`.
+
+    Args:
+        holofile (Path): Holography IQUV cube, axes (beam, stokes, freq, dec, ra)
+        beam (int): ASKAP beam number (0-indexed) to sample
+        position (SkyCoord): Sky position to sample the beam response at
+        freqs (u.Quantity): Frequencies to interpolate the cube's own frequency grid onto
+        stokes (int, optional): Stokes index to sample. Defaults to 0 (Stokes I)
+
+    Raises:
+        ValueError: Raised if `position` falls outside the holography cube
+
+    Returns:
+        NDArray[np.floating]: Attenuation at each of `freqs`
+    """
+    with fits.open(holofile, memmap=True) as hdul:
+        header = hdul[0].header
+        wcs = celestial_wcs_from_header(header)
+
+        x, y = skycoord_to_pixel(position, wcs=wcs, origin=0)
+
+        cube_freqs = get_freq_axis(header=header)
+        cube_slice = np.asarray(hdul[0].data[beam, stokes], dtype=float)
+
+        nfreq = len(cube_freqs)
+        coords = np.array(
+            [np.arange(nfreq), np.full(nfreq, float(y)), np.full(nfreq, float(x))]
+        )
+        # mode="constant" with a NaN fill turns "position outside the cube"
+        # into NaNs in the interpolated spectrum, checked for below
+        spectrum = map_coordinates(
+            cube_slice, coords, order=1, mode="constant", cval=np.nan
+        )
+
+    if np.any(np.isnan(spectrum)):
+        raise ValueError(f"{position=} falls outside the holography cube {holofile}")
+
+    return np.interp(freqs.to(u.Hz).value, cube_freqs, spectrum)
 
 
 def create_fits_info(cube_path: Path, hdu_index: int = 0) -> FITSCubeInfo:
