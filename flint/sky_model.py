@@ -37,7 +37,7 @@ class SkyModelOptions(BaseOptions):
     f"""Name of the preferred reference survey to use (not the filename). See the list of registered known catalogues: {KNOWN_REFERENCE_CATALOGUES.keys()}. """
     assumed_alpha: float = -0.83
     """Assume this to be the typical spectral index if it is not recorded in the reference catalogue"""
-    assumed_q: float = 0.0
+    assumed_beta: float = 0.0
     """Assume this to be the typical amount of spectral curvature should they not be in the reference catalogue"""
     flux_cutoff: float = 0.02
     """The intrinsic brightness a source needs to be for it to be included in the sky model"""
@@ -82,7 +82,7 @@ class SkyModelOptions(BaseOptions):
     catalogue_alpha_col: str | None = None
     """Spectral index column in catalogue_path. If unset, falls back to assumed_alpha"""
     catalogue_beta_col: str | None = None
-    """Spectral curvature column in catalogue_path. If unset, falls back to assumed_q"""
+    """Spectral curvature column in catalogue_path. If unset, falls back to assumed_beta"""
     catalogue_radec_unit: str = "deg"
     """Astropy unit string for catalogue_ra_col/catalogue_dec_col. Always applied explicitly, never inferred from the file"""
     catalogue_flux_unit: str = "Jy"
@@ -94,9 +94,9 @@ class SkyModelOptions(BaseOptions):
 class CurvedPL(NamedTuple):
     """Container for results of a Curved Power Law,
 
-    >>> S_nu = S_nu_0 * (nu/nu_0)**alpha * exp(q*ln(nu/nu_0)**2.)
+    >>> S_nu = S_nu_0 * (nu/nu_0)**alpha * exp(beta*ln(nu/nu_0)**2.)
 
-    Note that in the case of q=0. the model reduces to a normal power-law.
+    Note that in the case of beta=0. the model reduces to a normal power-law.
 
     """
 
@@ -105,7 +105,7 @@ class CurvedPL(NamedTuple):
     """The fitted normalisation of the fitted model"""
     alpha: float
     """The fitted spectral index"""
-    q: float
+    beta: float
     """The fitted curvature of the spectral index"""
     ref_nu: float
     """The nominated reference frequency"""
@@ -362,9 +362,9 @@ def curved_power_law(
 ) -> np.ndarray:
     """A curved power law model.
 
-    >>> S_nu = S_nu_0 * (nu/nu_0)**alpha * exp(q*ln(nu/nu_0)**2.)
+    >>> S_nu = S_nu_0 * (nu/nu_0)**alpha * exp(beta*ln(nu/nu_0)**2.)
 
-    Note that in the case of q=0. the model reduces to a normal power-law.
+    Note that in the case of beta=0. the model reduces to a normal power-law.
 
     Args:
         nu (np.ndarray): Frequency array.
@@ -411,14 +411,14 @@ def fit_curved_pl(freqs: u.Quantity, flux: u.Quantity, ref_nu: u.Quantity) -> Cu
 
     p, cov = curve_fit(curve_pl, freqs, flux, p0)
 
-    params = CurvedPL(norm=p[0], alpha=p[1], q=p[2], ref_nu=ref_nu)
+    params = CurvedPL(norm=p[0], alpha=p[1], beta=p[2], ref_nu=ref_nu)
 
     return params
 
 
 def evaluate_src_model(freqs: u.Quantity, src_row: Row, ref_nu: u.Quantity) -> u.Jy:
     """Evaluate a SED of an object using its recordded
-    Normalisation, alpha and q components.
+    Normalisation, alpha and beta components.
 
     Args:
         freqs (u.Quantity): Frequencies to evaluate
@@ -466,7 +466,7 @@ def load_catalogue(
     catalogue: str | None = None,
     ms_pointing: SkyCoord | None = None,
     assumed_alpha: float = -0.83,
-    assumed_q: float = 0.0,
+    assumed_beta: float = 0.0,
 ) -> tuple[Catalogue, Table]:
     """Load in a catalogue table given a name or measurement set declinattion.
 
@@ -475,7 +475,7 @@ def load_catalogue(
         catalogue (Optional[str], optional): Catalogue name to look up from known catalogues. Defaults to None.
         ms_pointing (Optional[SkyCoord], optional): Pointing direction of the measurement set. Defaults to None.
         assumed_alpha (float, optional): The assumed spectral index to use if there is no spectral index column known in model catalogue. Defaults to -0.83.
-        assumed_q (float, optional): The assumed curvature to use if there is no curvature column known in model catalogue. Defaults to 0.0.
+        assumed_beta (float, optional): The assumed curvature to use if there is no curvature column known in model catalogue. Defaults to 0.0.
 
     Raises:
         FileNotFoundError: Raised when a catalogue can not be resolved.
@@ -513,22 +513,25 @@ def load_catalogue(
     logger.info(f"Loaded table, found {len(cata_tab)} sources. ")
 
     return _fill_default_sed_columns(
-        catalogue=cata, table=cata_tab, assumed_alpha=assumed_alpha, assumed_q=assumed_q
+        catalogue=cata,
+        table=cata_tab,
+        assumed_alpha=assumed_alpha,
+        assumed_beta=assumed_beta,
     )
 
 
 def _fill_default_sed_columns(
-    catalogue: Catalogue, table: Table, assumed_alpha: float, assumed_q: float
+    catalogue: Catalogue, table: Table, assumed_alpha: float, assumed_beta: float
 ) -> tuple[Catalogue, Table]:
     """Add default spectral-index/curvature columns to `table` for whichever
-    of `catalogue`'s alpha_col/q_col are not set, returning a `Catalogue`
+    of `catalogue`'s alpha_col/beta_col are not set, returning a `Catalogue`
     pointing at them.
 
     Args:
-        catalogue (Catalogue): Catalogue description, possibly missing alpha_col/q_col
+        catalogue (Catalogue): Catalogue description, possibly missing alpha_col/beta_col
         table (Table): The loaded catalogue table
         assumed_alpha (float): Default spectral index to fill in if alpha_col is None
-        assumed_q (float): Default curvature to fill in if q_col is None
+        assumed_beta (float): Default curvature to fill in if beta_col is None
 
     Returns:
         tuple[Catalogue, Table]: Updated catalogue description and table
@@ -540,10 +543,10 @@ def _fill_default_sed_columns(
         )
         table["alpha"] = assumed_alpha
         cols["alpha_col"] = "alpha"
-    if catalogue.q_col is None:
-        logger.info(f"No 'beta' column, adding default {assumed_q:.3f}. ")
-        table["beta"] = assumed_q
-        cols["q_col"] = "beta"
+    if catalogue.beta_col is None:
+        logger.info(f"No 'beta' column, adding default {assumed_beta:.3f}. ")
+        table["beta"] = assumed_beta
+        cols["beta_col"] = "beta"
 
     return Catalogue(**cols), table
 
@@ -665,6 +668,9 @@ def load_user_catalogue(sky_model_options: SkyModelOptions) -> tuple[Catalogue, 
 
     if all(shape_cols):
         maj_col, min_col, pa_col = shape_cols
+        assert maj_col is not None and min_col is not None and pa_col is not None, (
+            "Expected shape columns to be set, received None. "
+        )
         shape_unit = u.Unit(sky_model_options.catalogue_shape_unit)
         table[maj_col].unit = shape_unit
         table[min_col].unit = shape_unit
@@ -688,6 +694,11 @@ def load_user_catalogue(sky_model_options: SkyModelOptions) -> tuple[Catalogue, 
                     "-- there is no pipeline restoring beam to fall back on here"
                 )
             psf_maj_col, psf_min_col, psf_pa_col = psf_cols
+            assert (
+                psf_maj_col is not None
+                and psf_min_col is not None
+                and psf_pa_col is not None
+            ), "Expected PSF columns to be set, received None. "
             table[psf_maj_col].unit = shape_unit
             table[psf_min_col].unit = shape_unit
             table[psf_pa_col].unit = u.deg
@@ -723,7 +734,7 @@ def load_user_catalogue(sky_model_options: SkyModelOptions) -> tuple[Catalogue, 
         min_col=min_col,
         pa_col=pa_col,
         alpha_col=sky_model_options.catalogue_alpha_col,
-        q_col=sky_model_options.catalogue_beta_col,
+        beta_col=sky_model_options.catalogue_beta_col,
         vizier_id=None,
     )
 
@@ -731,7 +742,7 @@ def load_user_catalogue(sky_model_options: SkyModelOptions) -> tuple[Catalogue, 
         catalogue=catalogue,
         table=table,
         assumed_alpha=sky_model_options.assumed_alpha,
-        assumed_q=sky_model_options.assumed_q,
+        assumed_beta=sky_model_options.assumed_beta,
     )
 
 
@@ -782,7 +793,7 @@ def preprocess_catalogue(
         cata_info.min_col,
         cata_info.pa_col,
         cata_info.alpha_col,
-        cata_info.q_col,
+        cata_info.beta_col,
     ]
     out_cols = ["RA", "DEC", "name", "flux", "maj", "min", "pa", "alpha", "beta"]
     if ref_freq_col is not None:
@@ -874,7 +885,7 @@ def make_hyperdrive_model(out_path: Path, sources: list[tuple[Row, CurvedPL]]) -
         flux_type = {
             "curved_power_law": {
                 "si": float(cpl.alpha),
-                "q": float(cpl.q),
+                "q": float(cpl.beta),
                 "fd": {"freq": float(cpl.ref_nu), "i": float(cpl.norm)},
             }
         }
@@ -931,7 +942,7 @@ def make_calibrate_model(out_path: Path, sources: list[tuple[Row, CurvedPL]]) ->
                     f"{ra_str},"
                     f"{dec_str},"
                     f"{src_cpl.norm},"
-                    f"[{src_cpl.alpha},{src_cpl.q}],"
+                    f"[{src_cpl.alpha},{src_cpl.beta}],"
                     f"true,{ref_nu},,,\n"
                 )
             else:
@@ -941,7 +952,7 @@ def make_calibrate_model(out_path: Path, sources: list[tuple[Row, CurvedPL]]) ->
                     f"{ra_str},"
                     f"{dec_str},"
                     f"{src_cpl.norm},"
-                    f"[{src_cpl.alpha},{src_cpl.q}],"
+                    f"[{src_cpl.alpha},{src_cpl.beta}],"
                     f"true,{ref_nu},"
                     f"{src_row['maj'].to(u.arcsecond).value},"
                     f"{src_row['maj'].to(u.arcsecond).value},"
@@ -1039,7 +1050,7 @@ def create_sky_model(
             catalogue=sky_model_options.reference_name,
             ms_pointing=direction,
             assumed_alpha=sky_model_options.assumed_alpha,
-            assumed_q=sky_model_options.assumed_q,
+            assumed_beta=sky_model_options.assumed_beta,
         )
 
     # Normalise the per-row SED reference frequency into a single column,
@@ -1073,6 +1084,7 @@ def create_sky_model(
         # Get the primary beam response, preferring the measured holography
         # beam over the idealized Gaussian when available
         if holofile is not None:
+            assert beam is not None, "Expected beam to be resolved, received None. "
             atten = sample_beam_attenuation(
                 holofile=holofile,
                 beam=beam,
@@ -1101,7 +1113,7 @@ def create_sky_model(
         total_flux += predict_model.norm * u.Jy
 
         logger.info(
-            f"{len(accepted_rows):05d} Sep={src_sep.to(u.deg):.3f} S_ref={predict_model.norm:.3f} SI={predict_model.alpha:.3f} q={predict_model.q:.3f}"
+            f"{len(accepted_rows):05d} Sep={src_sep.to(u.deg):.3f} S_ref={predict_model.norm:.3f} SI={predict_model.alpha:.3f} beta={predict_model.beta:.3f}"
         )
 
     logger.info(

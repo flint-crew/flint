@@ -354,7 +354,7 @@ def test_load_user_catalogue_point_source_default(tmp_path):
     assert np.all(table[catalogue.pa_col] == 0)
     assert list(table[catalogue.name_col]) == ["src0", "src1"]
     assert np.allclose(table["alpha"], sky_model_options.assumed_alpha)
-    assert np.allclose(table["beta"], sky_model_options.assumed_q)
+    assert np.allclose(table["beta"], sky_model_options.assumed_beta)
 
 
 def test_get_working_parser():
