@@ -21,6 +21,7 @@ from flint.naming import add_timestamp_to_path
 from flint.options import ArchiveOptions, FitsCubeOptions
 from flint.peel.potato import PotatoPeelOptions
 from flint.selfcal.casa import GainCalOptions
+from flint.sky_model import SkyModelOptions
 from flint.source_finding.aegean import AegeanOptions, BANEOptions
 
 # TODO: It feels like that the standard of this strategy file should
@@ -45,6 +46,7 @@ MODE_OPTIONS_MAPPING = {
     "potatopeel": PotatoPeelOptions,
     "fitscube": FitsCubeOptions,
     "tukeytractor": TukeyTractorOptions,
+    "skymodel": SkyModelOptions,
 }
 POLARISATION_MAPPING = {
     "total": "i",

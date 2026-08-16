@@ -8,11 +8,50 @@ import pytest
 
 from flint.ms import MS, find_mss
 from flint.naming import CASDANameComponents, extract_components_from_name
+from flint.options import RACSAllOptions
 from flint.prefect.flows.racs_all_continuum_selfcal import (
     _check_create_output_science_path,
+    _check_racs_all_options,
     _ensure_all_casda_format,
     match_beams_across_bands,
 )
+
+
+@pytest.fixture
+def base_racs_all_options(tmp_path) -> RACSAllOptions:
+    """A minimal RACSAllOptions with just enough set to pass the wsclean_container check"""
+    wsclean_container = tmp_path / "wsclean.sif"
+    wsclean_container.touch()
+
+    return RACSAllOptions(
+        low_data=tmp_path / "low",
+        mid_data=tmp_path / "mid",
+        high_data=tmp_path / "high",
+        wsclean_container=wsclean_container,
+        rounds=0,
+    )
+
+
+def test_check_racs_all_options_skymodel_requires_containers(
+    base_racs_all_options,
+) -> None:
+    """run_skymodel_calibration requires both calibrate_container and casa_container"""
+    _check_racs_all_options(racs_all_options=base_racs_all_options)
+
+    racs_all_options = base_racs_all_options.with_options(run_skymodel_calibration=True)
+    with pytest.raises(ValueError):
+        _check_racs_all_options(racs_all_options=racs_all_options)
+
+    racs_all_options = racs_all_options.with_options(
+        calibrate_container=base_racs_all_options.wsclean_container
+    )
+    with pytest.raises(ValueError):
+        _check_racs_all_options(racs_all_options=racs_all_options)
+
+    racs_all_options = racs_all_options.with_options(
+        casa_container=base_racs_all_options.wsclean_container
+    )
+    _check_racs_all_options(racs_all_options=racs_all_options)
 
 
 def test_check_create_output_science_path(tmpdir, monkeypatch) -> None:

@@ -16,8 +16,11 @@ from capn_crunch import BaseOptions, add_options_to_parser, create_options_from_
 from scipy.optimize import curve_fit
 
 from flint.catalogue import KNOWN_REFERENCE_CATALOGUES, Catalogue
+from flint.coadd.linmos import compute_pb_rotation_alpha
 from flint.logging import logger
-from flint.ms import get_freqs_from_ms, get_phase_dir_from_ms
+from flint.misc.holo import sample_beam_attenuation
+from flint.ms import get_freqs_from_ms, get_phase_dir_from_ms, get_pol_axis_as_rad
+from flint.naming import extract_beam_from_name
 from flint.utils import get_packaged_resource_path
 
 KNOWN_PB_TYPES = ("gaussian", "sincsquared", "airy")
@@ -34,7 +37,7 @@ class SkyModelOptions(BaseOptions):
     f"""Name of the preferred reference survey to use (not the filename). See the list of registered known catalogues: {KNOWN_REFERENCE_CATALOGUES.keys()}. """
     assumed_alpha: float = -0.83
     """Assume this to be the typical spectral index if it is not recorded in the reference catalogue"""
-    assumed_q: float = 0.0
+    assumed_beta: float = 0.0
     """Assume this to be the typical amount of spectral curvature should they not be in the reference catalogue"""
     flux_cutoff: float = 0.02
     """The intrinsic brightness a source needs to be for it to be included in the sky model"""
@@ -46,14 +49,54 @@ class SkyModelOptions(BaseOptions):
     """Should the model for calibrate be created. The output will have .calibrate.txt suffix appended to the MS path."""
     write_ds9_region: bool = False
     """Should a DS9 region file be created. The output will have .ds9.reg suffix appended to the MS path."""
+    catalogue_path: Path | None = None
+    """Path to a user-supplied catalogue file. If set, takes precedence over reference_catalogue_directory/reference_name. Column names/units below are never guessed."""
+    catalogue_freq: float | None = None
+    """Reference frequency, in Hz, of catalogue_path's flux column, used for every source. Ignored if catalogue_freq_col is set. One of catalogue_freq/catalogue_freq_col is required whenever catalogue_path is set."""
+    catalogue_freq_col: str | None = None
+    """Per-source reference-frequency column in catalogue_path. If set, overrides catalogue_freq with a per-row value instead of one value for the whole catalogue."""
+    catalogue_freq_unit: str = "Hz"
+    """Astropy unit string for catalogue_freq_col"""
+    catalogue_ra_col: str | None = None
+    """RA column in catalogue_path. Required whenever catalogue_path is set -- never guessed"""
+    catalogue_dec_col: str | None = None
+    """Dec column in catalogue_path. Required whenever catalogue_path is set"""
+    catalogue_flux_col: str | None = None
+    """Flux column in catalogue_path. Required whenever catalogue_path is set"""
+    catalogue_name_col: str | None = None
+    """Source name column in catalogue_path. If unset, names are synthesised (src0, src1, ...)"""
+    catalogue_maj_col: str | None = None
+    """Major-axis column in catalogue_path. None disables shape info (point sources). Must be set together with catalogue_min_col/catalogue_pa_col"""
+    catalogue_min_col: str | None = None
+    """Minor-axis column in catalogue_path, paired with catalogue_maj_col"""
+    catalogue_pa_col: str | None = None
+    """Position-angle column in catalogue_path, paired with catalogue_maj_col. Always degrees"""
+    catalogue_sizes_deconvolved: bool | None = None
+    """Whether catalogue_maj_col/catalogue_min_col are already intrinsic (PSF-deconvolved) sizes, ready to use directly in the sky model, or as-observed (PSF-convolved) sizes that must be deconvolved first. Required whenever catalogue_maj_col is set -- never guessed"""
+    catalogue_psf_maj_col: str | None = None
+    """Per-source PSF major-axis column in catalogue_path, used to deconvolve catalogue_maj_col/catalogue_min_col when catalogue_sizes_deconvolved is False. Required in that case -- there is no pipeline restoring beam to fall back on here"""
+    catalogue_psf_min_col: str | None = None
+    """Per-source PSF minor-axis column, paired with catalogue_psf_maj_col"""
+    catalogue_psf_pa_col: str | None = None
+    """Per-source PSF position-angle column, paired with catalogue_psf_maj_col. Always degrees"""
+    catalogue_alpha_col: str | None = None
+    """Spectral index column in catalogue_path. If unset, falls back to assumed_alpha"""
+    catalogue_beta_col: str | None = None
+    """Spectral curvature column in catalogue_path. If unset, falls back to assumed_beta"""
+    catalogue_radec_unit: str = "deg"
+    """Astropy unit string for catalogue_ra_col/catalogue_dec_col. Always applied explicitly, never inferred from the file"""
+    catalogue_flux_unit: str = "Jy"
+    """Astropy unit string for catalogue_flux_col"""
+    catalogue_shape_unit: str = "arcsec"
+    """Astropy unit string for catalogue_maj_col/catalogue_min_col/catalogue_psf_maj_col/catalogue_psf_min_col"""
 
 
 class CurvedPL(NamedTuple):
     """Container for results of a Curved Power Law,
 
-    >>> S_nu = S_nu_0 * (nu/nu_0)**alpha * exp(q*ln(nu/nu_0)**2.)
+    >>> S_nu = S_nu_0 * (nu/nu_0)**alpha * exp(beta*ln(nu/nu_0)**2.)
 
-    Note that in the case of q=0. the model reduces to a normal power-law.
+    Note that in the case of beta=0. the model reduces to a normal power-law.
 
     """
 
@@ -62,7 +105,7 @@ class CurvedPL(NamedTuple):
     """The fitted normalisation of the fitted model"""
     alpha: float
     """The fitted spectral index"""
-    q: float
+    beta: float
     """The fitted curvature of the spectral index"""
     ref_nu: float
     """The nominated reference frequency"""
@@ -319,9 +362,9 @@ def curved_power_law(
 ) -> np.ndarray:
     """A curved power law model.
 
-    >>> S_nu = S_nu_0 * (nu/nu_0)**alpha * exp(q*ln(nu/nu_0)**2.)
+    >>> S_nu = S_nu_0 * (nu/nu_0)**alpha * exp(beta*ln(nu/nu_0)**2.)
 
-    Note that in the case of q=0. the model reduces to a normal power-law.
+    Note that in the case of beta=0. the model reduces to a normal power-law.
 
     Args:
         nu (np.ndarray): Frequency array.
@@ -368,14 +411,14 @@ def fit_curved_pl(freqs: u.Quantity, flux: u.Quantity, ref_nu: u.Quantity) -> Cu
 
     p, cov = curve_fit(curve_pl, freqs, flux, p0)
 
-    params = CurvedPL(norm=p[0], alpha=p[1], q=p[2], ref_nu=ref_nu)
+    params = CurvedPL(norm=p[0], alpha=p[1], beta=p[2], ref_nu=ref_nu)
 
     return params
 
 
 def evaluate_src_model(freqs: u.Quantity, src_row: Row, ref_nu: u.Quantity) -> u.Jy:
     """Evaluate a SED of an object using its recordded
-    Normalisation, alpha and q components.
+    Normalisation, alpha and beta components.
 
     Args:
         freqs (u.Quantity): Frequencies to evaluate
@@ -390,7 +433,7 @@ def evaluate_src_model(freqs: u.Quantity, src_row: Row, ref_nu: u.Quantity) -> u
         nu=freqs.to(u.Hz).value,
         norm=src_row["flux"].to(u.Jy).value,
         alpha=src_row["alpha"],
-        beta=src_row["q"],
+        beta=src_row["beta"],
         ref_nu=ref_nu.to(u.Hz).value,
     )
 
@@ -423,7 +466,7 @@ def load_catalogue(
     catalogue: str | None = None,
     ms_pointing: SkyCoord | None = None,
     assumed_alpha: float = -0.83,
-    assumed_q: float = 0.0,
+    assumed_beta: float = 0.0,
 ) -> tuple[Catalogue, Table]:
     """Load in a catalogue table given a name or measurement set declinattion.
 
@@ -432,7 +475,7 @@ def load_catalogue(
         catalogue (Optional[str], optional): Catalogue name to look up from known catalogues. Defaults to None.
         ms_pointing (Optional[SkyCoord], optional): Pointing direction of the measurement set. Defaults to None.
         assumed_alpha (float, optional): The assumed spectral index to use if there is no spectral index column known in model catalogue. Defaults to -0.83.
-        assumed_q (float, optional): The assumed curvature to use if there is no curvature column known in model catalogue. Defaults to 0.0.
+        assumed_beta (float, optional): The assumed curvature to use if there is no curvature column known in model catalogue. Defaults to 0.0.
 
     Raises:
         FileNotFoundError: Raised when a catalogue can not be resolved.
@@ -469,21 +512,238 @@ def load_catalogue(
     cata_tab = Table.read(cata_path)
     logger.info(f"Loaded table, found {len(cata_tab)} sources. ")
 
-    _cols = cata._asdict()
-    if cata.alpha_col is None:
+    return _fill_default_sed_columns(
+        catalogue=cata,
+        table=cata_tab,
+        assumed_alpha=assumed_alpha,
+        assumed_beta=assumed_beta,
+    )
+
+
+def _fill_default_sed_columns(
+    catalogue: Catalogue, table: Table, assumed_alpha: float, assumed_beta: float
+) -> tuple[Catalogue, Table]:
+    """Add default spectral-index/curvature columns to `table` for whichever
+    of `catalogue`'s alpha_col/beta_col are not set, returning a `Catalogue`
+    pointing at them.
+
+    Args:
+        catalogue (Catalogue): Catalogue description, possibly missing alpha_col/beta_col
+        table (Table): The loaded catalogue table
+        assumed_alpha (float): Default spectral index to fill in if alpha_col is None
+        assumed_beta (float): Default curvature to fill in if beta_col is None
+
+    Returns:
+        tuple[Catalogue, Table]: Updated catalogue description and table
+    """
+    cols = catalogue._asdict()
+    if catalogue.alpha_col is None:
         logger.info(
             f"No 'alpha' column, adding default spectral index of {assumed_alpha:.3f}. "
         )
-        cata_tab["alpha"] = assumed_alpha
-        _cols["alpha_col"] = "alpha"
-    if cata.q_col is None:
-        logger.info(f"No 'q' column, adding default {assumed_q:.3f}. ")
-        cata_tab["q"] = assumed_q
-        _cols["q_col"] = "q"
+        table["alpha"] = assumed_alpha
+        cols["alpha_col"] = "alpha"
+    if catalogue.beta_col is None:
+        logger.info(f"No 'beta' column, adding default {assumed_beta:.3f}. ")
+        table["beta"] = assumed_beta
+        cols["beta_col"] = "beta"
 
-    cata = Catalogue(**_cols)
+    return Catalogue(**cols), table
 
-    return (cata, cata_tab)
+
+def _deconvolve_catalogue_shapes(
+    table: Table,
+    maj_col: str,
+    min_col: str,
+    pa_col: str,
+    psf_maj_col: str,
+    psf_min_col: str,
+    psf_pa_col: str,
+    shape_unit: u.Unit,
+) -> None:
+    """Deconvolve as-observed (PSF-convolved) source sizes by their per-row
+    PSF, overwriting `maj_col`/`min_col`/`pa_col` in place with the intrinsic
+    sizes. A source whose PSF is not smaller than its observed size in every
+    direction is treated as unresolved (point-like), rather than raising.
+
+    Args:
+        table (Table): Table containing the columns to deconvolve, modified in place
+        maj_col (str): Column of as-observed major-axis sizes
+        min_col (str): Column of as-observed minor-axis sizes
+        pa_col (str): Column of as-observed position angles
+        psf_maj_col (str): Column of per-source PSF major-axis sizes
+        psf_min_col (str): Column of per-source PSF minor-axis sizes
+        psf_pa_col (str): Column of per-source PSF position angles
+        shape_unit (u.Unit): Unit that maj_col/min_col/psf_maj_col/psf_min_col are in
+    """
+    from radio_beam import Beam
+
+    new_maj = np.zeros(len(table))
+    new_min = np.zeros(len(table))
+    new_pa = np.zeros(len(table))
+
+    for i in range(len(table)):
+        observed = Beam(
+            major=float(table[maj_col][i]) * shape_unit,
+            minor=float(table[min_col][i]) * shape_unit,
+            pa=float(table[pa_col][i]) * u.deg,
+        )
+        psf = Beam(
+            major=float(table[psf_maj_col][i]) * shape_unit,
+            minor=float(table[psf_min_col][i]) * shape_unit,
+            pa=float(table[psf_pa_col][i]) * u.deg,
+        )
+        deconvolved = observed.deconvolve(psf, failure_returns_pointlike=True)
+        new_maj[i] = deconvolved.major.to(shape_unit).value
+        new_min[i] = deconvolved.minor.to(shape_unit).value
+        new_pa[i] = deconvolved.pa.to(u.deg).value
+
+    table[maj_col] = new_maj * shape_unit
+    table[min_col] = new_min * shape_unit
+    table[pa_col] = new_pa * u.deg
+
+
+def load_user_catalogue(sky_model_options: SkyModelOptions) -> tuple[Catalogue, Table]:
+    """Load a user-supplied catalogue for the sky model. Column names and
+    units are never guessed -- see the `SkyModelOptions.catalogue_*` fields.
+
+    Args:
+        sky_model_options (SkyModelOptions): Must have `catalogue_path` set
+
+    Raises:
+        ValueError: Raised if a required column is not set
+
+    Returns:
+        tuple[Catalogue, Table]: The `Catalogue` information and `Table` of components loaded
+    """
+    catalogue_path = sky_model_options.catalogue_path
+    assert catalogue_path is not None and catalogue_path.exists(), (
+        f"{catalogue_path=} must be set and exist"
+    )
+    if (
+        sky_model_options.catalogue_freq is None
+        and sky_model_options.catalogue_freq_col is None
+    ):
+        raise ValueError(
+            "One of catalogue_freq or catalogue_freq_col must be set for a "
+            "user-supplied catalogue -- never guessed"
+        )
+
+    ra_col = sky_model_options.catalogue_ra_col
+    dec_col = sky_model_options.catalogue_dec_col
+    flux_col = sky_model_options.catalogue_flux_col
+    if not (ra_col and dec_col and flux_col):
+        raise ValueError(
+            "catalogue_ra_col, catalogue_dec_col and catalogue_flux_col must all "
+            "be set for a user-supplied catalogue -- these are never guessed"
+        )
+
+    shape_cols = (
+        sky_model_options.catalogue_maj_col,
+        sky_model_options.catalogue_min_col,
+        sky_model_options.catalogue_pa_col,
+    )
+    if any(shape_cols) and not all(shape_cols):
+        raise ValueError(
+            "catalogue_maj_col/catalogue_min_col/catalogue_pa_col must be all "
+            "set or all unset"
+        )
+
+    table = Table.read(catalogue_path)
+    logger.info(f"Loaded user catalogue {catalogue_path}, found {len(table)} sources. ")
+
+    radec_unit = u.Unit(sky_model_options.catalogue_radec_unit)
+    table[ra_col].unit = radec_unit
+    table[dec_col].unit = radec_unit
+    table[flux_col].unit = u.Unit(sky_model_options.catalogue_flux_unit)
+
+    freq_col = sky_model_options.catalogue_freq_col
+    if freq_col is not None:
+        table[freq_col].unit = u.Unit(sky_model_options.catalogue_freq_unit)
+
+    name_col = sky_model_options.catalogue_name_col
+    if name_col is None:
+        name_col = "_flint_src_name"
+        table[name_col] = [f"src{i}" for i in range(len(table))]
+
+    if all(shape_cols):
+        maj_col, min_col, pa_col = shape_cols
+        assert maj_col is not None and min_col is not None and pa_col is not None, (
+            "Expected shape columns to be set, received None. "
+        )
+        shape_unit = u.Unit(sky_model_options.catalogue_shape_unit)
+        table[maj_col].unit = shape_unit
+        table[min_col].unit = shape_unit
+        table[pa_col].unit = u.deg
+
+        if sky_model_options.catalogue_sizes_deconvolved is None:
+            raise ValueError(
+                "catalogue_sizes_deconvolved must be set (True or False) "
+                "whenever catalogue_maj_col is set -- never guessed"
+            )
+        if not sky_model_options.catalogue_sizes_deconvolved:
+            psf_cols = (
+                sky_model_options.catalogue_psf_maj_col,
+                sky_model_options.catalogue_psf_min_col,
+                sky_model_options.catalogue_psf_pa_col,
+            )
+            if not all(psf_cols):
+                raise ValueError(
+                    "catalogue_psf_maj_col/catalogue_psf_min_col/catalogue_psf_pa_col "
+                    "must all be set when catalogue_sizes_deconvolved is False "
+                    "-- there is no pipeline restoring beam to fall back on here"
+                )
+            psf_maj_col, psf_min_col, psf_pa_col = psf_cols
+            assert (
+                psf_maj_col is not None
+                and psf_min_col is not None
+                and psf_pa_col is not None
+            ), "Expected PSF columns to be set, received None. "
+            table[psf_maj_col].unit = shape_unit
+            table[psf_min_col].unit = shape_unit
+            table[psf_pa_col].unit = u.deg
+            _deconvolve_catalogue_shapes(
+                table=table,
+                maj_col=maj_col,
+                min_col=min_col,
+                pa_col=pa_col,
+                psf_maj_col=psf_maj_col,
+                psf_min_col=psf_min_col,
+                psf_pa_col=psf_pa_col,
+                shape_unit=shape_unit,
+            )
+    else:
+        maj_col, min_col, pa_col = (
+            "_flint_src_maj",
+            "_flint_src_min",
+            "_flint_src_pa",
+        )
+        table[maj_col] = np.zeros(len(table)) * u.arcsecond
+        table[min_col] = np.zeros(len(table)) * u.arcsecond
+        table[pa_col] = np.zeros(len(table)) * u.deg
+
+    catalogue = Catalogue(
+        survey="USER",
+        file_name=catalogue_path.name,
+        freq=sky_model_options.catalogue_freq or 0.0,
+        ra_col=ra_col,
+        dec_col=dec_col,
+        name_col=name_col,
+        flux_col=flux_col,
+        maj_col=maj_col,
+        min_col=min_col,
+        pa_col=pa_col,
+        alpha_col=sky_model_options.catalogue_alpha_col,
+        beta_col=sky_model_options.catalogue_beta_col,
+        vizier_id=None,
+    )
+
+    return _fill_default_sed_columns(
+        catalogue=catalogue,
+        table=table,
+        assumed_alpha=sky_model_options.assumed_alpha,
+        assumed_beta=sky_model_options.assumed_beta,
+    )
 
 
 def preprocess_catalogue(
@@ -492,6 +752,7 @@ def preprocess_catalogue(
     ms_pointing: SkyCoord,
     flux_cut: float = 0.02,
     radial_cut: u.deg = 1.0 * u.deg,
+    ref_freq_col: str | None = None,
 ) -> QTable:
     """Apply the flux and separation cuts to a loaded table, and transform input column names to an
     expected set of column names.
@@ -502,6 +763,9 @@ def preprocess_catalogue(
         ms_pointing (SkyCoord): Pointing of the measurement set
         flux_cut (float, optional): Flux cut in Jy. Defaults to 0.02.
         radial_cut (u.deg, optional): Radial separation cut in deg. Defaults to 1..
+        ref_freq_col (str | None, optional): A column (already in Hz) to carry through
+            as "ref_freq", used as the per-row SED reference frequency instead of
+            `cata_info.freq`. Defaults to None.
 
     Returns:
         QTable: _description_
@@ -529,9 +793,12 @@ def preprocess_catalogue(
         cata_info.min_col,
         cata_info.pa_col,
         cata_info.alpha_col,
-        cata_info.q_col,
+        cata_info.beta_col,
     ]
-    out_cols = ["RA", "DEC", "name", "flux", "maj", "min", "pa", "alpha", "q"]
+    out_cols = ["RA", "DEC", "name", "flux", "maj", "min", "pa", "alpha", "beta"]
+    if ref_freq_col is not None:
+        cols = [*cols, ref_freq_col]
+        out_cols = [*out_cols, "ref_freq"]
     new_cata_tab = cata_tab[cols]
 
     for orig, new in zip(cols, out_cols):
@@ -618,7 +885,7 @@ def make_hyperdrive_model(out_path: Path, sources: list[tuple[Row, CurvedPL]]) -
         flux_type = {
             "curved_power_law": {
                 "si": float(cpl.alpha),
-                "q": float(cpl.q),
+                "q": float(cpl.beta),
                 "fd": {"freq": float(cpl.ref_nu), "i": float(cpl.norm)},
             }
         }
@@ -675,7 +942,7 @@ def make_calibrate_model(out_path: Path, sources: list[tuple[Row, CurvedPL]]) ->
                     f"{ra_str},"
                     f"{dec_str},"
                     f"{src_cpl.norm},"
-                    f"[{src_cpl.alpha},{src_cpl.q}],"
+                    f"[{src_cpl.alpha},{src_cpl.beta}],"
                     f"true,{ref_nu},,,\n"
                 )
             else:
@@ -685,7 +952,7 @@ def make_calibrate_model(out_path: Path, sources: list[tuple[Row, CurvedPL]]) ->
                     f"{ra_str},"
                     f"{dec_str},"
                     f"{src_cpl.norm},"
-                    f"[{src_cpl.alpha},{src_cpl.q}],"
+                    f"[{src_cpl.alpha},{src_cpl.beta}],"
                     f"true,{ref_nu},"
                     f"{src_row['maj'].to(u.arcsecond).value},"
                     f"{src_row['maj'].to(u.arcsecond).value},"
@@ -730,7 +997,7 @@ def get_sky_model_output_paths(ms_path: Path) -> SkyModelOutputPaths:
 
 
 def create_sky_model(
-    ms_path: Path, sky_model_options: SkyModelOptions
+    ms_path: Path, sky_model_options: SkyModelOptions, holofile: Path | None = None
 ) -> SkyModel | None:
     """Create a sky-model to calibrate RACS based measurement sets.
 
@@ -739,12 +1006,23 @@ def create_sky_model(
     Args:
         ms_path (Path): Measurement set to create sky-model for
         sky_model_options (SkyModelOptions): Options to use to construct the sky model
+        holofile (Path | None, optional): Measured holography cube to sample the primary-beam
+            response from. If None, an idealized Gaussian primary beam is used instead. Defaults to None.
 
     Returns:
         SkyModel | None -- Basic informattion concerning the sky-model derived and the output files. If no sources were selected then None is returned.
     """
 
     assert ms_path.exists(), f"Measurement set {ms_path} does not exist. "
+
+    beam = extract_beam_from_name(name=ms_path) if holofile is not None else None
+    # Fields can be rotated on the sky relative to the holography; alpha is the
+    # same differential rotation flint uses for linmos's ASKAP_PB.alpha option.
+    alpha = (
+        compute_pb_rotation_alpha(pol_axis=get_pol_axis_as_rad(ms=ms_path))
+        if holofile is not None
+        else None
+    )
 
     direction = get_phase_dir_from_ms(ms=ms_path)
     logger.info(
@@ -764,19 +1042,36 @@ def create_sky_model(
     ).decompose()  # The lowest frequency FWHM is largest
     logger.info(f"Radial cutoff = {radial_cutoff.to(u.deg).value:.3f} degrees")
 
-    cata_info, cata_tab = load_catalogue(
-        catalogue_dir=sky_model_options.reference_catalogue_directory,
-        catalogue=sky_model_options.reference_name,
-        ms_pointing=direction,
-        assumed_alpha=sky_model_options.assumed_alpha,
-        assumed_q=sky_model_options.assumed_q,
-    )
+    if sky_model_options.catalogue_path is not None:
+        cata_info, cata_tab = load_user_catalogue(sky_model_options=sky_model_options)
+    else:
+        cata_info, cata_tab = load_catalogue(
+            catalogue_dir=sky_model_options.reference_catalogue_directory,
+            catalogue=sky_model_options.reference_name,
+            ms_pointing=direction,
+            assumed_alpha=sky_model_options.assumed_alpha,
+            assumed_beta=sky_model_options.assumed_beta,
+        )
+
+    # Normalise the per-row SED reference frequency into a single column,
+    # whether it is a per-source column from a user catalogue or a single
+    # value shared by every source (every known catalogue, or a user
+    # catalogue given a single catalogue_freq)
+    ref_freq_col = "_flint_ref_freq"
+    if sky_model_options.catalogue_path is not None and (
+        sky_model_options.catalogue_freq_col is not None
+    ):
+        cata_tab[ref_freq_col] = cata_tab[sky_model_options.catalogue_freq_col].to(u.Hz)
+    else:
+        cata_tab[ref_freq_col] = cata_info.freq * u.Hz
+
     cata_tab = preprocess_catalogue(
         cata_info,
         cata_tab,
         ms_pointing=direction,
         flux_cut=sky_model_options.flux_cutoff,
         radial_cut=radial_cutoff,
+        ref_freq_col=ref_freq_col,
     )
 
     total_flux: u.Jy = 0.0 * u.Jy
@@ -786,20 +1081,29 @@ def create_sky_model(
         src_pos = SkyCoord(row["RA"], row["DEC"])
         src_sep = src_pos.separation(direction)
 
-        # Get the primary beam response
-        gauss_taper = generate_gaussian_pb(
-            freqs=freqs, aperture=12.0 * u.m, offset=src_sep
-        )
+        # Get the primary beam response, preferring the measured holography
+        # beam over the idealized Gaussian when available
+        if holofile is not None:
+            assert beam is not None, "Expected beam to be resolved, received None. "
+            atten = sample_beam_attenuation(
+                holofile=holofile,
+                beam=beam,
+                position=src_pos,
+                freqs=freqs,
+                alpha=alpha,
+            )
+        else:
+            atten = generate_gaussian_pb(
+                freqs=freqs, aperture=12.0 * u.m, offset=src_sep
+            ).atten
 
         # Calculate the expected model
-        src_model = evaluate_src_model(
-            freqs=freqs, src_row=row, ref_nu=cata_info.freq * u.Hz
-        )
+        src_model = evaluate_src_model(freqs=freqs, src_row=row, ref_nu=row["ref_freq"])
 
         # Estimate the apparent model (intrinsic*response), and
         # then numerically fit to it
         predict_model = fit_curved_pl(
-            freqs=freqs, flux=src_model * gauss_taper.atten, ref_nu=freqs[0]
+            freqs=freqs, flux=src_model * atten, ref_nu=freqs[0]
         )
 
         if predict_model.norm < sky_model_options.flux_cutoff:
@@ -809,7 +1113,7 @@ def create_sky_model(
         total_flux += predict_model.norm * u.Jy
 
         logger.info(
-            f"{len(accepted_rows):05d} Sep={src_sep.to(u.deg):.3f} S_ref={predict_model.norm:.3f} SI={predict_model.alpha:.3f} q={predict_model.q:.3f}"
+            f"{len(accepted_rows):05d} Sep={src_sep.to(u.deg):.3f} S_ref={predict_model.norm:.3f} SI={predict_model.alpha:.3f} beta={predict_model.beta:.3f}"
         )
 
     logger.info(
