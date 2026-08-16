@@ -1,5 +1,8 @@
 [build-system]
-# Pin hatchling for hynek/build-and-inspect-python-package@v2
+# hatchling>=1.32 defaults to emitting Metadata-Version 2.5, which the
+# `packaging` library's validator (used by `twine check`) does not yet
+# recognise, breaking `twine check --strict` in CI. Pin below 1.32 until
+# packaging adds 2.5 support.
 requires = ["hatchling<1.32", "hatch-vcs"]
 build-backend = "hatchling.build"
 
