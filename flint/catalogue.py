@@ -9,6 +9,7 @@ and retained on disk.
 
 from __future__ import annotations
 
+import time
 from argparse import ArgumentParser
 from pathlib import Path
 from typing import NamedTuple
@@ -266,16 +267,26 @@ def get_reference_catalogue(
 
 
 def download_vizier_catalogue(
-    output_path: Path, vizier_id: str, dry_run: bool = False
+    output_path: Path,
+    vizier_id: str,
+    dry_run: bool = False,
+    attempts: int = 3,
+    retry_delay_seconds: float = 5.0,
 ) -> Path:
     """Download a catalogue from the vizier catalogue service. The table
     will be obtained using astroquery and written out to the supplied
     `output_path`, from which the format is inferred.
 
+    The vizier service can transiently return an empty table list (rather
+    than raising) when it is under load, so the query is retried a few
+    times before giving up.
+
     Args:
         output_path (Path): Where the table will be written to
         vizier_id (str): The catalogue ID that will be downloaded
         dry_run (bool, optional): If `True`, no downloading will take place. Defaults to False.
+        attempts (int, optional): Number of times to try the vizier query before giving up. Defaults to 3.
+        retry_delay_seconds (float, optional): Seconds to wait between retries. Defaults to 5.0.
 
     Returns:
         Path: Path the file was written to
@@ -286,15 +297,25 @@ def download_vizier_catalogue(
         logger.info(f"{dry_run=}, not downloading")
         return output_path
 
-    tablelist = Vizier(
-        columns=["_RAJ2000", "_DEJ2000", "all"], row_limit=-1
-    ).get_catalogs(vizier_id, verbose=True)
-    logger.info(f"catalogue downloaded, contains {len(tablelist[0])} rows")
-    logger.info(f"Writing {vizier_id=} to {output_path=}")
+    tablelist = []
+    for attempt in range(1, attempts + 1):
+        tablelist = Vizier(
+            columns=["_RAJ2000", "_DEJ2000", "all"], row_limit=-1
+        ).get_catalogs(vizier_id, verbose=True)
+        if len(tablelist) == 1:
+            break
+        logger.warning(
+            f"Attempt {attempt}/{attempts} for {vizier_id=} returned "
+            f"{len(tablelist)} tables, expected 1"
+        )
+        if attempt < attempts:
+            time.sleep(retry_delay_seconds)
 
     assert len(tablelist) == 1, (
-        f"Table list for {vizier_id=} has unexpected length of {len(tablelist)}"
+        f"Table list for {vizier_id=} has unexpected length of {len(tablelist)} after {attempts} attempts"
     )
+    logger.info(f"catalogue downloaded, contains {len(tablelist[0])} rows")
+    logger.info(f"Writing {vizier_id=} to {output_path=}")
 
     # Note all pirates respect the FITS standard@
     if description := tablelist[0].meta.get("description", None):
