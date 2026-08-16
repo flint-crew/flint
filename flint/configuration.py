@@ -23,6 +23,7 @@ from flint.options import (
     FitsCubeOptions,
     RMCleanOptions,
     RMSynthOptions,
+    SpiceOptions,
 )
 from flint.peel.potato import PotatoPeelOptions
 from flint.selfcal.casa import GainCalOptions
@@ -52,6 +53,7 @@ MODE_OPTIONS_MAPPING = {
     "tukeytractor": TukeyTractorOptions,
     "rmsynth": RMSynthOptions,
     "rmclean": RMCleanOptions,
+    "spice": SpiceOptions,
 }
 POLARISATION_MAPPING = {
     "total": "i",
