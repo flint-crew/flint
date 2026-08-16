@@ -145,7 +145,7 @@ def test_create_sky_model_uses_holography_when_supplied(
 
     calls = []
 
-    def _fake_attenuation(holofile, beam, position, freqs):
+    def _fake_attenuation(holofile, beam, position, freqs, alpha=None):
         calls.append((holofile, beam))
         return np.ones(len(freqs))
 

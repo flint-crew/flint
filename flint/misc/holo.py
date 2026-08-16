@@ -67,12 +67,37 @@ def celestial_wcs_from_header(header: fits.Header) -> WCS:
     return WCS(header).celestial
 
 
+def _rotate_position_about_tangent_point(
+    position: SkyCoord, wcs: WCS, alpha: float
+) -> SkyCoord:
+    """Rotate `position` about `wcs`'s tangent point (CRVAL) by `-alpha`.
+
+    linmos's `ASKAP_PB` primary beam is only ever given a single scalar
+    `alpha` (see `flint.coadd.linmos.compute_pb_rotation_alpha`) -- no
+    separate pointing-centre parset option -- so the cube's own tangent
+    point must already be registered to this field's nominal boresight, and
+    the whole beam footprint (all beams, as a rigid pattern) rotates about
+    that same point when the field's actual third-axis orientation departs
+    from the nominal holography orientation. This undoes that rotation for
+    `position` so it lands back where it would be in the cube's own
+    (un-rotated) frame.
+    """
+    tangent_point = SkyCoord(wcs.wcs.crval[0] * u.deg, wcs.wcs.crval[1] * u.deg)
+    position_icrs = SkyCoord(ra=position.icrs.ra, dec=position.icrs.dec)
+    dra, ddec = tangent_point.spherical_offsets_to(position_icrs)
+    cos_a, sin_a = np.cos(-alpha), np.sin(-alpha)
+    dra_rot = dra * cos_a - ddec * sin_a
+    ddec_rot = dra * sin_a + ddec * cos_a
+    return tangent_point.spherical_offsets_by(dra_rot, ddec_rot)
+
+
 def sample_beam_attenuation(
     holofile: Path,
     beam: int,
     position: SkyCoord,
     freqs: u.Quantity,
     stokes: int = 0,
+    alpha: float | None = None,
 ) -> NDArray[np.floating]:
     """Sample the measured ASKAP holography primary-beam response for a
     single beam and sky position: bilinearly interpolated at the sky
@@ -84,6 +109,12 @@ def sample_beam_attenuation(
         position (SkyCoord): Sky position to sample the beam response at
         freqs (u.Quantity): Frequencies to interpolate the cube's own frequency grid onto
         stokes (int, optional): Stokes index to sample. Defaults to 0 (Stokes I)
+        alpha (float | None, optional): Differential rotation, in radians, between
+            the field's third-axis orientation and the frame the holography cube
+            was measured in (see `flint.coadd.linmos.compute_pb_rotation_alpha`,
+            the same value used to set linmos's `ASKAP_PB.alpha`). If set,
+            `position` is de-rotated about the cube's own tangent point before
+            sampling. Defaults to None (no rotation applied).
 
     Raises:
         ValueError: Raised if `position` falls outside the holography cube
@@ -94,6 +125,11 @@ def sample_beam_attenuation(
     with fits.open(holofile, memmap=True) as hdul:
         header = hdul[0].header
         wcs = celestial_wcs_from_header(header)
+
+        if alpha is not None:
+            position = _rotate_position_about_tangent_point(
+                position=position, wcs=wcs, alpha=alpha
+            )
 
         x, y = skycoord_to_pixel(position, wcs=wcs, origin=0)
 

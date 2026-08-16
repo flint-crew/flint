@@ -16,9 +16,10 @@ from capn_crunch import BaseOptions, add_options_to_parser, create_options_from_
 from scipy.optimize import curve_fit
 
 from flint.catalogue import KNOWN_REFERENCE_CATALOGUES, Catalogue
+from flint.coadd.linmos import compute_pb_rotation_alpha
 from flint.logging import logger
 from flint.misc.holo import sample_beam_attenuation
-from flint.ms import get_freqs_from_ms, get_phase_dir_from_ms
+from flint.ms import get_freqs_from_ms, get_phase_dir_from_ms, get_pol_axis_as_rad
 from flint.naming import extract_beam_from_name
 from flint.utils import get_packaged_resource_path
 
@@ -1004,6 +1005,13 @@ def create_sky_model(
     assert ms_path.exists(), f"Measurement set {ms_path} does not exist. "
 
     beam = extract_beam_from_name(name=ms_path) if holofile is not None else None
+    # Fields can be rotated on the sky relative to the holography; alpha is the
+    # same differential rotation flint uses for linmos's ASKAP_PB.alpha option.
+    alpha = (
+        compute_pb_rotation_alpha(pol_axis=get_pol_axis_as_rad(ms=ms_path))
+        if holofile is not None
+        else None
+    )
 
     direction = get_phase_dir_from_ms(ms=ms_path)
     logger.info(
@@ -1066,7 +1074,11 @@ def create_sky_model(
         # beam over the idealized Gaussian when available
         if holofile is not None:
             atten = sample_beam_attenuation(
-                holofile=holofile, beam=beam, position=src_pos, freqs=freqs
+                holofile=holofile,
+                beam=beam,
+                position=src_pos,
+                freqs=freqs,
+                alpha=alpha,
             )
         else:
             atten = generate_gaussian_pb(

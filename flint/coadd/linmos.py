@@ -417,13 +417,42 @@ def generate_weights_list_and_files(
     return tuple(weight_file_list)
 
 
+def compute_pb_rotation_alpha(pol_axis: float) -> float:
+    """Compute the differential rotation, in radians, between a field's
+    third-axis orientation and the frame the holography cube was measured
+    in. The typical holography rotation is -45 degs. Internally the
+    `alpha` term is computed as:
+
+    >>> pol_axis - EXPECTED_HOLOGRAPHY_ROTATION_CONSTANT_RADIANS
+
+    Used both to build linmos's `ASKAP_PB.alpha` option (`_get_alpha_linmos_option`)
+    and to directly sample a holography cube's response for a rotated field
+    (`flint.misc.holo.sample_beam_attenuation`).
+
+    Args:
+        pol_axis (float): The prescribed polarisation axis value described in a MS, in radians.
+
+    Returns:
+        float: The differential rotation, in radians
+    """
+    assert np.abs(pol_axis) <= 2.0 * np.pi, (
+        f"{pol_axis=}, which is outside +/- 2pi radians and seems unreasonable"
+    )
+
+    logger.info(
+        f"The constant assumed holography rotation is: {EXPECTED_HOLOGRAPHY_ROTATION_CONSTANT_RADIANS:.4f} radians"
+    )
+    logger.info(f"The extracted pol_axis of the field: {pol_axis:.4f} radians")
+    alpha = pol_axis - EXPECTED_HOLOGRAPHY_ROTATION_CONSTANT_RADIANS
+    logger.info(f"Differential rotation is: {alpha} rad")
+
+    return alpha
+
+
 def _get_alpha_linmos_option(pol_axis: float | None = None) -> str:
     """Compute the appropriate alpha term for linmos that is used to
     describe the differential rotation of the ASKAP third-axis and the
-    footprint layout. The typical holography rotation is -45 degs. Internally
-    the `alpha` term is computed as:
-
-    >>> pol_axis - EXPECTED_HOLOGRAPHY_ROTATION_CONSTANT_RADIANS
+    footprint layout. See `compute_pb_rotation_alpha`.
 
     Args:
         pol_axis (Optional[float], optional): The prescribed polarisation axis value described in a MS. Defaults to None.
@@ -439,16 +468,7 @@ def _get_alpha_linmos_option(pol_axis: float | None = None) -> str:
     if pol_axis is None:
         return ""
 
-    assert np.abs(pol_axis) <= 2.0 * np.pi, (
-        f"{pol_axis=}, which is outside +/- 2pi radians and seems unreasonable"
-    )
-
-    logger.info(
-        f"The constant assumed holography rotation is: {EXPECTED_HOLOGRAPHY_ROTATION_CONSTANT_RADIANS:.4f} radians"
-    )
-    logger.info(f"The extracted pol_axis of the field: {pol_axis:.4f} radians")
-    alpha = pol_axis - EXPECTED_HOLOGRAPHY_ROTATION_CONSTANT_RADIANS
-    logger.info(f"Differential rotation is: {alpha} rad")
+    alpha = compute_pb_rotation_alpha(pol_axis=pol_axis)
 
     return f"linmos.primarybeam.ASKAP_PB.alpha = {alpha} # in radians\n"
 
