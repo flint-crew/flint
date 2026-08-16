@@ -311,9 +311,10 @@ def download_vizier_catalogue(
         if attempt < attempts:
             time.sleep(retry_delay_seconds)
 
-    assert len(tablelist) == 1, (
-        f"Table list for {vizier_id=} has unexpected length of {len(tablelist)} after {attempts} attempts"
-    )
+    if len(tablelist) != 1:
+        raise ConnectionError(
+            f"Table list for {vizier_id=} has unexpected length of {len(tablelist)} after {attempts} attempts"
+        )
     logger.info(f"catalogue downloaded, contains {len(tablelist[0])} rows")
     logger.info(f"Writing {vizier_id=} to {output_path=}")
 
