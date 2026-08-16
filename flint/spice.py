@@ -11,7 +11,7 @@ import astropy.units as u
 import numpy as np
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
-from astropy.table import Table
+from astropy.table import Row, Table
 from astropy.wcs import WCS
 from astropy.wcs.utils import proj_plane_pixel_scales, skycoord_to_pixel
 from radio_beam import Beam
@@ -77,7 +77,7 @@ def _resolve_columns(
 
 
 def _row_psf_beam(
-    row,
+    row: Row,
     spice_options: SpiceOptions,
     is_user_catalogue: bool,
     common_beam_shape: BeamShape,
@@ -104,7 +104,7 @@ def _row_psf_beam(
 
 
 def _component_box(
-    row,
+    row: Row,
     ra_col: str,
     dec_col: str,
     shape_cols: tuple[str, str, str] | None,

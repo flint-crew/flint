@@ -303,6 +303,9 @@ def process_science_fields_pol(
                 holofile=pol_field_options.holofile,
                 cutoff=pol_field_options.pb_cutoff,
                 cleanup=True,
+                # Must match the untrimmed shape of the per-channel/cube images
+                # spice_fits later compares this reference's shape against.
+                trim_linmos_fits=False,
             ),
             field_summary=field_summary,
             holofile=pol_field_options.holofile,
