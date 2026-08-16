@@ -353,6 +353,23 @@ def get_options_from_strategy(
         logger.debug(f"Updating options with {update_options=}")
         options.update(update_options)
 
+    if polarisation is not None and mode == "wsclean":
+        # Hardcoded to keep parallel imaging of all Stokes/MSs safe and to
+        # avoid spurious spectral fitting / source lists on Q, U and V.
+        hardcoded_options: dict[str, Any] = {"no_update_model_required": True}
+        if polarisation == "linear":
+            hardcoded_options["fit_spectral_pol"] = None
+        if polarisation in ("linear", "circular"):
+            hardcoded_options["save_source_list"] = False
+
+        for key, value in hardcoded_options.items():
+            if key in options and options[key] != value:
+                logger.warning(
+                    f"Requested {key}={options[key]!r} for {polarisation=} wsclean "
+                    f"options is not supported. Hardcoding to {value!r}."
+                )
+        options.update(hardcoded_options)
+
     return options
 
 
