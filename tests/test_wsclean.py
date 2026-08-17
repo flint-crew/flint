@@ -387,6 +387,26 @@ def test_transpose_and_sort_channel_images() -> None:
         )
 
 
+def test_transpose_and_sort_channel_images_wsclean_raw_index() -> None:
+    """When channels are imaged individually without being grouped into a flint
+    ch<lo>-<hi> range, images only carry wsclean's own bare per-channel index
+    (e.g. ``.0000``). This must still be sortable/groupable rather than
+    raising - regression test for the "No channel range in path" crash."""
+    base = "SB56289.RACS_1041+18.beam{beam:02d}.round1.i.{idx:04d}.image.conv.fits"
+
+    def beam_list(beam: int, order: list[int]) -> list[Path]:
+        return [Path(base.format(beam=beam, idx=idx)) for idx in order]
+
+    beam_channel_images = [beam_list(0, [0, 1, 2]), beam_list(1, [2, 0, 1])]
+
+    channel_groups = transpose_and_sort_channel_images(beam_channel_images)
+
+    assert len(channel_groups) == 3
+    for idx, group in enumerate(channel_groups):
+        assert len(group) == 2
+        assert all(f".{idx:04d}.image" in str(p) for p in group)
+
+
 def test_get_cli_parser() -> None:
     """capn_crunch was throwing error over duplicated options being added to
     the argpase object. No conflicting options means the parser should just
@@ -571,6 +591,24 @@ def test_regex_rename_wsclean_title():
     out_ex = "SB39400.RACS_0635-31.beam33.i.ch109-110.i.MFS.image"
     assert _rename_wsclean_title(name_str=ex) == out_ex
 
+    # wsclean's own bare per-channel index (no flint ch<lo>-<hi> range) must still
+    # be dot-converted rather than left as a stray hyphen - regression test for the
+    # negative lookbehind typo that previously left this as `i-0000-image`. It is
+    # also reformatted into flint's ch<lo>-<hi> range so it parses back out as a
+    # proper channel_range rather than an ambiguous bare index.
+    ex = "SB56289.RACS_1041+18.beam00.round1.i-0000-image.fits"
+    out_ex = "SB56289.RACS_1041+18.beam00.round1.i.ch0000-0001.image.fits"
+    assert _rename_wsclean_title(name_str=ex) == out_ex
+
+
+def test_regex_rename_wsclean_title_timestep():
+    """wsclean's own `-t00005` timestep suffix (from interval-based imaging) must
+    be folded into flint's scan<lo>-<hi> range convention, not left as a bare
+    index or mislabelled as a multiscale term."""
+    ex = "SB56289.RACS_1041+18.beam00.round1.i-0000-t00005-image.fits"
+    out_ex = "SB56289.RACS_1041+18.beam00.round1.i.ch0000-0001.scan0005-0006.image.fits"
+    assert _rename_wsclean_title(name_str=ex) == out_ex
+
 
 def test_regex_stokes_wsclean_title():
     """Test whether all stokes values are picked up properly"""
@@ -587,6 +625,52 @@ def test_regex_stokes_wsclean_title():
     name = "SB59058.RACS_1626-84.beam34.round4.i.ch287-288-image.fits"
     out_name = "SB59058.RACS_1626-84.beam34.round4.i.ch287-288.image.fits"
     assert _rename_wsclean_title(name_str=name) == out_name
+
+
+@pytest.mark.parametrize(
+    "project",
+    [
+        "pol",
+        "image",
+        "dirty",
+        "model",
+        "residual",
+        "psf",
+        "MFS",
+        "i",
+        "q",
+        "jack",
+        "sparrow",
+    ],
+)
+def test_rename_wsclean_title_project_field_collision(project: str):
+    """The `project` field is a free-form token (e.g. `.project-<name>.`) that sits
+    ahead of the wsclean-appended suffix in the file name. If a project name happens
+    to collide with a reserved wsclean token (an image type, MFS, or a pol letter),
+    the wsclean suffix search must not match inside the project token instead of the
+    real trailing suffix."""
+    ex = f"SB56289.RACS_1041+18.project-{project}.beam15.round1.i-0000-image.fits"
+    out_ex = (
+        f"SB56289.RACS_1041+18.project-{project}.beam15.round1.i.ch0000-0001.image.fits"
+    )
+    assert _rename_wsclean_title(name_str=ex) == out_ex
+
+
+def test_rename_wsclean_title_qu_joint_pol():
+    """The join_polarizations 'qu' tag should be folded into a single-letter
+    pol field per wsclean's own per-image -Q/-U suffix, for both per-channel
+    and MFS outputs."""
+    ex = "SB56289.RACS_1041+18.beam15.round1.qu-0000-Q-image.fits"
+    out_ex = "SB56289.RACS_1041+18.beam15.round1.q.ch0000-0001.image.fits"
+    assert _rename_wsclean_title(name_str=ex) == out_ex
+
+    ex = "SB56289.RACS_1041+18.beam15.round1.qu-0000-U-image.fits"
+    out_ex = "SB56289.RACS_1041+18.beam15.round1.u.ch0000-0001.image.fits"
+    assert _rename_wsclean_title(name_str=ex) == out_ex
+
+    ex = "SB56289.RACS_1041+18.beam15.round1.qu-MFS-Q-residual.fits"
+    out_ex = "SB56289.RACS_1041+18.beam15.round1.q.MFS.residual.fits"
+    assert _rename_wsclean_title(name_str=ex) == out_ex
 
 
 def test_combine_subbands_to_cube(tmpdir):
@@ -610,14 +694,18 @@ def test_combine_subbands_to_cube(tmpdir):
     )
 
     new_image_set = combine_image_set_to_cube(
-        image_set=image_set, remove_original_images=False
+        image_set=image_set,
+        fitscube_options=FitsCubeOptions(remove_original_images=False),
     )
 
     assert new_image_set.prefix == image_set.prefix
     assert len(new_image_set.image) == 1
 
     with pytest.raises(TypeError):
-        _ = combine_image_set_to_cube(image_set=files, remove_original_images=False)  # type: ignore
+        _ = combine_image_set_to_cube(
+            image_set=files,  # type: ignore
+            fitscube_options=FitsCubeOptions(remove_original_images=False),
+        )
 
 
 def test_combine_subbands_to_cube2(tmpdir):
@@ -641,7 +729,8 @@ def test_combine_subbands_to_cube2(tmpdir):
     )
 
     new_image_set = combine_image_set_to_cube(
-        image_set=image_set, remove_original_images=True
+        image_set=image_set,
+        fitscube_options=FitsCubeOptions(remove_original_images=True),
     )
     assert all([not file.exists() for file in files])
     assert new_image_set.prefix == image_set.prefix
@@ -715,6 +804,15 @@ def test_create_wsclean_name_argument(ms_example):
     )
 
     assert "/jack/sparrow/SB39400.RACS_0635-31.beam0.small.i" == str(name_argument_path)
+
+    wsclean_options_3 = WSCleanOptions(flint_name_suffix="pol")
+    name_argument_path = create_wsclean_name_argument(
+        wsclean_options=wsclean_options_3, ms=ms
+    )
+
+    assert f"{parent}/SB39400.RACS_0635-31.project-pol.beam00.i" == str(
+        name_argument_path
+    )
 
 
 def test_create_wsclean_name_argument_with_list_mss(ms_example) -> None:
@@ -982,6 +1080,49 @@ def test_merge_image_sets():
 
     assert isinstance(merged, ImageSet)
     assert merged.prefix == "JackSparrow"
+
+    assert merged.image is not None
+    assert len(merged.image) == 8
+    assert isinstance(merged.image[0], Path)
+
+    assert merged.dirty is not None
+    assert len(merged.dirty) == 8
+    assert isinstance(merged.dirty[0], Path)
+
+    assert merged.model is not None
+    assert len(merged.model) == 8
+    assert isinstance(merged.model[0], Path)
+
+    assert merged.residual is not None
+    assert len(merged.residual) == 8
+    assert isinstance(merged.residual[0], Path)
+
+    assert merged.psf is not None
+    assert len(merged.psf) == 8
+    assert isinstance(merged.psf[0], Path)
+
+
+def test_merge_image_sets_with_source_list():
+    """Test merging image sets. The source list property of the ImageSet is not
+    a list type."""
+    source_list = get_wsclean_output_source_list_path(name_path="JackSparrow", pol="i")
+
+    image_set = get_wsclean_output_names(
+        prefix="JackSparrow", subbands=4, include_mfs=False
+    )
+    image_set = image_set.with_options(source_list=source_list)
+
+    image_set2 = get_wsclean_output_names(
+        prefix="JackSparrow", subbands=4, include_mfs=False
+    )
+    image_set2 = image_set2.with_options(source_list=source_list)
+
+    merged = merge_image_sets(image_sets=[image_set, image_set2])
+
+    assert isinstance(merged, ImageSet)
+    assert merged.prefix == "JackSparrow"
+    assert merged.source_list is not None
+    assert merged.source_list == source_list
 
     assert merged.image is not None
     assert len(merged.image) == 8

@@ -17,6 +17,7 @@ import yaml
 from astropy.coordinates import EarthLocation, SkyCoord
 from astropy.time import Time
 from capn_crunch import BaseOptions
+from pydantic import create_model
 
 from flint.exceptions import MSError
 from flint.logging import logger
@@ -232,6 +233,122 @@ class PolFieldOptions(BaseOptions):
     """Path to a FLINT imaging yaml file that contains settings to use throughout imaging"""
     sbid_copy_path: Path | None = None
     """Path that final processed products will be copied into. If None no copying of file products is performed. See ArchiveOptions. """
+    run_rmsynth: bool = False
+    """Run RM-synthesis (and optionally RM-CLEAN) on the Stokes Q/U cubes once created. Requires 'linear' to have been imaged."""
+    rmsynth_cube_products: list[Literal["dirty", "clean", "model"]] = []
+    """Which Faraday dispersion function (FDF) cubes to write as FITS. 'dirty' is the raw FDF (no RM-CLEAN needed). 'clean'/'model' are RM-CLEAN's cleaned/clean-component FDF (RM-CLEAN is run if either is requested). Empty by default, as these cubes are large."""
+    rmsynth_moment_products: list[Literal["dirty", "clean", "model"]] = ["clean"]
+    """Which FDF(s) to compute Faraday moment maps (mom0=polarised intensity, mom1=mean Faraday depth, mom2=Faraday depth dispersion) from. 'clean' is the usual choice; 'dirty' moments are noise-biased; 'model' moments describe just the clean components."""
+    run_spice: bool = False
+    """Trim the Stokes cubes down to small boxes around catalogued sources (SPICE-style), for archiving and/or as RM-synthesis's input. See flint.spice"""
+    aegean_container: Path | None = None
+    """Path to the singularity aegean container. Required by run_spice when spice_catalogue is not set (built-in source finding)"""
+    spice_catalogue: Path | None = None
+    """A source catalogue (RA/Dec at minimum) for run_spice. If None the pipeline source finds its own Stokes I mosaic instead. See SpiceOptions for how to describe this catalogue's columns"""
+    rmsynth_on_spiced_cubes: bool = False
+    """When both run_spice and run_rmsynth are set, whether rm-synth reads the spiced cubes rather than the full (unspiced) ones. Ignored otherwise."""
+
+
+class RMSynthOptions(BaseOptions):
+    """Options controlling ``rm_lite.tools_3d.rmsynth.rmsynth_3d_from_fits``.
+
+    Defined here rather than in ``flint.rmsynth`` so that strategy validation
+    (``flint.configuration``) does not need to import ``rm_lite``, an optional
+    dependency.
+    """
+
+    phi_max_radm2: float | None = None
+    """Maximum Faraday depth to synthesise, in rad/m^2"""
+    d_phi_radm2: float | None = None
+    """Faraday depth resolution, in rad/m^2"""
+    n_samples: float | None = 10.0
+    """Number of samples across the RMSF"""
+    weight_type: Literal["variance", "natural", "uniform", "uniform_lsq", "briggs"] = (
+        "variance"
+    )
+    """Per-channel weighting scheme used during RM-synthesis"""
+    robust: float | None = None
+    """Briggs robust parameter, required if weight_type is 'briggs'"""
+    nufft_nthreads: int = 1
+    """finufft OpenMP threads per dask chunk"""
+    target_chunk_mb: float = 256
+    """Target per-chunk memory footprint, in MB, when reading the Q/U cubes"""
+    fit_order: int = 2
+    """Stokes I fractional-polarisation fit order; negative iterates orders and picks the best by AIC"""
+    fit_function: Literal["log", "linear"] = "log"
+    """Stokes I fit function: 'log' is a power law, 'linear' is a polynomial"""
+    stokes_i_snr_cut: float | None = 5.0
+    """Below this frequency-averaged Stokes I SNR a pixel falls back to a flat model. None fits every pixel"""
+    compute_model_error: bool = False
+    """Monte-Carlo the Stokes I fit's per-pixel model error via n_error_samples resamples. Only used if a Stokes I cube is given"""
+    n_error_samples: int = 1000
+    """Monte-Carlo resamples used by compute_model_error"""
+    debias_moments: bool = False
+    """Also compute a debiased (via rm_lite's debias_fdf) mom0/mom1/mom2 set per requested FDF"""
+    debias_filter_size: int = 5
+    """Median filter size (pixels) used by mom0 debiasing"""
+    write_fdfs_to_zarr: bool = False
+    """Write requested FDF cubes (rmsynth_cube_products) as a chunked zarr store instead of FITS. Recommended for large cubes"""
+    estimate_stokes_i_noise: bool = False
+    """Derive a per-channel Stokes I error from the Stokes I cube when fitting the fractional-polarisation model"""
+
+
+class RMCleanOptions(BaseOptions):
+    """Options controlling ``rm_lite.tools_3d.rmclean.run_rmclean_from_synth``.
+    See ``RMSynthOptions`` for why this lives here rather than ``flint.rmsynth``.
+    """
+
+    auto_mask: float = 7
+    """Masking threshold in SNR, scaled by the theoretical FDF noise"""
+    auto_threshold: float = 1
+    """Cleaning threshold in SNR, scaled by the theoretical FDF noise"""
+    max_iter: int = 100_000
+    """Maximum CLEAN iterations"""
+    gain: float = 0.1
+    """CLEAN loop gain"""
+    moment_threshold_snr: float = 5.0
+    """SNR cut (times the theoretical FDF noise) applied before computing Faraday moment maps"""
+    multiscale: bool = False
+    """Use multiscale RM-CLEAN, which can recover Faraday-thick structure"""
+
+
+class SpiceOptions(BaseOptions):
+    """Options controlling the SPICE-style cube trimming (see ``flint.spice``):
+    mask everything outside small boxes around catalogued sources, crop to
+    their union, and compress. Column names/units for a user-supplied
+    ``PolFieldOptions.spice_catalogue`` are never guessed -- see the
+    ``catalogue_*`` fields below."""
+
+    n_beamwidths: float = 3.0
+    """Padding added to each side of an island's bounding box, in units of the restoring beam major axis"""
+    catalogue_island_col: str | None = None
+    """Column grouping components into islands in a user-supplied spice_catalogue. None treats each row as its own island"""
+    catalogue_ra_col: str | None = None
+    """RA column in a user-supplied spice_catalogue. Required whenever spice_catalogue is set -- never guessed"""
+    catalogue_dec_col: str | None = None
+    """Dec column in a user-supplied spice_catalogue. Required whenever spice_catalogue is set"""
+    catalogue_radec_unit: str = "deg"
+    """Astropy unit string for catalogue_ra_col/catalogue_dec_col"""
+    catalogue_maj_col: str | None = None
+    """Major-axis column in a user-supplied spice_catalogue. None disables ellipse sizing (point-source + beamwidth padding only)"""
+    catalogue_min_col: str | None = None
+    """Minor-axis column in a user-supplied spice_catalogue"""
+    catalogue_pa_col: str | None = None
+    """Position-angle column in a user-supplied spice_catalogue"""
+    catalogue_shape_unit: str = "arcsec"
+    """Astropy unit string for catalogue_maj_col/catalogue_min_col. catalogue_pa_col is always degrees"""
+    catalogue_sizes_deconvolved: bool | None = None
+    """Whether catalogue_maj_col/catalogue_min_col are PSF-deconvolved rather than as-observed. Required whenever catalogue_maj_col is set -- the built-in Aegean catalogue is exempt (its a/b/pa are already as-observed)"""
+    catalogue_psf_maj_col: str | None = None
+    """Per-source PSF major-axis column, used to re-convolve when catalogue_sizes_deconvolved is True. Unset falls back to the pipeline's common restoring beam"""
+    catalogue_psf_min_col: str | None = None
+    """Column name for the per-source PSF minor axis, paired with catalogue_psf_maj_col"""
+    catalogue_psf_pa_col: str | None = None
+    """Column name for the per-source PSF position angle, paired with catalogue_psf_maj_col"""
+    compress_method: Literal["gzip", "pgzip"] = "pgzip"
+    """Compression backend for the mandatory gzip of every spiced cube."""
+    compress_max_workers: int | None = None
+    """Thread count handed to the compression backend"""
 
 
 class RACSAllOptions(BaseOptions):
@@ -300,6 +417,46 @@ class RACSAllOptions(BaseOptions):
     """Desired width, in Hz, of each plane of the final cube. The wsclean channel division is solved for this target so the cube has a single linear frequency axis, overriding the strategy ``channels_out`` in the final round. See ``flint.imager.channel_division``"""
     holofile: Path | None = None
     """The oath to a concatenated holography FITS file that contains low-, mid- and high-band cubes"""
+    run_polarisation: bool = False
+    """Whether to run the polarisation imaging pipeline on the final round of calibrated measurement sets"""
+    pol_cube_channel_width: float | None = None
+    """Desired width, in Hz, of each plane of the polarisation cubes. Solved for independently of ``cube_channel_width``, as the polarisation strategy may use a different channelisation. See ``flint.imager.channel_division``"""
+
+
+def racs_all_options_to_pol_field_options(
+    racs_all_options: RACSAllOptions,
+) -> PolFieldOptions:
+    """Build a default ``PolFieldOptions`` from the fields of ``RACSAllOptions`` that
+    share a name and meaning between the two (containers, beam/pb cutoffs, etc).
+    Fields that only exist on ``PolFieldOptions`` are left at their default. Used
+    when a caller does not supply its own ``PolFieldOptions`` (e.g. calling the
+    racs-all flow directly rather than through its CLI, where every
+    ``PolFieldOptions`` field is exposed)."""
+    shared_fields = set(RACSAllOptions.model_fields) & set(PolFieldOptions.model_fields)
+    return PolFieldOptions(
+        **{name: getattr(racs_all_options, name) for name in shared_fields}
+    )
+
+
+def pol_field_options_cli_class(
+    racs_all_options_class: type[RACSAllOptions] = RACSAllOptions,
+) -> type[PolFieldOptions]:
+    """Build a ``PolFieldOptions`` subclass containing only the fields not already
+    present on ``RACSAllOptions``, so it can be added to the same CLI parser without
+    duplicate flags for the fields the two share. Every current and future
+    ``PolFieldOptions`` field is exposed on the CLI this way, either through this
+    class or through ``RACSAllOptions`` itself for the shared ones."""
+    overlap = set(racs_all_options_class.model_fields) & set(
+        PolFieldOptions.model_fields
+    )
+    unique_fields = {
+        name: (field.annotation, field)
+        for name, field in PolFieldOptions.model_fields.items()
+        if name not in overlap
+    }
+    return create_model(
+        "PolFieldOptionsCLI", __base__=PolFieldOptions.__base__, **unique_fields
+    )
 
 
 def dump_field_options_to_yaml(
@@ -387,6 +544,8 @@ class FitsCubeOptions(BaseOptions):
     """Remove the images that go into forming the fitscube"""
     inplace: bool = True
     """If True, modify the file in-place. If False, write to a temporary file and then replace the original. Default True"""
+    create_blanks: bool = True
+    """Have fitscube re-grid the input frequencies onto a tolerant regular grid before writing."""
 
 
 class MSSummary(BaseOptions):

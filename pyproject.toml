@@ -10,7 +10,8 @@ build-backend = "hatchling.build"
 [project]
 name = "askap-flint"
 authors = [
-    {name="Tim Galvin", email="tim.galvin@csiro.au"}
+    {name="Tim Galvin", email="tim.galvin@csiro.au"},
+    {name="Alec Thomson", email="alec.thomson@skao.int"}
 ]
 description = "Pipeline for ASKAP processing, and profit along the way"
 readme = "README.md"
@@ -50,7 +51,7 @@ dependencies = [
     "scikit-image",
     "pandas",
     "ConfigArgParse>=1.7",
-    "fitscube[pgzip]>=2.5.0",
+    "fitscube[pgzip]>=2.5.1",
     "astroquery>=0.4.8.dev0",
     "crystalball>=0.4.3",
     "jolly-roger>=0.10.1",
@@ -90,6 +91,12 @@ dev = [
 casa =[
     "python-casacore>=3.6.0",
     "fixms>=0.4.0"
+]
+rmsynth = [
+    "rm-lite>=2026.7.7",
+]
+all = [
+    "askap-flint[dev,casa,rmsynth]",
 ]
 
 [project.scripts]

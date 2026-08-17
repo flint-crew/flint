@@ -113,3 +113,10 @@ polarisation:
       squared_channel_joining: true
   circular:
     wsclean: {}
+
+rmsynth:
+  rmsynth:
+    phi_max_radm2: 1000.0
+  rmclean:
+    auto_mask: 7
+    auto_threshold: 1
