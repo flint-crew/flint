@@ -17,6 +17,7 @@ from jolly_roger.tractor import TukeyTractorOptions
 from flint.imager.wsclean import WSCleanOptions
 from flint.logging import logger
 from flint.masking import MaskingOptions
+from flint.misc.holo import ConcatHoloOptions
 from flint.naming import add_timestamp_to_path
 from flint.options import (
     ArchiveOptions,
@@ -52,6 +53,7 @@ MODE_OPTIONS_MAPPING = {
     "tukeytractor": TukeyTractorOptions,
     "rmsynth": RMSynthOptions,
     "rmclean": RMCleanOptions,
+    "concatholo": ConcatHoloOptions,
 }
 POLARISATION_MAPPING = {
     "total": "i",

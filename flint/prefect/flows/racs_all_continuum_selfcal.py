@@ -362,6 +362,12 @@ def process_racs_all_field(
         racs_all_options=racs_all_options, output_science_path=output_science_path
     )
     if isinstance(holography_path, Path):
+        update_concat_holo_options = get_options_from_strategy(
+            strategy=strategy,
+            mode="concatholo",
+            round_info=0,
+            operation="selfcal",
+        )
         holography_path = task_concatenate_holography.submit(
             output_path=holography_path,
             holo_cubes=[
@@ -369,6 +375,7 @@ def process_racs_all_field(
                 racs_all_options.mid_holofile,
                 racs_all_options.high_holofile,
             ],
+            update_concat_holo_options=update_concat_holo_options,
         )
         terminal_futures.append(holography_path)
 
