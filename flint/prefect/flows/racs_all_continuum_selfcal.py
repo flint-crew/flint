@@ -17,7 +17,6 @@ from capn_crunch import (
 )
 from configargparse import ArgumentParser
 from prefect import flow, tags, unmapped
-from prefect.context import get_run_context
 from prefect.futures import PrefectFuture
 
 from flint.catalogue import verify_reference_catalogues
@@ -43,11 +42,9 @@ from flint.naming import (
 )
 from flint.options import (
     FitsCubeOptions,
-    PolFieldOptions,
     RACSAllOptions,
+    RACSContinuumResult,
     dump_field_options_to_yaml,
-    pol_field_options_cli_class,
-    racs_all_options_to_pol_field_options,
 )
 from flint.prefect.clusters import get_dask_runner
 from flint.prefect.common.imaging import (
@@ -70,7 +67,6 @@ from flint.prefect.common.utils import (
     task_update_field_summary,
     task_update_with_options,
 )
-from flint.prefect.flows.polarisation_pipeline import process_science_fields_pol
 from flint.summary import BeamSummary
 
 
@@ -125,12 +121,6 @@ def _check_racs_all_options(racs_all_options: RACSAllOptions) -> None:
             raise ValueError(
                 "Unable to create linmos cubes without a yandasoft container"
             )
-    if racs_all_options.run_polarisation:
-        if not racs_all_options.yandasoft_container:
-            raise ValueError(
-                "Unable to run polarisation imaging without a yandasoft container"
-            )
-
     # For the moment we make sure that this is provided. Can consider moving to mandatory argument in
     # the model definition
     assert (
@@ -282,14 +272,11 @@ def all_holography_available(
 
 
 @flow
-def process_racs_all_field(
+def process_racs_all_continuum(
     racs_all_options: RACSAllOptions,
-    pol_field_options: PolFieldOptions | None = None,
-) -> list[PrefectFuture[Any]]:
+) -> RACSContinuumResult:
     # returned futures are resolved by prefect to fail the flow on task failure
     terminal_futures: list[PrefectFuture[Any]] = []
-    # Get the current run context to examine, provide to sub-flows
-    run_context = get_run_context()
 
     # Any sanity checks will go in here, mateee
     _check_racs_all_options(racs_all_options=racs_all_options)
@@ -323,15 +310,6 @@ def process_racs_all_field(
         cube_division = channel_division_for_beams(
             mss_by_beam=science_mss_by_beam,
             target_width=racs_all_options.cube_channel_width,
-        )
-
-    # Polarisation may use a different channelisation to the self-cal cube, so it
-    # is solved independently from the same beam frequency lists
-    pol_cube_division: ChannelDivision | None = None
-    if racs_all_options.run_polarisation and racs_all_options.pol_cube_channel_width:
-        pol_cube_division = channel_division_for_beams(
-            mss_by_beam=science_mss_by_beam,
-            target_width=racs_all_options.pol_cube_channel_width,
         )
 
     dump_field_options_to_yaml(
@@ -622,77 +600,45 @@ def process_racs_all_field(
                 )
                 terminal_futures.extend(linmos_cubes)
 
-    if racs_all_options.run_polarisation:
-        with tags("polarisation"):
-            resolved_pol_field_options = (
-                pol_field_options
-                if pol_field_options is not None
-                else racs_all_options_to_pol_field_options(racs_all_options)
-            )
-            resolved_pol_field_options = resolved_pol_field_options.with_options(
-                holofile=holography_path.result()
-                if isinstance(holography_path, PrefectFuture)
-                else holography_path
-            )
-            # Hand down the final round's per-beam self-calibrated MSs directly, rather
-            # than having the polarisation flow rediscover MSs by globbing the output
-            # directory. These are still Prefect futures - passing them here is what
-            # makes prefect wait for the self-cal loop to finish before imaging starts.
-            final_round_mss_by_beam: MSsByBeam = tuple(
-                tuple([ms.result() for ms in beam_result.mss])
-                for beam_result in imaging_results[racs_all_options.rounds]
-            )
-            low_sbid = get_sbid_from_path(path=racs_all_options.low_data)
+    resolved_holography_path = (
+        holography_path.result()
+        if isinstance(holography_path, PrefectFuture)
+        else holography_path
+    )
+    # Final round's per-beam self-calibrated MSs, resolved from futures so the
+    # racs-all flow-of-flows can hand them to the polarisation stage in-memory
+    # rather than having it rediscover MSs by globbing the output directory.
+    final_round_mss_by_beam: tuple[tuple[MS, ...], ...] = tuple(
+        tuple([ms.result() for ms in beam_result.mss])
+        for beam_result in imaging_results[racs_all_options.rounds]
+    )
 
-            # sub-flows do no inherit the task runner, they use the specified
-            # running in their decorator flow argument. Overwrite it here with
-            # the current runner
-            # from prefect_dask import DaskTaskRunner
-
-            sub_flow_runner = run_context.task_runner.duplicate()
-
-            # sub_flow_runner = DaskTaskRunner(
-            #     cluster_class=run_context.task_runner.cluster_class,
-            #     cluster_kwargs=run_context.task_runner.cluster_kwargs,
-            #     adapt_kwargs=run_context.task_runner.adapt_kwargs,
-            # )
-
-            pol_futures = process_science_fields_pol.with_options(
-                task_runner=sub_flow_runner,
-                name=f"RACS All polarisation -- {low_sbid}",
-            )(
-                flint_ms_directory=output_science_path,
-                pol_field_options=resolved_pol_field_options,
-                cube_division=pol_cube_division,
-                mss_by_beam=final_round_mss_by_beam,
-                wait_for=terminal_futures,
-            )
-
-            terminal_futures.extend(pol_futures)
-
-    return terminal_futures
+    return RACSContinuumResult(
+        mss_by_beam=final_round_mss_by_beam,
+        holography_path=resolved_holography_path,
+        output_science_path=output_science_path,
+        terminal_futures=terminal_futures,
+    )
 
 
-def setup_run_racs_all_field(
+def setup_run_racs_all_continuum(
     cluster_config: Path,
     racs_all_options: RACSAllOptions,
-    pol_field_options: PolFieldOptions | None = None,
 ) -> None:
-    """The main launch script for the RACS-All processing flow
+    """The main launch script for the RACS-All continuum imaging/self-cal flow
 
     Args:
         cluster_config (Path): Path to the dask configuration yaml file to define the cluster
         racs_all_options (RACSAllOptions): Options around the processing of RACS-All field
-        pol_field_options (PolFieldOptions | None, optional): Options for the polarisation imaging pipeline, used if ``racs_all_options.run_polarisation`` is set. Derived from ``racs_all_options`` if not provided. Defaults to None.
     """
 
     low_sbid = get_sbid_from_path(path=racs_all_options.low_data)
 
     dask_task_runner = get_dask_runner(cluster=cluster_config)
 
-    process_racs_all_field.with_options(
+    process_racs_all_continuum.with_options(
         name=f"RACS All -- {low_sbid}", task_runner=dask_task_runner
-    )(racs_all_options=racs_all_options, pol_field_options=pol_field_options)
+    )(racs_all_options=racs_all_options)
 
 
 def get_parser() -> ArgumentParser:
@@ -716,11 +662,6 @@ def get_parser() -> ArgumentParser:
     )
 
     parser = add_options_to_parser(parser=parser, options_class=RACSAllOptions)
-    parser = add_options_to_parser(
-        parser=parser,
-        options_class=pol_field_options_cli_class(RACSAllOptions),
-        description="Polarisation processing options",
-    )
 
     return parser
 
@@ -733,14 +674,10 @@ def cli() -> None:
     racs_all_options = create_options_from_parser(
         parser_namespace=args, options_class=RACSAllOptions
     )
-    pol_field_options = create_options_from_parser(
-        parser_namespace=args, options_class=PolFieldOptions
-    )
 
-    setup_run_racs_all_field(
+    setup_run_racs_all_continuum(
         cluster_config=args.cluster_config,
         racs_all_options=racs_all_options,
-        pol_field_options=pol_field_options,
     )
 
 
