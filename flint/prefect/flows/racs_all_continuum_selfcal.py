@@ -647,13 +647,15 @@ def process_racs_all_field(
             # sub-flows do no inherit the task runner, they use the specified
             # running in their decorator flow argument. Overwrite it here with
             # the current runner
-            from prefect_dask import DaskTaskRunner
+            # from prefect_dask import DaskTaskRunner
 
-            sub_flow_runner = DaskTaskRunner(
-                cluster_class=run_context.task_runner.cluster_class,
-                cluster_kwargs=run_context.task_runner.cluster_kwargs,
-                adapt_kwargs=run_context.task_runner.adapt_kwargs,
-            )
+            sub_flow_runner = run_context.task_runner.duplicate()
+
+            # sub_flow_runner = DaskTaskRunner(
+            #     cluster_class=run_context.task_runner.cluster_class,
+            #     cluster_kwargs=run_context.task_runner.cluster_kwargs,
+            #     adapt_kwargs=run_context.task_runner.adapt_kwargs,
+            # )
 
             pol_futures = process_science_fields_pol.with_options(
                 task_runner=sub_flow_runner,
