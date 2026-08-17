@@ -24,6 +24,7 @@ from flint.options import (
     FitsCubeOptions,
     RMCleanOptions,
     RMSynthOptions,
+    SpiceOptions,
 )
 from flint.peel.potato import PotatoPeelOptions
 from flint.selfcal.casa import GainCalOptions
@@ -54,6 +55,7 @@ MODE_OPTIONS_MAPPING = {
     "rmsynth": RMSynthOptions,
     "rmclean": RMCleanOptions,
     "concatholo": ConcatHoloOptions,
+    "spice": SpiceOptions,
 }
 POLARISATION_MAPPING = {
     "total": "i",

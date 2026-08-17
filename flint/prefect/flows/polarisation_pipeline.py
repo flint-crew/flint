@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,7 @@ from flint.options import (
     PolFieldOptions,
     RMCleanOptions,
     RMSynthOptions,
+    SpiceOptions,
     dump_field_options_to_yaml,
 )
 from flint.prefect.clusters import get_dask_runner
@@ -43,14 +45,22 @@ from flint.prefect.common.imaging import (
     task_create_name_from_common_fields,
     task_get_channel_images_from_paths,
     task_get_common_beam_from_image_set,
+    task_get_mfs_image_from_paths,
+    task_linmos_images,
     task_merge_image_sets,
     task_preprocess_askap_ms,
     task_remove_files_folders,
+    task_run_bane_and_aegean,
     task_split_and_get_image_set,
     task_transpose_and_sort_channel_images,
     task_wsclean_imager,
 )
 from flint.prefect.common.rmsynth import task_rmsynth_and_write_products
+from flint.prefect.common.spice import (
+    task_compress_cube,
+    task_get_spice_boxes,
+    task_spice_fits,
+)
 from flint.prefect.common.utils import (
     task_create_field_summary,
     task_getattr,
@@ -210,6 +220,11 @@ def process_science_fields_pol(
     # per-channel images (rather than cubing per beam) so we can co-add across
     # beams one channel at a time.
     stokes_beam_channel_images: dict[str, list[PrefectFuture[list[Path]]]] = {}
+    # Per-beam Stokes I MFS images, used by run_spice both as the field WCS
+    # reference for box-building and (absent a user spice_catalogue) as the
+    # image source-found against. wsclean already produces these; only the
+    # collection here is new.
+    beam_mfs_images: list[PrefectFuture[Path]] = []
     for polarisation, image_set_list in image_sets_dict.items():
         with tags(f"polarisation-{polarisation}"):
             # Get the individual Stokes parameters in case of joint imaging
@@ -231,6 +246,12 @@ def process_science_fields_pol(
                             beam_shape=common_beam_shape,
                             cutoff=pol_field_options.beam_cutoff,
                         )
+                        if stokes == "i" and pol_field_options.run_spice:
+                            beam_mfs_images.append(
+                                task_get_mfs_image_from_paths.submit(
+                                    paths=convolved_image_list
+                                )
+                            )
                         channel_image_list = task_get_channel_images_from_paths.submit(
                             paths=convolved_image_list
                         )
@@ -262,6 +283,70 @@ def process_science_fields_pol(
         )
     )
 
+    island_boxes: PrefectFuture[list] | None = None
+    if pol_field_options.run_spice:
+        # Required even with a user-supplied spice_catalogue: the MFS mosaic
+        # built below is the earliest field-level WCS reference available,
+        # needed to turn that catalogue's RA/Dec into pixel boxes.
+        assert i_channel_groups is not None, (
+            "run_spice requires the 'total' polarisation (Stokes I) to have been imaged"
+        )
+        assert (
+            pol_field_options.spice_catalogue is not None
+            or pol_field_options.aegean_container is not None
+        ), "run_spice without a spice_catalogue requires an aegean_container"
+
+        mfs_linmos_result = task_linmos_images.submit(
+            image_list=beam_mfs_images,
+            container=pol_field_options.yandasoft_container,
+            linmos_options=LinmosOptions(
+                holofile=pol_field_options.holofile,
+                cutoff=pol_field_options.pb_cutoff,
+                cleanup=True,
+                # Must match the untrimmed shape of the per-channel/cube images
+                # spice_fits later compares this reference's shape against.
+                trim_linmos_fits=False,
+            ),
+            field_summary=field_summary,
+            holofile=pol_field_options.holofile,
+        )
+        mfs_image_path = task_getattr.submit(mfs_linmos_result, "image_fits")
+
+        is_user_catalogue = pol_field_options.spice_catalogue is not None
+        if is_user_catalogue:
+            catalogue_path = pol_field_options.spice_catalogue
+        else:
+            aegean_outputs = task_run_bane_and_aegean.submit(
+                image=mfs_linmos_result,
+                aegean_container=pol_field_options.aegean_container,
+                update_bane_options=get_options_from_strategy(
+                    strategy=strategy, operation="polarisation", mode="bane"
+                ),
+                update_aegean_options=get_options_from_strategy(
+                    strategy=strategy, operation="polarisation", mode="aegean"
+                ),
+            )
+            catalogue_path = task_getattr.submit(aegean_outputs, "comp")
+
+        spice_options = SpiceOptions(
+            **get_options_from_strategy(
+                strategy=strategy, operation="polarisation", mode="spice"
+            )
+        )
+        island_boxes = task_get_spice_boxes.submit(
+            reference_image=mfs_image_path,
+            catalogue=catalogue_path,
+            spice_options=spice_options,
+            beam_shape=common_beam_shape,
+            is_user_catalogue=is_user_catalogue,
+        )
+
+    # Whether anything downstream needs the full-size (unspiced) cube: either
+    # spice is off entirely, or rm-synth is on and reading the full cube.
+    need_full_cube = not pol_field_options.run_spice or (
+        pol_field_options.run_rmsynth and not pol_field_options.rmsynth_on_spiced_cubes
+    )
+
     cube_results: list[PrefectFuture[Path]] = []
     stokes_image_cubes: dict[str, PrefectFuture[Path]] = {}
     all_input_images: list[Path] = []
@@ -283,6 +368,9 @@ def process_science_fields_pol(
                 field_summary=field_summary,
                 fitscube_options=fitscube_options,
                 suffix_str=POL_NAME_SUFFIX,
+                plane_post_process=partial(task_spice_fits.submit, boxes=island_boxes)
+                if pol_field_options.run_spice and not need_full_cube
+                else None,
             )
             stokes_image_cubes[stokes] = stokes_cubes[0]
             cube_results.extend(stokes_cubes)
@@ -324,6 +412,34 @@ def process_science_fields_pol(
             moment_products=pol_field_options.rmsynth_moment_products,
             output_prefix=output_prefix,
         )
+
+    if pol_field_options.run_spice:
+        if need_full_cube:
+            # Case 3: rm-synth (always on here, see need_full_cube above) has
+            # already read these full cubes -- now replace them in place.
+            spiced_cubes = [
+                task_spice_fits.submit(
+                    fits_path=cube, boxes=island_boxes, wait_for=[rmsynth_result]
+                )
+                for cube in cube_results
+            ]
+            compress_wait_for = None
+        else:
+            # Case 2: cube_results are already the spiced cubes (spice ran as
+            # plane_post_process before cubing). If rm-synth read them
+            # (rmsynth_on_spiced_cubes), keep them uncompressed until it's done.
+            spiced_cubes = cube_results
+            compress_wait_for = [rmsynth_result] if rmsynth_result else None
+
+        cube_results = [
+            task_compress_cube.submit(
+                out_cube=cube,
+                method=spice_options.compress_method,
+                max_workers=spice_options.compress_max_workers,
+                wait_for=compress_wait_for,
+            )
+            for cube in spiced_cubes
+        ]
 
     return [*cube_results, remove_result, *([rmsynth_result] if rmsynth_result else [])]
 

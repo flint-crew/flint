@@ -58,7 +58,7 @@ class LinmosOptions(BaseOptions):
     """Delete the images that were coaddede together. Defaults to False."""
 
 
-class BoundingBox(NamedTuple):
+class BoundingBox(BaseOptions):
     """Simple container to represent a bounding box"""
 
     xmin: int

@@ -6,7 +6,7 @@ imaging flows.
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Callable, Collection
 from pathlib import Path
 from typing import Any, ParamSpec, TypeVar
 
@@ -118,6 +118,14 @@ FlagMS = TypeVar("FlagMS", MS, ApplySolutions)
 @task
 def task_get_channel_images_from_paths(paths: list[Path]) -> list[Path]:
     return [path for path in paths if "MFS" not in path.name]
+
+
+@task
+def task_get_mfs_image_from_paths(paths: list[Path]) -> Path:
+    """Inverse of ``task_get_channel_images_from_paths`` -- the single MFS image"""
+    mfs_paths = [path for path in paths if "MFS" in path.name]
+    assert len(mfs_paths) == 1, f"Expected a single MFS image, got {mfs_paths=}"
+    return mfs_paths[0]
 
 
 @task
@@ -986,6 +994,8 @@ def linmos_channel_groups_to_cubes(
     field_summary: FieldSummary | None = None,
     suffix_str: str | None = None,
     holofile: Path | None = None,
+    plane_post_process: Callable[[PrefectFuture[Path]], PrefectFuture[Path]]
+    | None = None,
 ) -> list[PrefectFuture[Path]]:
     """Co-add beam images one channel at a time, in parallel, then stack the
     resulting mosaics back into image and weight cubes.
@@ -1004,6 +1014,7 @@ def linmos_channel_groups_to_cubes(
         field_summary (FieldSummary | None, optional): Description of the field, used to get the ``pol_axis``. Defaults to None.
         suffix_str (str | None, optional): Additional suffix added to the linmos and cube names. Defaults to None.
         holofile (Path | None, optional): Holography file overriding the one in ``linmos_options``. Defaults to None.
+        plane_post_process (Callable[[PrefectFuture[Path]], PrefectFuture[Path]] | None, optional): Applied to each per-channel image/weight plane future right after it's co-added, before cubing (e.g. spice's mask/crop). Defaults to None.
 
     Returns:
         list[PrefectFuture[Path]]: The image and weight cubes being created
@@ -1034,8 +1045,13 @@ def linmos_channel_groups_to_cubes(
             field_summary=field_summary,
             holofile=holofile,
         )
-        image_planes.append(task_getattr.submit(linmos_result, "image_fits"))
-        weight_planes.append(task_getattr.submit(linmos_result, "weight_fits"))
+        image_plane = task_getattr.submit(linmos_result, "image_fits")
+        weight_plane = task_getattr.submit(linmos_result, "weight_fits")
+        if plane_post_process is not None:
+            image_plane = plane_post_process(image_plane)
+            weight_plane = plane_post_process(weight_plane)
+        image_planes.append(image_plane)
+        weight_planes.append(weight_plane)
 
     bounding_box: bool | PrefectFuture[BoundingBox] = False
     if fitscube_options.bounding_box:

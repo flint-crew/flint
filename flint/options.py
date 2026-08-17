@@ -239,6 +239,14 @@ class PolFieldOptions(BaseOptions):
     """Which Faraday dispersion function (FDF) cubes to write as FITS. 'dirty' is the raw FDF (no RM-CLEAN needed). 'clean'/'model' are RM-CLEAN's cleaned/clean-component FDF (RM-CLEAN is run if either is requested). Empty by default, as these cubes are large."""
     rmsynth_moment_products: list[Literal["dirty", "clean", "model"]] = ["clean"]
     """Which FDF(s) to compute Faraday moment maps (mom0=polarised intensity, mom1=mean Faraday depth, mom2=Faraday depth dispersion) from. 'clean' is the usual choice; 'dirty' moments are noise-biased; 'model' moments describe just the clean components."""
+    run_spice: bool = False
+    """Trim the Stokes cubes down to small boxes around catalogued sources (SPICE-style), for archiving and/or as RM-synthesis's input. See flint.spice"""
+    aegean_container: Path | None = None
+    """Path to the singularity aegean container. Required by run_spice when spice_catalogue is not set (built-in source finding)"""
+    spice_catalogue: Path | None = None
+    """A source catalogue (RA/Dec at minimum) for run_spice. If None the pipeline source finds its own Stokes I mosaic instead. See SpiceOptions for how to describe this catalogue's columns"""
+    rmsynth_on_spiced_cubes: bool = False
+    """When both run_spice and run_rmsynth are set, whether rm-synth reads the spiced cubes rather than the full (unspiced) ones. Ignored otherwise."""
 
 
 class RMSynthOptions(BaseOptions):
@@ -302,6 +310,45 @@ class RMCleanOptions(BaseOptions):
     """SNR cut (times the theoretical FDF noise) applied before computing Faraday moment maps"""
     multiscale: bool = False
     """Use multiscale RM-CLEAN, which can recover Faraday-thick structure"""
+
+
+class SpiceOptions(BaseOptions):
+    """Options controlling the SPICE-style cube trimming (see ``flint.spice``):
+    mask everything outside small boxes around catalogued sources, crop to
+    their union, and compress. Column names/units for a user-supplied
+    ``PolFieldOptions.spice_catalogue`` are never guessed -- see the
+    ``catalogue_*`` fields below."""
+
+    n_beamwidths: float = 3.0
+    """Padding added to each side of an island's bounding box, in units of the restoring beam major axis"""
+    catalogue_island_col: str | None = None
+    """Column grouping components into islands in a user-supplied spice_catalogue. None treats each row as its own island"""
+    catalogue_ra_col: str | None = None
+    """RA column in a user-supplied spice_catalogue. Required whenever spice_catalogue is set -- never guessed"""
+    catalogue_dec_col: str | None = None
+    """Dec column in a user-supplied spice_catalogue. Required whenever spice_catalogue is set"""
+    catalogue_radec_unit: str = "deg"
+    """Astropy unit string for catalogue_ra_col/catalogue_dec_col"""
+    catalogue_maj_col: str | None = None
+    """Major-axis column in a user-supplied spice_catalogue. None disables ellipse sizing (point-source + beamwidth padding only)"""
+    catalogue_min_col: str | None = None
+    """Minor-axis column in a user-supplied spice_catalogue"""
+    catalogue_pa_col: str | None = None
+    """Position-angle column in a user-supplied spice_catalogue"""
+    catalogue_shape_unit: str = "arcsec"
+    """Astropy unit string for catalogue_maj_col/catalogue_min_col. catalogue_pa_col is always degrees"""
+    catalogue_sizes_deconvolved: bool | None = None
+    """Whether catalogue_maj_col/catalogue_min_col are PSF-deconvolved rather than as-observed. Required whenever catalogue_maj_col is set -- the built-in Aegean catalogue is exempt (its a/b/pa are already as-observed)"""
+    catalogue_psf_maj_col: str | None = None
+    """Per-source PSF major-axis column, used to re-convolve when catalogue_sizes_deconvolved is True. Unset falls back to the pipeline's common restoring beam"""
+    catalogue_psf_min_col: str | None = None
+    """Column name for the per-source PSF minor axis, paired with catalogue_psf_maj_col"""
+    catalogue_psf_pa_col: str | None = None
+    """Column name for the per-source PSF position angle, paired with catalogue_psf_maj_col"""
+    compress_method: Literal["gzip", "pgzip"] = "pgzip"
+    """Compression backend for the mandatory gzip of every spiced cube."""
+    compress_max_workers: int | None = None
+    """Thread count handed to the compression backend"""
 
 
 class RACSAllOptions(BaseOptions):
