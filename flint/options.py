@@ -531,7 +531,7 @@ class PolPipelineResult(BaseOptions):
     stokes_cubes: dict[str, Path]
     """The full, unspiced Stokes cube written for each imaged polarisation (e.g. 'i', 'q', 'u', 'v')"""
     mfs_products: dict[str, dict[str, Path]]
-    """MFS image/model/residual products co-added per polarisation, keyed by polarisation then product type. Only populated for polarisations imaged with ``WSCleanOptions.flint_save_mfs_products``"""
+    """MFS image/model/residual products co-added per Stokes parameter, keyed by Stokes ('i', 'q', 'u', 'v') then product type ('image', 'model', 'residual'). Only populated for Stokes imaged under a polarisation with ``WSCleanOptions.flint_save_mfs_products`` set"""
     terminal_futures: list[Any]
     """Every future the polarisation stage produced, propagated so Prefect still detects any of their failures"""
 

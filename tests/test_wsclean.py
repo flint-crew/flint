@@ -856,6 +856,19 @@ def test_create_wsclean_command(ms_example):
     assert isinstance(command, WSCleanResult)
 
 
+def test_create_wsclean_command_excludes_flint_save_mfs_products(ms_example):
+    """flint_save_mfs_products is a flint-only field (like flint_name_suffix)
+    and should not leak into the generated wsclean command"""
+    wsclean_options = WSCleanOptions(flint_save_mfs_products=True)
+
+    command = create_wsclean_cmd(
+        ms_list=MS.cast(ms_example), wsclean_options=wsclean_options
+    )
+    assert isinstance(command, WSCleanResult)
+    assert "flint" not in command.cmd
+    assert "mfs" not in command.cmd.lower()
+
+
 def test_create_wsclean_command_with_list_ms(ms_example) -> None:
     """Test whether WSCleanOptions can be correctly cast to a command string
     when using a list of MS instance"""

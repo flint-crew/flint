@@ -107,6 +107,7 @@ polarisation:
   total:
     wsclean:
       squared_channel_joining: false
+      flint_save_mfs_products: true
   linear:
     wsclean:
       join_polarizations: true

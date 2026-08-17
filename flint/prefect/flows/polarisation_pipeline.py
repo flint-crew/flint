@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -33,16 +32,13 @@ from flint.naming import (
 from flint.options import (
     FitsCubeOptions,
     PolFieldOptions,
-    RMCleanOptions,
-    RMSynthOptions,
-    SpiceOptions,
+    PolPipelineResult,
     dump_field_options_to_yaml,
 )
 from flint.prefect.clusters import get_dask_runner
 from flint.prefect.common.imaging import (
     linmos_channel_groups_to_cubes,
     task_convolve_images,
-    task_create_name_from_common_fields,
     task_get_channel_images_from_paths,
     task_get_common_beam_from_image_set,
     task_get_mfs_image_from_paths,
@@ -50,16 +46,9 @@ from flint.prefect.common.imaging import (
     task_merge_image_sets,
     task_preprocess_askap_ms,
     task_remove_files_folders,
-    task_run_bane_and_aegean,
     task_split_and_get_image_set,
     task_transpose_and_sort_channel_images,
     task_wsclean_imager,
-)
-from flint.prefect.common.rmsynth import task_rmsynth_and_write_products
-from flint.prefect.common.spice import (
-    task_compress_cube,
-    task_get_spice_boxes,
-    task_spice_fits,
 )
 from flint.prefect.common.utils import (
     task_create_field_summary,
@@ -77,8 +66,7 @@ def process_science_fields_pol(
     pol_field_options: PolFieldOptions,
     cube_division: ChannelDivision | None = None,
     mss_by_beam: MSsByBeam | None = None,
-) -> list[PrefectFuture[Any]]:
-    # returned futures are resolved by prefect to fail the flow on task failure
+) -> PolPipelineResult:
     strategy = load_and_copy_strategy(
         output_split_science_path=flint_ms_directory,
         imaging_strategy=pol_field_options.imaging_strategy,
@@ -88,7 +76,7 @@ def process_science_fields_pol(
 
     if strategy is None:
         logger.info("No strategy provided. Returning.")
-        return []
+        return PolPipelineResult(stokes_cubes={}, mfs_products={}, terminal_futures=[])
 
     if mss_by_beam is not None:
         # Already Flint-processed, self-calibrated MSs handed down by the calling
@@ -171,7 +159,9 @@ def process_science_fields_pol(
 
     if pol_field_options.wsclean_container is None:
         logger.info("No wsclean container provided. Returning. ")
-        return [field_summary]
+        return PolPipelineResult(
+            stokes_cubes={}, mfs_products={}, terminal_futures=[field_summary]
+        )
 
     polarisations: dict[str, str] = strategy.get("polarisation", {"total": {}})
 
@@ -193,12 +183,16 @@ def process_science_fields_pol(
                         update_wsclean_options=update_wsclean_options,
                         cube_division=cube_division,
                     )
+                save_mfs_products = update_wsclean_options.get(
+                    "flint_save_mfs_products", False
+                )
                 wsclean_result: PrefectFuture[WSCleanResult] = (
                     task_wsclean_imager.submit(
                         in_ms=beam_mss,
                         wsclean_container=pol_field_options.wsclean_container,
                         make_cube_from_subbands=False,  # We will do this later
                         update_wsclean_options=update_wsclean_options,
+                        extra_output_types=("model",) if save_mfs_products else None,
                     )
                 )
                 _image_set: PrefectFuture[ImageSet] = task_getattr.submit(
@@ -220,42 +214,60 @@ def process_science_fields_pol(
     # per-channel images (rather than cubing per beam) so we can co-add across
     # beams one channel at a time.
     stokes_beam_channel_images: dict[str, list[PrefectFuture[list[Path]]]] = {}
-    # Per-beam Stokes I MFS images, used by run_spice both as the field WCS
-    # reference for box-building and (absent a user spice_catalogue) as the
-    # image source-found against. wsclean already produces these; only the
-    # collection here is new.
-    beam_mfs_images: list[PrefectFuture[Path]] = []
+    # Per-beam MFS image/model/residual, collected per Stokes whenever that
+    # Stokes' polarisation strategy sets flint_save_mfs_products. Co-added
+    # further down the same way as the science image/cube.
+    mfs_beam_images: dict[str, dict[str, list[PrefectFuture[Path]]]] = {}
     for polarisation, image_set_list in image_sets_dict.items():
         with tags(f"polarisation-{polarisation}"):
             # Get the individual Stokes parameters in case of joint imaging
             if polarisation not in POLARISATION_MAPPING.keys():
                 raise ValueError(f"Unknown polarisation {polarisation}")
             stokes_list = list(POLARISATION_MAPPING[polarisation])
+
+            save_mfs_products = get_options_from_strategy(
+                strategy=strategy,
+                operation="polarisation",
+                mode="wsclean",
+                polarisation=polarisation,
+            ).get("flint_save_mfs_products", False)
+            product_types = (
+                ("image", "model", "residual") if save_mfs_products else ("image",)
+            )
+
             for stokes in stokes_list:
                 with tags(f"stokes-{stokes}"):
                     beam_channel_images: list[PrefectFuture[list[Path]]] = []
-                    for image_set in image_set_list:
-                        stokes_image_list = task_split_and_get_image_set.submit(
-                            image_set=image_set,
-                            get=stokes,
-                            by="pol",
-                            mode="image",
-                        )
-                        convolved_image_list = task_convolve_images.submit(
-                            image_paths=stokes_image_list,
-                            beam_shape=common_beam_shape,
-                            cutoff=pol_field_options.beam_cutoff,
-                        )
-                        if stokes == "i" and pol_field_options.run_spice:
-                            beam_mfs_images.append(
-                                task_get_mfs_image_from_paths.submit(
-                                    paths=convolved_image_list
-                                )
+                    for product_type in product_types:
+                        beam_mfs_images: list[PrefectFuture[Path]] = []
+                        for image_set in image_set_list:
+                            stokes_image_list = task_split_and_get_image_set.submit(
+                                image_set=image_set,
+                                get=stokes,
+                                by="pol",
+                                mode=product_type,
                             )
-                        channel_image_list = task_get_channel_images_from_paths.submit(
-                            paths=convolved_image_list
-                        )
-                        beam_channel_images.append(channel_image_list)
+                            convolved_image_list = task_convolve_images.submit(
+                                image_paths=stokes_image_list,
+                                beam_shape=common_beam_shape,
+                                cutoff=pol_field_options.beam_cutoff,
+                            )
+                            if save_mfs_products:
+                                beam_mfs_images.append(
+                                    task_get_mfs_image_from_paths.submit(
+                                        paths=convolved_image_list
+                                    )
+                                )
+                            if product_type == "image":
+                                beam_channel_images.append(
+                                    task_get_channel_images_from_paths.submit(
+                                        paths=convolved_image_list
+                                    )
+                                )
+                        if save_mfs_products:
+                            mfs_beam_images.setdefault(stokes, {})[product_type] = (
+                                beam_mfs_images
+                            )
                     stokes_beam_channel_images[stokes] = beam_channel_images
 
     # Regroup each Stokes' per-beam channel images into per-channel beam groups
@@ -283,70 +295,6 @@ def process_science_fields_pol(
         )
     )
 
-    island_boxes: PrefectFuture[list] | None = None
-    if pol_field_options.run_spice:
-        # Required even with a user-supplied spice_catalogue: the MFS mosaic
-        # built below is the earliest field-level WCS reference available,
-        # needed to turn that catalogue's RA/Dec into pixel boxes.
-        assert i_channel_groups is not None, (
-            "run_spice requires the 'total' polarisation (Stokes I) to have been imaged"
-        )
-        assert (
-            pol_field_options.spice_catalogue is not None
-            or pol_field_options.aegean_container is not None
-        ), "run_spice without a spice_catalogue requires an aegean_container"
-
-        mfs_linmos_result = task_linmos_images.submit(
-            image_list=beam_mfs_images,
-            container=pol_field_options.yandasoft_container,
-            linmos_options=LinmosOptions(
-                holofile=pol_field_options.holofile,
-                cutoff=pol_field_options.pb_cutoff,
-                cleanup=True,
-                # Must match the untrimmed shape of the per-channel/cube images
-                # spice_fits later compares this reference's shape against.
-                trim_linmos_fits=False,
-            ),
-            field_summary=field_summary,
-            holofile=pol_field_options.holofile,
-        )
-        mfs_image_path = task_getattr.submit(mfs_linmos_result, "image_fits")
-
-        is_user_catalogue = pol_field_options.spice_catalogue is not None
-        if is_user_catalogue:
-            catalogue_path = pol_field_options.spice_catalogue
-        else:
-            aegean_outputs = task_run_bane_and_aegean.submit(
-                image=mfs_linmos_result,
-                aegean_container=pol_field_options.aegean_container,
-                update_bane_options=get_options_from_strategy(
-                    strategy=strategy, operation="polarisation", mode="bane"
-                ),
-                update_aegean_options=get_options_from_strategy(
-                    strategy=strategy, operation="polarisation", mode="aegean"
-                ),
-            )
-            catalogue_path = task_getattr.submit(aegean_outputs, "comp")
-
-        spice_options = SpiceOptions(
-            **get_options_from_strategy(
-                strategy=strategy, operation="polarisation", mode="spice"
-            )
-        )
-        island_boxes = task_get_spice_boxes.submit(
-            reference_image=mfs_image_path,
-            catalogue=catalogue_path,
-            spice_options=spice_options,
-            beam_shape=common_beam_shape,
-            is_user_catalogue=is_user_catalogue,
-        )
-
-    # Whether anything downstream needs the full-size (unspiced) cube: either
-    # spice is off entirely, or rm-synth is on and reading the full cube.
-    need_full_cube = not pol_field_options.run_spice or (
-        pol_field_options.run_rmsynth and not pol_field_options.rmsynth_on_spiced_cubes
-    )
-
     cube_results: list[PrefectFuture[Path]] = []
     stokes_image_cubes: dict[str, PrefectFuture[Path]] = {}
     all_input_images: list[Path] = []
@@ -368,9 +316,7 @@ def process_science_fields_pol(
                 field_summary=field_summary,
                 fitscube_options=fitscube_options,
                 suffix_str=POL_NAME_SUFFIX,
-                plane_post_process=partial(task_spice_fits.submit, boxes=island_boxes)
-                if pol_field_options.run_spice and not need_full_cube
-                else None,
+                plane_post_process=None,
             )
             stokes_image_cubes[stokes] = stokes_cubes[0]
             cube_results.extend(stokes_cubes)
@@ -381,67 +327,66 @@ def process_science_fields_pol(
         *all_input_images, wait_for=cube_results
     )
 
-    rmsynth_result: PrefectFuture[list[Path]] | None = None
-    if pol_field_options.run_rmsynth:
-        assert "q" in stokes_image_cubes and "u" in stokes_image_cubes, (
-            "run_rmsynth requires the 'linear' polarisation (Stokes Q/U) to have been imaged"
-        )
-        # Mirrors the i_channel_groups leakage-correction gating above: use
-        # Stokes I if it was imaged, otherwise skip the fractional-pol correction.
-        stokes_i_cube = stokes_image_cubes.get("i")
-        rmsynth_options = RMSynthOptions(
-            **get_options_from_strategy(
-                strategy=strategy, operation="rmsynth", mode="rmsynth"
-            )
-        )
-        rmclean_options = RMCleanOptions(
-            **get_options_from_strategy(
-                strategy=strategy, operation="rmsynth", mode="rmclean"
-            )
-        )
-        output_prefix = task_create_name_from_common_fields.submit(
-            in_paths=(stokes_image_cubes["q"], stokes_image_cubes["u"])
-        )
-        rmsynth_result = task_rmsynth_and_write_products.submit(
-            stokes_q_cube=stokes_image_cubes["q"],
-            stokes_u_cube=stokes_image_cubes["u"],
-            stokes_i_cube=stokes_i_cube,
-            rmsynth_options=rmsynth_options,
-            rmclean_options=rmclean_options,
-            cube_products=pol_field_options.rmsynth_cube_products,
-            moment_products=pol_field_options.rmsynth_moment_products,
-            output_prefix=output_prefix,
-        )
+    # Co-add the MFS image/model/residual products collected above the same way
+    # as the science cube: PB-correct via linmos, leakage-correct against the
+    # matching Stokes I MFS product where available, then clean up the
+    # per-beam convolved intermediates.
+    mfs_products: dict[str, dict[str, PrefectFuture[Path]]] = {}
+    all_mfs_input_images: list[PrefectFuture[Path]] = []
+    mfs_linmos_results: list[PrefectFuture[Path]] = []
+    for stokes, product_type_images in mfs_beam_images.items():
+        with tags(f"stokes-{stokes}"):
+            for product_type, beam_images in product_type_images.items():
+                stokesi_images: list[Path] | None = None
+                if stokes != "i":
+                    i_beam_images = mfs_beam_images.get("i", {}).get(product_type)
+                    if i_beam_images is not None:
+                        stokesi_images = [future.result() for future in i_beam_images]
 
-    if pol_field_options.run_spice:
-        if need_full_cube:
-            # Case 3: rm-synth (always on here, see need_full_cube above) has
-            # already read these full cubes -- now replace them in place.
-            spiced_cubes = [
-                task_spice_fits.submit(
-                    fits_path=cube, boxes=island_boxes, wait_for=[rmsynth_result]
+                mfs_linmos_result = task_linmos_images.submit(
+                    image_list=beam_images,
+                    container=pol_field_options.yandasoft_container,
+                    linmos_options=LinmosOptions(
+                        holofile=pol_field_options.holofile,
+                        cutoff=pol_field_options.pb_cutoff,
+                        stokesi_images=stokesi_images,
+                        force_remove_leakage=force_remove_leakage,
+                        cleanup=True,
+                    ),
+                    field_summary=field_summary,
+                    suffix_str=POL_NAME_SUFFIX,
+                    holofile=pol_field_options.holofile,
                 )
-                for cube in cube_results
-            ]
-            compress_wait_for = None
-        else:
-            # Case 2: cube_results are already the spiced cubes (spice ran as
-            # plane_post_process before cubing). If rm-synth read them
-            # (rmsynth_on_spiced_cubes), keep them uncompressed until it's done.
-            spiced_cubes = cube_results
-            compress_wait_for = [rmsynth_result] if rmsynth_result else None
+                mfs_image_path = task_getattr.submit(mfs_linmos_result, "image_fits")
+                mfs_products.setdefault(stokes, {})[product_type] = mfs_image_path
+                all_mfs_input_images.extend(beam_images)
+                mfs_linmos_results.append(mfs_image_path)
 
-        cube_results = [
-            task_compress_cube.submit(
-                out_cube=cube,
-                method=spice_options.compress_method,
-                max_workers=spice_options.compress_max_workers,
-                wait_for=compress_wait_for,
-            )
-            for cube in spiced_cubes
-        ]
+    remove_mfs_result = (
+        task_remove_files_folders.submit(
+            *all_mfs_input_images, wait_for=mfs_linmos_results
+        )
+        if all_mfs_input_images
+        else None
+    )
 
-    return [*cube_results, remove_result, *([rmsynth_result] if rmsynth_result else [])]
+    terminal_futures: list[PrefectFuture[Any]] = [*cube_results, remove_result]
+    if remove_mfs_result is not None:
+        terminal_futures.append(remove_mfs_result)
+
+    return PolPipelineResult(
+        stokes_cubes={
+            stokes: future.result() for stokes, future in stokes_image_cubes.items()
+        },
+        mfs_products={
+            stokes: {
+                product_type: future.result()
+                for product_type, future in product_type_futures.items()
+            }
+            for stokes, product_type_futures in mfs_products.items()
+        },
+        terminal_futures=terminal_futures,
+    )
 
 
 def setup_run_process_science_field(
