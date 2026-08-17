@@ -95,6 +95,9 @@ casa =[
 rmsynth = [
     "rm-lite>=2026.7.7",
 ]
+all = [
+    "askap-flint[dev,casa,rmsynth]",
+]
 
 [project.scripts]
 flint_skymodel = "flint.sky_model:cli"
