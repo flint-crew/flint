@@ -361,6 +361,7 @@ def task_wsclean_imager(
     channel_range: tuple[int, int] | None = None,
     scan_range: tuple[int, int] | None = None,
     make_cube_from_subbands: bool = True,
+    extra_output_types: tuple[str, ...] | None = None,
 ) -> WSCleanResult:
     """Run the wsclean imager against an input measurement set
 
@@ -374,6 +375,7 @@ def task_wsclean_imager(
         fits_mask (Optional[FITSMaskNames], optional): A path to a clean guard mask. Defaults to None.
         channel_range (Optional[Tuple[int,int]], optional): Add to the wsclean options the specific channel range to be imaged. Defaults to None.
         scan_range (Optional[Tuple[int,int]], optional): Add to the wsclean options the specific scan range to be imaged. Defaults to None.
+        extra_output_types (tuple[str, ...] | None, optional): Additional output types (beyond ``image``/``residual``) to search for and attach to the returned ``ImageSet``. Defaults to None.
 
     Returns:
         WSCleanResult: A resulting wsclean command and resulting meta-data
@@ -405,6 +407,7 @@ def task_wsclean_imager(
         update_wsclean_options=update_wsclean_options,
         make_cube_from_subbands=make_cube_from_subbands,
         update_fitscube_options=update_fitscube_options,
+        extra_output_types=extra_output_types,
     )
 
 
