@@ -272,6 +272,9 @@ def rmsynth_and_write_products(
 ) -> list[Path]:
     """Run RM-synthesis (and RM-CLEAN if needed) and write the requested output products.
 
+    Thin wrapper around ``run_rmsynth_3d``/``run_rmclean_3d``/``write_rm_products``,
+    kept so callers that want the combined behaviour in one call still have it.
+
     Args:
         stokes_q_cube (Path): Path to the Stokes Q FITS cube
         stokes_u_cube (Path): Path to the Stokes U FITS cube
@@ -290,12 +293,6 @@ def rmsynth_and_write_products(
         logger.info("No RM-synthesis products requested, skipping.")
         return []
 
-    if os.environ.get("OMP_NUM_THREADS") != "1":
-        logger.warning(
-            "OMP_NUM_THREADS is not set to '1'. rm-lite's dask parallelisation guide "
-            "warns this oversubscribes cores when combined with Dask-level parallelism."
-        )
-
     synth_results = run_rmsynth_3d(
         stokes_q_cube=stokes_q_cube,
         stokes_u_cube=stokes_u_cube,
@@ -311,6 +308,54 @@ def rmsynth_and_write_products(
         if run_clean
         else None
     )
+
+    return write_rm_products(
+        synth_results=synth_results,
+        clean_results=clean_results,
+        stokes_q_cube=stokes_q_cube,
+        rmsynth_options=rmsynth_options,
+        rmclean_options=rmclean_options,
+        cube_products=cube_products,
+        moment_products=moment_products,
+        output_prefix=output_prefix,
+        dask_client=dask_client,
+    )
+
+
+def write_rm_products(
+    synth_results: RMSynth3DResults,
+    clean_results: RMClean3DResults | None,
+    stokes_q_cube: Path,
+    rmsynth_options: RMSynthOptions,
+    rmclean_options: RMCleanOptions,
+    cube_products: list[FDFLabel],
+    moment_products: list[FDFLabel],
+    output_prefix: Path,
+    dask_client: Client | None = None,
+) -> list[Path]:
+    """Batch-compute and write the requested RM-synthesis/RM-CLEAN output products.
+
+    Args:
+        synth_results (RMSynth3DResults): Results from ``run_rmsynth_3d``
+        clean_results (RMClean3DResults | None): Results from ``run_rmclean_3d``, or None if 'clean'/'model' were not requested
+        stokes_q_cube (Path): Path to the Stokes Q FITS cube (its header is reused for output WCS)
+        rmsynth_options (RMSynthOptions): Options controlling RM-synthesis
+        rmclean_options (RMCleanOptions): Options controlling RM-CLEAN
+        cube_products (list[FDFLabel]): Which FDF cube(s) to write ('dirty', 'clean', 'model')
+        moment_products (list[FDFLabel]): Which FDF(s) to compute Faraday moment maps from
+        output_prefix (Path): Common prefix for the output files
+        dask_client (Client | None, optional): A distributed Client (e.g. the one backing a Prefect ``DaskTaskRunner``) to compute across, rather than just the local worker. Defaults to None.
+
+    Returns:
+        list[Path]: Every FITS path written
+    """
+    if os.environ.get("OMP_NUM_THREADS") != "1":
+        logger.warning(
+            "OMP_NUM_THREADS is not set to '1'. rm-lite's dask parallelisation guide "
+            "warns this oversubscribes cores when combined with Dask-level parallelism."
+        )
+
+    run_clean = clean_results is not None
 
     fdf_sources = {"dirty": synth_results.fdf_dirty_cube}
     if clean_results is not None:
