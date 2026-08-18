@@ -5,8 +5,6 @@ Not intended to contain any common task decorated functions
 
 from __future__ import annotations
 
-import logging
-
 from prefect import get_run_logger
 
 
@@ -68,39 +66,3 @@ def enable_loguru_support() -> None:
         level="TRACE",
         format=log_format,
     )
-
-
-class _RMLiteRunLoggerHandler(logging.Handler):
-    """Forwards rm-lite's stdlib log records to the active Prefect run logger."""
-
-    _LEVEL_TO_METHOD = {
-        logging.DEBUG: "debug",
-        logging.INFO: "info",
-        logging.WARNING: "warning",
-        logging.ERROR: "error",
-        logging.CRITICAL: "critical",
-    }
-
-    def emit(self, record: logging.LogRecord) -> None:
-        method_name = self._LEVEL_TO_METHOD.get(record.levelno, "info")
-        getattr(get_run_logger(), method_name)(self.format(record))
-
-
-def enable_rmlite_logging_support() -> None:
-    """Redirect rm-lite's stdlib logging (logger name 'rmtools-lite') to the
-    Prefect run logger. This function should be called from within a Prefect
-    task before calling any module that uses rm-lite. Safe to call multiple
-    times.
-    """
-    rmlite_logger = logging.getLogger("rmtools-lite")
-    for handler in list(rmlite_logger.handlers):
-        if not isinstance(handler, _RMLiteRunLoggerHandler):
-            rmlite_logger.removeHandler(handler)
-
-    if not any(
-        isinstance(handler, _RMLiteRunLoggerHandler)
-        for handler in rmlite_logger.handlers
-    ):
-        rmlite_logger.addHandler(_RMLiteRunLoggerHandler())
-
-    rmlite_logger.propagate = False

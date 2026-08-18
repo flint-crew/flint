@@ -13,19 +13,3 @@ def test_get_parser() -> None:
     parser = get_parser()
 
     assert isinstance(parser, ArgumentParser)
-
-
-def test_get_parser_has_no_run_polarisation() -> None:
-    """Polarisation orchestration moved to the racs-all flow-of-flows
-
-    This flow only does continuum imaging/self-cal and should no longer expose
-    run_polarisation or any other PolFieldOptions flag.
-
-    """
-    parser = get_parser()
-    option_strings = {
-        option_string
-        for action in parser._actions
-        for option_string in action.option_strings
-    }
-    assert "--run-polarisation" not in option_strings

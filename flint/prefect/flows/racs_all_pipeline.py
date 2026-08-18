@@ -14,7 +14,6 @@ from prefect import flow
 from pydantic import create_model
 
 from flint.configuration import get_options_from_strategy, load_strategy_yaml
-from flint.logging import logger
 from flint.naming import get_sbid_from_path
 from flint.options import (
     PolFieldOptions,
@@ -130,16 +129,15 @@ def process_racs_all(
 
     terminal_results: list[Any] = []
 
-    if not pipeline_options.run_imaging:
-        logger.info("run_imaging is False, nothing to do.")
-        return terminal_results
-
-    assert pipeline_options.imaging_cluster_config is not None
-    continuum_result = process_racs_all_continuum.with_options(
-        task_runner=get_dask_runner(cluster=pipeline_options.imaging_cluster_config),
-        name="RACS All -- continuum imaging",
-    )(racs_all_options=racs_all_options)
-    terminal_results.extend(continuum_result.terminal_futures)
+    if pipeline_options.run_imaging:
+        assert pipeline_options.imaging_cluster_config is not None
+        continuum_result = process_racs_all_continuum.with_options(
+            task_runner=get_dask_runner(
+                cluster=pipeline_options.imaging_cluster_config
+            ),
+            name="RACS All -- continuum imaging",
+        )(racs_all_options=racs_all_options)
+        terminal_results.extend(continuum_result.terminal_futures)
 
     if not pipeline_options.run_polarisation:
         return terminal_results

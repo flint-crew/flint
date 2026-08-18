@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from capn_crunch import add_options_to_parser, create_options_from_parser
+from capn_crunch import BaseOptions, add_options_to_parser, create_options_from_parser
 from configargparse import ArgumentParser
 from prefect import flow, tags
 from prefect.futures import PrefectFuture
@@ -32,7 +32,6 @@ from flint.naming import (
 from flint.options import (
     FitsCubeOptions,
     PolFieldOptions,
-    PolPipelineResult,
     dump_field_options_to_yaml,
 )
 from flint.prefect.clusters import get_dask_runner
@@ -58,6 +57,19 @@ from flint.prefect.common.utils import (
 # Marks images/cubes produced by this pipeline so they don't clash with the
 # continuum self-cal flow's own Stokes I/V products for the same MS/beam.
 POL_NAME_SUFFIX = "pol"
+
+
+class PolPipelineResult(BaseOptions):
+    """Return value of ``process_science_fields_pol``, handed in-memory to
+    the rm-synth/clean and spice-compression stages of the ``racs-all``
+    flow-of-flows."""
+
+    stokes_cubes: dict[str, Path]
+    """The full, unspiced Stokes cube written for each imaged polarisation (e.g. 'i', 'q', 'u', 'v')"""
+    mfs_products: dict[str, dict[str, Path]]
+    """MFS image/model/residual products co-added per Stokes parameter, keyed by Stokes ('i', 'q', 'u', 'v') then product type ('image', 'model', 'residual'). Only populated for Stokes imaged under a polarisation with ``WSCleanOptions.flint_save_mfs_products`` set"""
+    terminal_futures: list[PrefectFuture[Any]]
+    """Every future the polarisation stage produced, propagated so Prefect still detects any of their failures"""
 
 
 @flow(name="Flint Polarisation Pipeline")

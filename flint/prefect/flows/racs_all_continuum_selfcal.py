@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from capn_crunch import (
+    BaseOptions,
     add_options_to_parser,
     create_options_from_parser,
 )
@@ -43,7 +44,6 @@ from flint.naming import (
 from flint.options import (
     FitsCubeOptions,
     RACSAllOptions,
-    RACSContinuumResult,
     dump_field_options_to_yaml,
 )
 from flint.prefect.clusters import get_dask_runner
@@ -81,6 +81,22 @@ class LoopFutures:
     """Imaging results from wsclean imaging"""
     ms_summaries: list[MSSummary] | None = None
     """Results from a MS description"""
+
+
+class RACSContinuumResult(BaseOptions):
+    """Return value of ``process_racs_all_continuum``, handed in-memory to the
+    polarisation stage of the ``racs-all`` flow-of-flows rather than having
+    it rediscover measurement sets and paths by globbing the output
+    directory."""
+
+    mss_by_beam: tuple[tuple[MS, ...], ...]
+    """The final round's per-beam self-calibrated measurement sets. Structurally equivalent to ``flint.ms.MSsByBeam``"""
+    holography_path: Path | None
+    """Path to the holography FITS cube used when co-adding beams, if any"""
+    output_science_path: Path
+    """Directory the continuum imaging stage wrote its output products into"""
+    terminal_futures: list[PrefectFuture[Any]]
+    """Every future the continuum imaging stage produced, propagated so Prefect still detects any of their failures"""
 
 
 def _check_racs_all_options(racs_all_options: RACSAllOptions) -> None:

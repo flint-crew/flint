@@ -10,7 +10,7 @@ hold stateful properties throughout the flint codebase.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import Literal, Protocol
 
 import numpy as np
 import yaml
@@ -510,35 +510,6 @@ class RACSAllPipelineOptions(BaseOptions):
     """Specify a new cluster configuration file for the rm-synth/clean stage, different to the preferred one. If None, drawn from the preferred cluster config"""
     spice_cluster_config: Path | None = None
     """Specify a new cluster configuration file for the spice-compression stage, different to the preferred one. If None, drawn from the preferred cluster config"""
-
-
-class RACSContinuumResult(BaseOptions):
-    """Return value of ``process_racs_all_continuum``, handed in-memory to the
-    polarisation stage of the ``racs-all`` flow-of-flows rather than having
-    it rediscover measurement sets and paths by globbing the output
-    directory."""
-
-    mss_by_beam: tuple[tuple[MS, ...], ...]
-    """The final round's per-beam self-calibrated measurement sets. Structurally equivalent to ``flint.ms.MSsByBeam``"""
-    holography_path: Path | None
-    """Path to the holography FITS cube used when co-adding beams, if any"""
-    output_science_path: Path
-    """Directory the continuum imaging stage wrote its output products into"""
-    terminal_futures: list[Any]
-    """Every future the continuum imaging stage produced, propagated so Prefect still detects any of their failures"""
-
-
-class PolPipelineResult(BaseOptions):
-    """Return value of ``process_science_fields_pol``, handed in-memory to
-    the rm-synth/clean and spice-compression stages of the ``racs-all``
-    flow-of-flows."""
-
-    stokes_cubes: dict[str, Path]
-    """The full, unspiced Stokes cube written for each imaged polarisation (e.g. 'i', 'q', 'u', 'v')"""
-    mfs_products: dict[str, dict[str, Path]]
-    """MFS image/model/residual products co-added per Stokes parameter, keyed by Stokes ('i', 'q', 'u', 'v') then product type ('image', 'model', 'residual'). Only populated for Stokes imaged under a polarisation with ``WSCleanOptions.flint_save_mfs_products`` set"""
-    terminal_futures: list[Any]
-    """Every future the polarisation stage produced, propagated so Prefect still detects any of their failures"""
 
 
 def dump_field_options_to_yaml(

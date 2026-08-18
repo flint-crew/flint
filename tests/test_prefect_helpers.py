@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 from uuid import uuid4
 
@@ -12,11 +11,7 @@ from prefect.task_engine import run_task_sync
 from prefect.testing.utilities import prefect_test_harness
 
 from flint.prefect.caching import task as flint_task
-from flint.prefect.helpers import (
-    _RMLiteRunLoggerHandler,
-    enable_loguru_support,
-    enable_rmlite_logging_support,
-)
+from flint.prefect.helpers import enable_loguru_support
 
 
 @flow
@@ -35,35 +30,6 @@ def test_enable_loguru_support():
 
     with prefect_test_harness(), disable_run_logger():
         assert example_flow() == "JackSparrow"
-
-
-@flow
-def _rmlite_flow():
-    enable_rmlite_logging_support()
-    return "Kraken"
-
-
-def test_enable_rmlite_logging_support():
-    """rm-lite (flint.rmsynth's dependency) logs via stdlib logging under
-    the name 'rmtools-lite' and attaches its own StreamHandler by default.
-    This swaps that for a handler forwarding to the Prefect run logger,
-    sibling to enable_loguru_support above.
-    """
-
-    rmlite_logger = logging.getLogger("rmtools-lite")
-    original_handlers = list(rmlite_logger.handlers)
-    original_propagate = rmlite_logger.propagate
-    rmlite_logger.handlers = [logging.StreamHandler()]
-
-    try:
-        with prefect_test_harness(), disable_run_logger():
-            assert _rmlite_flow() == "Kraken"
-
-        assert len(rmlite_logger.handlers) == 1
-        assert isinstance(rmlite_logger.handlers[0], _RMLiteRunLoggerHandler)
-    finally:
-        rmlite_logger.handlers = original_handlers
-        rmlite_logger.propagate = original_propagate
 
 
 @task

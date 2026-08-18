@@ -10,7 +10,7 @@ from pathlib import Path
 from astropy.io import fits
 from capn_crunch import add_options_to_parser, create_options_from_parser
 from configargparse import ArgumentParser
-from prefect import flow, task
+from prefect import flow, task, unmapped
 from radio_beam import Beam
 
 from flint.configuration import get_options_from_strategy, load_and_copy_strategy
@@ -79,23 +79,19 @@ def process_spice_compression(spice_field_options: SpiceFieldOptions) -> list[Pa
         is_user_catalogue=is_user_catalogue,
     )
 
-    spiced_cubes = [
-        task_spice_fits.submit(fits_path=cube, boxes=island_boxes)
-        for cube in spice_field_options.cubes
-    ]
+    spiced_cubes = task_spice_fits.map(
+        fits_path=spice_field_options.cubes, boxes=unmapped(island_boxes)
+    )
 
-    compressed_cubes = [
-        task_compress_cube.submit(
-            out_cube=cube,
-            method=spice_options.compress_method,
-            max_workers=spice_options.compress_max_workers,
-        )
-        for cube in spiced_cubes
-    ]
+    compressed_cubes = task_compress_cube.map(
+        out_cube=spiced_cubes,
+        method=unmapped(spice_options.compress_method),
+        max_workers=unmapped(spice_options.compress_max_workers),
+    )
 
     logger.info(f"Compressed {len(compressed_cubes)} cubes")
 
-    return [cube.result() for cube in compressed_cubes]
+    return compressed_cubes.result()
 
 
 def setup_run_spice_compression(

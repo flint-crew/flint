@@ -13,7 +13,6 @@ from prefect import task
 
 from flint.logging import logger
 from flint.options import RMCleanOptions, RMSynthOptions
-from flint.prefect.helpers import enable_rmlite_logging_support
 from flint.rmsynth import (
     FDFLabel,
     RMClean3DResults,
@@ -23,34 +22,8 @@ from flint.rmsynth import (
     write_rm_products,
 )
 
-
-@task
-def task_rmsynth(
-    stokes_q_cube: Path,
-    stokes_u_cube: Path,
-    rmsynth_options: RMSynthOptions,
-    stokes_i_cube: Path | None = None,
-) -> RMSynth3DResults:
-    """Lazily build the dirty FDF cube"""
-    enable_rmlite_logging_support()
-    return run_rmsynth_3d(
-        stokes_q_cube=stokes_q_cube,
-        stokes_u_cube=stokes_u_cube,
-        rmsynth_options=rmsynth_options,
-        stokes_i_cube=stokes_i_cube,
-    )
-
-
-@task
-def task_rmclean(
-    rm_synth_results: RMSynth3DResults,
-    rmclean_options: RMCleanOptions,
-) -> RMClean3DResults:
-    """Lazily build the clean/model FDF cubes"""
-    enable_rmlite_logging_support()
-    return run_rmclean_3d(
-        rm_synth_results=rm_synth_results, rmclean_options=rmclean_options
-    )
+task_rmsynth = task(run_rmsynth_3d)
+task_rmclean = task(run_rmclean_3d)
 
 
 @task
