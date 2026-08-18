@@ -355,9 +355,9 @@ class RMSynthFieldOptions(BaseOptions):
     imaging_strategy: Path | None = None
     """Path to a FLINT imaging yaml file that contains the RMSynthOptions/RMCleanOptions settings to use"""
     cube_products: list[Literal["dirty", "clean", "model"]] = []
-    """Which Faraday dispersion function (FDF) cubes to write as FITS. 'dirty' is the raw FDF (no RM-CLEAN needed). 'clean'/'model' are RM-CLEAN's cleaned/clean-component FDF (RM-CLEAN is run if either is requested). Empty by default, as these cubes are large."""
+    """Which Faraday dispersion function (FDF) cubes to write as FITS. Nothing by default, as these cubes can be large."""
     moment_products: list[Literal["dirty", "clean", "model"]] = ["clean"]
-    """Which FDF(s) to compute Faraday moment maps (mom0=polarised intensity, mom1=mean Faraday depth, mom2=Faraday depth dispersion) from. 'clean' is the usual choice; 'dirty' moments are noise-biased; 'model' moments describe just the clean components."""
+    """Which FDF(s) to compute Faraday moment maps from."""
     sbid_copy_path: Path | None = None
     """Path that final processed products will be copied into. If None no copying of file products is performed. See ArchiveOptions. """
 
@@ -371,7 +371,7 @@ class SpiceFieldOptions(BaseOptions):
     cubes: list[Path]
     """Stokes cubes to trim and compress"""
     reference_image: Path | None = None
-    """A 2D MFS image whose WCS/shape sources the source-finding boxes. Required only when catalogue is not set (built-in aegean source finding); a supplied catalogue instead sources WCS/shape from one of cubes' own header"""
+    """A 2D MFS image whose WCS/shape sources the source-finding boxes. Required only when catalogue is not set (built-in aegean source finding)"""
     catalogue: Path | None = None
     """A source catalogue (RA/Dec at minimum). If None the pipeline source finds its own sources from reference_image instead. See SpiceOptions for how to describe this catalogue's columns"""
     aegean_container: Path | None = None
