@@ -136,6 +136,7 @@ def process_racs_all(
         logger.info("run_imaging is False, nothing to do.")
         return terminal_results
 
+    assert pipeline_options.imaging_cluster_config is not None
     continuum_result = process_racs_all_continuum.with_options(
         task_runner=get_dask_runner(cluster=pipeline_options.imaging_cluster_config),
         name="RACS All -- continuum imaging",
@@ -148,6 +149,7 @@ def process_racs_all(
     resolved_pol_field_options = pol_field_options.with_options(
         holofile=continuum_result.holography_path
     )
+    assert pipeline_options.polarisation_cluster_config is not None
     pol_result = process_science_fields_pol.with_options(
         task_runner=get_dask_runner(
             cluster=pipeline_options.polarisation_cluster_config
@@ -166,8 +168,11 @@ def process_racs_all(
             stokes_u_cube=pol_result.stokes_cubes["u"],
             stokes_i_cube=pol_result.stokes_cubes.get("i"),
         )
+        assert pipeline_options.rmsynth_cluster_config is not None
         rmsynth_results = process_rmsynth.with_options(
-            task_runner=get_dask_runner(cluster=pipeline_options.rmsynth_cluster_config),
+            task_runner=get_dask_runner(
+                cluster=pipeline_options.rmsynth_cluster_config
+            ),
             name="RACS All -- rm-synthesis",
         )(rmsynth_field_options=resolved_rmsynth_field_options)
         terminal_results.extend(rmsynth_results)
@@ -182,6 +187,7 @@ def process_racs_all(
             cubes=list(pol_result.stokes_cubes.values()),
             reference_image=resolved_reference_image,
         )
+        assert pipeline_options.spice_cluster_config is not None
         spice_results = process_spice_compression.with_options(
             task_runner=get_dask_runner(cluster=pipeline_options.spice_cluster_config),
             name="RACS All -- spice compression",
