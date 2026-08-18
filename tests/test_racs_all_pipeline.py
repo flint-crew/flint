@@ -69,29 +69,25 @@ def racs_all_options() -> RACSAllOptions:
     )
 
 
-def test_check_racs_all_pipeline_options_run_polarisation_requires_run_imaging() -> (
-    None
-):
+def test_check_racs_all_pipeline_options_polarisation_requires_imaging() -> None:
     with pytest.raises(ValueError):
         _check_racs_all_pipeline_options(
-            RACSAllPipelineOptions(run_imaging=False, run_polarisation=True)
+            RACSAllPipelineOptions(skip_imaging=True, skip_polarisation=False)
         )
 
 
-def test_check_racs_all_pipeline_options_run_rmsynth_requires_run_polarisation() -> (
-    None
-):
+def test_check_racs_all_pipeline_options_rmsynth_requires_polarisation() -> None:
     with pytest.raises(ValueError):
         _check_racs_all_pipeline_options(
-            RACSAllPipelineOptions(run_polarisation=False, run_rmsynth=True)
+            RACSAllPipelineOptions(skip_polarisation=True, skip_rmsynth=False)
         )
 
 
-def test_check_racs_all_pipeline_options_run_spice_requires_run_polarisation() -> None:
+def test_check_racs_all_pipeline_options_spice_requires_polarisation() -> None:
     with pytest.raises(ValueError):
         _check_racs_all_pipeline_options(
             RACSAllPipelineOptions(
-                run_polarisation=False, run_rmsynth=False, run_spice=True
+                skip_polarisation=True, skip_rmsynth=True, skip_spice=False
             )
         )
 
@@ -101,13 +97,13 @@ def test_check_racs_all_pipeline_options_default_is_valid() -> None:
     _check_racs_all_pipeline_options(RACSAllPipelineOptions())
 
 
-def test_check_racs_all_pipeline_options_everything_disabled_is_valid() -> None:
+def test_check_racs_all_pipeline_options_everything_skipped_is_valid() -> None:
     _check_racs_all_pipeline_options(
         RACSAllPipelineOptions(
-            run_imaging=False,
-            run_polarisation=False,
-            run_rmsynth=False,
-            run_spice=False,
+            skip_imaging=True,
+            skip_polarisation=True,
+            skip_rmsynth=True,
+            skip_spice=True,
         )
     )
 
@@ -119,7 +115,7 @@ def test_check_spice_mfs_dependency_errors_without_catalogue_or_strategy(
     False) means no aegean reference image would be available."""
     with pytest.raises(ValueError):
         _check_spice_mfs_dependency(
-            RACSAllPipelineOptions(run_spice=True),
+            RACSAllPipelineOptions(skip_spice=False),
             racs_all_options,
             SpiceFieldOptions(cubes=[Path("/tmp/i.fits")], catalogue=None),
         )
@@ -131,7 +127,7 @@ def test_check_spice_mfs_dependency_ok_with_user_catalogue(
     """A user-supplied catalogue sources WCS/shape from a cube header
     directly, so no MFS reference image check is needed."""
     _check_spice_mfs_dependency(
-        RACSAllPipelineOptions(run_spice=True),
+        RACSAllPipelineOptions(skip_spice=False),
         racs_all_options,
         SpiceFieldOptions(cubes=[Path("/tmp/i.fits")], catalogue=Path("/tmp/cat.fits")),
     )
@@ -141,7 +137,7 @@ def test_check_spice_mfs_dependency_ok_when_spice_disabled(
     racs_all_options: RACSAllOptions,
 ) -> None:
     _check_spice_mfs_dependency(
-        RACSAllPipelineOptions(run_spice=False),
+        RACSAllPipelineOptions(skip_spice=True),
         racs_all_options,
         SpiceFieldOptions(cubes=[Path("/tmp/i.fits")], catalogue=None),
     )
@@ -155,7 +151,7 @@ def test_process_racs_all_everything_disabled_returns_immediately(
     from flint.options import PolFieldOptions, RMSynthFieldOptions
 
     pipeline_options = RACSAllPipelineOptions(
-        run_imaging=False, run_polarisation=False, run_rmsynth=False, run_spice=False
+        skip_imaging=True, skip_polarisation=True, skip_rmsynth=True, skip_spice=True
     )
     pol_field_options = PolFieldOptions()
     rmsynth_field_options = RMSynthFieldOptions(

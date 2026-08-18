@@ -50,20 +50,23 @@ def _check_racs_all_pipeline_options(pipeline_options: RACSAllPipelineOptions) -
     (for its in-memory input) is skipped.
 
     """
-    if pipeline_options.run_polarisation and not pipeline_options.run_imaging:
+    if not pipeline_options.skip_polarisation and pipeline_options.skip_imaging:
         raise ValueError(
-            "`run_polarisation` requires run_imaging."
-            "To run polarisation on its own, use flint_flow_polarisation_pipeline."
+            "polarisation stage requires the imaging stage (cannot set skip_imaging "
+            "without skip_polarisation). To run polarisation on its own, use "
+            "flint_flow_polarisation_pipeline."
         )
-    if pipeline_options.run_rmsynth and not pipeline_options.run_polarisation:
+    if not pipeline_options.skip_rmsynth and pipeline_options.skip_polarisation:
         raise ValueError(
-            "`run_rmsynth` requires run_polarisation."
-            "To run rm-synth on its own, use flint_flow_rmsynth_pipeline."
+            "rm-synth stage requires the polarisation stage (cannot set "
+            "skip_polarisation without skip_rmsynth). To run rm-synth on its own, "
+            "use flint_flow_rmsynth_pipeline."
         )
-    if pipeline_options.run_spice and not pipeline_options.run_polarisation:
+    if not pipeline_options.skip_spice and pipeline_options.skip_polarisation:
         raise ValueError(
-            "run_spice requires run_polarisation "
-            "To run spice on its own, use flint_flow_spice_compression_pipeline."
+            "spice stage requires the polarisation stage (cannot set "
+            "skip_polarisation without skip_spice). To run spice on its own, use "
+            "flint_flow_spice_compression_pipeline."
         )
 
 
@@ -76,7 +79,7 @@ def _check_spice_mfs_dependency(
     which only exists if the 'total' polarisation strategy sets
     ``flint_save_mfs_products``.
     """
-    if not pipeline_options.run_spice or spice_field_options.catalogue is not None:
+    if pipeline_options.skip_spice or spice_field_options.catalogue is not None:
         return
 
     strategy = (
@@ -92,7 +95,7 @@ def _check_spice_mfs_dependency(
     ).get("flint_save_mfs_products", False)
     if not save_mfs_products:
         raise ValueError(
-            "run_spice with no spice_field_options.catalogue requires the "
+            "spice stage with no spice_field_options.catalogue requires the "
             "'total' polarisation strategy to set flint_save_mfs_products=True "
             "(needed as the aegean source-finding reference image)"
         )
@@ -135,7 +138,7 @@ def process_racs_all(
 
     terminal_results: list[Any] = []
 
-    if pipeline_options.run_imaging:
+    if not pipeline_options.skip_imaging:
         assert pipeline_options.imaging_cluster_config is not None
         continuum_result = process_racs_all_continuum.with_options(
             task_runner=get_dask_runner(
@@ -145,7 +148,7 @@ def process_racs_all(
         )(racs_all_options=racs_all_options)
         terminal_results.extend(continuum_result.terminal_futures)
 
-    if not pipeline_options.run_polarisation:
+    if pipeline_options.skip_polarisation:
         return terminal_results
 
     resolved_pol_field_options = pol_field_options.with_options(
@@ -164,7 +167,7 @@ def process_racs_all(
     )
     terminal_results.extend(pol_result.terminal_futures)
 
-    if pipeline_options.run_rmsynth:
+    if not pipeline_options.skip_rmsynth:
         resolved_rmsynth_field_options = rmsynth_field_options.with_options(
             stokes_q_cube=pol_result.stokes_cubes["q"],
             stokes_u_cube=pol_result.stokes_cubes["u"],
@@ -179,7 +182,7 @@ def process_racs_all(
         )(rmsynth_field_options=resolved_rmsynth_field_options)
         terminal_results.extend(rmsynth_results)
 
-    if pipeline_options.run_spice:
+    if not pipeline_options.skip_spice:
         resolved_reference_image = (
             spice_field_options.reference_image
             if spice_field_options.catalogue is not None

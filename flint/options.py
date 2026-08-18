@@ -494,14 +494,14 @@ class RACSAllPipelineOptions(BaseOptions):
     with each stage individually skippable.
     """
 
-    run_imaging: bool = True
-    """Whether to run the continuum imaging/self-calibration stage"""
-    run_polarisation: bool = True
-    """Whether to run the polarisation imaging stage"""
-    run_rmsynth: bool = True
-    """Whether to run the RM-synthesis/RM-CLEAN stage"""
-    run_spice: bool = True
-    """Whether to run the SPICE compression stage"""
+    skip_imaging: bool = False
+    """Skip the continuum imaging/self-calibration stage"""
+    skip_polarisation: bool = False
+    """Skip the polarisation imaging stage"""
+    skip_rmsynth: bool = False
+    """Skip the RM-synthesis/RM-CLEAN stage"""
+    skip_spice: bool = False
+    """Skip the SPICE compression stage"""
     imaging_cluster_config: Path | None = None
     """Specify a new cluster configuration file for the imaging stage, different to the preferred one. If None, drawn from the preferred cluster config"""
     polarisation_cluster_config: Path | None = None
