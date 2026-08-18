@@ -349,30 +349,35 @@ def process_science_fields_pol(
     for stokes, product_type_images in mfs_beam_images.items():
         with tags(f"stokes-{stokes}"):
             for product_type, beam_images in product_type_images.items():
-                stokesi_images: list[Path] | None = None
-                if stokes != "i":
-                    i_beam_images = mfs_beam_images.get("i", {}).get(product_type)
-                    if i_beam_images is not None:
-                        stokesi_images = [future.result() for future in i_beam_images]
+                with tags(f"product-{product_type}"):
+                    stokesi_images: list[Path] | None = None
+                    if stokes != "i":
+                        i_beam_images = mfs_beam_images.get("i", {}).get(product_type)
+                        if i_beam_images is not None:
+                            stokesi_images = [
+                                future.result() for future in i_beam_images
+                            ]
 
-                mfs_linmos_result = task_linmos_images.submit(
-                    image_list=beam_images,
-                    container=pol_field_options.yandasoft_container,
-                    linmos_options=LinmosOptions(
+                    mfs_linmos_result = task_linmos_images.submit(
+                        image_list=beam_images,
+                        container=pol_field_options.yandasoft_container,
+                        linmos_options=LinmosOptions(
+                            holofile=pol_field_options.holofile,
+                            cutoff=pol_field_options.pb_cutoff,
+                            stokesi_images=stokesi_images,
+                            force_remove_leakage=force_remove_leakage,
+                            cleanup=True,
+                        ),
+                        field_summary=field_summary,
+                        suffix_str=f"{POL_NAME_SUFFIX}.{product_type}",
                         holofile=pol_field_options.holofile,
-                        cutoff=pol_field_options.pb_cutoff,
-                        stokesi_images=stokesi_images,
-                        force_remove_leakage=force_remove_leakage,
-                        cleanup=True,
-                    ),
-                    field_summary=field_summary,
-                    suffix_str=POL_NAME_SUFFIX,
-                    holofile=pol_field_options.holofile,
-                )
-                mfs_image_path = task_getattr.submit(mfs_linmos_result, "image_fits")
-                mfs_products.setdefault(stokes, {})[product_type] = mfs_image_path
-                all_mfs_input_images.extend(beam_images)
-                mfs_linmos_results.append(mfs_image_path)
+                    )
+                    mfs_image_path = task_getattr.submit(
+                        mfs_linmos_result, "image_fits"
+                    )
+                    mfs_products.setdefault(stokes, {})[product_type] = mfs_image_path
+                    all_mfs_input_images.extend(beam_images)
+                    mfs_linmos_results.append(mfs_image_path)
 
     remove_mfs_result = (
         task_remove_files_folders.submit(
