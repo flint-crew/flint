@@ -23,8 +23,7 @@ def task_get_spice_boxes(
     beam_shape: BeamShape,
     is_user_catalogue: bool,
 ) -> list[BoundingBox]:
-    """Build the (single, shared) set of island bounding boxes for a field
-    """
+    """Build the (single, shared) set of island bounding boxes for a field"""
     header = fits.getheader(reference_image)
     wcs = WCS(header)
     image_shape = (header["NAXIS2"], header["NAXIS1"])

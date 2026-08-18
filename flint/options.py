@@ -488,9 +488,9 @@ def pol_field_options_cli_class(
 
 class RACSAllPipelineOptions(BaseOptions):
     """Options controlling the ``racs-all`` flow-of-flows.
-     
-    Execution order: imaging -> polarisation -> rm-synth/clean -> spice-compression 
-    
+
+    Execution order: imaging -> polarisation -> rm-synth/clean -> spice-compression
+
     with each stage individually skippable.
     """
 

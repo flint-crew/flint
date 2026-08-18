@@ -40,10 +40,10 @@ STAGE_CLUSTER_CONFIG_ATTRS = (
 
 def _check_racs_all_pipeline_options(pipeline_options: RACSAllPipelineOptions) -> None:
     """Enforce the fixed stage order for RACS-all
-    
-    A downstream stage may not be enabled while the upstream stage it depends on 
+
+    A downstream stage may not be enabled while the upstream stage it depends on
     (for its in-memory input) is skipped.
-    
+
     """
     if pipeline_options.run_polarisation and not pipeline_options.run_imaging:
         raise ValueError(
@@ -57,7 +57,7 @@ def _check_racs_all_pipeline_options(pipeline_options: RACSAllPipelineOptions) -
         )
     if pipeline_options.run_spice and not pipeline_options.run_polarisation:
         raise ValueError(
-            "run_spice requires run_polarisation " \
+            "run_spice requires run_polarisation "
             "To run spice on its own, use flint_flow_spice_compression_pipeline."
         )
 

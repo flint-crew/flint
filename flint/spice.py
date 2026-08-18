@@ -110,10 +110,10 @@ def _component_box(
     psf_beam: Beam | None,
 ) -> BoundingBox:
     """Bounding box of a single catalogue row's ellipse (or point, if
-    shape_cols is None), in pixel space. 
-    
+    shape_cols is None), in pixel space.
+
     No beamwidth padding applied here.
-    
+
     """
     sky_coord = SkyCoord(
         float(row[ra_col]) * radec_unit, float(row[dec_col]) * radec_unit
@@ -262,10 +262,10 @@ def keep_mask_from_boxes(
 
 def spice_fits(fits_path: Path, boxes: list[BoundingBox]) -> Path:
     """Mask every pixel outside ``boxes`` to NaN and crop to their union,
-    
-    
-        - Works on a single plane or a multi-channel cube
-        - replaces ``fits_path`` in place
+
+
+    - Works on a single plane or a multi-channel cube
+    - replaces ``fits_path`` in place
     """
     if not boxes:
         raise ValueError(f"No bounding boxes supplied for {fits_path}")

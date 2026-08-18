@@ -20,7 +20,7 @@ def test_get_parser_has_no_run_polarisation() -> None:
 
     This flow only does continuum imaging/self-cal and should no longer expose
     run_polarisation or any other PolFieldOptions flag.
-    
+
     """
     parser = get_parser()
     option_strings = {
