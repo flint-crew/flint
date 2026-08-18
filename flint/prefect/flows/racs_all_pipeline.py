@@ -67,11 +67,10 @@ def _check_spice_mfs_dependency(
     racs_all_options: RACSAllOptions,
     spice_field_options: SpiceFieldOptions,
 ) -> None:
-    """Spice's built-in aegean source finding (no user catalogue) needs a
-    Stokes I MFS reference image, which only exists if the 'total'
-    polarisation strategy sets ``flint_save_mfs_products``. Checked up front,
-    before imaging/polarisation run, so a misconfigured run fails immediately
-    rather than after hours of imaging."""
+    """Aegean source finding (no user catalogue) needs a Stokes I MFS reference image, 
+    which only exists if the 'total' polarisation strategy sets 
+    ``flint_save_mfs_products``.
+    """
     if not pipeline_options.run_spice or spice_field_options.catalogue is not None:
         return
 
