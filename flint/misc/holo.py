@@ -520,14 +520,6 @@ def create_output_header(
     return out_header
 
 
-def _check_concat_holo_options(concat_holo_options: ConcatHoloOptions) -> None:
-    """Check to ensure appropriate options have been set. Some of these are made up
-    programmatically in the process of a workflow, so a sanity check is made here."""
-
-    assert concat_holo_options.output_path is not None, "Unsure output path"
-    assert concat_holo_options.holo_cubes is not None, "Unset cube"
-
-
 def concatenate_holography(concat_holo_options: ConcatHoloOptions) -> Path:
     """Reproject a set of ASKAP IQUV primary beam cubes into a single output cube.
     An optimal spatial grid is computed internally through ``reproject``, and input
@@ -543,14 +535,15 @@ def concatenate_holography(concat_holo_options: ConcatHoloOptions) -> Path:
     logger.info("Attempting to concatenate holography cubes")
     logger.info(f"Running on host {gethostname()}")
 
-    _check_concat_holo_options(concat_holo_options=concat_holo_options)
-
+    # Some option are established from a larger workflow, and default options
+    # in ConCatHolo are tolerated to ensure compatibility with the strategy file.
     assert concat_holo_options.holo_cubes is not None, "Holography cubes are unset."
+    assert concat_holo_options.output_path is not None, "Unset output path"
+
     fits_cube_infos = load_and_sort_cubes(cube_paths=concat_holo_options.holo_cubes)
     spatial_header = construct_spatial_output_wcs(fits_cube_infos=fits_cube_infos)
     frequency_grid = construct_frequency_grid(fits_cube_infos=fits_cube_infos)
 
-    assert concat_holo_options.output_path is not None, "Unset output path"
     final_fits_cube_info: FinalFITSCubeInfo = create_placeholder_cube(
         fits_cube_infos=fits_cube_infos,
         spatial_header=spatial_header,
