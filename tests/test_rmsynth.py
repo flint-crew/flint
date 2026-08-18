@@ -9,8 +9,9 @@ import pytest
 from astropy.io import fits
 from astropy.wcs import WCS
 
+from flint.exceptions import NotSupportedError
 from flint.options import RMCleanOptions, RMSynthOptions
-from flint.rmsynth import rmsynth_and_write_products
+from flint.rmsynth import rmsynth_and_write_products, run_rmsynth_3d
 
 N_CHAN = 20
 NY = 5
@@ -280,3 +281,14 @@ def test_rmsynth_no_products_is_noop(
     assert not list(tmp_path.glob("*.fits")) or all(
         p in (stokes_q_cube, stokes_u_cube) for p in tmp_path.glob("*.fits")
     )
+
+
+def test_rmsynth_rejects_compressed_cubes(tmp_path: Path) -> None:
+    """A gzipped cube cannot be memmapped, so rm-lite's per-block reopens would
+    each inflate the whole cube into memory."""
+    with pytest.raises(NotSupportedError):
+        run_rmsynth_3d(
+            stokes_q_cube=tmp_path / "q.fits.gz",
+            stokes_u_cube=tmp_path / "u.fits.gz",
+            rmsynth_options=RMSynthOptions(),
+        )

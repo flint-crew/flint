@@ -15,7 +15,11 @@ from flint.configuration import (
     load_and_copy_strategy,
 )
 from flint.exceptions import MSError
-from flint.imager.channel_division import ChannelDivision, apply_cube_division
+from flint.imager.channel_division import (
+    ChannelDivision,
+    apply_cube_division,
+    channel_division_for_beams,
+)
 from flint.imager.wsclean import (
     ImageSet,
     WSCleanResult,
@@ -76,9 +80,13 @@ class PolPipelineResult(BaseOptions):
 def process_science_fields_pol(
     flint_ms_directory: Path,
     pol_field_options: PolFieldOptions,
-    cube_division: ChannelDivision | None = None,
     mss_by_beam: MSsByBeam | None = None,
+    compress_cubes: bool | None = None,
 ) -> PolPipelineResult:
+    """``compress_cubes`` overrides the strategy ``fitscube`` compress setting. A
+    calling flow that reads these cubes afterwards (rm-synth, spice) has to set it
+    False: astropy cannot memmap a gzip file, so a chunked read inflates the whole
+    cube into memory. None honours the strategy."""
     strategy = load_and_copy_strategy(
         output_split_science_path=flint_ms_directory,
         imaging_strategy=pol_field_options.imaging_strategy,
@@ -176,6 +184,20 @@ def process_science_fields_pol(
         )
 
     polarisations: dict[str, str] = strategy.get("polarisation", {"total": {}})
+
+    # Solved once for all beams, and before any imaging
+    cube_division: ChannelDivision | None = None
+    if pol_field_options.pol_cube_channel_width:
+        cube_division = channel_division_for_beams(
+            mss_by_beam=[
+                [
+                    ms.result() if isinstance(ms, PrefectFuture) else ms
+                    for ms in beam_mss
+                ]
+                for beam_mss in resolved_mss_by_beam
+            ],
+            target_width=pol_field_options.pol_cube_channel_width,
+        )
 
     image_sets_dict: dict[str, PrefectFuture[ImageSet]] = {}
     image_sets_list: list[PrefectFuture[ImageSet]] = []
@@ -306,6 +328,8 @@ def process_science_fields_pol(
             mode="fitscube",
         )
     )
+    if compress_cubes is not None:
+        fitscube_options = fitscube_options.with_options(compress=compress_cubes)
 
     cube_results: list[PrefectFuture[Path]] = []
     stokes_image_cubes: dict[str, PrefectFuture[Path]] = {}

@@ -231,6 +231,8 @@ class PolFieldOptions(BaseOptions):
     """Primary beam attenuation cutoff to use during linmos"""
     imaging_strategy: Path | None = None
     """Path to a FLINT imaging yaml file that contains settings to use throughout imaging"""
+    pol_cube_channel_width: float | None = None
+    """Desired width, in Hz, of each plane of the polarisation cubes. The wsclean channel division is solved for this target so the cubes have a single linear frequency axis, overriding the strategy ``channels_out``. Deliberately separate from ``RACSAllOptions.cube_channel_width``, as the continuum and polarisation cubes need not share a channelisation. See ``flint.imager.channel_division``"""
     sbid_copy_path: Path | None = None
     """Path that final processed products will be copied into. If None no copying of file products is performed. See ArchiveOptions. """
 

@@ -11,6 +11,7 @@ from prefect.logging import disable_run_logger
 from prefect.testing.utilities import prefect_test_harness
 
 from flint.options import (
+    PolFieldOptions,
     RACSAllOptions,
     RACSAllPipelineOptions,
     RMSynthFieldOptions,
@@ -169,3 +170,30 @@ def test_process_racs_all_everything_disabled_returns_immediately(
         )
 
     assert result == []
+
+
+def test_get_parser_pol_cube_channel_width_is_independent() -> None:
+    """The polarisation cube channelisation is deliberately its own option: a
+    field name shared with RACSAllOptions is deduplicated in this combined CLI,
+    which would silently tie the pol cubes to the continuum grid."""
+    args = get_parser().parse_args(
+        [
+            "/low",
+            "/mid",
+            "/high",
+            "--cube-channel-width",
+            "1e6",
+            "--pol-cube-channel-width",
+            "2e6",
+        ]
+    )
+
+    pol_field_options = create_options_from_parser(
+        parser_namespace=args, options_class=PolFieldOptions
+    )
+    racs_all_options = create_options_from_parser(
+        parser_namespace=args, options_class=RACSAllOptions
+    )
+
+    assert racs_all_options.cube_channel_width == 1e6
+    assert pol_field_options.pol_cube_channel_width == 2e6

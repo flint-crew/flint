@@ -35,12 +35,28 @@ from rm_lite.utils.synthesis import (  # noqa: E402
     calc_faraday_moments,
 )
 
+from flint.exceptions import NotSupportedError
 from flint.logging import logger
 from flint.naming import create_image_cube_name
 from flint.options import RMCleanOptions, RMSynthOptions
 
 FDFLabel = Literal["dirty", "clean", "model"]
 _MOMENT_NAMES = ("mom0", "mom1", "mom2")
+
+
+def _check_cubes_memmappable(*cubes: Path | None) -> None:
+    """rm-lite reads each spatial block by reopening the cube with ``memmap=True``.
+    astropy cannot memmap a gzip file, so every block read decompresses the whole
+    cube into memory. Compress after RM-synthesis, not before."""
+    compressed = [cube for cube in cubes if cube is not None and cube.suffix == ".gz"]
+    if compressed:
+        msg = (
+            f"{compressed} are gzip-compressed and cannot be used for RM-synthesis: "
+            "astropy cannot memmap a compressed FITS file, so each of the chunked "
+            "reads would decompress the entire cube into memory. Run RM-synthesis "
+            "on the uncompressed cubes."
+        )
+        raise NotSupportedError(msg)
 
 
 def run_rmsynth_3d(
@@ -60,6 +76,8 @@ def run_rmsynth_3d(
     Returns:
         RMSynth3DResults: Lazy dirty FDF cube, RMSF cube, and associated parameters
     """
+    _check_cubes_memmappable(stokes_q_cube, stokes_u_cube, stokes_i_cube)
+
     stokes_i_kwargs = (
         {
             "stokes_i_file": stokes_i_cube,
