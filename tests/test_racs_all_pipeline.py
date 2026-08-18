@@ -6,12 +6,14 @@ from argparse import ArgumentParser
 from pathlib import Path
 
 import pytest
+from capn_crunch import create_options_from_parser
 from prefect.logging import disable_run_logger
 from prefect.testing.utilities import prefect_test_harness
 
 from flint.options import (
     RACSAllOptions,
     RACSAllPipelineOptions,
+    RMSynthFieldOptions,
     SpiceFieldOptions,
 )
 from flint.prefect.flows.racs_all_pipeline import (
@@ -29,6 +31,33 @@ def test_get_parser() -> None:
     are fields shared by more than one of the five classes)."""
     parser = get_parser()
     assert isinstance(parser, ArgumentParser)
+
+
+def test_get_parser_excludes_computed_stage_outputs() -> None:
+    """stokes_q_cube/stokes_u_cube (rm-synth) and cubes (spice) are computed
+    from the polarisation stage's output inside process_racs_all, so the
+    combined CLI must not force the user to supply dummy positional values
+    for them -- only low_data/mid_data/high_data should be positional."""
+    args = get_parser().parse_args(["/low", "/mid", "/high"])
+
+    assert not hasattr(args, "stokes_q_cube")
+    assert not hasattr(args, "stokes_u_cube")
+    assert not hasattr(args, "cubes")
+
+    # create_options_from_parser needs these keys present even though excluded
+    # from the CLI; cli() injects placeholders before calling it, as done here.
+    args.stokes_q_cube = Path("UNUSED")
+    args.stokes_u_cube = Path("UNUSED")
+    args.cubes = [Path("UNUSED")]
+
+    rmsynth_field_options = create_options_from_parser(
+        parser_namespace=args, options_class=RMSynthFieldOptions
+    )
+    spice_field_options = create_options_from_parser(
+        parser_namespace=args, options_class=SpiceFieldOptions
+    )
+    assert rmsynth_field_options.stokes_q_cube == Path("UNUSED")
+    assert spice_field_options.cubes == [Path("UNUSED")]
 
 
 @pytest.fixture

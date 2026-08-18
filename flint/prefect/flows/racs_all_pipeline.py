@@ -6,6 +6,7 @@ handed from one stage to the next in-memory rather than rediscovered on disk.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from capn_crunch import BaseOptions, add_options_to_parser, create_options_from_parser
@@ -35,6 +36,11 @@ STAGE_CLUSTER_CONFIG_ATTRS = (
     "rmsynth_cluster_config",
     "spice_cluster_config",
 )
+
+# Required fields on the rm-synth/spice options classes that process_racs_all always
+# recomputes from the polarisation stage's output before use (see process_racs_all).
+# Excluded from the combined CLI so the user isn't forced to supply dummy values.
+COMPUTED_FIELDS = {"stokes_q_cube", "stokes_u_cube", "cubes"}
 
 
 def _check_racs_all_pipeline_options(pipeline_options: RACSAllPipelineOptions) -> None:
@@ -226,8 +232,10 @@ def get_parser() -> ArgumentParser:
 
     parser = add_options_to_parser(parser=parser, options_class=RACSAllPipelineOptions)
     parser = add_options_to_parser(parser=parser, options_class=RACSAllOptions)
-    seen_fields = set(RACSAllPipelineOptions.model_fields) | set(
-        RACSAllOptions.model_fields
+    seen_fields = (
+        set(RACSAllPipelineOptions.model_fields)
+        | set(RACSAllOptions.model_fields)
+        | COMPUTED_FIELDS
     )
 
     parser = add_options_to_parser(
@@ -257,6 +265,14 @@ def cli() -> None:
     parser = get_parser()
 
     args = parser.parse_args()
+
+    # stokes_q_cube/stokes_u_cube/cubes are excluded from the parser (COMPUTED_FIELDS)
+    # but create_options_from_parser still needs the keys present; the values are
+    # never read since process_racs_all always overrides them before use.
+    unused = Path("UNUSED")
+    args.stokes_q_cube = unused
+    args.stokes_u_cube = unused
+    args.cubes = [unused]
 
     pipeline_options = create_options_from_parser(
         parser_namespace=args, options_class=RACSAllPipelineOptions
