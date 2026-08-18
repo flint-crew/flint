@@ -23,10 +23,15 @@ from flint.logging import logger
 class ConcatHoloOptions(BaseOptions):
     """Options to use to concatenate holography cubes today"""
 
-    output_path: Path
-    """Output holography cube to make"""
-    holo_cubes: tuple[Path, ...]
-    """The path to the holography IQUV cubes to concatenate together"""
+    output_path: Path | None = None
+    """Output holography cube to make. No sensible default exists (it is always
+    a specific per-run path); ``None`` is a placeholder that must be overridden
+    before calling ``concatenate_holography``, which raises if it is left unset"""
+    holo_cubes: tuple[Path, ...] = ()
+    """The path to the holography IQUV cubes to concatenate together. No sensible
+    default exists (it always names specific input cubes); an empty tuple is a
+    placeholder that must be overridden before calling ``concatenate_holography``,
+    which raises if it is left unset"""
     max_workers: int = 8
     """The maximum number of sub-processes that may be spawned"""
 
@@ -531,6 +536,12 @@ def concatenate_holography(concat_holo_options: ConcatHoloOptions) -> Path:
     Returns:
         Path: Path to the output cube formed
     """
+
+    if concat_holo_options.output_path is None or not concat_holo_options.holo_cubes:
+        raise ValueError(
+            "concat_holo_options.output_path and holo_cubes are placeholder "
+            f"defaults and must be set, got {concat_holo_options=}"
+        )
 
     logger.info("Attempting to concatenate holography cubes")
     logger.info(f"Running on host {gethostname()}")
