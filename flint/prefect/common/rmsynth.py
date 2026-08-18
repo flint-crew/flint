@@ -31,8 +31,7 @@ def task_rmsynth(
     rmsynth_options: RMSynthOptions,
     stokes_i_cube: Path | None = None,
 ) -> RMSynth3DResults:
-    """Lazily build the dirty FDF cube -- no Dask client needed, the actual
-    compute happens in ``task_write_rm_products``."""
+    """Lazily build the dirty FDF cube"""
     enable_rmlite_logging_support()
     return run_rmsynth_3d(
         stokes_q_cube=stokes_q_cube,
@@ -47,8 +46,7 @@ def task_rmclean(
     rm_synth_results: RMSynth3DResults,
     rmclean_options: RMCleanOptions,
 ) -> RMClean3DResults:
-    """Lazily build the clean/model FDF cubes -- no Dask client needed, the
-    actual compute happens in ``task_write_rm_products``."""
+    """Lazily build the clean/model FDF cubes"""
     enable_rmlite_logging_support()
     return run_rmclean_3d(
         rm_synth_results=rm_synth_results, rmclean_options=rmclean_options
@@ -66,12 +64,7 @@ def task_write_rm_products(
     moment_products: list[FDFLabel],
     output_prefix: Path,
 ) -> list[Path]:
-    """Batch-compute and write the requested RM-synthesis/RM-CLEAN products,
-    computing across the Dask cluster backing the flow's ``DaskTaskRunner``
-    rather than just this task's own worker -- mirrors how
-    ``task_crystalball_to_ms`` hands its distributed Client to crystalball
-    (``flint/prefect/common/predict.py``).
-    """
+    """Batch-compute and write the requested RM-synthesis/RM-CLEAN products"""
     from prefect_dask import get_dask_client
 
     with get_dask_client(set_as_default=False) as client:

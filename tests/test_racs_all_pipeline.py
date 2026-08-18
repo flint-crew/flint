@@ -23,8 +23,8 @@ from flint.prefect.flows.racs_all_pipeline import (
 
 
 def test_get_parser() -> None:
-    """Simple test to ensure that the parser -- composed from five options
-    classes on one shared parser -- can be built without a duplicate-flag
+    """Simple test to ensure that the parser, composed from five options
+    classes on one shared parser=, can be built without a duplicate-flag
     error (e.g. from imaging_strategy/sbid_copy_path/aegean_container, which
     are fields shared by more than one of the five classes)."""
     parser = get_parser()

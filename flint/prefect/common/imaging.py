@@ -122,7 +122,11 @@ def task_get_channel_images_from_paths(paths: list[Path]) -> list[Path]:
 
 @task
 def task_get_mfs_image_from_paths(paths: list[Path]) -> Path:
-    """Inverse of ``task_get_channel_images_from_paths`` -- the single MFS image"""
+    """Get the single MFS image from a list of paths.
+
+    Inverse of ``task_get_channel_images_from_paths``
+    
+    """
     mfs_paths = [path for path in paths if "MFS" in path.name]
     assert len(mfs_paths) == 1, f"Expected a single MFS image, got {mfs_paths=}"
     return mfs_paths[0]

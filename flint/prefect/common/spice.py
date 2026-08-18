@@ -23,9 +23,8 @@ def task_get_spice_boxes(
     beam_shape: BeamShape,
     is_user_catalogue: bool,
 ) -> list[BoundingBox]:
-    """Build the (single, shared) set of island bounding boxes for a field,
-    against ``reference_image``'s WCS/shape -- reused as-is for every
-    Stokes/plane/cube ``task_spice_fits`` is later applied to."""
+    """Build the (single, shared) set of island bounding boxes for a field
+    """
     header = fits.getheader(reference_image)
     wcs = WCS(header)
     image_shape = (header["NAXIS2"], header["NAXIS1"])

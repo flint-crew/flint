@@ -45,9 +45,10 @@ def _rmlite_flow():
 
 def test_enable_rmlite_logging_support():
     """rm-lite (flint.rmsynth's dependency) logs via stdlib logging under
-    the name 'rmtools-lite' and attaches its own StreamHandler by default --
-    this swaps that for a handler forwarding to the Prefect run logger,
-    sibling to enable_loguru_support above."""
+    the name 'rmtools-lite' and attaches its own StreamHandler by default.
+    This swaps that for a handler forwarding to the Prefect run logger,
+    sibling to enable_loguru_support above.
+    """
 
     rmlite_logger = logging.getLogger("rmtools-lite")
     original_handlers = list(rmlite_logger.handlers)

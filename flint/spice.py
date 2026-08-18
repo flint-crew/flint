@@ -31,14 +31,7 @@ def load_component_table(catalogue: Path | Table) -> Table:
 def _resolve_columns(
     table: Table, spice_options: SpiceOptions, is_user_catalogue: bool
 ) -> tuple[str | None, str, str, tuple[str, str, str] | None]:
-    """Resolve (island_col, ra_col, dec_col, shape_cols) for a catalogue.
-
-    Column names/units are never guessed for a user-supplied catalogue --
-    only the built-in Aegean catalogue has a fixed, known contract (confirmed
-    against the installed aegeantools==2.3.0 source, AegeanTools.source_finder
-    around result_to_components: island/ra/dec (deg) /a/b/pa (arcsec/arcsec/deg),
-    with a/b/pa the as-fit, PSF-convolved sizes -- no reconvolution needed here).
-    """
+    """Resolve (island_col, ra_col, dec_col, shape_cols) for a catalogue."""
     if not is_user_catalogue:
         island_col = "island" if "island" in table.colnames else None
         return island_col, "ra", "dec", ("a", "b", "pa")
@@ -48,8 +41,7 @@ def _resolve_columns(
         or spice_options.catalogue_dec_col is None
     ):
         raise ValueError(
-            "catalogue_ra_col and catalogue_dec_col must be set on SpiceOptions "
-            "for a user-supplied spice_catalogue -- these are never guessed"
+            "catalogue_ra_col and catalogue_dec_col must be set on SpiceOptions"
         )
 
     shape_cols = (
@@ -118,8 +110,11 @@ def _component_box(
     psf_beam: Beam | None,
 ) -> BoundingBox:
     """Bounding box of a single catalogue row's ellipse (or point, if
-    shape_cols is None), in pixel space. No beamwidth padding applied here --
-    that happens once per island, after merging."""
+    shape_cols is None), in pixel space. 
+    
+    No beamwidth padding applied here.
+    
+    """
     sky_coord = SkyCoord(
         float(row[ra_col]) * radec_unit, float(row[dec_col]) * radec_unit
     )
@@ -183,9 +178,9 @@ def island_bounding_boxes(
         table=table, spice_options=spice_options, is_user_catalogue=is_user_catalogue
     )
     if len(table) == 0:
-        raise ValueError("Catalogue is empty -- nothing to box")
+        raise ValueError("Catalogue is empty!")
 
-    # Aegean's own catalogue is always degrees/arcsec -- see _resolve_columns
+    # Aegean's own catalogue is always degrees/arcsec see _resolve_columns
     radec_unit = u.Unit(
         "deg" if not is_user_catalogue else spice_options.catalogue_radec_unit
     )
@@ -267,8 +262,10 @@ def keep_mask_from_boxes(
 
 def spice_fits(fits_path: Path, boxes: list[BoundingBox]) -> Path:
     """Mask every pixel outside ``boxes`` to NaN and crop to their union,
-    replacing ``fits_path`` in place. Works on a single plane or a
-    multi-channel cube -- the mask/crop broadcast across any leading axes.
+    
+    
+        - Works on a single plane or a multi-channel cube
+        - replaces ``fits_path`` in place
     """
     if not boxes:
         raise ValueError(f"No bounding boxes supplied for {fits_path}")

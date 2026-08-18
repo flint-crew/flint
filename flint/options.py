@@ -299,18 +299,20 @@ class RMCleanOptions(BaseOptions):
 
 
 class SpiceOptions(BaseOptions):
-    """Options controlling the SPICE-style cube trimming (see ``flint.spice``):
-    mask everything outside small boxes around catalogued sources, crop to
+    """Options controlling the SPICE-style cube trimming (see ``flint.spice``)
+
+    Mask everything outside small boxes around catalogued sources, crop to
     their union, and compress. Column names/units for a user-supplied
-    ``PolFieldOptions.spice_catalogue`` are never guessed -- see the
-    ``catalogue_*`` fields below."""
+    ``PolFieldOptions.spice_catalogue`` are specified via the
+    ``catalogue_*`` fields
+    """
 
     n_beamwidths: float = 3.0
     """Padding added to each side of an island's bounding box, in units of the restoring beam major axis"""
     catalogue_island_col: str | None = None
     """Column grouping components into islands in a user-supplied spice_catalogue. None treats each row as its own island"""
     catalogue_ra_col: str | None = None
-    """RA column in a user-supplied spice_catalogue. Required whenever spice_catalogue is set -- never guessed"""
+    """RA column in a user-supplied spice_catalogue. Required whenever spice_catalogue is set"""
     catalogue_dec_col: str | None = None
     """Dec column in a user-supplied spice_catalogue. Required whenever spice_catalogue is set"""
     catalogue_radec_unit: str = "deg"
@@ -324,7 +326,7 @@ class SpiceOptions(BaseOptions):
     catalogue_shape_unit: str = "arcsec"
     """Astropy unit string for catalogue_maj_col/catalogue_min_col. catalogue_pa_col is always degrees"""
     catalogue_sizes_deconvolved: bool | None = None
-    """Whether catalogue_maj_col/catalogue_min_col are PSF-deconvolved rather than as-observed. Required whenever catalogue_maj_col is set -- the built-in Aegean catalogue is exempt (its a/b/pa are already as-observed)"""
+    """Whether catalogue_maj_col/catalogue_min_col are PSF-deconvolved rather than as-observed. Required whenever catalogue_maj_col is set"""
     catalogue_psf_maj_col: str | None = None
     """Per-source PSF major-axis column, used to re-convolve when catalogue_sizes_deconvolved is True. Unset falls back to the pipeline's common restoring beam"""
     catalogue_psf_min_col: str | None = None
@@ -485,9 +487,12 @@ def pol_field_options_cli_class(
 
 
 class RACSAllPipelineOptions(BaseOptions):
-    """Options controlling the ``racs-all`` flow-of-flows. Execution order is
-    fixed sequential -- imaging -> polarisation -> rm-synth/clean ->
-    spice-compression -- with each stage individually skippable."""
+    """Options controlling the ``racs-all`` flow-of-flows.
+     
+    Execution order: imaging -> polarisation -> rm-synth/clean -> spice-compression 
+    
+    with each stage individually skippable.
+    """
 
     run_imaging: bool = True
     """Whether to run the continuum imaging/self-calibration stage"""

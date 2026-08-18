@@ -39,27 +39,26 @@ STAGE_CLUSTER_CONFIG_ATTRS = (
 
 
 def _check_racs_all_pipeline_options(pipeline_options: RACSAllPipelineOptions) -> None:
-    """Enforce the fixed stage order -- a downstream stage may not be enabled
-    while the upstream stage it depends on (for its in-memory input) is
-    skipped. No auto-fix: rerunning a downstream stage alone is done through
-    that stage's own standalone CLI, not racs-all."""
+    """Enforce the fixed stage order for RACS-all
+    
+    A downstream stage may not be enabled while the upstream stage it depends on 
+    (for its in-memory input) is skipped.
+    
+    """
     if pipeline_options.run_polarisation and not pipeline_options.run_imaging:
         raise ValueError(
-            "run_polarisation requires run_imaging -- racs-all hands the "
-            "imaging stage's output to polarisation in-memory. To run "
-            "polarisation on its own, use flint_flow_polarisation_pipeline."
+            "`run_polarisation` requires run_imaging."
+            "To run polarisation on its own, use flint_flow_polarisation_pipeline."
         )
     if pipeline_options.run_rmsynth and not pipeline_options.run_polarisation:
         raise ValueError(
-            "run_rmsynth requires run_polarisation -- racs-all hands the "
-            "polarisation stage's Stokes Q/U cubes to rm-synth in-memory. To "
-            "run rm-synth on its own, use flint_flow_rmsynth_pipeline."
+            "`run_rmsynth` requires run_polarisation."
+            "To run rm-synth on its own, use flint_flow_rmsynth_pipeline."
         )
     if pipeline_options.run_spice and not pipeline_options.run_polarisation:
         raise ValueError(
-            "run_spice requires run_polarisation -- racs-all hands the "
-            "polarisation stage's Stokes cubes to spice in-memory. To run "
-            "spice on its own, use flint_flow_spice_compression_pipeline."
+            "run_spice requires run_polarisation " \
+            "To run spice on its own, use flint_flow_spice_compression_pipeline."
         )
 
 

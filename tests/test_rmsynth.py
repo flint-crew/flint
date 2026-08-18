@@ -1,7 +1,4 @@
-"""Plumbing tests for RM-synthesis via rm-lite. rm-lite's own synthesis
-correctness is its responsibility, not flint-pol's -- these tests only check
-that FITS in -> WCS/product-selection -> FITS out behaves as expected.
-"""
+"""Plumbing tests for RM-synthesis via rm-lite"""
 
 from __future__ import annotations
 

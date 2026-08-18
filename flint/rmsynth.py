@@ -19,8 +19,7 @@ from dask.distributed import Client
 # process with "OMP: Error #15: Initializing libomp.dylib, but found
 # libomp.dylib already initialized." as soon as anything else (e.g.
 # casacore) has already initialised an OpenMP runtime in the process. Must
-# be set before finufft/rm_lite are imported -- this module is the first
-# place in flint-pol that imports them.
+# be set before finufft/rm_lite are imported.
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 from rm_lite.tools_3d.rmclean import (  # noqa: E402
@@ -160,9 +159,10 @@ def write_moment_maps_to_fits(
     debias_filter_size: int = 5,
 ) -> list[Path]:
     """Compute and write the mom0/mom1/mom2 Faraday moment maps of an FDF cube.
+
     If ``debias`` is True, an additional debiased mom0/mom1/mom2 set (via
     rm_lite's ``debias_fdf``) is written alongside the usual thresholded set,
-    suffixed ``.debiased`` -- not a replacement for it.
+    suffixed ``.debiased``.
 
     Args:
         fdf_cube (np.ndarray): Complex FDF cube, shape (n_phi, ny, nx)
@@ -363,7 +363,7 @@ def write_rm_products(
         fdf_sources["model"] = clean_results.model_fdf_cube
 
     # Cubes written to zarr are stored chunk-by-chunk (one worker writing its
-    # own chunk directly) and so must NOT also be gathered to numpy here --
+    # own chunk directly) and so must NOT also be gathered to numpy here!
     # only labels also needed for moments (small, cheap to gather) go through
     # the numpy path below.
     write_cubes_as_zarr = rmsynth_options.write_fdfs_to_zarr and bool(cube_products)
@@ -399,7 +399,7 @@ def write_rm_products(
     #
     # Per rm-lite's dask parallelisation guide: the threaded scheduler suits
     # the GIL-releasing NUFFT (dirty-only), but RM-CLEAN/Stokes-I fitting are
-    # GIL-bound Python loops that need the process scheduler -- unless a
+    # GIL-bound Python loops that need the process scheduler, unless a
     # distributed Client is given, in which case it takes over entirely.
     scheduler = (
         dask_client

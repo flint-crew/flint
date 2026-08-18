@@ -39,8 +39,6 @@ def process_spice_compression(spice_field_options: SpiceFieldOptions) -> list[Pa
     is_user_catalogue = spice_field_options.catalogue is not None
     if is_user_catalogue:
         catalogue_path = spice_field_options.catalogue
-        # No 2D MFS image required -- a cube's own header carries the same
-        # celestial WCS/shape a 2D image's would (see flint.spice).
         reference_image = spice_field_options.cubes[0]
     else:
         assert spice_field_options.reference_image is not None, (
@@ -69,9 +67,6 @@ def process_spice_compression(spice_field_options: SpiceFieldOptions) -> list[Pa
         )
     )
 
-    # The restoring beam is read straight from the reference image/cube's own
-    # header -- it already carries the pipeline's common beam, so there is no
-    # need for a separate beam-shape input to this standalone flow.
     beam_shape = BeamShape.from_radio_beam(
         Beam.from_fits_header(fits.getheader(reference_image))
     )

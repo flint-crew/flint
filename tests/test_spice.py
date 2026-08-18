@@ -1,8 +1,4 @@
-"""Tests for SPICE-style cube trimming (flint.spice): catalogue -> per-island
-pixel boxes -> mask/crop-in-place. rm-lite/aegean's own science is not this
-module's responsibility -- these tests check the WCS/box geometry and the
-FITS in -> FITS out plumbing.
-"""
+"""Tests for SPICE-style cube trimming"""
 
 from __future__ import annotations
 
