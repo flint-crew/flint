@@ -24,9 +24,7 @@ class ConcatHoloOptions(BaseOptions):
     """Options to use to concatenate holography cubes today"""
 
     output_path: Path | None = None
-    """Output holography cube to make. No sensible default exists (it is always
-    a specific per-run path); ``None`` is a placeholder that must be overridden
-    before calling ``concatenate_holography``, which raises if it is left unset"""
+    """Output holography cube to make"""
     holo_cubes: tuple[Path, ...] = ()
     """The path to the holography IQUV cubes to concatenate together. No sensible
     default exists (it always names specific input cubes); an empty tuple is a
@@ -545,6 +543,10 @@ def concatenate_holography(concat_holo_options: ConcatHoloOptions) -> Path:
 
     logger.info("Attempting to concatenate holography cubes")
     logger.info(f"Running on host {gethostname()}")
+
+    # Some option are established from a larger workflow, and default options
+    # in ConCatHolo are tolerated to ensure compatibility with the strategy file.
+    assert concat_holo_options.output_path is not None, "Unset output path"
 
     fits_cube_infos = load_and_sort_cubes(cube_paths=concat_holo_options.holo_cubes)
     spatial_header = construct_spatial_output_wcs(fits_cube_infos=fits_cube_infos)
