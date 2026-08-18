@@ -223,6 +223,44 @@ def test_rmsynth_write_fdfs_to_zarr(
     assert group["dirty"].shape[1:] == (NY, NX)
 
 
+def test_moment_only_never_computes_a_full_cube(
+    tmp_path: Path, qu_cubes: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Moment maps must be computed as lazy (ny, nx) reductions, never by
+    gathering the (n_phi, ny, nx) FDF cube into the calling process. Gathering
+    is invisible on these tiny test cubes but is tens of GB on a real mosaic."""
+    import dask
+
+    stokes_q_cube, stokes_u_cube = qu_cubes
+    real_compute = dask.compute
+    computed_shapes: list[tuple[int, ...]] = []
+
+    def _spy_compute(*args, **kwargs):
+        results = real_compute(*args, **kwargs)
+        computed_shapes.extend(
+            np.shape(result) for result in results if hasattr(result, "shape")
+        )
+        return results
+
+    monkeypatch.setattr(dask, "compute", _spy_compute)
+
+    rmsynth_and_write_products(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        rmsynth_options=RMSynthOptions(),
+        rmclean_options=RMCleanOptions(),
+        cube_products=[],
+        moment_products=["dirty", "clean", "model"],
+        output_prefix=tmp_path / "test_field",
+    )
+
+    assert computed_shapes, "expected a batched dask.compute call"
+    # Every gathered array is a 2D map; a 3D shape means an FDF cube came back.
+    assert all(len(shape) == 2 for shape in computed_shapes), computed_shapes
+    # 3 labels x mom0/mom1/mom2, and nothing else.
+    assert len(computed_shapes) == 9
+
+
 def test_rmsynth_no_products_is_noop(
     tmp_path: Path, qu_cubes: tuple[Path, Path]
 ) -> None:
