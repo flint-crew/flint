@@ -371,7 +371,7 @@ class SpiceFieldOptions(BaseOptions):
     cubes: list[Path]
     """Stokes cubes to trim and compress"""
     reference_image: Path | None = None
-    """A 2D MFS image whose WCS/shape sources the source-finding boxes. Required only when catalogue is not set (built-in aegean source finding); a supplied catalogue instead sources WCS/shape from one of cubes' own header"""
+    """A 2D MFS image whose WCS/shape sources the source-finding boxes. Required only when catalogue is not set (built-in aegean source finding)"""
     catalogue: Path | None = None
     """A source catalogue (RA/Dec at minimum). If None the pipeline source finds its own sources from reference_image instead. See SpiceOptions for how to describe this catalogue's columns"""
     aegean_container: Path | None = None
