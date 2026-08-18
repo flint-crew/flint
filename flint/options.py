@@ -355,7 +355,7 @@ class RMSynthFieldOptions(BaseOptions):
     imaging_strategy: Path | None = None
     """Path to a FLINT imaging yaml file that contains the RMSynthOptions/RMCleanOptions settings to use"""
     cube_products: list[Literal["dirty", "clean", "model"]] = []
-    """Which Faraday dispersion function (FDF) cubes to write as FITS. 'dirty' is the raw FDF (no RM-CLEAN needed). 'clean'/'model' are RM-CLEAN's cleaned/clean-component FDF (RM-CLEAN is run if either is requested). Empty by default, as these cubes are large."""
+    """Which Faraday dispersion function (FDF) cubes to write as FITS. Nothing by default, as these cubes can be large."""
     moment_products: list[Literal["dirty", "clean", "model"]] = ["clean"]
     """Which FDF(s) to compute Faraday moment maps (mom0=polarised intensity, mom1=mean Faraday depth, mom2=Faraday depth dispersion) from. 'clean' is the usual choice; 'dirty' moments are noise-biased; 'model' moments describe just the clean components."""
     sbid_copy_path: Path | None = None
