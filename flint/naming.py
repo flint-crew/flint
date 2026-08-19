@@ -593,6 +593,9 @@ class SuffixSpec(BaseOptions):
 
         return merge_suffix_spec(spec_1=self, spec_2=other, how="or")
 
+    def __or__(self: SuffixSpec, other: Path | SuffixSpec) -> SuffixSpec:
+        return self + other
+
     def __sub__(self: SuffixSpec, other: Path | SuffixSpec) -> SuffixSpec:
         if isinstance(other, Path):
             pcn = processed_ms_format(in_name=other)
@@ -647,17 +650,14 @@ def merge_suffix_spec(
     assert len(set(dict_1.keys()) - set(dict_2.keys())) == 0, "Mismatch in key lengths"
 
     # While keys are all booleans this will be acceptable
-    out_spec = (
-        {k: dict_1[k] or dict_2[k] for k in dict_1.keys()}
-        if how == "or"
-        else {k: dict_1[k] and dict_2[k] for k in dict_1.keys()}
-    )
     if how == "or":
         out_spec = {k: dict_1[k] or dict_2[k] for k in dict_1.keys()}
     elif how == "and":
         out_spec = {k: dict_1[k] and dict_2[k] for k in dict_1.keys()}
     elif how == "remove":
-        out_spec = {k: False for k in dict_1.keys() if dict_1[k] and dict_2[k]}
+        out_spec = {
+            k: False if dict_1[k] and dict_2[k] else dict_1[k] for k in dict_1.keys()
+        }
     else:
         msg = f"Unknown mode {how=}"
         raise ValueError(msg)
