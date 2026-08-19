@@ -74,17 +74,17 @@ def test_add_suffix_with_path() -> None:
     expected_path = Path("SB123.Jack-Sparrow.round1.linmos")
     assert file_path == expected_path
 
+    updated_path = Path("SB123.Jack-Sparrow.round1.image.linmos")
+
     suffix = SuffixSpec(image=True)
 
     result = suffix + file_path
-    assert isinstance(result, SuffixSpec)
-    assert result.image
-    assert result.linmos
+    assert isinstance(result, Path)
+    assert result == updated_path
 
     result = file_path + suffix
-    assert isinstance(result, SuffixSpec)
-    assert result.image
-    assert result.linmos
+    assert isinstance(result, Path)
+    assert result == updated_path
 
 
 def test_or_suffix_with_path() -> None:
@@ -101,15 +101,14 @@ def test_or_suffix_with_path() -> None:
     )
     expected_path = Path("SB123.Jack-Sparrow.round1.linmos")
     assert file_path == expected_path
+    updated_path = Path("SB123.Jack-Sparrow.round1.image.linmos")
 
     suffix = SuffixSpec(image=True)
 
     result = suffix | file_path
-    assert isinstance(result, SuffixSpec)
-    assert result.image
-    assert result.linmos
+    assert isinstance(result, Path)
+    assert result == updated_path
 
     result = file_path | suffix
-    assert isinstance(result, SuffixSpec)
-    assert result.image
-    assert result.linmos
+    assert isinstance(result, Path)
+    assert result == updated_path

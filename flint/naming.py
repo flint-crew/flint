@@ -7,7 +7,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal, NamedTuple, TypeVar, get_args
+from typing import Any, Literal, NamedTuple, TypeVar, get_args, overload
 
 from flint.exceptions import NamingException
 from flint.logging import logger
@@ -583,21 +583,38 @@ class SuffixSpec(BaseOptions):
     cube: bool = False
     """Indicates whether a cube is present"""
 
-    def __add__(self: SuffixSpec, other: Path | SuffixSpec) -> SuffixSpec:
+    @overload
+    def __add__(self: SuffixSpec, other: Path) -> Path: ...
 
+    @overload
+    def __add__(self: SuffixSpec, other: SuffixSpec) -> SuffixSpec: ...
+
+    def __add__(self: SuffixSpec, other: Path | SuffixSpec) -> SuffixSpec | Path:
+        # The self at this point will always be SuffixSpec
+
+        pcn: ProcessedNameComponents | None = None
         if isinstance(other, Path):
             pcn = processed_ms_format(in_name=other)
             assert pcn is not None, f"{other=} is not a Flint format name"
-            other = pcn.suffix_spec
 
-        assert isinstance(other, SuffixSpec), f"Unknown {other=}"
+        other_suffix = pcn.suffix_spec if pcn is not None else other
+        assert isinstance(other_suffix, SuffixSpec), f"Unknown {other=}"
 
-        return merge_suffix_spec(spec_1=self, spec_2=other, how="or")
+        updated_spec = merge_suffix_spec(spec_1=self, spec_2=other_suffix, how="or")
+
+        if pcn is None:
+            return updated_spec
+
+        return create_path_from_processed_name_components(
+            processed_name_components=pcn,
+            parent_path=other.parent,
+            suffix_spec=updated_spec,
+        )
 
     def __radd__(self, other) -> SuffixSpec:
         return self.__add__(other)
 
-    def __or__(self: SuffixSpec, other: Path | SuffixSpec) -> SuffixSpec:
+    def __or__(self: SuffixSpec, other: Path | SuffixSpec) -> SuffixSpec | Path:
         return self + other
 
     def __ror__(self, other) -> SuffixSpec:
