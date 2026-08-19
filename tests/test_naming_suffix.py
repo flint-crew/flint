@@ -5,10 +5,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from flint.naming import (
     ProcessedNameComponents,
     Suffix,
     create_path_from_processed_name_components,
+    processed_ms_format,
 )
 
 
@@ -180,3 +183,22 @@ def test_bad_pol_field() -> None:
     pcn = processed_ms_format(expected_path)
     assert pcn is not None
     assert pcn.pol is None
+
+
+@pytest.mark.parametrize("field", list(Suffix.model_fields))
+def test_every_suffix_field_round_trips(field: str) -> None:
+    """Each field declared on Suffix has to survive a generate and parse cycle.
+    Fields were previously matched by the regex but never carried onto the
+    components container."""
+    name = create_path_from_processed_name_components(
+        processed_name_components=ProcessedNameComponents(
+            sbid="1234", field="Jack-Sparrow"
+        ),
+        suffix_spec=Suffix(**{field: True}),
+    )
+    assert name == Path(f"SB1234.Jack-Sparrow.{field}")
+
+    pcn = processed_ms_format(Path(f"{name}.fits"))
+    assert pcn is not None
+    assert getattr(pcn, field) is True
+    assert pcn.suffix_spec == Suffix(**{field: True})

@@ -1111,7 +1111,7 @@ def test_create_name_from_common_fields_3():
 
     common_name = create_name_from_common_fields(in_paths=files)
     assert common_name == PosixPath(
-        "/scratch3/gal16b/spectral_flow/57516/SB57516.RACS_0929-81.round4.i.ch0238-0239.image"
+        "/scratch3/gal16b/spectral_flow/57516/SB57516.RACS_0929-81.round4.i.ch0238-0239.image.optimal.conv"
     )
 
 

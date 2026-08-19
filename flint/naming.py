@@ -9,11 +9,29 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, NamedTuple, TypeVar, get_args, overload
 
+from capn_crunch import options_to_dict
+
 from flint.exceptions import NamingException
 from flint.logging import logger
 from flint.options import BaseOptions
 
 PathStr = TypeVar("PathStr", str, Path)
+
+
+def _append_suffixes(path: Path, additional_suffixes: str | None) -> Path:
+    """Append a dot separated set of suffixes onto an existing path"""
+    if not additional_suffixes:
+        return path
+
+    if not additional_suffixes.startswith("."):
+        additional_suffixes = f".{additional_suffixes}"
+
+    return Path(str(path) + additional_suffixes)
+
+
+def _is_set(value: Any) -> bool:
+    """Whether a name component is populated, i.e. not None and not an unset flag"""
+    return value is not None and value is not False
 
 
 def _rename_linear_to_stokes(
@@ -154,8 +172,8 @@ def create_name_from_common_fields(
 
     >>> "59058/SB59058.RACS_1626-84.ch0287-0288.pirates.fits"
 
-    the `pirates.fits` would be ignored. Should these be needed they can be specified
-    by ``additional_suffixes``.
+    the ``pirates.fits`` would be ignored. Should these be needed they can be specified
+    by ``additional_suffixes``, or as a field on ``Suffix``.
 
     All ``in_paths`` should be detected, otherwise an ValueError is raised
 
@@ -170,8 +188,6 @@ def create_name_from_common_fields(
     Returns:
         Path: Common fields with the same base parent path
     """
-    from capn_crunch import options_to_dict
-
     in_paths = tuple(Path(p) for p in in_paths)
     parent = in_paths[0].parent
     processed_components = list(map(processed_ms_format, in_paths))
@@ -180,13 +196,6 @@ def create_name_from_common_fields(
         raise ValueError("Processed name format failed")
     processed_components_dict = [options_to_dict(pc) for pc in processed_components]
 
-    def _valid_type_value(k, v) -> bool:
-        if v is None:
-            return False
-        if isinstance(v, bool) and v is False:
-            return False
-        return True
-
     keys_to_test = processed_components_dict[0].keys()
     logger.info(f"{keys_to_test=}")
     # Extract the fields that are constant across all inputs and are not None
@@ -194,7 +203,7 @@ def create_name_from_common_fields(
         key: processed_components_dict[0][key]
         for key in keys_to_test
         if len(set([pcd[key] for pcd in processed_components_dict])) == 1
-        and _valid_type_value(key, processed_components_dict[0][key])
+        and _is_set(processed_components_dict[0][key])
     }
 
     processed_name_components = ProcessedNameComponents(**constant_fields)
@@ -226,14 +235,7 @@ def create_name_from_common_fields(
     constant_field_keys = list(constant_fields.keys())
     logger.info(f"Identified {constant_field_keys=}")
 
-    if additional_suffixes:
-        additional_suffixes = (
-            f".{additional_suffixes}"
-            if not additional_suffixes.startswith(".")
-            else additional_suffixes
-        )
-        name_path = Path(str(name_path) + additional_suffixes)
-    return Path(name_path)
+    return _append_suffixes(path=name_path, additional_suffixes=additional_suffixes)
 
 
 # TODO: Need to assess the mode argument, and define literals that are accepted
@@ -262,6 +264,9 @@ def create_image_cube_name(
     Returns:
         Path: The final path and file name
     """
+    image_prefix = Path(image_prefix)
+
+    # TODO: Remove the mode/suffix branch once flint.imager.wsclean callers are migrated
     if suffix_spec is not None:
         output_cube_name = create_path_from_processed_name_components(
             processed_name_components=image_prefix.name,
@@ -557,15 +562,18 @@ def raw_ms_format(in_name: str) -> None | RawNameComponents:
 
 
 class Suffix(BaseOptions):
-    """Simple container to hole flags to include additional suffixes"""
+    """Simple container to hold flags to include additional suffixes.
 
-    # TODO: These should be made available to the ProcessedNameComponents as well
+    Field declaration order is the order the suffixes appear in a file name, for
+    both parsing and generation. Adding a field here is enough for it to be
+    recognised throughout ``naming``"""
+
     image: bool = False
     """Indicates whether the data product is an image"""
     residual: bool = False
     """Indicates whether the data product is a residual"""
     optimal: bool = False
-    """Indicates that the image is at an optimal (often natureal) resolution"""
+    """Indicates that the image is at an optimal (often natural) resolution"""
     conv: bool = False
     """Indicates data have been convolved to some specified resolution"""
     contsub: bool = False
@@ -573,7 +581,7 @@ class Suffix(BaseOptions):
     cont: bool = False
     """Indicates whether the continuum is present"""
     time: bool = False
-    """Indaicates whether the output data product has a time axis"""
+    """Indicates whether the output data product has a time axis"""
     freq: bool = False
     """Indicates whether the output data product has a freq axis"""
     linmos: bool = False
@@ -583,6 +591,21 @@ class Suffix(BaseOptions):
     cube: bool = False
     """Indicates whether a cube is present"""
 
+    def _apply(self, other: Path | Suffix, how: SuffixMergeModes) -> Suffix | Path:
+        """Merge ``self`` into ``other``, which may be a ``Suffix`` or a flint format path"""
+        if not isinstance(other, Path):
+            assert isinstance(other, Suffix), f"Unknown {other=}"
+            return merge_suffix_spec(spec_1=self, spec_2=other, how=how)
+
+        pcn = processed_ms_format(in_name=other)
+        assert pcn is not None, f"{other=} is not a Flint format name"
+
+        return create_path_from_processed_name_components(
+            processed_name_components=pcn,
+            parent_path=other.parent,
+            suffix_spec=merge_suffix_spec(spec_1=pcn.suffix_spec, spec_2=self, how=how),
+        )
+
     @overload
     def __add__(self: Suffix, other: Path) -> Path: ...
 
@@ -590,35 +613,11 @@ class Suffix(BaseOptions):
     def __add__(self: Suffix, other: Suffix) -> Suffix: ...
 
     def __add__(self: Suffix, other: Path | Suffix) -> Suffix | Path:
-        # The self at this point will always be Suffix
+        return self._apply(other=other, how="or")
 
-        pcn: ProcessedNameComponents | None = None
-        if isinstance(other, Path):
-            pcn = processed_ms_format(in_name=other)
-            assert pcn is not None, f"{other=} is not a Flint format name"
-
-        other_suffix = pcn.suffix_spec if pcn is not None else other
-        assert isinstance(other_suffix, Suffix), f"Unknown {other=}"
-
-        updated_spec = merge_suffix_spec(spec_1=self, spec_2=other_suffix, how="or")
-
-        if pcn is None:
-            return updated_spec
-
-        return create_path_from_processed_name_components(
-            processed_name_components=pcn,
-            parent_path=other.parent,
-            suffix_spec=updated_spec,
-        )
-
-    def __radd__(self, other) -> Suffix:
-        return self.__add__(other)
-
-    def __or__(self: Suffix, other: Path | Suffix) -> Suffix | Path:
-        return self + other
-
-    def __ror__(self, other) -> Suffix:
-        return self.__add__(other)
+    __radd__ = __add__
+    __or__ = __add__
+    __ror__ = __add__
 
     @overload
     def __sub__(self: Suffix, other: Path) -> Path: ...
@@ -627,30 +626,9 @@ class Suffix(BaseOptions):
     def __sub__(self: Suffix, other: Suffix) -> Suffix: ...
 
     def __sub__(self: Suffix, other: Path | Suffix) -> Suffix | Path:
-        # The self at this point will always be Suffix
+        return self._apply(other=other, how="remove")
 
-        pcn: ProcessedNameComponents | None = None
-        if isinstance(other, Path):
-            pcn = processed_ms_format(in_name=other)
-            assert pcn is not None, f"{other=} is not a Flint format name"
-            path_spec = pcn.suffix_spec if pcn.suffix_spec is not None else Suffix()
-            updated_spec = merge_suffix_spec(
-                spec_1=path_spec, spec_2=self, how="remove"
-            )
-        else:
-            updated_spec = merge_suffix_spec(spec_1=self, spec_2=other, how="remove")
-
-        if pcn is None:
-            return updated_spec
-
-        return create_path_from_processed_name_components(
-            processed_name_components=pcn,
-            parent_path=other.parent,
-            suffix_spec=updated_spec,
-        )
-
-    def __rsub__(self, other) -> Suffix | Path:
-        return self.__sub__(other)
+    __rsub__ = __sub__
 
     @overload
     def __and__(self: Suffix, other: Path) -> Path: ...
@@ -659,42 +637,21 @@ class Suffix(BaseOptions):
     def __and__(self: Suffix, other: Suffix) -> Suffix: ...
 
     def __and__(self: Suffix, other: Path | Suffix) -> Suffix | Path:
-        pcn: ProcessedNameComponents | None = None
-        parent_path: Path | None = None
-        if isinstance(other, Path):
-            pcn = processed_ms_format(in_name=other)
-            assert pcn is not None, f"{other=} is not a Flint format name"
-            parent_path = other.parent
-            other = pcn.suffix_spec
+        return self._apply(other=other, how="and")
 
-        assert isinstance(other, Suffix), f"Unknown {other=}"
-
-        updated_spec = merge_suffix_spec(spec_1=self, spec_2=other, how="and")
-
-        if pcn is None:
-            return updated_spec
-
-        return create_path_from_processed_name_components(
-            processed_name_components=pcn,
-            parent_path=parent_path,
-            suffix_spec=updated_spec,
-        )
-
-    def __rand__(self, object) -> Suffix | Path:
-        return self.__and__(object)
+    __rand__ = __and__
 
 
 SuffixMergeModes = Literal["or", "remove", "and"]
 
 
 def merge_suffix_spec(spec_1: Suffix, spec_2: Suffix, how: SuffixMergeModes) -> Suffix:
-    """Merge different instances of the suffix representation together. Supported modes are
-    ``or`` and ``and``
+    """Merge different instances of the suffix representation together
 
     Args:
         spec_1 (Suffix): The first set of suffix field values
         spec_2 (Suffix): The second set of suffix field values
-        how (SuffixMergeModes): How to join, either ``or`` or ``and``.
+        how (SuffixMergeModes): How to join, either ``or``, ``and`` or ``remove``.
 
     Raises:
         ValueError: Unrecognised `how=`` specification
@@ -702,32 +659,26 @@ def merge_suffix_spec(spec_1: Suffix, spec_2: Suffix, how: SuffixMergeModes) -> 
     Returns:
         Suffix: Merged suffix field indicators
     """
-    # Ensure the mode is recognised
     _modes = get_args(SuffixMergeModes)
     if how not in _modes:
         msg = f"{how=} not in known merge {_modes=}"
         raise ValueError(msg)
 
-    # Get to dictionaries and do some basic, potentially unnecessary, checking. There be pirates.
-    dict_1 = spec_1._asdict()
-    dict_2 = spec_2._asdict()
-
-    assert len(set(dict_1.keys()) - set(dict_2.keys())) == 0, "Mismatch in key lengths"
-
-    # While keys are all booleans this will be acceptable
+    # Only the Suffix fields are considered, so either spec may be a subclass
+    fields = Suffix.model_fields
     if how == "or":
-        out_spec = {k: dict_1[k] or dict_2[k] for k in dict_1.keys()}
+        out_spec = {k: getattr(spec_1, k) or getattr(spec_2, k) for k in fields}
     elif how == "and":
-        out_spec = {k: dict_1[k] and dict_2[k] for k in dict_1.keys()}
-    elif how == "remove":
-        out_spec = {
-            k: (False if dict_1[k] and dict_2[k] else dict_1[k]) for k in dict_1.keys()
-        }
+        out_spec = {k: getattr(spec_1, k) and getattr(spec_2, k) for k in fields}
     else:
-        msg = f"Unknown mode {how=}"
-        raise ValueError(msg)
+        out_spec = {k: getattr(spec_1, k) and not getattr(spec_2, k) for k in fields}
 
     return Suffix(**out_spec)
+
+
+_SUFFIX_REGEX = "".join(
+    rf"((\.(?P<{field}>{field}))?)" for field in Suffix.model_fields
+)
 
 
 def get_string_for_suffix(
@@ -741,21 +692,9 @@ def get_string_for_suffix(
     Returns:
         str | None: If at least one field was active, their string representation is returned. ``None`` otherwise.
     """
-    fields = []
+    fields = [k for k in Suffix.model_fields if getattr(suffix_spec, k)]
 
-    if isinstance(suffix_spec, ProcessedNameComponents):
-        suffix_spec = (
-            suffix_spec.suffix_spec if suffix_spec.suffix_spec is not None else Suffix()
-        )
-
-    suffix_spec_dict = suffix_spec._asdict()
-
-    fields = [k for k in suffix_spec_dict if suffix_spec_dict[k]]
-
-    if len(fields) == 0:
-        return None
-
-    return ".".join(fields)
+    return ".".join(fields) if fields else None
 
 
 class ProcessedNameComponents(Suffix):
@@ -786,14 +725,7 @@ class ProcessedNameComponents(Suffix):
         Returns:
             Suffix: Options related to the suffix specification
         """
-        from capn_crunch import options_to_dict
-
-        dummy_suffix_dict = options_to_dict(input_options=Suffix())
-        self_pcn_dict = options_to_dict(input_options=self)
-
-        suffix_res = {k: v for k, v in self_pcn_dict.items() if k in dummy_suffix_dict}
-
-        return Suffix(**suffix_res)
+        return Suffix(**{k: getattr(self, k) for k in Suffix.model_fields})
 
 
 def processed_ms_format(
@@ -824,19 +756,9 @@ def processed_ms_format(
         r"((\.(?P<pol>(i|q|u|v|xx|yy|xy|yx)+))?)"
         r"((\.ch(?P<chl>([0-9]+))-(?P<chh>([0-9]+)))?)"
         r"((\.scan(?P<scanl>([0-9]+))-(?P<scanh>([0-9]+)))?)"
-        r"((\.(?P<image>image))?)"
-        r"((\.(?P<residual>residual))?)"
-        r"((\.(?P<optimal>optimal))?)"
-        r"((\.(?P<conv>conv))?)"
-        r"((\.(?P<contsub>contsub))?)"
-        r"((\.(?P<cont>cont))?)"
-        r"((\.(?P<time>time))?)"
-        r"((\.(?P<freq>freq))?)"
-        r"((\.(?P<linmos>linmos))?)"
-        r"((\.(?P<weight>weight))?)"
-        r"((\.(?P<cube>cube))?)"
-        r"((\.(?P<ext>[a-zA-Z0-9]+))?)"
-        r"$"
+        + _SUFFIX_REGEX
+        # Any unrecognised trailing components, e.g. -MFS-image.fits, are ignored
+        + r"((?P<ext>[.-].*)?)$"
     )
     results = regex.match(in_name)
 
@@ -862,15 +784,7 @@ def processed_ms_format(
         pol=groups["pol"],
         channel_range=channel_range,
         scan_range=scan_range,
-        image=bool(groups["image"]),
-        residual=bool(groups["residual"]),
-        contsub=bool(groups["contsub"]),
-        cont=bool(groups["cont"]),
-        time=bool(groups["time"]),
-        freq=bool(groups["freq"]),
-        linmos=bool(groups["linmos"]),
-        weight=bool(groups["weight"]),
-        cube=bool(groups["cube"]),
+        **{field: bool(groups[field]) for field in Suffix.model_fields},
     )
 
 
@@ -1225,9 +1139,8 @@ def create_linmos_base_path(
     The default operation is to form the name from the common processed name fields
     among all of the input images.
 
-    if either the `linmos` or `weight` fields are detected they are removed. This can happen
-    if they are considered to be common among all input images (.e.g. linmos'ing already linmos'd
-    images).
+    If either the ``linmos`` or ``weight`` fields are detected they are removed. This can happen
+    when they are common among all input images, e.g. linmos'ing already linmos'd images.
 
     Args:
         input_images (list[Path] | None, optional): If provided the common fields of the input images are used as basis of the path. Defaults to None.
@@ -1240,23 +1153,12 @@ def create_linmos_base_path(
 
     # Unless something has been specified, we make it up
     logger.info(f"Combining images {input_images}")
-    output_name = create_name_from_common_fields(
-        in_paths=tuple(input_images), additional_suffixes=additional_suffixes
+    output_name = create_name_from_common_fields(in_paths=tuple(input_images))
+    output_name = Suffix(linmos=True, weight=True) - output_name
+    output_name = _append_suffixes(
+        path=output_name, additional_suffixes=additional_suffixes
     )
-    out_dir = output_name.parent
     logger.info(f"Base output image name will be: {output_name}")
-    assert out_dir is not None, f"{out_dir=}, which should not happen"
-
-    if ".linmos" in str(output_name.name):
-        logger.warning(f"Remoing the detected linmos field in {output_name=}")
-        output_name = output_name.parent / Path(
-            str(output_name.name).replace(".linmos", "")
-        )
-    if ".weight" in str(output_name.name):
-        logger.warning(f"Remoing the detected weight field in {output_name=}")
-        output_name = output_name.parent / Path(
-            str(output_name.name).replace(".weight", "")
-        )
 
     return output_name.absolute()
 
