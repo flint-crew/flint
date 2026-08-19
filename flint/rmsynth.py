@@ -37,7 +37,6 @@ from rm_lite.utils.synthesis import (  # noqa: E402
 
 from flint.exceptions import NotSupportedError
 from flint.logging import logger
-from flint.naming import create_image_cube_name
 from flint.options import RMCleanOptions, RMSynthOptions
 
 FDFLabel = Literal["dirty", "clean", "model"]
@@ -143,46 +142,6 @@ def run_rmclean_3d(
         moment_threshold_snr=rmclean_options.moment_threshold_snr,
         multiscale=rmclean_options.multiscale,
     )
-
-
-def _phi_header(
-    reference_header: fits.Header, phi_arr_radm2: np.ndarray
-) -> fits.Header:
-    """Build a FDF cube header: the reference header's spatial WCS with the
-    spectral axis replaced by a linear Faraday-depth axis."""
-    header = WCS(reference_header).celestial.to_header()
-    header["NAXIS"] = 3
-    header["CTYPE3"] = "FDEPTH"
-    header["CUNIT3"] = "rad/m2"
-    header["CRPIX3"] = 1
-    header["CRVAL3"] = float(phi_arr_radm2[0])
-    header["CDELT3"] = float(phi_arr_radm2[1] - phi_arr_radm2[0])
-    return header
-
-
-def write_fdf_cube_to_fits(
-    fdf_cube: np.ndarray,
-    phi_arr_radm2: np.ndarray,
-    reference_header: fits.Header,
-    output_path: Path,
-) -> Path:
-    """Write a (already computed) FDF cube to FITS as amplitude, matching the
-    RM-Tools ``_FDFdirty.fits``/``_FDFclean.fits`` convention. Phase is dropped.
-
-    Args:
-        fdf_cube (np.ndarray): Complex FDF cube, shape (n_phi, ny, nx)
-        phi_arr_radm2 (np.ndarray): Faraday depth values, rad/m^2
-        reference_header (fits.Header): Header to derive the spatial WCS from (e.g. the Stokes Q cube header)
-        output_path (Path): Output FITS path
-
-    Returns:
-        Path: ``output_path``
-    """
-    header = _phi_header(reference_header=reference_header, phi_arr_radm2=phi_arr_radm2)
-    fits.writeto(
-        output_path, np.abs(fdf_cube).astype(np.float32), header, overwrite=True
-    )
-    return output_path
 
 
 def write_moment_maps_to_fits(
@@ -339,22 +298,26 @@ def write_rm_products(
         fdf_sources["clean"] = clean_results.clean_fdf_cube
         fdf_sources["model"] = clean_results.model_fdf_cube
 
-    # Cubes written to zarr are stored chunk-by-chunk (one worker writing its
-    # own chunk directly) and so must NOT also be gathered to numpy here!
-    # only labels also needed for moments (small, cheap to gather) go through
-    # the numpy path below.
-    write_cubes_as_zarr = rmsynth_options.write_fdfs_to_zarr and bool(cube_products)
-    zarr_store_path = Path(f"{output_prefix}.fdf.zarr") if write_cubes_as_zarr else None
-    numpy_cube_labels = set() if write_cubes_as_zarr else set(cube_products)
+    # FDF cubes are only ever written to zarr, chunk-by-chunk with each worker
+    # writing its own chunk. Gathering an (n_phi, ny, nx) cube into this process
+    # to write it as FITS is tens of GB on a real mosaic.
+    zarr_store_path = Path(f"{output_prefix}.fdf.zarr") if cube_products else None
 
-    compute_targets: dict[str, dask.array.Array] = {
-        label: fdf_sources[label] for label in numpy_cube_labels
-    }
-    if write_cubes_as_zarr:
-        for label in cube_products:
-            compute_targets[f"zarr_{label}"] = fdf_sources[label].to_zarr(
-                str(zarr_store_path), component=label, overwrite=True, compute=False
-            )
+    compute_targets: dict[str, dask.array.Array] = {}
+    for label in cube_products:
+        compute_targets[f"zarr_{label}"] = fdf_sources[label].to_zarr(
+            str(zarr_store_path), component=label, overwrite=True, compute=False
+        )
+    if cube_products:
+        # Without the Faraday depth axis the cubes are not self-describing
+        compute_targets["zarr_phi"] = dask.array.from_array(
+            synth_results.phi_arr_radm2
+        ).to_zarr(
+            str(zarr_store_path),
+            component="phi_arr_radm2",
+            overwrite=True,
+            compute=False,
+        )
 
     # Moments enter the batch as their lazy (ny, nx) maps, never as the FDF cube
     # they reduce: gathering the cube here would pull the whole (n_phi, ny, nx)
@@ -428,22 +391,8 @@ def write_rm_products(
     reference_header = fits.getheader(stokes_q_cube)
 
     output_paths: list[Path] = []
-    if write_cubes_as_zarr:
-        assert zarr_store_path is not None
+    if zarr_store_path is not None:
         output_paths.append(zarr_store_path)
-    else:
-        for label in cube_products:
-            output_path = create_image_cube_name(
-                image_prefix=output_prefix, mode="fdf", suffix=label
-            )
-            output_paths.append(
-                write_fdf_cube_to_fits(
-                    fdf_cube=computed[label],
-                    phi_arr_radm2=synth_results.phi_arr_radm2,
-                    reference_header=reference_header,
-                    output_path=output_path,
-                )
-            )
     for label in moment_products:
         output_paths.extend(
             write_moment_maps_to_fits(

@@ -275,8 +275,6 @@ class RMSynthOptions(BaseOptions):
     """Also compute a debiased (via rm_lite's debias_fdf) mom0/mom1/mom2 set per requested FDF"""
     debias_filter_size: int = 5
     """Median filter size (pixels) used by mom0 debiasing"""
-    write_fdfs_to_zarr: bool = False
-    """Write the requested FDF cubes as a chunked zarr store instead of FITS. Recommended for large cubes"""
     estimate_stokes_i_noise: bool = False
     """Derive a per-channel Stokes I error from the Stokes I cube when fitting the fractional-polarisation model"""
 

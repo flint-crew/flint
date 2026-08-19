@@ -135,16 +135,16 @@ def test_rmsynth_all_products(tmp_path: Path, qu_cubes: tuple[Path, Path]) -> No
         output_prefix=output_prefix,
     )
 
-    assert len(output_paths) == 3 + 3 * 3
+    # One zarr store holding all three cubes, plus three moments per label
+    assert len(output_paths) == 1 + 3 * 3
     for path in output_paths:
         assert path.exists()
 
-    for label in ("dirty", "clean", "model"):
-        cube_path = Path(f"{output_prefix}.fdf.{label}.cube.fits")
-        assert cube_path.exists()
-        header = fits.getheader(cube_path)
-        assert header["CTYPE3"] == "FDEPTH"
+    assert not list(tmp_path.glob("*.fdf.*.cube.fits")), (
+        "FDF cubes are zarr-only; a FITS cube means the gather path came back"
+    )
 
+    for label in ("dirty", "clean", "model"):
         for moment in ("mom0", "mom1", "mom2"):
             moment_path = Path(f"{output_prefix}.fdf.{label}.{moment}.fits")
             assert moment_path.exists()
@@ -240,7 +240,7 @@ def test_rmsynth_debias_moments_runs(
     assert len(output_paths) == 6
 
 
-def test_rmsynth_write_fdfs_to_zarr(
+def test_rmsynth_writes_fdf_cubes_to_zarr(
     tmp_path: Path, qu_cubes: tuple[Path, Path]
 ) -> None:
     stokes_q_cube, stokes_u_cube = qu_cubes
@@ -249,7 +249,7 @@ def test_rmsynth_write_fdfs_to_zarr(
     output_paths = _synth_and_write(
         stokes_q_cube=stokes_q_cube,
         stokes_u_cube=stokes_u_cube,
-        rmsynth_options=RMSynthOptions(write_fdfs_to_zarr=True),
+        rmsynth_options=RMSynthOptions(),
         rmclean_options=RMCleanOptions(),
         cube_products=["dirty", "clean"],
         moment_products=["clean"],
@@ -263,8 +263,10 @@ def test_rmsynth_write_fdfs_to_zarr(
     import zarr
 
     group = zarr.open(str(zarr_store), mode="r")
-    assert set(group.keys()) == {"dirty", "clean"}
+    assert set(group.keys()) == {"dirty", "clean", "phi_arr_radm2"}
     assert group["dirty"].shape[1:] == (NY, NX)
+    # Without the Faraday depth axis the store is not self-describing
+    assert group["phi_arr_radm2"].shape[0] == group["dirty"].shape[0]
 
 
 def test_moment_only_never_computes_a_full_cube(
