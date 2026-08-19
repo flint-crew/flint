@@ -138,6 +138,35 @@ def test_remove_suffix_with_path() -> None:
     assert result == updated_path
 
 
+def test_and_suffix_with_path() -> None:
+    """Create a Path object, and try oring a suffix to it using
+    the ``and`` joining mode"""
+
+    pcn = ProcessedNameComponents(
+        sbid="123",
+        field="Jack-Sparrow",
+        round="1",
+        image=True,
+        linmos=True,
+    )
+    file_path = create_path_from_processed_name_components(
+        processed_name_components=pcn
+    )
+    expected_path = Path("SB123.Jack-Sparrow.round1.image.linmos")
+    assert file_path == expected_path
+    updated_path = Path("SB123.Jack-Sparrow.round1.image")
+
+    suffix = SuffixSpec(image=True)
+
+    result = suffix & file_path
+    assert isinstance(result, Path)
+    assert result == updated_path
+
+    result = file_path & suffix
+    assert isinstance(result, Path)
+    assert result == updated_path
+
+
 def test_bad_pol_field() -> None:
     """When constructing the above tests a incorrect
     handling of a pol field was found. This is tracking

@@ -643,26 +643,45 @@ class SuffixSpec(BaseOptions):
         if pcn is None:
             return updated_spec
 
-        print(f"{updated_spec}")
-        res = create_path_from_processed_name_components(
+        return create_path_from_processed_name_components(
             processed_name_components=pcn,
             parent_path=other.parent,
             suffix_spec=updated_spec,
         )
-        return res
 
     def __rsub__(self, other) -> SuffixSpec | Path:
         return self.__sub__(other)
 
-    def __and__(self: SuffixSpec, other: Path | SuffixSpec) -> SuffixSpec:
+    @overload
+    def __and__(self: SuffixSpec, other: Path) -> Path: ...
+
+    @overload
+    def __and__(self: SuffixSpec, other: SuffixSpec) -> SuffixSpec: ...
+
+    def __and__(self: SuffixSpec, other: Path | SuffixSpec) -> SuffixSpec | Path:
+        pcn: ProcessedNameComponents | None = None
+        parent_path: Path | None = None
         if isinstance(other, Path):
             pcn = processed_ms_format(in_name=other)
             assert pcn is not None, f"{other=} is not a Flint format name"
+            parent_path = other.parent
             other = pcn.suffix_spec
 
         assert isinstance(other, SuffixSpec), f"Unknown {other=}"
 
-        return merge_suffix_spec(spec_1=self, spec_2=other, how="and")
+        updated_spec = merge_suffix_spec(spec_1=self, spec_2=other, how="and")
+
+        if pcn is None:
+            return updated_spec
+
+        return create_path_from_processed_name_components(
+            processed_name_components=pcn,
+            parent_path=parent_path,
+            suffix_spec=updated_spec,
+        )
+
+    def __rand__(self, object) -> SuffixSpec | Path:
+        return self.__and__(object)
 
 
 SuffixSpecMergeModes = Literal["or", "remove", "and"]
