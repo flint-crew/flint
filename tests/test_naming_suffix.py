@@ -114,32 +114,28 @@ def test_or_suffix_with_path() -> None:
     assert result == updated_path
 
 
-# def test_remove_suffix_with_path() -> None:
-#     """Create a Path object, and try oring a suffix to it"""
+def test_remove_suffix_with_path() -> None:
+    """Create a Path object, and try oring a suffix to it"""
 
-#     pcn = ProcessedNameComponents(
-#         sbid="123",
-#         field="Jack-Sparrow",
-#         round="1",
-#         linmos=True,
-#         image=True
-#     )
-#     file_path = create_path_from_processed_name_components(
-#         processed_name_components=pcn
-#     )
-#     expected_path = Path("SB123.Jack-Sparrow.round1.image.linmos")
-#     assert file_path == expected_path
-#     updated_path = Path("SB123.Jack-Sparrow.round1.linmos")
+    pcn = ProcessedNameComponents(
+        sbid="123", field="Jack-Sparrow", round="1", linmos=True, image=True
+    )
+    file_path = create_path_from_processed_name_components(
+        processed_name_components=pcn
+    )
+    expected_path = Path("SB123.Jack-Sparrow.round1.image.linmos")
+    assert file_path == expected_path
+    updated_path = Path("SB123.Jack-Sparrow.round1.linmos")
 
-#     suffix = SuffixSpec(image=True)
+    suffix = SuffixSpec(image=True)
 
-#     result = suffix - file_path
-#     assert isinstance(result, Path)
-#     assert result == updated_path
+    result = suffix - file_path
+    assert isinstance(result, Path)
+    assert result == updated_path
 
-#     result = file_path - suffix
-#     assert isinstance(result, Path)
-#     assert result == updated_path
+    result = file_path - suffix
+    assert isinstance(result, Path)
+    assert result == updated_path
 
 
 def test_bad_pol_field() -> None:
@@ -149,7 +145,9 @@ def test_bad_pol_field() -> None:
     expected_path = Path("SB123.Jack-Sparrow.round1.image.linmos")
     from flint.naming import processed_ms_format
 
-    # NOTE: THIS SHOULD BE NONE. JUST COMMITTING TO SAVE BRAIN STATE
+    # There was previously a bug that would allow something like the
+    # `.image` ield to incorrectly be cast to a `pol`. This tests
+    # was used to help diagnose.
     pcn = processed_ms_format(expected_path)
     assert pcn is not None
-    assert pcn.pol == "i"
+    assert pcn.pol is None

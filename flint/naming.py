@@ -633,15 +633,17 @@ class SuffixSpec(BaseOptions):
         if isinstance(other, Path):
             pcn = processed_ms_format(in_name=other)
             assert pcn is not None, f"{other=} is not a Flint format name"
-
-        other_suffix = pcn.suffix_spec if pcn is not None else other
-        assert isinstance(other_suffix, SuffixSpec), f"Unknown {other=}"
-
-        updated_spec = merge_suffix_spec(spec_1=self, spec_2=other_suffix, how="remove")
+            path_spec = pcn.suffix_spec if pcn.suffix_spec is not None else SuffixSpec()
+            updated_spec = merge_suffix_spec(
+                spec_1=path_spec, spec_2=self, how="remove"
+            )
+        else:
+            updated_spec = merge_suffix_spec(spec_1=self, spec_2=other, how="remove")
 
         if pcn is None:
             return updated_spec
 
+        print(f"{updated_spec}")
         res = create_path_from_processed_name_components(
             processed_name_components=pcn,
             parent_path=other.parent,
@@ -818,6 +820,8 @@ def processed_ms_format(
         r"((\.(?P<linmos>linmos))?)"
         r"((\.(?P<weight>weight))?)"
         r"((\.(?P<cube>cube))?)"
+        r"((\.(?P<ext>[a-zA-Z0-9]+))?)"
+        r"$"
     )
     results = regex.match(in_name)
 
