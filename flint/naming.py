@@ -620,15 +620,37 @@ class SuffixSpec(BaseOptions):
     def __ror__(self, other) -> SuffixSpec:
         return self.__add__(other)
 
-    def __sub__(self: SuffixSpec, other: Path | SuffixSpec) -> SuffixSpec:
+    @overload
+    def __sub__(self: SuffixSpec, other: Path) -> Path: ...
+
+    @overload
+    def __sub__(self: SuffixSpec, other: SuffixSpec) -> SuffixSpec: ...
+
+    def __sub__(self: SuffixSpec, other: Path | SuffixSpec) -> SuffixSpec | Path:
+        # The self at this point will always be SuffixSpec
+
+        pcn: ProcessedNameComponents | None = None
         if isinstance(other, Path):
             pcn = processed_ms_format(in_name=other)
             assert pcn is not None, f"{other=} is not a Flint format name"
-            other = pcn.suffix_spec
 
-        assert isinstance(other, SuffixSpec), f"Unknown {other=}"
+        other_suffix = pcn.suffix_spec if pcn is not None else other
+        assert isinstance(other_suffix, SuffixSpec), f"Unknown {other=}"
 
-        return merge_suffix_spec(spec_1=self, spec_2=other, how="remove")
+        updated_spec = merge_suffix_spec(spec_1=self, spec_2=other_suffix, how="remove")
+
+        if pcn is None:
+            return updated_spec
+
+        res = create_path_from_processed_name_components(
+            processed_name_components=pcn,
+            parent_path=other.parent,
+            suffix_spec=updated_spec,
+        )
+        return res
+
+    def __rsub__(self, other) -> SuffixSpec | Path:
+        return self.__sub__(other)
 
     def __and__(self: SuffixSpec, other: Path | SuffixSpec) -> SuffixSpec:
         if isinstance(other, Path):
@@ -680,7 +702,7 @@ def merge_suffix_spec(
         out_spec = {k: dict_1[k] and dict_2[k] for k in dict_1.keys()}
     elif how == "remove":
         out_spec = {
-            k: False if dict_1[k] and dict_2[k] else dict_1[k] for k in dict_1.keys()
+            k: (False if dict_1[k] and dict_2[k] else dict_1[k]) for k in dict_1.keys()
         }
     else:
         msg = f"Unknown mode {how=}"
