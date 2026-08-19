@@ -584,6 +584,7 @@ class SuffixSpec(BaseOptions):
     """Indicates whether a cube is present"""
 
     def __add__(self: SuffixSpec, other: Path | SuffixSpec) -> SuffixSpec:
+
         if isinstance(other, Path):
             pcn = processed_ms_format(in_name=other)
             assert pcn is not None, f"{other=} is not a Flint format name"
@@ -593,8 +594,14 @@ class SuffixSpec(BaseOptions):
 
         return merge_suffix_spec(spec_1=self, spec_2=other, how="or")
 
+    def __radd__(self, other) -> SuffixSpec:
+        return self.__add__(other)
+
     def __or__(self: SuffixSpec, other: Path | SuffixSpec) -> SuffixSpec:
         return self + other
+
+    def __ror__(self, other) -> SuffixSpec:
+        return self.__add__(other)
 
     def __sub__(self: SuffixSpec, other: Path | SuffixSpec) -> SuffixSpec:
         if isinstance(other, Path):
