@@ -9,10 +9,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from prefect import task
-
 from flint.logging import logger
 from flint.options import RMCleanOptions, RMSynthOptions
+from flint.prefect.caching import task
 from flint.rmsynth import (
     FDFLabel,
     RMClean3DResults,

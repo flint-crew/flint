@@ -7,10 +7,10 @@ from pathlib import Path
 from astropy.io import fits
 from astropy.wcs import WCS
 from fitscube.combine_fits import compress_cube
-from prefect import task
 
 from flint.convol import BeamShape
 from flint.options import SpiceOptions
+from flint.prefect.caching import task
 from flint.spice import (
     SkyBoundingBox,
     island_sky_boxes,

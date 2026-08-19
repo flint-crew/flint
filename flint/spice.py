@@ -363,6 +363,14 @@ def spice_fits(
     if not sky_boxes:
         raise ValueError(f"No bounding boxes supplied for {fits_path}")
 
+    # A dask worker death after the unlink below leaves the output written and the
+    # input gone. Recognise that state rather than failing the rerun.
+    if output_path is not None:
+        spiced_path = output_path / fits_path.name
+        if spiced_path.exists() and not fits_path.exists():
+            logger.info(f"{spiced_path} already written, nothing to redo")
+            return spiced_path
+
     with fits.open(fits_path) as hdul:
         header = hdul[0].header.copy()
         image_shape = tuple(hdul[0].data.shape[-2:])

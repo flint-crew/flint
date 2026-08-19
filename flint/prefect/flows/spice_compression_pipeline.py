@@ -10,7 +10,7 @@ from pathlib import Path
 from astropy.io import fits
 from capn_crunch import add_options_to_parser, create_options_from_parser
 from configargparse import ArgumentParser
-from prefect import flow, task, unmapped
+from prefect import flow, unmapped
 from radio_beam import Beam
 
 from flint.configuration import get_options_from_strategy, load_and_copy_strategy
@@ -18,6 +18,7 @@ from flint.convol import BeamShape
 from flint.logging import logger
 from flint.naming import get_sbid_from_path
 from flint.options import SpiceFieldOptions, SpiceOptions
+from flint.prefect.caching import task
 from flint.prefect.clusters import get_dask_runner
 from flint.prefect.common.spice import (
     task_compress_cube,

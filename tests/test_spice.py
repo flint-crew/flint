@@ -558,3 +558,31 @@ def test_spice_fits_unoverlapped_cube_is_not_moved(tmp_path: Path):
 
     assert result == fits_path
     assert fits_path.exists(), "An unspiced cube must not be deleted"
+
+
+def test_spice_fits_is_idempotent_after_a_worker_death(tmp_path: Path):
+    """A rerun must recognise the output it already wrote, not fail on the
+    input it already removed."""
+    wcs = _make_wcs()
+    fits_path = tmp_path / "cube.fits"
+    _write_test_fits(fits_path, wcs, (NY, NX))
+    sky_boxes = island_sky_boxes(
+        table=_aegean_table([_default_row(0, RA0, DEC0)]),
+        wcs=wcs,
+        beam_shape=BEAM,
+        spice_options=SpiceOptions(n_beamwidths=1.0),
+        is_user_catalogue=False,
+    )
+    output_path = tmp_path / "spice"
+
+    first = spice_fits(
+        fits_path=fits_path, sky_boxes=sky_boxes, output_path=output_path
+    )
+    first_bytes = first.read_bytes()
+
+    second = spice_fits(
+        fits_path=fits_path, sky_boxes=sky_boxes, output_path=output_path
+    )
+
+    assert second == first
+    assert second.read_bytes() == first_bytes, "The rerun must not re-crop the output"
