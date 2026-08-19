@@ -47,6 +47,7 @@ from flint.logging import logger
 from flint.ms import MS, standardise_ms_to_list_ms
 from flint.naming import (
     ProcessedNameComponents,
+    Suffix,
     create_image_cube_name,
     create_imaging_name_prefix,
     create_path_from_processed_name_components,
@@ -506,10 +507,11 @@ def split_cube_into_planes(cube: Path) -> list[Path]:
         # Only the flint name fields are retained, so a single cube per beam
         # should be split at a time to avoid clobbering planes
         plane_base = create_path_from_processed_name_components(
-            processed_name_components=components._replace(
+            processed_name_components=components.with_options(
                 channel_range=(channel, channel)
             ),
             parent_path=cube.parent,
+            suffix_spec=components.suffix_spec - Suffix(cube=True),
         )
         return Path(f"{plane_base}.fits")
 

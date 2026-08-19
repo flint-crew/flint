@@ -122,7 +122,7 @@ def test_create_path_from_process_named_components():
     assert parent / ex == out2
 
     components = ProcessedNameComponents(
-        sbid="39400", field="RACS_0000-123", beam="33", spw=234, round="3", pol="i"
+        sbid="39400", field="RACS_0000-123", beam="33", spw="234", round="3", pol="i"
     )
     assert isinstance(components, ProcessedNameComponents)
 
@@ -143,7 +143,7 @@ def test_create_path_from_process_named_components():
         sbid="39400",
         field="RACS_0000-123",
         beam="33",
-        spw=234,
+        spw="234",
         round="3",
         pol="i",
         channel_range=(123, 567),
@@ -167,7 +167,7 @@ def test_create_path_from_process_named_components():
         sbid="39400",
         field="RACS_0000-123",
         beam="33",
-        spw=234,
+        spw="234",
         round="3",
         pol="i",
         channel_range=(123, 567444),
@@ -243,7 +243,7 @@ def test_create_path_from_processed_name_components_with_suffix() -> None:
         sbid="39400",
         field="RACS_0000-123",
         beam="33",
-        spw=234,
+        spw="234",
         round="3",
         pol="i",
         channel_range=(123, 567),
@@ -262,7 +262,7 @@ def test_create_path_from_processed_name_components_with_suffix() -> None:
         sbid="39400",
         field="RACS_0000-123",
         beam="33",
-        spw=234,
+        spw="234",
         round="3",
         pol="i",
         channel_range=(123, 567),
@@ -303,7 +303,7 @@ def test_returned_suffix_spec_from_processed_named_components() -> None:
         sbid="39400",
         field="RACS_0000-123",
         beam="33",
-        spw=234,
+        spw="234",
         round="3",
         pol="i",
         channel_range=(123, 567),

@@ -7,7 +7,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal, NamedTuple, TypeVar, get_args, overload
+from typing import Any, Literal, NamedTuple, TypeVar, get_args
 
 from capn_crunch import options_to_dict
 
@@ -591,55 +591,55 @@ class Suffix(BaseOptions):
     cube: bool = False
     """Indicates whether a cube is present"""
 
-    def _apply(self, other: Path | Suffix, how: SuffixMergeModes) -> Suffix | Path:
-        """Merge ``self`` into ``other``, which may be a ``Suffix`` or a flint format path"""
-        if not isinstance(other, Path):
-            assert isinstance(other, Suffix), f"Unknown {other=}"
-            return merge_suffix_spec(spec_1=self, spec_2=other, how=how)
-
-        pcn = processed_ms_format(in_name=other)
-        assert pcn is not None, f"{other=} is not a Flint format name"
+    def _apply_to_path(self, path: Path, how: SuffixMergeModes) -> Path:
+        """Merge these suffix flags into an existing flint format path"""
+        pcn = processed_ms_format(in_name=path)
+        assert pcn is not None, f"{path=} is not a Flint format name"
 
         return create_path_from_processed_name_components(
             processed_name_components=pcn,
-            parent_path=other.parent,
+            parent_path=path.parent,
             suffix_spec=merge_suffix_spec(spec_1=pcn.suffix_spec, spec_2=self, how=how),
         )
 
-    @overload
-    def __add__(self: Suffix, other: Path) -> Path: ...
+    def __add__(self, other: Suffix) -> Suffix:
+        """Union of two suffix specifications"""
+        if not isinstance(other, Suffix):
+            return NotImplemented
+        return merge_suffix_spec(spec_1=self, spec_2=other, how="or")
 
-    @overload
-    def __add__(self: Suffix, other: Suffix) -> Suffix: ...
+    def __radd__(self, other: Path) -> Path:
+        """Add these suffixes to a flint format path"""
+        if not isinstance(other, Path):
+            return NotImplemented
+        return self._apply_to_path(path=other, how="or")
 
-    def __add__(self: Suffix, other: Path | Suffix) -> Suffix | Path:
-        return self._apply(other=other, how="or")
-
-    __radd__ = __add__
     __or__ = __add__
-    __ror__ = __add__
+    __ror__ = __radd__
 
-    @overload
-    def __sub__(self: Suffix, other: Path) -> Path: ...
+    def __sub__(self, other: Suffix) -> Suffix:
+        """Suffixes present in ``self`` but not in ``other``"""
+        if not isinstance(other, Suffix):
+            return NotImplemented
+        return merge_suffix_spec(spec_1=self, spec_2=other, how="remove")
 
-    @overload
-    def __sub__(self: Suffix, other: Suffix) -> Suffix: ...
+    def __rsub__(self, other: Path) -> Path:
+        """Remove these suffixes from a flint format path"""
+        if not isinstance(other, Path):
+            return NotImplemented
+        return self._apply_to_path(path=other, how="remove")
 
-    def __sub__(self: Suffix, other: Path | Suffix) -> Suffix | Path:
-        return self._apply(other=other, how="remove")
+    def __and__(self, other: Suffix) -> Suffix:
+        """Intersection of two suffix specifications"""
+        if not isinstance(other, Suffix):
+            return NotImplemented
+        return merge_suffix_spec(spec_1=self, spec_2=other, how="and")
 
-    __rsub__ = __sub__
-
-    @overload
-    def __and__(self: Suffix, other: Path) -> Path: ...
-
-    @overload
-    def __and__(self: Suffix, other: Suffix) -> Suffix: ...
-
-    def __and__(self: Suffix, other: Path | Suffix) -> Suffix | Path:
-        return self._apply(other=other, how="and")
-
-    __rand__ = __and__
+    def __rand__(self, other: Path) -> Path:
+        """Retain only the suffixes common to these and a flint format path"""
+        if not isinstance(other, Path):
+            return NotImplemented
+        return self._apply_to_path(path=other, how="and")
 
 
 SuffixMergeModes = Literal["or", "remove", "and"]
@@ -707,7 +707,7 @@ class ProcessedNameComponents(Suffix):
     """The name of the field extracted"""
     beam: str | None = None
     """The beam of the observation processed"""
-    spw: str | int | None = None
+    spw: str | None = None
     """The SPW of the observation. If there is only one spw this is None."""
     round: str | None = None
     """The self-calibration round detected. This might be represented as 'noselfcal' in some image products, e.g. linmos. """
@@ -1154,7 +1154,7 @@ def create_linmos_base_path(
     # Unless something has been specified, we make it up
     logger.info(f"Combining images {input_images}")
     output_name = create_name_from_common_fields(in_paths=tuple(input_images))
-    output_name = Suffix(linmos=True, weight=True) - output_name
+    output_name = output_name - Suffix(linmos=True, weight=True)
     output_name = _append_suffixes(
         path=output_name, additional_suffixes=additional_suffixes
     )

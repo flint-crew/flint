@@ -344,8 +344,9 @@ def test_split_cube_into_planes(tmpdir) -> None:
 
     planes = split_cube_into_planes(cube=cube)
 
+    # No `.i`, the pol field previously swallowed the leading `i` of `.image`
     assert [plane.name for plane in planes] == [
-        f"SB56659.RACS_0940-04.beam17.round3.i.ch{channel:04d}-{channel:04d}.fits"
+        f"SB56659.RACS_0940-04.beam17.round3.ch{channel:04d}-{channel:04d}.image.fits"
         for channel in range(3)
     ]
     assert all(plane.exists() for plane in planes)

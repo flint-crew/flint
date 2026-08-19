@@ -3,6 +3,7 @@ that is used to build names"""
 
 from __future__ import annotations
 
+import operator
 from pathlib import Path
 
 import pytest
@@ -81,10 +82,6 @@ def test_add_suffix_with_path() -> None:
 
     suffix = Suffix(image=True)
 
-    result = suffix + file_path
-    assert isinstance(result, Path)
-    assert result == updated_path
-
     result = file_path + suffix
     assert isinstance(result, Path)
     assert result == updated_path
@@ -108,10 +105,6 @@ def test_or_suffix_with_path() -> None:
 
     suffix = Suffix(image=True)
 
-    result = suffix | file_path
-    assert isinstance(result, Path)
-    assert result == updated_path
-
     result = file_path | suffix
     assert isinstance(result, Path)
     assert result == updated_path
@@ -131,10 +124,6 @@ def test_remove_suffix_with_path() -> None:
     updated_path = Path("SB123.Jack-Sparrow.round1.linmos")
 
     suffix = Suffix(image=True)
-
-    result = suffix - file_path
-    assert isinstance(result, Path)
-    assert result == updated_path
 
     result = file_path - suffix
     assert isinstance(result, Path)
@@ -160,10 +149,6 @@ def test_and_suffix_with_path() -> None:
     updated_path = Path("SB123.Jack-Sparrow.round1.image")
 
     suffix = Suffix(image=True)
-
-    result = suffix & file_path
-    assert isinstance(result, Path)
-    assert result == updated_path
 
     result = file_path & suffix
     assert isinstance(result, Path)
@@ -202,3 +187,15 @@ def test_every_suffix_field_round_trips(field: str) -> None:
     assert pcn is not None
     assert getattr(pcn, field) is True
     assert pcn.suffix_spec == Suffix(**{field: True})
+
+
+@pytest.mark.parametrize(
+    "operation", [operator.add, operator.or_, operator.sub, operator.and_]
+)
+def test_suffix_on_left_of_path_rejected(operation) -> None:
+    """A Path is always the left operand, otherwise the operand order of a
+    remove reads backwards"""
+    file_path = Path("SB123.Jack-Sparrow.round1.linmos")
+
+    with pytest.raises(TypeError):
+        operation(Suffix(image=True), file_path)
