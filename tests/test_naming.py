@@ -13,7 +13,7 @@ from flint.naming import (
     FITSMaskNames,
     ProcessedNameComponents,
     RawNameComponents,
-    SuffixSpec,
+    Suffix,
     _rename_linear_to_stokes,
     add_timestamp_to_path,
     casda_ms_format,
@@ -295,10 +295,10 @@ def test_processed_name_components_with_scan():
 
 def test_returned_suffix_spec_from_processed_named_components() -> None:
     """Create a processed named component instance with some suffix fields
-    activated, and then return a SuffixSpec instance with the property method.
+    activated, and then return a Suffix instance with the property method.
     Make sure this sail around the world works."""
 
-    suffix_spec = SuffixSpec(cube=True, contsub=True, image=True)
+    suffix_spec = Suffix(cube=True, contsub=True, image=True)
     components = ProcessedNameComponents(
         sbid="39400",
         field="RACS_0000-123",
@@ -423,12 +423,12 @@ def test_create_image_cube_name() -> None:
 
 def test_create_image_cube_name_using_suffix_spec() -> None:
     """Put together a consistent file cube name. This test focuses
-    on using the SuffixSpec interface"""
+    on using the Suffix interface"""
     name = create_image_cube_name(
         image_prefix=Path(
             "/jack/sparrow/worst/pirate/flint_fitscube/57222/SB57222.RACS_1141-55.beam10.round3.i"
         ),
-        suffix_spec=SuffixSpec(linmos=True),
+        suffix_spec=Suffix(linmos=True),
     )
     assert isinstance(name, Path)
     assert name == Path(
@@ -437,7 +437,7 @@ def test_create_image_cube_name_using_suffix_spec() -> None:
 
     name = create_image_cube_name(
         image_prefix=Path("./57222/SB57222.RACS_1141-55.beam10.round3.i"),
-        suffix_spec=SuffixSpec(residual=True),
+        suffix_spec=Suffix(residual=True),
     )
     assert isinstance(name, Path)
     assert name == Path(
@@ -1283,14 +1283,14 @@ def test_split_images():
 
 def test_get_string_for_suffix() -> None:
     """Ensures that the suffix string creation works as expected"""
-    suffix_spec = SuffixSpec(cont=True)
+    suffix_spec = Suffix(cont=True)
     assert "cont" == get_string_for_suffix(suffix_spec=suffix_spec)
 
-    suffix_spec = SuffixSpec(cont=True, cube=True)
+    suffix_spec = Suffix(cont=True, cube=True)
     assert "cont.cube" == get_string_for_suffix(suffix_spec=suffix_spec)
 
 
 def test_get_string_for_suffix_empty() -> None:
     """Ensures that None is returned when no fields are  empty"""
-    suffix_spec = SuffixSpec()
+    suffix_spec = Suffix()
     assert get_string_for_suffix(suffix_spec=suffix_spec) is None

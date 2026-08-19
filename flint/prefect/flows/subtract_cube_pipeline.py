@@ -34,7 +34,7 @@ from flint.ms import (
     get_times_from_ms,
 )
 from flint.naming import (
-    SuffixSpec,
+    Suffix,
     create_image_cube_name,
     create_name_from_common_fields,
     get_sbid_from_path,
@@ -259,7 +259,7 @@ def task_combine_all_linmos_images(
 
     assert len(images_to_combine) > 0, "No images to combine"
 
-    suffix_spec = SuffixSpec(**suffix_spec_dict)
+    suffix_spec = Suffix(**suffix_spec_dict)
 
     base_cube_path = create_name_from_common_fields(in_paths=tuple(images_to_combine))
     output_cube_path = create_image_cube_name(

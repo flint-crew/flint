@@ -143,7 +143,7 @@ def create_largest_common_field_name(
 def create_name_from_common_fields(
     in_paths: tuple[Path, ...],
     additional_suffixes: str | None = None,
-    suffix_spec: SuffixSpec | None = None,
+    suffix_spec: Suffix | None = None,
 ) -> Path:
     """Attempt to craft a base name using the field elements that are in common.
     The expectation that these are paths that can be processed by the ``processed_name_format``
@@ -162,7 +162,7 @@ def create_name_from_common_fields(
     Args:
         in_paths (Tuple[Path, ...]): Collection of input paths to consider
         additional_suffixes (Optional[str], optional): Add an additional set of suffixes before returning. Defaults to None.
-        suffix_spec (SuffixSpec | None, optional): If not None, update suffix field information with these. Defaults to None.
+        suffix_spec (Suffix | None, optional): If not None, update suffix field information with these. Defaults to None.
 
     Raises:
         ValueError: Raised if any of the ``in_paths`` fail to conform to ``flint`` processed name format
@@ -241,7 +241,7 @@ def create_image_cube_name(
     image_prefix: Path,
     mode: str | list[str] | None = None,
     suffix: str | list[str] | None = None,
-    suffix_spec: SuffixSpec | None = None,
+    suffix_spec: Suffix | None = None,
 ) -> Path:
     """Create a consistent naming scheme when combining images into cube images. Intended to
     be used when combining many subband images together into a single cube.
@@ -556,7 +556,7 @@ def raw_ms_format(in_name: str) -> None | RawNameComponents:
     )
 
 
-class SuffixSpec(BaseOptions):
+class Suffix(BaseOptions):
     """Simple container to hole flags to include additional suffixes"""
 
     # TODO: These should be made available to the ProcessedNameComponents as well
@@ -584,13 +584,13 @@ class SuffixSpec(BaseOptions):
     """Indicates whether a cube is present"""
 
     @overload
-    def __add__(self: SuffixSpec, other: Path) -> Path: ...
+    def __add__(self: Suffix, other: Path) -> Path: ...
 
     @overload
-    def __add__(self: SuffixSpec, other: SuffixSpec) -> SuffixSpec: ...
+    def __add__(self: Suffix, other: Suffix) -> Suffix: ...
 
-    def __add__(self: SuffixSpec, other: Path | SuffixSpec) -> SuffixSpec | Path:
-        # The self at this point will always be SuffixSpec
+    def __add__(self: Suffix, other: Path | Suffix) -> Suffix | Path:
+        # The self at this point will always be Suffix
 
         pcn: ProcessedNameComponents | None = None
         if isinstance(other, Path):
@@ -598,7 +598,7 @@ class SuffixSpec(BaseOptions):
             assert pcn is not None, f"{other=} is not a Flint format name"
 
         other_suffix = pcn.suffix_spec if pcn is not None else other
-        assert isinstance(other_suffix, SuffixSpec), f"Unknown {other=}"
+        assert isinstance(other_suffix, Suffix), f"Unknown {other=}"
 
         updated_spec = merge_suffix_spec(spec_1=self, spec_2=other_suffix, how="or")
 
@@ -611,29 +611,29 @@ class SuffixSpec(BaseOptions):
             suffix_spec=updated_spec,
         )
 
-    def __radd__(self, other) -> SuffixSpec:
+    def __radd__(self, other) -> Suffix:
         return self.__add__(other)
 
-    def __or__(self: SuffixSpec, other: Path | SuffixSpec) -> SuffixSpec | Path:
+    def __or__(self: Suffix, other: Path | Suffix) -> Suffix | Path:
         return self + other
 
-    def __ror__(self, other) -> SuffixSpec:
+    def __ror__(self, other) -> Suffix:
         return self.__add__(other)
 
     @overload
-    def __sub__(self: SuffixSpec, other: Path) -> Path: ...
+    def __sub__(self: Suffix, other: Path) -> Path: ...
 
     @overload
-    def __sub__(self: SuffixSpec, other: SuffixSpec) -> SuffixSpec: ...
+    def __sub__(self: Suffix, other: Suffix) -> Suffix: ...
 
-    def __sub__(self: SuffixSpec, other: Path | SuffixSpec) -> SuffixSpec | Path:
-        # The self at this point will always be SuffixSpec
+    def __sub__(self: Suffix, other: Path | Suffix) -> Suffix | Path:
+        # The self at this point will always be Suffix
 
         pcn: ProcessedNameComponents | None = None
         if isinstance(other, Path):
             pcn = processed_ms_format(in_name=other)
             assert pcn is not None, f"{other=} is not a Flint format name"
-            path_spec = pcn.suffix_spec if pcn.suffix_spec is not None else SuffixSpec()
+            path_spec = pcn.suffix_spec if pcn.suffix_spec is not None else Suffix()
             updated_spec = merge_suffix_spec(
                 spec_1=path_spec, spec_2=self, how="remove"
             )
@@ -649,16 +649,16 @@ class SuffixSpec(BaseOptions):
             suffix_spec=updated_spec,
         )
 
-    def __rsub__(self, other) -> SuffixSpec | Path:
+    def __rsub__(self, other) -> Suffix | Path:
         return self.__sub__(other)
 
     @overload
-    def __and__(self: SuffixSpec, other: Path) -> Path: ...
+    def __and__(self: Suffix, other: Path) -> Path: ...
 
     @overload
-    def __and__(self: SuffixSpec, other: SuffixSpec) -> SuffixSpec: ...
+    def __and__(self: Suffix, other: Suffix) -> Suffix: ...
 
-    def __and__(self: SuffixSpec, other: Path | SuffixSpec) -> SuffixSpec | Path:
+    def __and__(self: Suffix, other: Path | Suffix) -> Suffix | Path:
         pcn: ProcessedNameComponents | None = None
         parent_path: Path | None = None
         if isinstance(other, Path):
@@ -667,7 +667,7 @@ class SuffixSpec(BaseOptions):
             parent_path = other.parent
             other = pcn.suffix_spec
 
-        assert isinstance(other, SuffixSpec), f"Unknown {other=}"
+        assert isinstance(other, Suffix), f"Unknown {other=}"
 
         updated_spec = merge_suffix_spec(spec_1=self, spec_2=other, how="and")
 
@@ -680,32 +680,30 @@ class SuffixSpec(BaseOptions):
             suffix_spec=updated_spec,
         )
 
-    def __rand__(self, object) -> SuffixSpec | Path:
+    def __rand__(self, object) -> Suffix | Path:
         return self.__and__(object)
 
 
-SuffixSpecMergeModes = Literal["or", "remove", "and"]
+SuffixMergeModes = Literal["or", "remove", "and"]
 
 
-def merge_suffix_spec(
-    spec_1: SuffixSpec, spec_2: SuffixSpec, how: SuffixSpecMergeModes
-) -> SuffixSpec:
+def merge_suffix_spec(spec_1: Suffix, spec_2: Suffix, how: SuffixMergeModes) -> Suffix:
     """Merge different instances of the suffix representation together. Supported modes are
     ``or`` and ``and``
 
     Args:
-        spec_1 (SuffixSpec): The first set of suffix field values
-        spec_2 (SuffixSpec): The second set of suffix field values
-        how (SuffixSpecMergeModes): How to join, either ``or`` or ``and``.
+        spec_1 (Suffix): The first set of suffix field values
+        spec_2 (Suffix): The second set of suffix field values
+        how (SuffixMergeModes): How to join, either ``or`` or ``and``.
 
     Raises:
         ValueError: Unrecognised `how=`` specification
 
     Returns:
-        SuffixSpec: Merged suffix field indicators
+        Suffix: Merged suffix field indicators
     """
     # Ensure the mode is recognised
-    _modes = get_args(SuffixSpecMergeModes)
+    _modes = get_args(SuffixMergeModes)
     if how not in _modes:
         msg = f"{how=} not in known merge {_modes=}"
         raise ValueError(msg)
@@ -729,16 +727,16 @@ def merge_suffix_spec(
         msg = f"Unknown mode {how=}"
         raise ValueError(msg)
 
-    return SuffixSpec(**out_spec)
+    return Suffix(**out_spec)
 
 
 def get_string_for_suffix(
-    suffix_spec: SuffixSpec | ProcessedNameComponents,
+    suffix_spec: Suffix | ProcessedNameComponents,
 ) -> str | None:
     """Construct a string that represents any known suffix fields
 
     Args:
-        suffix_spec (SuffixSpec | ProcessedNameComponents): Container with known fields to consider
+        suffix_spec (Suffix | ProcessedNameComponents): Container with known fields to consider
 
     Returns:
         str | None: If at least one field was active, their string representation is returned. ``None`` otherwise.
@@ -747,9 +745,7 @@ def get_string_for_suffix(
 
     if isinstance(suffix_spec, ProcessedNameComponents):
         suffix_spec = (
-            suffix_spec.suffix_spec
-            if suffix_spec.suffix_spec is not None
-            else SuffixSpec()
+            suffix_spec.suffix_spec if suffix_spec.suffix_spec is not None else Suffix()
         )
 
     suffix_spec_dict = suffix_spec._asdict()
@@ -762,7 +758,7 @@ def get_string_for_suffix(
     return ".".join(fields)
 
 
-class ProcessedNameComponents(SuffixSpec):
+class ProcessedNameComponents(Suffix):
     """Container for a file name derived from a MS flint name. Generally of the
     form: SB.Field.Beam.Spw"""
 
@@ -784,20 +780,20 @@ class ProcessedNameComponents(SuffixSpec):
     """The scane range encoded in a file name. Generally are zero-padded and are two fields of the form scan1234-1235, where the epper bound is exclusive. Defaults to None."""
 
     @property
-    def suffix_spec(self) -> SuffixSpec:
-        """Extract just the fields for an instance of ``SuffixSpec``
+    def suffix_spec(self) -> Suffix:
+        """Extract just the fields for an instance of ``Suffix``
 
         Returns:
-            SuffixSpec: Options related to the suffix specification
+            Suffix: Options related to the suffix specification
         """
         from capn_crunch import options_to_dict
 
-        dummy_suffix_dict = options_to_dict(input_options=SuffixSpec())
+        dummy_suffix_dict = options_to_dict(input_options=Suffix())
         self_pcn_dict = options_to_dict(input_options=self)
 
         suffix_res = {k: v for k, v in self_pcn_dict.items() if k in dummy_suffix_dict}
 
-        return SuffixSpec(**suffix_res)
+        return Suffix(**suffix_res)
 
 
 def processed_ms_format(
@@ -881,7 +877,7 @@ def processed_ms_format(
 def create_path_from_processed_name_components(
     processed_name_components: ProcessedNameComponents | Path | str,
     parent_path: Path | None = None,
-    suffix_spec: SuffixSpec | None = None,
+    suffix_spec: Suffix | None = None,
 ) -> Path:
     """Given an input ProcessedNameComponents create the corresponding path
 
@@ -892,7 +888,7 @@ def create_path_from_processed_name_components(
     Args:
         processed_name_components (ProcessedNameComponents | Path | str): The naming specification to create. If of type Path the existing name fields are used as a base.
         parent_path (Path | None, optional): The parent directory of the output path. Defaults to None.
-        suffix_spec (SuffixSpec | None, optional): Additional suffix field indicators to use. If provided they overwrite any described by ``processed_name_components``. Defaults to None.
+        suffix_spec (Suffix | None, optional): Additional suffix field indicators to use. If provided they overwrite any described by ``processed_name_components``. Defaults to None.
 
     Returns:
         Path: A directory with following the specification of the input ProcessedNameComponents

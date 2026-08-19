@@ -7,7 +7,7 @@ from pathlib import Path
 
 from flint.naming import (
     ProcessedNameComponents,
-    SuffixSpec,
+    Suffix,
     create_path_from_processed_name_components,
 )
 
@@ -15,11 +15,11 @@ from flint.naming import (
 def test_add_suffix() -> None:
     """Combining two instances using the add operator of suffix spec yield union"""
 
-    suffix_1 = SuffixSpec(image=True)
-    suffix_2 = SuffixSpec(linmos=True)
-    expected = SuffixSpec(image=True, linmos=True)
+    suffix_1 = Suffix(image=True)
+    suffix_2 = Suffix(linmos=True)
+    expected = Suffix(image=True, linmos=True)
     result = suffix_1 + suffix_2
-    assert isinstance(result, SuffixSpec)
+    assert isinstance(result, Suffix)
     assert result.image
     assert result.linmos
     assert expected == result
@@ -28,11 +28,11 @@ def test_add_suffix() -> None:
 def test_or_suffix() -> None:
     """Combining two instances using the or keyword of suffix spec yield union"""
 
-    suffix_1 = SuffixSpec(image=True)
-    suffix_2 = SuffixSpec(linmos=True)
-    expected = SuffixSpec(image=True, linmos=True)
+    suffix_1 = Suffix(image=True)
+    suffix_2 = Suffix(linmos=True)
+    expected = Suffix(image=True, linmos=True)
     result = suffix_1 | suffix_2
-    assert isinstance(result, SuffixSpec)
+    assert isinstance(result, Suffix)
     assert result.image
     assert result.linmos
     assert expected == result
@@ -41,19 +41,19 @@ def test_or_suffix() -> None:
 def test_subtact_suffix() -> None:
     """Combining two instances using the or keyword of suffix spec yield union"""
 
-    suffix_1 = SuffixSpec(image=True)
-    suffix_2 = SuffixSpec(image=True)
-    expected = SuffixSpec(image=False)
+    suffix_1 = Suffix(image=True)
+    suffix_2 = Suffix(image=True)
+    expected = Suffix(image=False)
     result = suffix_1 - suffix_2
-    assert isinstance(result, SuffixSpec)
+    assert isinstance(result, Suffix)
     assert not result.image
     assert expected == result
 
-    suffix_1 = SuffixSpec(image=True, linmos=True)
-    suffix_2 = SuffixSpec(image=True)
-    expected = SuffixSpec(image=False, linmos=True)
+    suffix_1 = Suffix(image=True, linmos=True)
+    suffix_2 = Suffix(image=True)
+    expected = Suffix(image=False, linmos=True)
     result = suffix_1 - suffix_2
-    assert isinstance(result, SuffixSpec)
+    assert isinstance(result, Suffix)
     assert not result.image
     assert result.linmos
     assert expected == result
@@ -76,7 +76,7 @@ def test_add_suffix_with_path() -> None:
 
     updated_path = Path("SB123.Jack-Sparrow.round1.image.linmos")
 
-    suffix = SuffixSpec(image=True)
+    suffix = Suffix(image=True)
 
     result = suffix + file_path
     assert isinstance(result, Path)
@@ -103,7 +103,7 @@ def test_or_suffix_with_path() -> None:
     assert file_path == expected_path
     updated_path = Path("SB123.Jack-Sparrow.round1.image.linmos")
 
-    suffix = SuffixSpec(image=True)
+    suffix = Suffix(image=True)
 
     result = suffix | file_path
     assert isinstance(result, Path)
@@ -127,7 +127,7 @@ def test_remove_suffix_with_path() -> None:
     assert file_path == expected_path
     updated_path = Path("SB123.Jack-Sparrow.round1.linmos")
 
-    suffix = SuffixSpec(image=True)
+    suffix = Suffix(image=True)
 
     result = suffix - file_path
     assert isinstance(result, Path)
@@ -156,7 +156,7 @@ def test_and_suffix_with_path() -> None:
     assert file_path == expected_path
     updated_path = Path("SB123.Jack-Sparrow.round1.image")
 
-    suffix = SuffixSpec(image=True)
+    suffix = Suffix(image=True)
 
     result = suffix & file_path
     assert isinstance(result, Path)
