@@ -583,8 +583,38 @@ class SuffixSpec(BaseOptions):
     cube: bool = False
     """Indicates whether a cube is present"""
 
+    def __add__(self: SuffixSpec, other: Path | SuffixSpec) -> SuffixSpec:
+        if isinstance(other, Path):
+            pcn = processed_ms_format(in_name=other)
+            assert pcn is not None, f"{other=} is not a Flint format name"
+            other = pcn.suffix_spec
 
-SuffixSpecMergeModes = Literal["or", "and"]
+        assert isinstance(other, SuffixSpec), f"Unknown {other=}"
+
+        return merge_suffix_spec(spec_1=self, spec_2=other, how="or")
+
+    def __sub__(self: SuffixSpec, other: Path | SuffixSpec) -> SuffixSpec:
+        if isinstance(other, Path):
+            pcn = processed_ms_format(in_name=other)
+            assert pcn is not None, f"{other=} is not a Flint format name"
+            other = pcn.suffix_spec
+
+        assert isinstance(other, SuffixSpec), f"Unknown {other=}"
+
+        return merge_suffix_spec(spec_1=self, spec_2=other, how="remove")
+
+    def __and__(self: SuffixSpec, other: Path | SuffixSpec) -> SuffixSpec:
+        if isinstance(other, Path):
+            pcn = processed_ms_format(in_name=other)
+            assert pcn is not None, f"{other=} is not a Flint format name"
+            other = pcn.suffix_spec
+
+        assert isinstance(other, SuffixSpec), f"Unknown {other=}"
+
+        return merge_suffix_spec(spec_1=self, spec_2=other, how="and")
+
+
+SuffixSpecMergeModes = Literal["or", "remove", "and"]
 
 
 def merge_suffix_spec(
@@ -622,6 +652,15 @@ def merge_suffix_spec(
         if how == "or"
         else {k: dict_1[k] and dict_2[k] for k in dict_1.keys()}
     )
+    if how == "or":
+        out_spec = {k: dict_1[k] or dict_2[k] for k in dict_1.keys()}
+    elif how == "and":
+        out_spec = {k: dict_1[k] and dict_2[k] for k in dict_1.keys()}
+    elif how == "remove":
+        out_spec = {k: False for k in dict_1.keys() if dict_1[k] and dict_2[k]}
+    else:
+        msg = f"Unknown mode {how=}"
+        raise ValueError(msg)
 
     return SuffixSpec(**out_spec)
 
