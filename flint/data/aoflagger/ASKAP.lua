@@ -139,6 +139,6 @@ that is packaged in aoflagger. The main differences are:
      -- visualized with aoqplot.
      aoflagger.collect_statistics(input, copy_of_input)
    end
-   input:flag_nans()
-   input:flag_zeros()
+   input:flag_nans(data)
+   input:flag_zeros(data)
  end

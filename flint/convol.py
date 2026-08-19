@@ -6,9 +6,10 @@ from __future__ import annotations
 
 import warnings
 from argparse import ArgumentParser
+from collections.abc import Collection
 from pathlib import Path
 from shutil import copyfile
-from typing import Collection, Literal, NamedTuple
+from typing import Literal, NamedTuple
 
 import astropy.units as u
 import numpy as np

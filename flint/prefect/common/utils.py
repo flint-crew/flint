@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import base64
+from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import Any, Callable, Iterable, ParamSpec, TypeVar
+from typing import Any, ParamSpec, TypeVar
 from uuid import UUID
 
-from prefect import task
 from prefect.artifacts import create_markdown_artifact
 
 from flint.archive import copy_sbid_files_archive, create_sbid_tar_archive
 from flint.logging import logger
+from flint.misc.holo import ConcatHoloOptions, concatenate_holography
+from flint.misc.interopt import flag_antenna_from_casda_bandpass_table
 from flint.naming import (
     add_timestamp_to_path,
     get_fits_cube_from_paths,
@@ -19,6 +21,7 @@ from flint.naming import (
     rename_linear_to_stokes,
 )
 from flint.options import ArchiveOptions
+from flint.prefect.caching import task
 from flint.summary import (
     create_beam_summary,
     create_field_summary,
@@ -31,6 +34,23 @@ R = TypeVar("R")
 C = TypeVar("C", bound=Callable)
 
 SUPPORTED_IMAGE_TYPES = ("png",)
+
+task_flag_antenna_from_casda_bandpass_table = task(
+    flag_antenna_from_casda_bandpass_table
+)
+
+
+@task
+def task_concatenate_holography(
+    output_path: Path,
+    holo_cubes: list[Path],
+) -> Path:
+    logger.info("Attempting to concatenate holography cubes")
+    concat_holo_options = ConcatHoloOptions(
+        output_path=output_path, holo_cubes=holo_cubes, max_workers=8
+    )
+
+    return concatenate_holography(concat_holo_options=concat_holo_options)
 
 
 @task

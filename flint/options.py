@@ -7,264 +7,19 @@ hold stateful properties throughout the flint codebase.
 # This happens a lot with the linting / typing checking, where classes are
 # imported purely for tools like ruff
 
-from __future__ import (  # Used for mypy/pylance to like the return type of MS.with_options
-    annotations,
-)
+from __future__ import annotations
 
-from argparse import ArgumentParser, Namespace
 from pathlib import Path
-from types import NoneType, UnionType
-from typing import (
-    Any,
-    NamedTuple,
-    TypeVar,
-    get_args,
-    get_origin,
-)
+from typing import Literal, Protocol
 
+import numpy as np
 import yaml
-from pydantic import BaseModel, ConfigDict
-from pydantic.fields import FieldInfo
+from astropy.coordinates import EarthLocation, SkyCoord
+from astropy.time import Time
+from capn_crunch import BaseOptions
 
 from flint.exceptions import MSError
 from flint.logging import logger
-
-
-class MS(NamedTuple):
-    """Helper to keep track of measurement set information
-
-    This is the class that should be used when describing a measurement
-    set that will be operated on.
-    """
-
-    path: Path
-    """Path to the measurement set that is being represented"""
-    column: str | None = None
-    """Column that should be operated against"""
-    beam: int | None = None
-    """The beam ID of the MS within an ASKAP field"""
-    spw: int | None = None
-    """Intended to be used with ASKAP high-frequency resolution modes, where the MS is divided into SPWs"""
-    field: str | None = None
-    """The field name  of the data"""
-    model_column: str | None = None
-    """The column name of the most recently MODEL data"""
-
-    @property
-    def ms(self) -> MS:
-        return self
-
-    @classmethod
-    def cast(cls, ms: MS | Path) -> MS:
-        """Create/return a MS instance given either a Path or MS.
-
-        If the input is neither a MS instance or Path, the object will
-        be checked to see if it has a `.ms` attribute. If it does then
-        this will be used.
-
-        Args:
-            ms (Union[MS, Path]): The input type to consider
-
-        Raises:
-            MSError: Raised when the input ms can not be cast to an MS instance
-
-        Returns:
-            MS: A normalised MS
-        """
-        if isinstance(ms, MS):
-            # Nothing to do
-            pass
-        elif isinstance(ms, Path):
-            ms = MS(path=ms)
-        elif "ms" in dir(ms) and isinstance(ms.ms, MS):
-            ms = ms.ms
-        else:
-            raise MSError(f"Unable to convert {ms=} of {type(ms)} to MS object. ")
-
-        return ms
-
-    def with_options(self, **kwargs) -> MS:
-        """Create a new MS instance with keywords updated
-
-        Returns:
-            MS: New MS instance with updated attributes
-        """
-        # TODO: Update the signature to have the actual attributes to
-        # help keep mypy and other linters happy
-        as_dict = self._asdict()
-        as_dict.update(kwargs)
-
-        return MS(**as_dict)
-
-
-def options_to_dict(input_options: Any) -> dict:
-    """Helper function to convert an `Options` type class to a dictionary.
-
-    Most of `flint` `Option` and `Result` classes used `typing.NamedTuples`, which carry with
-    it a `_asdict` method to convert them to a dictionary. Future roadmap plans to move over to
-    pydantic type models. This is a place holder function to help transition to this.
-
-    Args:
-        input_options (Any): Item to convert to a dictionary
-
-    Raises:
-        TypeError: Raised if the conversion to a dictionary was not successful
-
-    Returns:
-        Dict: The dictionary version of the input options
-    """
-
-    if "_asdict" in dir(input_options):
-        return input_options._asdict()
-
-    try:
-        if issubclass(input_options, BaseModel):
-            return dict(**input_options.__dict__)
-    except TypeError:
-        logger.debug(f"can not use issubclass on {input_options}")
-
-    try:
-        return dict(**input_options)
-    except TypeError:
-        raise TypeError(f"Input options is not known: {type(input_options)}")
-
-
-T = TypeVar("T", bound=BaseModel)
-
-
-class BaseOptions(BaseModel):
-    """A base class that Options style flint classes can
-    inherit from. This is derived from ``pydantic.BaseModel``,
-    and can be used for validation of supplied values.
-
-    Class derived from ``BaseOptions`` are immutable by
-    default, and have the docstrings of attributes
-    extracted.
-    """
-
-    model_config = ConfigDict(
-        frozen=True, from_attributes=True, use_attribute_docstrings=True, extra="forbid"
-    )
-
-    def with_options(self: T, /, **kwargs) -> T:
-        new_args = self.__dict__.copy()
-        new_args.update(**kwargs)
-
-        return self.__class__(**new_args)
-
-    def _asdict(self) -> dict[str, Any]:
-        return self.__dict__
-
-
-def _create_argparse_options(name: str, field: FieldInfo) -> tuple[str, dict[str, Any]]:
-    """Convert a pydantic Field into ``dict`` to splate into ArgumentParser.add_argument()"""
-
-    field_name = name if field.is_required() else "--" + name.replace("_", "-")
-
-    field_type = get_origin(field.annotation)
-    field_args = get_args(field.annotation)
-    iterable_types = (list, tuple, set)
-
-    options = dict(action="store", help=field.description, default=field.default)
-
-    if field.annotation is bool:
-        options["action"] = "store_false" if field.default else "store_true"
-
-    # if field_type is in (list, tuple, set) OR if (list, tuple, set) | Any
-    elif field_type in iterable_types or (
-        field_type is UnionType
-        and any(get_origin(p) in iterable_types for p in field_args)
-    ):
-        nargs: str | int = "+"
-
-        # If the field is a tuple, and the Ellipsis is not present
-        # We can assume that the nargs is the length of the tuple
-        if field_type is tuple and Ellipsis not in field_args:
-            nargs = len(field_args)
-
-        # Now we handle unions, but do the same check as above
-        elif field_type is UnionType and Ellipsis not in field_args:
-            for arg in field_args:
-                args = get_args(arg)
-                if arg is not NoneType and type(args) is tuple and Ellipsis not in args:
-                    nargs = len(args)
-
-        if nargs == 0:
-            raise ValueError(f"Unable to determine nargs for {name=}, got {nargs=}")
-        options["nargs"] = nargs
-
-    return field_name, options
-
-
-def add_options_to_parser(
-    parser: ArgumentParser,
-    options_class: type[BaseOptions],
-    description: str | None = None,
-) -> ArgumentParser:
-    """Given an established argument parser and a class derived
-    from a ``pydantic.BaseModel``, populate the argument parser
-    with the model properties.
-
-    Args:
-        parser (ArgumentParser): Parser that arguments will be added to
-        options_class (type[BaseModel]): A ``Options`` style class derived from ``BaseOptions``
-
-    Returns:
-        ArgumentParser: Updated argument parser
-    """
-
-    assert issubclass(options_class, BaseModel), (
-        f"{options_class=} is not a pydantic BaseModel"
-    )
-
-    group = parser.add_argument_group(
-        title=f"Inputs for {options_class.__name__}", description=description
-    )
-
-    for name, field in options_class.model_fields.items():
-        field_name, options = _create_argparse_options(name=name, field=field)
-        try:
-            group.add_argument(field_name, **options)  # type: ignore
-        except Exception as e:
-            logger.error(f"{field_name=} {options=}")
-            raise e
-
-    return parser
-
-
-U = TypeVar("U", bound=BaseOptions)
-
-
-def create_options_from_parser(
-    parser_namespace: Namespace, options_class: type[U]
-) -> U:
-    """Given a ``BaseOptions`` derived class, extract the corresponding
-    arguments from an ``argparse.nNamespace``. These options correspond to
-    ones generated by ``add_options_to_parser``.
-
-    Args:
-        parser_namespace (Namespace): The argument parser corresponding to those in the ``BaseOptions`` class
-        options_class (U): A ``BaseOptions`` derived class
-
-    Returns:
-        U: An populated options class with arguments drawn from CLI argument parser
-    """
-    assert issubclass(
-        options_class,  # type: ignore
-        BaseModel,
-    ), f"{options_class=} is not a pydantic BaseModel"
-
-    args = (
-        vars(parser_namespace)
-        if not isinstance(parser_namespace, dict)
-        else parser_namespace
-    )
-
-    opts_dict = {}
-    for name, field in options_class.model_fields.items():
-        opts_dict[name] = args[name]
-
-    return options_class(**opts_dict)
 
 
 class BandpassOptions(BaseOptions):
@@ -362,8 +117,6 @@ class SubtractFieldOptions(BaseOptions):
     """Perform channel-wise imaing of the residuals"""
     max_intervals: int = 500
     """The maximum number of scans/channels to consider"""
-    fitscube_remove_original_images: bool = False
-    """Remove the images that go into forming the fitscube"""
 
 
 class FieldOptions(BaseOptions):
@@ -443,6 +196,8 @@ class FieldOptions(BaseOptions):
     """Attempt to update a MSs MODEL_DATA column with a source list (e.g. source list output from wsclean)"""
     use_jolly_tukey_tractor: bool = False
     """Use the jolly roger tukey tractor. See the TukeyTractorOptions and the jolly-roger package for more details."""
+    casda_bandpass_table: Path | None = None
+    """The bandpass table applied to the MSs for this SBID, as deposited onto CASDA. Used to identify antennas to flag that may be unflagged under certain conditions."""
 
 
 class PolFieldOptions(BaseOptions):
@@ -473,17 +228,86 @@ class PolFieldOptions(BaseOptions):
     """Specify the final beamsize of linmos field images in (arcsec, arcsec, deg)"""
     pb_cutoff: float = 0.1
     """Primary beam attenuation cutoff to use during linmos"""
-    trim_linmos_fits: bool = False
-    """Trim the linmos fits files to remove the padding that is added. If True, the output fits files will be smaller but might be different shapes"""
     imaging_strategy: Path | None = None
     """Path to a FLINT imaging yaml file that contains settings to use throughout imaging"""
     sbid_copy_path: Path | None = None
     """Path that final processed products will be copied into. If None no copying of file products is performed. See ArchiveOptions. """
 
 
+class RACSAllOptions(BaseOptions):
+    """Options to use throughout the RACS-All processing workflow. Based
+    on the continuum self-calibration flow. In the current form this will
+    be processing data from CASDA, i.e. no bandpass applied.
+
+    In its present form this `FieldOptions` class is not intended
+    to contain properties of the data that are being processed,
+    rather how those data will be processed.
+    """
+
+    low_data: Path
+    """Path to the low data to process"""
+    mid_data: Path
+    """Path to the mid data to process"""
+    high_data: Path
+    """Path to the high data to process"""
+    flagger_container: Path | None = None
+    """Path to the singularity aoflagger container"""
+    casa_container: Path | None = None
+    """Path to the singularity CASA container"""
+    expected_ms: int = 36
+    """The expected number of measurement set files to find"""
+    wsclean_container: Path | None = None
+    """Path to the singularity wsclean container"""
+    yandasoft_container: Path | None = None
+    """Path to the singularity yandasoft container"""
+    potato_container: Path | None = None
+    """Path to the singularity potato peel container"""
+    low_holofile: Path | None = None
+    """Path to the holography FITS cube for the low-band data that will be used when co-adding beams"""
+    mid_holofile: Path | None = None
+    """Path to the holography FITS cube for the mid-band data that will be used when co-adding beams"""
+    high_holofile: Path | None = None
+    """Path to the holography FITS cube for the high-band data that will be used when co-adding beams"""
+    rounds: int = 2
+    """Number of required rouds of self-calibration and imaging to perform"""
+    zip_ms: bool = False
+    """Whether to zip measurement sets once they are no longer required"""
+    run_aegean: bool = False
+    """Whether to run the aegean source finding tool"""
+    aegean_container: Path | None = None
+    """Path to the singularity aegean container"""
+    reference_catalogue_directory: Path | None = None
+    """Path to the directory container the reference catalogues, used to generate validation plots"""
+    linmos_residuals: bool = False
+    """Linmos the cleaning residuals together into a field image"""
+    beam_cutoff: float = 150
+    """Cutoff in arcseconds to use when calculating the common beam to convol to"""
+    pb_cutoff: float = 0.1
+    """Primary beam attenuation cutoff to use during linmos"""
+    use_beam_masks: bool = False
+    """Construct beam masks from MFS images to use for the next round of imaging. """
+    imaging_strategy: Path | None = None
+    """Path to a FLINT imaging yaml file that contains settings to use throughout imaging"""
+    sbid_archive_path: Path | None = None
+    """Path that SBID archive tarballs will be created under. If None no archive tarballs are created. See ArchiveOptions. """
+    sbid_copy_path: Path | None = None
+    """Path that final processed products will be copied into. If None no copying of file products is performed. See ArchiveOptions. """
+    rename_ms: bool = False
+    """Rename MSs throughout rounds of imaging and self-cal instead of creating copies. This will delete data-columns throughout. """
+    coadd_cubes: bool = False
+    """Co-add cubes formed throughout imaging together. Cubes will be smoothed channel-wise to a common resolution. Only performed on final set of images"""
+    cube_channel_width: float | None = None
+    """Desired width, in Hz, of each plane of the final cube. The wsclean channel division is solved for this target so the cube has a single linear frequency axis, overriding the strategy ``channels_out`` in the final round. See ``flint.imager.channel_division``"""
+    holofile: Path | None = None
+    """The oath to a concatenated holography FITS file that contains low-, mid- and high-band cubes"""
+
+
 def dump_field_options_to_yaml(
     output_path: Path,
-    field_options: FieldOptions | PolFieldOptions | SubtractFieldOptions,
+    field_options: FieldOptions
+    | PolFieldOptions
+    | SubtractFieldOptions
+    | RACSAllOptions,
     overwrite: bool = False,
 ) -> Path:
     """Dump the supplied instance of `FieldOptions` to a yaml file
@@ -494,7 +318,7 @@ def dump_field_options_to_yaml(
 
     Args:
         output_path (Path): Path of the output file.
-        field_options (FieldOptions): The `FieldOptions` class to write.
+        field_options (FieldOptions | PolFieldOptions | SubtractFieldOptions | RACSAllOptions): The `FieldOptions` class to write.
         overwrite (bool, optional): Overwrite the file if it exists. Defaults to False.
 
     Raises:
@@ -549,9 +373,127 @@ class FitsCubeOptions(BaseOptions):
     """Container of opptions used to combine images into a single cube using the `fitscube` package.
     This is particularly useful to manage the larger concatenations."""
 
-    bounding_box: bool = False
+    bounding_box: bool = True
     """Whether to attempt to trim images when combining"""
     max_workers: int = 4
     """The number of concurrent workers (readers/writers) that are permitted at a time"""
     invalidate_zeros: bool = True
     """Set pixels whose values are exactly 0.0 to not-a-number (nan)"""
+    compress: bool = False
+    """Gzip-compress the output cube once written"""
+    compress_method: Literal["gzip", "pgzip"] = "pgzip"
+    """The compression backend to use when ``compress`` is set"""
+    remove_original_images: bool = True
+    """Remove the images that go into forming the fitscube"""
+    inplace: bool = True
+    """If True, modify the file in-place. If False, write to a temporary file and then replace the original. Default True"""
+
+
+class MSSummary(BaseOptions):
+    """Small structure to contain overview of a MS"""
+
+    unflagged: int
+    """Number of unflagged records"""
+    flagged: int
+    """Number of flagged records"""
+    flag_spectrum: np.ndarray
+    """Flagged spectral channels"""
+    fields: list[str]
+    """Collection of unique field names from the FIELDS table"""
+    ants: list[int]
+    """Collection of unique antennas"""
+    beam: int
+    """The ASKAP beam number of the measurement set"""
+    path: Path
+    """Path to the measurement set that is being represented"""
+    phase_dir: SkyCoord
+    """The phase direction of the measurement set, which will be where the image will be centred"""
+    spw: int | None = None
+    """Intended to be used with ASKAP high-frequency resolution modes, where the MS is divided into SPWs"""
+    ms: MS | None = None
+    """The MS object used to generate the summary"""
+    pol_axis: float | None = None
+    """The rotation of the third-axis mount recorded in the MS"""
+    location: EarthLocation | None = None
+    """Location of the instrument"""
+    ms_times: Time | None = None
+    """Unique timesteps in the measurement set"""
+    integration: float | None = None
+    """Length of the observing time in seconds"""
+
+
+class HasMS(Protocol):
+    ms: MS
+
+
+class MS(BaseOptions):
+    path: Path
+    """Path to the MS that this instanceis tracking"""
+    column: str | None = None
+    """If set indicates column that is activate and should be used during imaging or calibration operations"""
+    beam: int | None = None
+    """If set indicates seam number of the MS"""
+    spw: int | None = None
+    """If set indicates the SPW that should be used in operations"""
+    field: str | None = None
+    """If set indicates the field of the data in the MS"""
+    model_column: str | None = None
+    """If set indicates the column with model visibilities"""
+
+    @property
+    def ms(self) -> MS:
+        return self
+
+    @classmethod
+    def cast(cls, ms: MS | Path | HasMS) -> MS:
+
+        if isinstance(ms, MS):
+            pass
+        elif isinstance(ms, Path):
+            ms = MS(path=ms)
+        elif not isinstance(ms, MS) and "ms" in dir(ms) and isinstance(ms.ms, MS):
+            ms = ms.ms
+        else:
+            # Helpful checks that helped figure out issues involving NamedTuples
+            logger.debug(f"{not isinstance(ms, (MS, tuple))=}")
+            logger.debug(f"{'ms' in dir(ms)=}")
+
+            raise MSError(f"Unable to convert {ms=} of {type(ms)} to MS object. ")
+
+        return ms
+
+
+def standardise_ms_to_list_ms(
+    ms: Path | MS | tuple[MS | Path, ...] | list[MS | Path] | HasMS,
+) -> list[MS]:
+    """A utility to process a collection of inputs that could be linked to a
+    set of MS instances, and output a single list of MS objects. The list may
+    be of length 1.
+
+    Useful for when a single task could potentially operate against a set of
+    input MSs simuletanously, such as wsclean.
+
+    Args:
+        ms (Path | MS | tuple[MS  |  Path, ...] | list[MS  |  Path]): Descriptions to create MS instances
+
+    Raises:
+        ValueError: Raised when an empty list is formed
+
+    Returns:
+        list[MS]: Set of output MS objects
+    """
+    output_list: list[MS] = []
+    if isinstance(ms, Path):
+        output_list.append(MS(path=ms))
+    elif isinstance(ms, MS):
+        output_list.append(ms)
+    elif isinstance(ms, (list, tuple)):
+        for item in ms:
+            output_list.append(MS.cast(item))
+    assert isinstance(output_list, list), f"{type(output_list)=} is not list"
+
+    if not len(output_list) > 0:
+        msg = f"Constructed output list of MSs is empty, {output_list=}"
+        raise ValueError(msg)
+
+    return output_list

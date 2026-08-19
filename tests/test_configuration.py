@@ -1,18 +1,22 @@
 from __future__ import annotations
 
 import filecmp
+import logging
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from flint.configuration import (
     Strategy,
+    TukeyTractorOptions,
     _create_mode_mapping_defaults,
     copy_and_timestamp_strategy_file,
     create_default_yaml,
     get_image_options_from_yaml,
     get_options_from_strategy,
     get_selfcal_options_from_yaml,
+    get_selfcal_round_fitscube_options,
     load_strategy_yaml,
     verify_configuration,
     write_strategy_to_yaml,
@@ -71,6 +75,37 @@ def package_strategy_path():
     )
 
     return example
+
+
+@pytest.fixture
+def package_strategy_3_path():
+    example = get_packaged_resource_path(
+        package="flint", filename="data/tests/test_config_3.yaml"
+    )
+
+    return example
+
+
+def test_defaults_error_raised(package_strategy_3_path) -> None:
+    """If there is a bad field in the defaults section but is
+    otherwise not further defined in the subsequent operation
+    sections then it is missed until it is accessed.
+    """
+    # The verification is turned off as the file is not valid
+    strategy = load_strategy_yaml(input_yaml=package_strategy_3_path, verify=False)
+    tukey_tractor_options = get_options_from_strategy(
+        strategy=strategy, mode="tukeytractor", round_info=0, operation="selfcal"
+    )
+
+    # During construction of options validation error was being thrown.
+    # Make sure that happens here
+    with pytest.raises(ValidationError):
+        TukeyTractorOptions(**tukey_tractor_options)
+
+    # Should the above happen a ValueError needs to be raised
+    # by the verify function
+    with pytest.raises(ValueError):
+        verify_configuration(input_strategy=strategy)
 
 
 def test_get_jolly_tukey_tractor_options(package_strategy_operations):
@@ -364,6 +399,56 @@ def test_max_round_override(package_strategy):
     assert opts["data_column"] == "TheLastRoundIs3"
 
 
+def test_get_selfcal_round_fitscube_options_final_round(package_strategy):
+    # a final round should honour a configured compress=True as-is
+    opts = get_selfcal_round_fitscube_options(
+        strategy=package_strategy,
+        operation="selfcal",
+        current_round=2,
+        final_round=True,
+    )
+    assert opts["compress"] is False
+
+
+def test_get_selfcal_round_fitscube_options_non_final_round_forces_off(
+    package_strategy, caplog
+):
+    """A final round cube must never be compressed, as it will be split into planes for co-addition.
+    So if a non-final round requests compress=True, it is ignored and a warning is logged."""
+    with caplog.at_level(logging.WARNING, logger="flint"):
+        opts = get_selfcal_round_fitscube_options(
+            strategy=package_strategy,
+            operation="selfcal",
+            current_round=1,
+            final_round=True,
+        )
+    assert opts["compress"] is False
+    assert "compress=True" in caplog.text
+
+    # The early rounds do not need to be disabled, so the value of True does not need
+    # to be modified
+    opts = get_selfcal_round_fitscube_options(
+        strategy=package_strategy,
+        operation="selfcal",
+        current_round=1,
+        final_round=False,
+    )
+    assert opts["compress"] is True
+
+
+def test_get_selfcal_round_fitscube_options_no_compress_no_warning(strategy, caplog):
+    # nothing to warn about if compress was never requested in the first place
+    with caplog.at_level(logging.WARNING, logger="flint"):
+        opts = get_selfcal_round_fitscube_options(
+            strategy=strategy,
+            operation="selfcal",
+            current_round=0,
+            final_round=False,
+        )
+    assert opts.get("compress", False) is False
+    assert "compress=True" not in caplog.text
+
+
 def test_empty_options(package_strategy):
     # ensures an empty options dict is return should something not set is requested
     items = get_options_from_strategy(
@@ -383,7 +468,7 @@ def test_assert_strategy_bad():
 def test_updated_get_options(package_strategy):
     # test to make sure that the defaults outlined in a strategy file
     # are correctly overwritten should there be an options in a later
-    # round. All other optiosn should remain the same.
+    # round. All other options should remain the same.
     strategy = package_strategy
     assert isinstance(strategy, Strategy)
 
@@ -510,3 +595,46 @@ def test_polarisation_options(package_strategy_polarisation):
         polarisation="circular",
     )
     assert circular_options["pol"] == "v"
+
+
+def test_polarisation_fitscube_sibling_mode(package_strategy_polarisation) -> None:
+    """A mode (e.g. fitscube) may sit directly under the polarisation operation,
+    as a sibling of the total/linear/circular polarisation types, and should
+    verify cleanly rather than being mistaken for an unsupported polarisation."""
+    strategy = package_strategy_polarisation
+    # exercise the sibling-key path directly, not just the defaults-inherited
+    # fitscube options, so a regression to the old "every key is a polarisation"
+    # validation would actually be caught here
+    strategy["polarisation"]["fitscube"] = {
+        "compress": True,
+        "compress_method": "gzip",
+    }
+
+    verify_configuration(input_strategy=strategy)
+
+    fitscube_options = get_options_from_strategy(
+        strategy=strategy,
+        operation="polarisation",
+        mode="fitscube",
+    )
+    assert fitscube_options["compress"]
+    assert fitscube_options["compress_method"] == "gzip"
+
+
+def test_verify_polarisation_catches_bad_override(
+    package_strategy_polarisation,
+) -> None:
+    """verify_configuration must check the actual per-polarisation override, not
+    just the defaults, else a bad field nested under a polarisation type would
+    silently pass verification."""
+    strategy = package_strategy_polarisation
+    verify_configuration(input_strategy=strategy)
+
+    strategy["polarisation"]["linear"]["wsclean"]["ThisDoesNotExist"] = "123"
+    with pytest.raises(ValueError):
+        verify_configuration(input_strategy=strategy)
+
+    strategy["polarisation"]["linear"]["wsclean"].pop("ThisDoesNotExist")
+    strategy["polarisation"]["ThisIsNotAPolarisationOrMode"] = {}
+    with pytest.raises(ValueError):
+        verify_configuration(input_strategy=strategy)

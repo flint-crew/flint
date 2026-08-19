@@ -9,9 +9,10 @@ from argparse import ArgumentParser
 from pathlib import Path
 from typing import Literal
 
+from capn_crunch import BaseOptions, add_options_to_parser, create_options_from_parser
+
 from flint.logging import logger
 from flint.ms import remove_columns_from_ms
-from flint.options import BaseOptions, add_options_to_parser, create_options_from_parser
 from flint.sclient import run_singularity_command
 
 

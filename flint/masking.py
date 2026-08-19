@@ -5,13 +5,15 @@ thought being towards FITS images.
 from __future__ import annotations
 
 from argparse import ArgumentParser
+from collections.abc import Collection
 from pathlib import Path
-from typing import Collection, NamedTuple
+from typing import NamedTuple
 
 import astropy.units as u
 import numpy as np
 from astropy.io import fits
 from astropy.wcs import WCS
+from capn_crunch import BaseOptions, add_options_to_parser, create_options_from_parser
 from numpy.typing import NDArray
 from radio_beam import Beam
 from reproject import reproject_interp
@@ -26,7 +28,6 @@ from scipy.signal import fftconvolve
 
 from flint.logging import logger
 from flint.naming import FITSMaskNames, create_fits_mask_names
-from flint.options import BaseOptions, add_options_to_parser, create_options_from_parser
 from flint.utils import get_pixels_per_beam
 
 # TODO: Need to remove a fair amount of old approaches, and deprecate some of the toy functions
@@ -830,7 +831,7 @@ def create_snr_mask_from_fits(
 
     Args:
         fits_image_path (Path): Path to the FITS file containing an image
-        masking_options (MaskingOptions): Configurables on the masking operation procedure.
+        masking_options (MaskingOptions): Configurable on the masking operation procedure.
         fits_rms_path (Optional[Path], optional): Path to the FITS file with an RMS image corresponding to ``fits_image_path``. Defaults to None.
         fits_bkg_path (Optional[Path], optional): Path to the FITS file with an background image corresponding to ``fits_image_path``. Defaults to None.
         create_signal_fits (bool, optional): Create an output signal map. Defaults to False.
@@ -926,6 +927,12 @@ def convolve_image_by_scale(
     Also not that:
 
     >> fwhm = 2.355 * sigma
+
+    Also not that the initial stage of this function is to first apply an 'open' filter,
+    which preprocessed the image by using a set of minimum and maximum operations. This
+    attempts to separate out emission at different scales before subsequent convolution.
+    This feels counter productive, but is done to avoid confusion type effocts with
+    convolving scales.
 
     Args:
         image_data (NDArray[np.floating]): The imaged to be convolved

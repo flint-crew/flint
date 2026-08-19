@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Collection
 from pathlib import Path
 from subprocess import CalledProcessError
 from time import sleep
-from typing import Callable, Collection, NamedTuple
+from typing import NamedTuple
 
 from spython.main import Client as sclient
 

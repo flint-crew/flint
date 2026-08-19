@@ -6,9 +6,8 @@ from __future__ import annotations
 from argparse import ArgumentParser
 
 import pytest
+from capn_crunch import BaseOptions, add_options_to_parser, create_options_from_parser
 from pydantic import ValidationError
-
-from flint.options import BaseOptions, add_options_to_parser, create_options_from_parser
 
 
 def test_ensure_options_frozen():

@@ -39,7 +39,74 @@ you run a `prefect` enabled workflow without these, `prefect` will automatically
 database and server processes to manage the workflow. This comes at a scalability cost though. Large workflows
 with many concurrent sets of independent workers may overwhelm the default shortlived set of services.
 
+To-date there have been two ways we have used to establish a `prefect` server instance. Note that in either case the server does not need to be located on the same machine/cluster as the workers used to perform the compute. The only requirement is that the compute workers can communicate with the `prefect` server over http. This may mean that appropriate firewall ingress/egress rules are added -- this is not something addressed here.
+
+### Deploying a Prefect self-hosted server with Docker
+
+These instructions are a subset of those on the official `prefect` docs page.
+
+`Docker` provides a simple mechanism of establishing a `prefect` self-hosted server. Copy the below into a `docker-compose.yaml` file:
+
+```yaml
+
+services:
+  postgres:
+    image: postgres:14
+    environment:
+      POSTGRES_USER: prefect
+      POSTGRES_PASSWORD: prefect
+      POSTGRES_DB: prefect
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prefect"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Single-node: services run in-process, no redis broker needed.
+  # Split out prefect-services + redis only when scaling the API past one replica.
+  prefect-server:
+    image: prefecthq/prefect:3-latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PREFECT_SERVER_DATABASE_CONNECTION_URL: postgresql+asyncpg://prefect:prefect@postgres:5432/prefect
+      PREFECT_SERVER_API_HOST: 0.0.0.0
+      PREFECT_SERVER_UI_API_URL: http://localhost:4200/api
+    command: prefect server start
+    ports:
+      - "4200:4200"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:4200/api/health', timeout=1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  postgres_data:
+
+```
+
+This `docker compose` configuration will start a `postgres` database service, then establish a `prefect` server configured to connect to it. Appropriate health checkers are also configured, which would restart components if needed.
+
+Note that you should update the database username and password from `prefect` to something more secure. Further, you may also need to update the `PREFECT_SERVER_UI_API_URL` replacing the `localhost` reference to the fully-resolved domain name of the machine hosting your prefect service.
+
+This configuration may be started with
+
+`docker compose up -d`
+
+and halted with
+
+`docker compose down`
+
+You will need to issue these commands while in the same directory as the `docker-compose.yaml` file constructed with the above. Further configuration changes could be made to allow additional processes, memory usage etc as needed.
+
 ### Deploying your own prefect server
+
+In instances where `docker` is not available the below may off an alternative. For better or worse, these scripts are historically this is what was used in early stages of `flint` development.
 
 If you want to have a scalable self-host solution there are two components that need to be established:
 
@@ -112,15 +179,15 @@ export POSTGRES_PORT=5432 # consider changing this if there is already an attach
 # to send prefect restful api messages.
 export PREFECT_API_URL="http://${POSTGRES_ADDR}:4200/api"
 export PREFECT_SERVER_API_HOST="127.0.0.1"
-export PREFECT_API_DATABASE_CONNECTION_URL="postgresql+asyncpg://$POSTGRES_USER:$POSTGRES_PASS@$POSTGRES_ADDR:5432/$POSTGRES_DB"
+export PREFECT_SERVER_DATABASE_CONNECTION_URL="postgresql+asyncpg://$POSTGRES_USER:$POSTGRES_PASS@$POSTGRES_ADDR:5432/$POSTGRES_DB"
 
 # These attempt to make prefect more scalable and robust to many, many workers
 export WEB_CONCURRENCY=12
-export PREFECT_SQLALCHEMY_POOL_SIZE=75
-export PREFECT_SQLALCHEMY_MAX_OVERFLOW=150
-export PREFECT_API_DATABASE_TIMEOUT=80
-export PREFECT_API_DATABASE_CONNECTION_TIMEOUT=90
-export PREFECT_SERVER_CSRF_PROTECTION_ENABLED=False
+export PREFECT_SERVER_DATABASE_SQLALCHEMY_POOL_SIZE=75
+export PREFECT_SERVER_DATABASE_SQLALCHEMY_MAX_OVERFLOW=150
+export PREFECT_SERVER_DATABASE_TIMEOUT=80
+export PREFECT_SERVER_DATABASE_CONNECTION_TIMEOUT=90
+export PREFECT_SERVER_API_CSRF_PROTECTION_ENABLED=False
 export PREFECT_HOME="$(pwd)/prefect"
 
 
@@ -146,6 +213,21 @@ out in place. For proper robustness this should be changed.
 
 Provided these two services start without throwing an error you should not be able to visit port 4200 of your
 server in a web browser to access the `prefect` web page.
+
+The older `PREFECT_API_DATABASE_*`, `PREFECT_SQLALCHEMY_*` and `PREFECT_SERVER_CSRF_PROTECTION_ENABLED`
+names remain valid aliases in `prefect` 3, but the names above are the canonical ones.
+
+### Upgrading an existing server from prefect 2
+
+The `prefect` 2 to 3 database migration is one-way. Snapshot the `postgres` database first,
+otherwise rolling back to `prefect<3` is not possible.
+
+1. Pause any deployment schedules
+2. Stop the `prefect` server (leave `postgres` running)
+3. Snapshot the database (e.g. `pg_dump`)
+4. Upgrade the environment (`uv sync`)
+5. `prefect server database upgrade -y` against the existing `postgres`
+6. Restart the server as above
 
 ## Running a `prefect` flow
 
@@ -223,6 +305,8 @@ A shortform description of the settings and their intent in a `flint` context ar
 - `PREFECT_HOME`: The default location `prefect` should use to store settings, meta-data and persistent task results. On some systems there are strict quota limits on `$HOME`. Setting this to anhother location, such as the launch directory of a flow, might be of use.
 - `PREFECT_LOGGING_EXTRA_LOGGERS`: Specifies which `logging` instances the `prefect` stream-handler should be attached to. General these will be the module name, but this is by convention and not mandatory in python.
 - `PREFECT_LOGGING_LEVEL`: Which logging level should be captured and streamed to the `prefect` server
-- `PREFECT_RESULTS_PERSIST_BY_DEFAULT`: Store the result of each evaluated task to disk. Should a task result be needed later in a flow it can be retrieved from this cache. This is useful in instances where worker agents are unexpectedly killed, allowing for their results to be a simple lookup rather than recomputed.
+- `PREFECT_RESULTS_PERSIST_BY_DEFAULT`: Store the result of each evaluated task to disk. Should a task result be needed later in a flow it can be retrieved from this cache. This is useful in instances where worker agents are unexpectedly killed, allowing for their results to be a simple lookup rather than recomputed. `flint` sets this itself in `flint.prefect.__init__`; it is listed here so the intent is visible and can be overridden. Many `flint` tasks are side-effecting (they zip, delete and archive on disk), and re-running one is not free, so this is the setting that keeps a lost `dask` worker from repeating work that was already done.
+
+  The lookup is only safe because of the cache policy that goes with it. `flint` tasks are decorated with `flint.prefect.task`, which keys a result on the ID of the task run that produced it. `prefect_dask` creates that ID on the client and passes it into the `dask` submission, so a task `dask` recomputes after a worker death carries the ID it had on its first attempt and finds its result, while a task `flint` genuinely submits twice gets a new ID each time and always runs. The `prefect` default policy (inputs, task source and *flow* run ID) cannot tell those two apart, and would skip the second of two identical submissions.
 
 The usage of these variables are by no means mandatory, and can vary depending on the usage of `flint` and computing platform.

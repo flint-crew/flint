@@ -267,7 +267,7 @@ def test_trim_fits_while_blanking(tmp_path):
     trim_data = fits.getdata(out_fits)
     assert trim_hdr["CRPIX1"] == -10
     assert trim_hdr["CRPIX2"] == 10
-    assert trim_data.shape == (589, 479)
+    assert trim_data.shape == (590, 480)
     assert np.sum(trim_data == 0.0) == 0
 
 
@@ -288,7 +288,7 @@ def test_trim_fits(tmp_path):
     trim_data = fits.getdata(out_fits)
     assert trim_hdr["CRPIX1"] == -10
     assert trim_hdr["CRPIX2"] == 10
-    assert trim_data.shape == (589, 479)
+    assert trim_data.shape == (590, 480)
 
 
 def test_trim_fits_cube(tmp_path):
@@ -316,7 +316,7 @@ def test_trim_fits_cube(tmp_path):
     trim_data = fits.getdata(out_fits)
     assert trim_hdr["CRPIX1"] == -10
     assert trim_hdr["CRPIX2"] == 10
-    assert trim_data.shape == (12, 589, 479)  # type: ignore
+    assert trim_data.shape == (12, 590, 480)  # type: ignore
 
 
 def test_trim_fits_image_matching(tmp_path):
@@ -341,7 +341,7 @@ def test_trim_fits_image_matching(tmp_path):
     trim_data = fits.getdata(out_fits2)
     assert trim_hdr["CRPIX1"] == -10
     assert trim_hdr["CRPIX2"] == 10
-    assert trim_data.shape == (589, 479)
+    assert trim_data.shape == (590, 480)
 
     out_fits2 = tmp_dir / "example3.fits"
     create_fits_image(out_fits2, image_size=(300, 300))
@@ -360,9 +360,9 @@ def test_bounding_box():
 
     assert isinstance(bb, BoundingBox)
     assert bb.xmin == 10
-    assert bb.xmax == 599  # slices upper limit is not inclusive
+    assert bb.xmax == 600  # the maximum is exclusive, i.e. slice ready
     assert bb.ymin == 20
-    assert bb.ymax == 499  # slices upper limit no inclusive
+    assert bb.ymax == 500  # the maximum is exclusive, i.e. slice ready
 
 
 def test_bounding_box_none():
@@ -376,8 +376,8 @@ def test_bounding_box_none():
     assert isinstance(bb, BoundingBox)
     assert bb.xmin == 0
     assert bb.xmin == 0
-    assert bb.xmax == 999
-    assert bb.ymax == 999
+    assert bb.xmax == 1000
+    assert bb.ymax == 1000
 
 
 def test_bounding_box_cube():
@@ -392,9 +392,9 @@ def test_bounding_box_cube():
     bb = create_bound_box(image_data=data)
     assert isinstance(bb, BoundingBox)
     assert bb.xmin == 10
-    assert bb.xmax == 599
+    assert bb.xmax == 600
     assert bb.ymin == 20
-    assert bb.ymax == 499
+    assert bb.ymax == 500
 
 
 def test_bounding_box_cube_different_bounds():
@@ -413,9 +413,9 @@ def test_bounding_box_cube_different_bounds():
     bb = create_bound_box(image_data=data)
     assert isinstance(bb, BoundingBox)
     assert bb.xmin == 10
-    assert bb.xmax == 887
+    assert bb.xmax == 888
     assert bb.ymin == 20
-    assert bb.ymax == 799
+    assert bb.ymax == 800
 
 
 def test_bounding_box_with_mask():
@@ -427,6 +427,6 @@ def test_bounding_box_with_mask():
 
     assert isinstance(bb, BoundingBox)
     assert bb.xmin == 10
-    assert bb.xmax == 599  # slices upper limit is not inclusive
+    assert bb.xmax == 600  # the maximum is exclusive, i.e. slice ready
     assert bb.ymin == 20
-    assert bb.ymax == 499  # slices upper limit no inclusive
+    assert bb.ymax == 500  # the maximum is exclusive, i.e. slice ready

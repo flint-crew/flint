@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import math
 from argparse import ArgumentParser
+from collections.abc import Collection
 from pathlib import Path
-from typing import Collection, NamedTuple
+from typing import NamedTuple
 
 import numpy as np
 from casacore.tables import table
@@ -32,7 +33,87 @@ class AOFlaggerCommand(NamedTuple):
     """The path to the aoflagging strategy file to use"""
 
 
-def flag_ms_zero_uvws(ms: MS, chunk_size: int = 10000) -> MS:
+# These get_all_chans_flagged_by_baseline and set_all_chans_flagged_by_baseline functions are used to get and set
+# were written to deal with oddities in flags applied from reference field calibration. It _appears__ that after
+# reference field calibration was introduced it is common for uncalibrated data in the MS to be marked as flagged
+# but otherwise not modified. In resetting the flags in aoflagger it is possible for the uncalibrated data to
+# end up unflagged. These fybctuibs can characterise when all timesteps per channel are flagged, and ensure they
+# remain after.
+def get_all_chans_flagged_by_baseline(
+    ms: MS,
+) -> dict[tuple[int, int], NDArray[np.bool]]:
+    """Get a dictionary of all the baselines in a measurement set and the channels that are flagged for all timesteps.
+
+    The FLAG column is inspected, which takes the shape (nrow, nchan, npol). Each baseline is iterated over to select
+    just the rows for that antenna pair. These make the indices of the returned dictionary, and the values are boolean arrays
+    of shape (nchan,) indicating which channels are flagged for all timesteps.
+
+    Args:
+        ms (MS): The measurement set to inspect
+
+    Returns:
+        dict[tuple[int,int], NDArray[np.bool]]: A dictionary where the keys are tuples of (ANTENNA1, ANTENNA2) and the values are boolean arrays of shape (nchan,) indicating which channels are flagged for all timesteps.
+    """
+
+    ms = MS.cast(ms)
+
+    logger.info(f"Identifying channels completely flagged by baseline in {ms.path!s}")
+
+    with table(str(ms.path), readonly=True, ack=False) as tab:
+        ant1 = tab.getcol("ANTENNA1")
+        ant2 = tab.getcol("ANTENNA2")
+        flags = tab.getcol("FLAG")
+
+        baseline_keys = set(zip(ant1, ant2))
+        logger.info(f"Found {len(baseline_keys)} baselines in {ms.path!s}")
+
+        beam_ant_idxs: dict[tuple[int, int], NDArray[np.bool]] = {}
+
+        for baseline in baseline_keys:
+            baseline_mask = (ant1 == baseline[0]) & (ant2 == baseline[1])
+            baseline_flags = flags[baseline_mask, :, :]
+            # Reduce the flags to a single boolean array of shape (nchan,) indicating which channels are flagged for all timesteps
+            beam_ant_flagged = np.all(baseline_flags, axis=(0, 2))
+            beam_ant_idxs[baseline] = beam_ant_flagged
+
+    return beam_ant_idxs
+
+
+def set_all_chans_flagged_by_baseline(
+    ms: MS, baseline_flags: dict[tuple[int, int], NDArray[np.bool]]
+) -> MS:
+    """Set the FLAG column in a measurement set based on a dictionary of baselines and their flagged channels.
+
+    The FLAG column is inspected, which takes the shape (nrow, nchan, npol). Each baseline is iterated over to select
+    just the rows for that antenna pair. The corresponding channels are then flagged for all timesteps.
+
+    Args:
+        ms (MS): The measurement set to modify
+        baseline_flags (dict[tuple[int,int], NDArray[np.bool]]): A dictionary where the keys are tuples of (ANTENNA1, ANTENNA2) and the values are boolean arrays of shape (nchan,) indicating which channels should be flagged for all timesteps.
+
+    Returns:
+        MS: The modified measurement set with the updated FLAG column
+    """
+
+    ms = MS.cast(ms)
+    logger.info(f"Setting channels completely flagged by baseline in {ms.path!s}")
+
+    with table(str(ms.path), readonly=False, ack=False) as tab:
+        ant1 = tab.getcol("ANTENNA1")
+        ant2 = tab.getcol("ANTENNA2")
+        flags = tab.getcol("FLAG")
+
+        for baseline, chan_flags in baseline_flags.items():
+            baseline_mask = (ant1 == baseline[0]) & (ant2 == baseline[1])
+            # Set the FLAG column for the selected rows and channels
+            flags[baseline_mask, :, :] |= chan_flags[np.newaxis, :, np.newaxis]
+
+        tab.putcol("FLAG", flags)
+
+    return ms
+
+
+def flag_ms_zero_uvws(ms: MS, chunk_size: int = 2500) -> MS:
     """Flag out the UVWs in a measurement set that have values of zero.
     This happens when some data are flagged before it reaches the TOS.
 
@@ -41,7 +122,7 @@ def flag_ms_zero_uvws(ms: MS, chunk_size: int = 10000) -> MS:
 
     Args:
         ms (MS): Measurement set to flag
-        chunk_size (int, optional): The number of rows to flag at a tim. Defaults to 10000.
+        chunk_size (int, optional): The number of rows to flag at a tim. Defaults to 2500.
 
     Returns:
         MS: The flagged measurement set
@@ -288,8 +369,12 @@ def flag_ms_aoflagger(ms: MS, container: Path) -> MS:
     logger.info(f"Will flag column {ms.column} in {ms.path!s}.")
     aoflagger_cmd = create_aoflagger_cmd(ms=ms)
 
+    baseline_chans_flagged = get_all_chans_flagged_by_baseline(ms=ms)
+
     logger.info("Flagging command constructed. ")
     run_aoflagger_cmd(aoflagger_cmd=aoflagger_cmd, container=container)
+
+    ms = set_all_chans_flagged_by_baseline(ms=ms, baseline_flags=baseline_chans_flagged)
 
     # TODO: This should be moved to the aoflagger lua file once it has
     # been implemented

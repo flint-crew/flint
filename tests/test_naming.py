@@ -20,6 +20,7 @@ from flint.naming import (
     create_fits_mask_names,
     create_image_cube_name,
     create_imaging_name_prefix,
+    create_largest_common_field_name,
     create_linmos_base_path,
     create_linmos_names,
     create_ms_name,
@@ -41,6 +42,63 @@ from flint.naming import (
     update_beam_resolution_field_in_path,
 )
 from flint.options import MS
+
+
+def test_create_largest_common_field_name() -> None:
+    """Tests to attempt to extract the longest field name present in a collection
+    of field names. Should it fail a default should be return from the helper
+    function"""
+
+    fields: list[str | ProcessedNameComponents] = [
+        "G334_1666_A_1",
+        "G334_1666_B_1",
+        "G334_1666_C_1",
+    ]
+
+    common_field = create_largest_common_field_name(field_list=fields)
+    assert common_field == "G334_1666"
+
+    common_field = create_largest_common_field_name(
+        field_list=fields, strip_characters=None
+    )
+    assert common_field == "G334_1666_"
+
+    fields.append("ThisBreaksThings")
+    common_field = create_largest_common_field_name(
+        field_list=fields, field_default="Jack"
+    )
+    assert common_field == "Jack"
+
+
+def test_create_largest_common_field_name_different_strip() -> None:
+    """Tests to attempt to extract the longest field name present in a collection
+    of field names. Should it fail a default should be return from the helper
+    function. This makes sure the strip character works"""
+
+    fields: list[str | ProcessedNameComponents] = [
+        "G334_1666!A_1",
+        "G334_1666!B_1",
+        "G334_1666!C_1",
+    ]
+
+    common_field = create_largest_common_field_name(field_list=fields)
+    assert common_field == "G334_1666!"
+
+    common_field = create_largest_common_field_name(
+        field_list=fields, strip_characters=None
+    )
+    assert common_field == "G334_1666!"
+
+    common_field = create_largest_common_field_name(
+        field_list=fields, strip_characters="! _"
+    )
+    assert common_field == "G334_1666"
+
+    fields.append("ThisBreaksThings")
+    common_field = create_largest_common_field_name(
+        field_list=fields, field_default="Jack"
+    )
+    assert common_field == "Jack"
 
 
 def test_create_path_from_process_named_components():
@@ -288,10 +346,12 @@ def test_create_imaging_name_prefix():
 
 
 def test_get_cube_fits_from_paths():
-    """Identify the files that contain the cube field and are fits"""
+    """Identify the files that contain the cube field and are fits, including
+    gzip-compressed cubes produced when FitsCubeOptions.compress is set"""
     files = [
         "SB63789.EMU_1743-51.beam03.round4.i.image.cube.fits",
         "SB63789.EMU_1743-51.beam03.round4.i.image.cube.other.fields.fits",
+        "SB63789.EMU_1743-51.beam03.round4.i.image.cube.compressed.fits.gz",
         "SB63789.EMU_1743-51.beam03.round4.i.MFS.image.optimal.conv.fits",
         "SB63789.EMU_1743-51.beam03.round4.i.MFS.residual.optimal.conv.fits",
         "SB63789.EMU_1743-51.beam03.round4.i.MFS.image.fits",
@@ -301,10 +361,13 @@ def test_get_cube_fits_from_paths():
 
     cube_files = get_fits_cube_from_paths(paths=files)
 
-    assert len(cube_files) == 2
+    assert len(cube_files) == 3
     assert cube_files[0] == Path("SB63789.EMU_1743-51.beam03.round4.i.image.cube.fits")
     assert cube_files[1] == Path(
         "SB63789.EMU_1743-51.beam03.round4.i.image.cube.other.fields.fits"
+    )
+    assert cube_files[2] == Path(
+        "SB63789.EMU_1743-51.beam03.round4.i.image.cube.compressed.fits.gz"
     )
 
 

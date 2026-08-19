@@ -10,15 +10,19 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from capn_crunch import add_options_to_parser, create_options_from_parser
 from configargparse import ArgumentParser
 from prefect import flow, tags, unmapped
+from prefect.futures import PrefectFuture
 
 from flint.calibrate.aocalibrate import find_existing_solutions
 from flint.catalogue import verify_reference_catalogues
 from flint.coadd.linmos import LinmosResult
 from flint.configuration import (
+    FitsCubeOptions,
     Strategy,
     get_options_from_strategy,
+    get_selfcal_round_fitscube_options,
     load_and_copy_strategy,
 )
 from flint.logging import logger
@@ -32,8 +36,6 @@ from flint.naming import (
 )
 from flint.options import (
     FieldOptions,
-    add_options_to_parser,
-    create_options_from_parser,
     dump_field_options_to_yaml,
 )
 from flint.prefect.clusters import get_dask_runner
@@ -63,6 +65,7 @@ from flint.prefect.common.utils import (
     task_archive_sbid,
     task_create_beam_summary,
     task_create_field_summary,
+    task_flag_antenna_from_casda_bandpass_table,
     task_flatten,
     task_update_field_summary,
     task_update_with_options,
@@ -150,7 +153,9 @@ def process_science_fields(
     split_path: Path,
     field_options: FieldOptions,
     bandpass_path: Path | None = None,
-) -> None:
+) -> list[PrefectFuture[Any]]:
+    # returned futures are resolved by prefect to fail the flow on task failure
+
     # Verify no nasty incompatible options
     _check_field_options(field_options=field_options)
 
@@ -175,7 +180,7 @@ def process_science_fields(
         field_options=field_options,
     )
 
-    archive_wait_for: list[Any] = []
+    archive_wait_for: list[PrefectFuture[Any]] = []
 
     strategy: Strategy | None = load_and_copy_strategy(
         output_split_science_path=output_split_science_path,
@@ -200,6 +205,13 @@ def process_science_fields(
             preprocess_science_mss = task_flag_ms_aoflagger.map(  # type: ignore
                 ms=preprocess_science_mss, container=field_options.flagger_container
             )
+            if field_options.casda_bandpass_table is not None:
+                preprocess_science_mss = (
+                    task_flag_antenna_from_casda_bandpass_table.map(
+                        ms=preprocess_science_mss,
+                        bandpass_table=field_options.casda_bandpass_table,
+                    )
+                )
     else:
         # TODO: This will likely need to be expanded should any
         # other calibration strategies get added
@@ -253,11 +265,11 @@ def process_science_fields(
         logger.info(
             f"No imaging will be performed, as requested by {field_options.no_imaging=}"
         )
-        return
+        return list(preprocess_science_mss)
 
     if field_options.wsclean_container is None:
         logger.info("No wsclean container provided. Returning. ")
-        return
+        return list(preprocess_science_mss)
 
     if field_options.potato_container:
         # The call into potato peel task has two potential update option keywords.
@@ -287,8 +299,8 @@ def process_science_fields(
         )
 
     # Some preprocessing stages (temporarily) modify the MS name.
-    # Run the field summary here to avoid attemptign to read at
-    # poor timem when MS is renamed, ya see dog
+    # Run the field summary here to avoid attempting to read at
+    # poor time when MS is renamed, ya see dog
     field_summary = task_create_field_summary.submit(
         mss=preprocess_science_mss,
         cal_sbid_path=bandpass_path,
@@ -299,6 +311,14 @@ def process_science_fields(
     # The stokes-v mss are updated throughout the self-calibration loop
     # as the file names change
     stokes_v_mss = preprocess_science_mss
+
+    round0_fitscube_options = get_selfcal_round_fitscube_options(
+        strategy=strategy,
+        operation="selfcal",
+        current_round=0,
+        final_round=field_options.rounds == 0,
+    )
+
     wsclean_results = task_wsclean_imager.map(
         in_ms=preprocess_science_mss,
         wsclean_container=field_options.wsclean_container,
@@ -310,6 +330,7 @@ def process_science_fields(
                 operation="selfcal",
             )
         ),
+        update_fitscube_options=unmapped(round0_fitscube_options),
     )  # type: ignore
 
     wsclean_results = (
@@ -366,7 +387,7 @@ def process_science_fields(
 
         if run_aegean:
             aegean_field_output = task_run_bane_and_aegean.submit(
-                image=parset, aegean_container=unmapped(field_options.aegean_container)
+                image=parset, aegean_container=field_options.aegean_container
             )  # type: ignore
             field_summary = task_update_field_summary.submit(
                 field_summary=field_summary,
@@ -376,11 +397,13 @@ def process_science_fields(
             archive_wait_for.append(field_summary)
 
             if run_validation and field_options.reference_catalogue_directory:
-                validation_items(
+                val_results = validation_items(
                     field_summary=field_summary,
                     aegean_outputs=aegean_field_output,
                     reference_catalogue_directory=field_options.reference_catalogue_directory,
                 )
+                if val_results:
+                    archive_wait_for.extend(val_results)
 
     # Set up the default value should the user activated mask option is not set
     fits_beam_masks = None
@@ -476,11 +499,18 @@ def process_science_fields(
                 operation="selfcal",
                 round_info=current_round,
             )
+            round_fitscube_options = get_selfcal_round_fitscube_options(
+                strategy=strategy,
+                operation="selfcal",
+                current_round=current_round,
+                final_round=final_round,
+            )
             wsclean_results = task_wsclean_imager.map(
                 in_ms=cal_mss,
                 wsclean_container=field_options.wsclean_container,
                 fits_mask=fits_beam_masks,
                 update_wsclean_options=unmapped(update_wsclean_options),
+                update_fitscube_options=unmapped(round_fitscube_options),
             )
             wsclean_results = (
                 task_add_model_source_list_to_ms.map(
@@ -494,9 +524,11 @@ def process_science_fields(
 
             # Do source finding on the last round of self-cal'ed images
             if round == field_options.rounds and run_aegean:
-                task_run_bane_and_aegean.map(
-                    image=wsclean_results,
-                    aegean_container=unmapped(field_options.aegean_container),
+                archive_wait_for.extend(
+                    task_run_bane_and_aegean.map(
+                        image=wsclean_results,
+                        aegean_container=unmapped(field_options.aegean_container),
+                    )
                 )
 
             parsets_self: None | list[LinmosResult] = None  # Without could be unbound
@@ -511,7 +543,7 @@ def process_science_fields(
             if final_round and run_aegean and parsets_self:
                 aegean_outputs = task_run_bane_and_aegean.submit(
                     image=parsets_self[-1],
-                    aegean_container=unmapped(field_options.aegean_container),
+                    aegean_container=field_options.aegean_container,
                 )  # type: ignore
                 field_summary = task_update_field_summary.submit(
                     field_summary=field_summary,
@@ -527,30 +559,46 @@ def process_science_fields(
                         aegean_outputs=aegean_outputs,
                         reference_catalogue_directory=field_options.reference_catalogue_directory,
                     )
-                    archive_wait_for.append(val_results)
+                    if val_results:
+                        archive_wait_for.extend(val_results)
 
     if field_options.coadd_cubes:
+        final_round_fitscube_options = get_options_from_strategy(
+            strategy=strategy,
+            operation="selfcal",
+            mode="fitscube",
+            round_info=field_options.rounds if field_options.rounds else 0,
+        )
+        fitscube_options = FitsCubeOptions().with_options(
+            **final_round_fitscube_options
+        )
         with tags("cubes"):
-            cube_parset = create_convolve_linmos_cubes(
+            cube_results = create_convolve_linmos_cubes(
                 wsclean_results=wsclean_results,  # type: ignore
                 field_options=field_options,
                 current_round=(field_options.rounds if field_options.rounds else None),
                 additional_linmos_suffix_str="cube",
+                fitscube_options=fitscube_options,
             )
-            archive_wait_for.append(cube_parset)
+            archive_wait_for.extend(cube_results)
 
     if field_options.stokes_v_imaging:
         with tags("stokes-v"):
             stokes_v_wsclean_options = get_options_from_strategy(
                 strategy=strategy, mode="wsclean", operation="stokesv"
             )
+            stokes_v_fitscube_options = get_options_from_strategy(
+                strategy=strategy, mode="fitscube", operation="stokesv"
+            )
             wsclean_results = task_wsclean_imager.map(
                 in_ms=stokes_v_mss,
                 wsclean_container=field_options.wsclean_container,
                 update_wsclean_options=unmapped(stokes_v_wsclean_options),
                 fits_mask=fits_beam_masks,
+                update_fitscube_options=unmapped(stokes_v_fitscube_options),
                 wait_for=wsclean_results,  # Ensure that measurement sets are doubled up during imaging
             )
+            archive_wait_for.extend(wsclean_results)
             if field_options.yandasoft_container:
                 parsets = create_convol_linmos_images(
                     wsclean_results=wsclean_results,
@@ -571,7 +619,7 @@ def process_science_fields(
         update_archive_options = get_options_from_strategy(
             strategy=strategy, mode="archive", round_info=0, operation="selfcal"
         )
-        task_archive_sbid.submit(
+        archive_sbid = task_archive_sbid.submit(
             science_folder_path=output_split_science_path,
             archive_path=field_options.sbid_archive_path,
             copy_path=field_options.sbid_copy_path,
@@ -579,6 +627,9 @@ def process_science_fields(
             update_archive_options=update_archive_options,
             wait_for=archive_wait_for,
         )
+        archive_wait_for.append(archive_sbid)
+
+    return archive_wait_for
 
 
 def setup_run_process_science_field(

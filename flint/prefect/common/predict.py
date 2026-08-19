@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from prefect import task
-
 from flint.logging import logger
 from flint.ms import MS
 from flint.options import AddModelSubtractFieldOptions
 from flint.predict.crystalball import CrystalBallOptions
+from flint.prefect.caching import task
 
 
 @task

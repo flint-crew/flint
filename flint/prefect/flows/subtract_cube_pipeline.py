@@ -15,9 +15,11 @@ from typing import Any
 
 import dask
 import numpy as np
+from capn_crunch import add_options_to_parser, create_options_from_parser
 from configargparse import ArgumentParser
-from fitscube.combine_fits import combine_fits
-from prefect import flow, tags, task, unmapped
+from fitscube.combine_fits import combine_fits, compress_cube
+from prefect import flow, tags, unmapped
+from prefect.futures import PrefectFuture
 
 from flint.coadd.linmos import LinmosResult
 from flint.configuration import get_options_from_strategy, load_and_copy_strategy
@@ -41,10 +43,9 @@ from flint.options import (
     AddModelSubtractFieldOptions,
     FitsCubeOptions,
     SubtractFieldOptions,
-    add_options_to_parser,
-    create_options_from_parser,
 )
 from flint.predict.crystalball import CrystalBallOptions
+from flint.prefect.caching import task
 from flint.prefect.clusters import get_dask_runner
 from flint.prefect.common.imaging import (
     task_common_beam_convolve_linmos,
@@ -201,7 +202,6 @@ def task_map_all_wsclean(in_mss: list[MS], *args, **kwargs) -> list[WSCleanResul
 @task
 def task_combine_all_linmos_images(
     linmos_commands: list[LinmosResult],
-    remove_original_images: bool = False,
     combine_weights: bool = False,
     time_domain: bool = False,
     continuum_subtracted: bool = False,
@@ -211,11 +211,11 @@ def task_combine_all_linmos_images(
 
     Args:
         linmos_commands (list[LinmosResult]): The output linmos commands to concatenated into a single cube.
-        remove_original_images (bool, optional): Remove the original images after the cube has been formed. Defaults to False.
         combine_weights (bool, optional): Whether to concatenated the images or the weights that are described by the input `linmos_commands`. Defaults to False.
         time_domain (bool, optional): Whether images are to be formed on the spectral or time axis. Defaults to False.
         continuum_subtracted (bool, optional): Indicates whether the input images have been continuum subtracted. Used to information the output file name. Defaults to False.
         update_fits_cube_optiopns (dict[str, Any] | None, optional): Additional overriding options to provided to ``FitsCubeOptions``. Defaults to None.
+        update_fits_cube_options (dict[str, Any] | None, optional): Overrides applied to the default `FitsCubeOptions`, including `remove_original_images`, `bounding_box` and `invalidate_zeros`. Defaults to None.
 
     Returns:
         Path: The output cube path
@@ -275,7 +275,7 @@ def task_combine_all_linmos_images(
         invalidate_zeros=fits_cube_options.invalidate_zeros,
     )
 
-    if remove_original_images:
+    if fits_cube_options.remove_original_images:
         logger.info(f"Removing original {len(images_to_combine)} images")
         for image in images_to_combine:
             logger.info(f"Removing {image=}")
@@ -283,6 +283,12 @@ def task_combine_all_linmos_images(
                 f"{image=} does not exist, but it should"
             )
             image.unlink()
+
+    if fits_cube_options.compress:
+        output_cube_path = compress_cube(
+            output_cube_path, method=fits_cube_options.compress_method
+        )
+
     return Path(output_cube_path)
 
 
@@ -319,7 +325,10 @@ def flow_subtract_cube(
     subtract_field_options: SubtractFieldOptions,
     addmodel_subtract_field_options: AddModelSubtractFieldOptions,
     crystalball_subtract_field_options: CrystalBallOptions,
-) -> None:
+) -> list[PrefectFuture[Any] | MS]:
+    # returned futures are resolved by prefect to fail the flow on task failure
+    cube_results: list[PrefectFuture[Any] | MS] = []
+
     strategy = load_and_copy_strategy(
         output_split_science_path=science_path,
         imaging_strategy=subtract_field_options.imaging_strategy,
@@ -406,7 +415,7 @@ def flow_subtract_cube(
     # Fellow Captain Zic request, arrr
     if subtract_field_options.subtract_only:
         logger.info("The '--subtract-only' option has been specified. No imaging.")
-        return
+        return list(science_mss)
 
     if subtract_field_options.channelwise_image:
         with tags("channel-cube"):
@@ -453,16 +462,18 @@ def flow_subtract_cube(
                 mode="fitscube",
                 operation="subtractcube",
             )
-            task_combine_all_linmos_images.submit(
-                linmos_commands=channel_parset_list,
-                remove_original_images=subtract_field_options.fitscube_remove_original_images,
-                update_fits_cube_options=update_fits_cube_options,
+            cube_results.append(
+                task_combine_all_linmos_images.submit(
+                    linmos_commands=channel_parset_list,
+                    update_fits_cube_options=update_fits_cube_options,
+                )
             )
-            task_combine_all_linmos_images.submit(
-                linmos_commands=channel_parset_list,
-                remove_original_images=subtract_field_options.fitscube_remove_original_images,
-                combine_weights=True,
-                update_fits_cube_options=update_fits_cube_options,
+            cube_results.append(
+                task_combine_all_linmos_images.submit(
+                    linmos_commands=channel_parset_list,
+                    combine_weights=True,
+                    update_fits_cube_options=update_fits_cube_options,
+                )
             )
 
     if subtract_field_options.timestep_image:
@@ -509,21 +520,23 @@ def flow_subtract_cube(
                 mode="fitscube",
                 operation="subtractcube",
             )
-            task_combine_all_linmos_images.submit(
-                linmos_commands=scan_parset_list,
-                remove_original_images=subtract_field_options.fitscube_remove_original_images,
-                time_domain=True,
-                update_fits_cube_options=update_fits_cube_options,
+            cube_results.append(
+                task_combine_all_linmos_images.submit(
+                    linmos_commands=scan_parset_list,
+                    time_domain=True,
+                    update_fits_cube_options=update_fits_cube_options,
+                )
             )
-            task_combine_all_linmos_images.submit(
-                linmos_commands=scan_parset_list,
-                remove_original_images=subtract_field_options.fitscube_remove_original_images,
-                combine_weights=True,
-                time_domain=True,
-                update_fits_cube_options=update_fits_cube_options,
+            cube_results.append(
+                task_combine_all_linmos_images.submit(
+                    linmos_commands=scan_parset_list,
+                    combine_weights=True,
+                    time_domain=True,
+                    update_fits_cube_options=update_fits_cube_options,
+                )
             )
 
-    return
+    return cube_results if cube_results else list(science_mss)
 
 
 def setup_run_subtract_flow(
@@ -590,7 +603,7 @@ def cli() -> None:
     )
 
     if addmodel_subtract_field_options.addmodel_cluster_config is None:
-        addmodel_subtract_field_options.with_options(
+        addmodel_subtract_field_options = addmodel_subtract_field_options.with_options(
             addmodel_cluster_config=args.cluster_config
         )
 

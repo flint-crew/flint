@@ -47,6 +47,10 @@ class FrequencyMismatchError(FlintException):
     """Raised when there are differences in frequencies"""
 
 
+class ChannelDivisionError(FlintException):
+    """Raised when no wsclean channel division would make a usable cube"""
+
+
 class PhaseOutlierFitError(FlintException):
     """Raised when the phase outlier fit routine fails."""
 
@@ -67,3 +71,7 @@ class CleanDivergenceError(FlintException):
 
 class TarArchiveError(FlintException):
     """Raised it the flint tarball is not created successfullty"""
+
+
+class ShapeMismatchError(FlintException):
+    """Raised when images that should share a pixel grid do not"""

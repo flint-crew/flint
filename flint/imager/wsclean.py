@@ -18,33 +18,45 @@ from __future__ import annotations
 
 import re
 from argparse import ArgumentParser
+from collections.abc import Collection
 from glob import glob
 from numbers import Number
 from pathlib import Path
-from typing import Any, Collection, NamedTuple
+from typing import Any, Literal, NamedTuple
 
 import numpy as np
 from astropy.io import fits
-from fitscube.combine_fits import combine_fits
+from capn_crunch import (
+    add_options_to_parser,
+    create_options_from_parser,
+    options_to_dict,
+)
+from fitscube.bounding_box import BoundingBox
+from fitscube.combine_fits import combine_fits, compress_cube
+from fitscube.exceptions import TargetAxisMissingException
+from fitscube.extract import ExtractOptions, extract_plane_from_cube, find_target_axis
 
 from flint.exceptions import (
     AttemptRerunException,
     CleanDivergenceError,
     NamingException,
     NotSupportedError,
+    ShapeMismatchError,
 )
 from flint.logging import logger
+from flint.ms import MS, standardise_ms_to_list_ms
 from flint.naming import (
+    ProcessedNameComponents,
     create_image_cube_name,
     create_imaging_name_prefix,
+    create_path_from_processed_name_components,
+    extract_components_from_name,
+    processed_ms_format,
     split_images,
 )
 from flint.options import (
-    MS,
     BaseOptions,
-    add_options_to_parser,
-    create_options_from_parser,
-    options_to_dict,
+    FitsCubeOptions,
 )
 from flint.sclient import run_singularity_command
 from flint.utils import (
@@ -108,6 +120,10 @@ class WSCleanOptions(BaseOptions):
     """Threshold in Jy to stop cleaning"""
     channels_out: int = 4
     """Number of output channels"""
+    channel_division_frequencies: tuple[float, ...] | None = None
+    """Frequencies, in Hz, that divide the output channels into groups. Supplying ``channels_out - 1`` values fully specifies the output frequency grid, see ``flint.imager.channel_division``"""
+    gain: float = 0.1
+    """Cleaning gain, ratio of peak that will be subtracted in each iteration"""
     mgain: float = 0.7
     """Major cycle gain"""
     nmiter: int = 15
@@ -184,9 +200,13 @@ class WSCleanOptions(BaseOptions):
     """If True turn off the reordering of the MS at the beginning of wsclean"""
     no_mf_weighting: bool = False
     """Opposite of -ms-weighting; can be used to turn off MF weighting in -join-channels mode"""
+    verbose: bool = False
+    """Increase logging output"""
+    deconvolution_threads: int | None = None
+    """Number of threads to use during the deconvolution. More may make things faster but can come with a memory hit. If None defaults to -j"""
+    taper_gaussian: float | None = None
+    """The size of a Gaussian function applied to the weights, assuming units of arcseconds. Defaults to None. """
     # Options below here are not added to wsclean command
-    flint_make_cube_inplace: bool = True
-    """Rotate the cube for the linmos axis ordering in place, or do it via a temporary file that then gets deleted. Good thing to turn off when getting weird OSErrors on file writing"""
     flint_no_log_wsclean_output: bool = False
     """If True do not log the wsclean output"""
 
@@ -199,7 +219,9 @@ class WSCleanResult(BaseOptions):
     options: WSCleanOptions
     """The set of wslean options used for imaging"""
     ms: MS
-    """The measurement sets that have been included in the wsclean command. """
+    """The base measurement sets that have been included in the wsclean command. """
+    ms_list: list[MS]
+    """List of measurement sets uused in the wsclean command"""
     bind_dirs: tuple[Path, ...]
     """Paths that should be binded to when executing the command"""
     move_hold_directories: tuple[Path, Path]
@@ -216,12 +238,33 @@ def image_set_from_result(wsclean_result: WSCleanResult) -> ImageSet | None:
     return wsclean_result.image_set
 
 
+def assert_common_pixel_grid(images: Collection[Path]) -> None:
+    """Ensure a set of images all share the same spatial pixel grid.
+
+    ``fitscube`` writes each plane into the cube at a fixed byte offset, so
+    planes of differing shape are silently interleaved rather than rejected.
+
+    Args:
+        images (Collection[Path]): The images that will be stacked into a cube
+
+    Raises:
+        ShapeMismatchError: If the images do not share a common NAXIS1/NAXIS2
+    """
+    shapes = {
+        (header["NAXIS1"], header["NAXIS2"])
+        for header in (fits.getheader(image) for image in images)
+    }
+    if len(shapes) > 1:
+        msg = f"Images to be cubed have differing pixel grids: {shapes=}"
+        raise ShapeMismatchError(msg)
+
+
 def combine_images_to_cube(
     images: list[Path],
     prefix: str,
     mode: str,
-    remove_original_images: bool = False,
-    inplace: bool = True,
+    fitscube_options: FitsCubeOptions,
+    bounding_box: bool | BoundingBox | None = None,
 ) -> Path:
     """Combine wsclean subband channel images into a cube. Each collection attribute
     of the input `image_set` will be inspected. The MFS images will be ignored.
@@ -229,20 +272,33 @@ def combine_images_to_cube(
     A output file name will be generated based on the  prefix and mode (e.g. `image`, `residual`, `psf`, `dirty`).
 
     Args:
-        image_set (ImageSet): Collection of wsclean image productds
-        remove_original_images (bool, optional): If True, images that went into the cube are removed. Defaults to False.
-        inplace (bool, optional): If True, modify the file in-place. If False, write to a temporary file and
-        then replace the original. Default True
+        images (list[Path]): The images to combine into a cube
+        prefix (str): The prefix of the images to combine
+        mode (str): The type of images to combine, e.g. `image`, `residual`, `psf`, `dirty`
+        fitscube_options (FitsCubeOptions): Options to control the cube creation
+        bounding_box (bool | BoundingBox | None, optional): Overrides ``fitscube_options.bounding_box``
+        when given. Used to force a box shared with another cube (e.g. weights) rather than
+        letting fitscube compute one for this cube alone. Defaults to None.
+
     Returns:
-        ImageSet: Updated iamgeset describing the new outputs
+        Path: The path to the created FITS cube
     """
     logger.info("Combining subband images into fits cubes")
+
+    assert_common_pixel_grid(images=images)
 
     output_cube_name = create_image_cube_name(image_prefix=Path(prefix), mode=mode)
 
     logger.info(f"Combining {len(images)} images. {images=}")
-    freqs = combine_fits(file_list=images, out_cube=output_cube_name)
-    rotate_cube(output_cube_name, inplace=inplace)
+    freqs = combine_fits(
+        file_list=images,
+        out_cube=output_cube_name,
+        invalidate_zeros=fitscube_options.invalidate_zeros,
+        bounding_box=fitscube_options.bounding_box
+        if bounding_box is None
+        else bounding_box,
+    )
+    rotate_cube(output_cube_name, inplace=fitscube_options.inplace)
 
     # Write out the hdu to preserve the beam table constructed in fitscube
     logger.info(f"Writing {output_cube_name=}")
@@ -250,8 +306,13 @@ def combine_images_to_cube(
     output_freqs_name = output_cube_name.with_suffix(".freqs_Hz.txt")
     np.savetxt(output_freqs_name, freqs.to("Hz").value)
 
-    if remove_original_images:
+    if fitscube_options.remove_original_images:
         remove_files_folders(*images)
+
+    if fitscube_options.compress:
+        output_cube_name = compress_cube(
+            output_cube_name, method=fitscube_options.compress_method
+        )
 
     return output_cube_name
 
@@ -371,6 +432,98 @@ def split_and_get_image_set(
     return split_list
 
 
+def transpose_and_sort_channel_images(
+    beam_channel_images: list[list[Path]],
+) -> list[list[Path]]:
+    """Regroup per-beam lists of sub-band channel images into per-channel lists
+    of beam images, ready to be co-added one channel at a time.
+
+    Each beam's images are sorted by their channel range, and every beam must
+    contribute the same number of channels.
+
+    Args:
+        beam_channel_images (list[list[Path]]): For each beam, the list of its per-channel images.
+
+    Returns:
+        list[list[Path]]: For each channel, the list of beam images at that channel.
+    """
+
+    def _channel_key(path: Path) -> int:
+        processed_name = extract_components_from_name(path)
+        if not isinstance(processed_name, ProcessedNameComponents):
+            msg = f"Expected Flint-named images e.g. ProcessedNameComponents. Got {type(processed_name)}"
+            raise ValueError(msg)
+        channel_range = processed_name.channel_range
+        assert channel_range is not None, f"No channel range in {path=}"
+        return channel_range[0]
+
+    sorted_beams = [sorted(images, key=_channel_key) for images in beam_channel_images]
+    channel_counts = {len(images) for images in sorted_beams}
+    assert len(channel_counts) == 1, (
+        f"Beams contribute differing channel counts: {channel_counts}"
+    )
+
+    return [list(channel_group) for channel_group in zip(*sorted_beams)]
+
+
+def split_cube_into_planes(cube: Path) -> list[Path]:
+    """Extract each channel of a FITS cube into its own image, named following the
+    flint processed name format so that the planes may be regrouped across beams
+    by ``transpose_and_sort_channel_images``.
+
+    Args:
+        cube (Path): The FITS cube to split apart
+
+    Returns:
+        list[Path]: The per-channel images extracted from ``cube``
+
+    Raises:
+        NotSupportedError: If ``cube`` is gzip-compressed. Splitting reopens
+            the cube once per channel, and astropy cannot memmap a gzip file,
+            so each reopen decompresses the entire cube into memory. Set
+            ``FitsCubeOptions.compress=False`` for cubes that get split.
+    """
+    if cube.suffix == ".gz":
+        msg = (
+            f"{cube=} is gzip-compressed and cannot be split into planes: "
+            "astropy cannot memmap a compressed FITS file, so each of the "
+            "per-channel reads would decompress the whole cube into memory. "
+            "Disable FitsCubeOptions.compress for cubes that will be split."
+        )
+        raise NotSupportedError(msg)
+
+    components = processed_ms_format(in_name=cube)
+    if components is None:
+        msg = f"Expected a flint named cube. Got {cube=}"
+        raise NamingException(msg)
+
+    with fits.open(cube, memmap=True, lazy_load_hdus=True) as open_fits:
+        header = open_fits[0].header
+    channels = int(header[f"NAXIS{find_target_axis(header=header).axis}"])
+    logger.info(f"Splitting {cube} into {channels} planes")
+
+    def _plane_path(channel: int) -> Path:
+        # Only the flint name fields are retained, so a single cube per beam
+        # should be split at a time to avoid clobbering planes
+        plane_base = create_path_from_processed_name_components(
+            processed_name_components=components._replace(
+                channel_range=(channel, channel)
+            ),
+            parent_path=cube.parent,
+        )
+        return Path(f"{plane_base}.fits")
+
+    return [
+        extract_plane_from_cube(
+            fits_cube=cube,
+            extract_options=ExtractOptions(
+                channel_index=channel, output_path=_plane_path(channel), overwrite=True
+            ),
+        )
+        for channel in range(channels)
+    ]
+
+
 def get_wsclean_output_source_list_path(
     name_path: str | Path, pol: str | None = None
 ) -> Path:
@@ -428,7 +581,9 @@ def _rename_wsclean_title(name_str: str) -> str:
     logger.info(f"Renaming {name_str=} for qu components if necessary")
     name_str = re.sub(
         r"(\.qu)-([^-]+)-?([QU])?(\-(psf|image|dirty|model|residual)\.fits)",
-        lambda m: f".{m.group(3).lower() if m.group(3) else 'q'}-{m.group(2)}{m.group(4)}",
+        lambda m: (
+            f".{m.group(3).lower() if m.group(3) else 'q'}-{m.group(2)}{m.group(4)}"
+        ),
         name_str,
     )
 
@@ -690,20 +845,28 @@ def wsclean_cleanup_files(
     return tuple(rm_files)
 
 
-def create_wsclean_name_argument(wsclean_options: WSCleanOptions, ms: MS) -> Path:
+def create_wsclean_name_argument(
+    wsclean_options: WSCleanOptions, ms: MS | list[MS]
+) -> Path:
     """Create the value that will be provided to wsclean -name argument. This has
     to be generated. Among things to consider is the desired output directory of imaging
     files. This by default will be alongside the measurement set. If a `temp_dir`
     has been specified then output files will be written here.
 
+    If the input ``ms`` is an instance of ``MSs`` then the first measurement
+    set will be used to base the name from.
+
     Args:
         wsclean_options (WSCleanOptions): Set of wsclean options to consider
-        ms (MS): The measurement set to be imaged
+        ms (MS | list[MS]): The measurement set to be imaged
 
     Returns:
         Path: Value of the -name argument to provide to wsclean
     """
     wsclean_options_dict = wsclean_options._asdict()
+
+    # Extract the first measurement set should multiple be provided
+    name_ms: MS = ms if isinstance(ms, MS) else ms[0]
 
     # Prepare the name for the output wsclean command
     # Construct the name property of the string
@@ -711,14 +874,14 @@ def create_wsclean_name_argument(wsclean_options: WSCleanOptions, ms: MS) -> Pat
     channel_range = wsclean_options.channel_range
     scan_range = wsclean_options.interval
     name_prefix_str = create_imaging_name_prefix(
-        ms_path=ms.path,
+        ms_path=name_ms.path,
         pol=pol,
         channel_range=channel_range,
         scan_range=scan_range,
     )
 
     # Now resolve the directory part
-    name_dir: Path | str | None = ms.path.parent
+    name_dir: Path | str | None = name_ms.path.parent
     temp_dir = wsclean_options_dict.get("temp_dir", None)
     if temp_dir:
         # attempt to resolve possible environment variables flexibly
@@ -760,7 +923,7 @@ def _resolve_wsclean_key_value_to_cli_str(key: str, value: Any) -> ResolvedCLIRe
     # Some wsclean options, if multiple values are provided, might need
     # to be join as a csv list. Others might want to be dumped in. Just
     # attempting to future proof (arguably needlessly).
-    options_to_comma_join = "multiscale-scales"
+    options_to_comma_join = ("multiscale-scales", "channel-division-frequencies")
     bind_dir_options = ("temp-dir",)
 
     logger.debug(f"{key=} {value=} {type(value)=}")
@@ -807,7 +970,7 @@ def _resolve_wsclean_key_value_to_cli_str(key: str, value: Any) -> ResolvedCLIRe
 
 
 def create_wsclean_cmd(
-    ms: MS,
+    ms_list: list[MS],
     wsclean_options: WSCleanOptions,
 ) -> WSCleanResult:
     """Create a wsclean command from a WSCleanOptions container
@@ -822,7 +985,7 @@ def create_wsclean_cmd(
     same directory as the measurement set.
 
     Args:
-        ms (MS): The measurement set to be imaged
+        ms_list (list[MS]): The measurement sets to be imaged
         wsclean_options (WSCleanOptions): WSClean options to image with
         container (Optional[Path], optional): If a path to a container is provided the command is executed immediately. Defaults to None.
 
@@ -837,15 +1000,22 @@ def create_wsclean_cmd(
     # argument alongside the prefix in the WSCleanCMD. Also need to rename that, its a horrible
     # name for a variable and ship
 
+    if isinstance(ms_list, MS):
+        ms_list = standardise_ms_to_list_ms(ms=ms_list)
+        import warnings
+
+        warnings.warn("Input `ms` will need to be list[MS] type.", DeprecationWarning)
+
     # Some options should also extend the singularity bind directories
     bind_dir_paths = []
 
     wsclean_options_dict = wsclean_options._asdict()
 
+    example_ms: MS = ms_list[0]
     name_argument_path = create_wsclean_name_argument(
-        wsclean_options=wsclean_options, ms=ms
+        wsclean_options=wsclean_options, ms=example_ms
     )
-    move_directory = ms.path.parent
+    move_directory = example_ms.path.parent
     hold_directory: Path | None = Path(name_argument_path).parent
 
     unknowns: list[tuple[Any, Any]] = []
@@ -873,9 +1043,10 @@ def create_wsclean_cmd(
         raise ValueError(f"Unknown wsclean option types: {msg}")
 
     cmds += [f"-name {name_argument_path!s}"]
-    cmds += [f"{ms.path!s} "]
 
-    bind_dir_paths.append(ms.path.parent)
+    assert isinstance(ms_list, list), f"Expected MSs, got {type(ms_list)}"
+    cmds += [f"{ms.path!s}" for ms in ms_list]
+    bind_dir_paths += [ms.path.parent for ms in ms_list]
 
     # TODO: Currently there are two calls into the `parse_environment_variable`
     # when processing the `-temp-dir` and `-name` options. When using the `FLINT_UUID`
@@ -891,10 +1062,13 @@ def create_wsclean_cmd(
     logger.info(f"Constructed wsclean command: {cmd=}")
     logger.info("Setting default model data column to 'MODEL_DATA'")
 
+    ms_list = [ms.with_options(model_column="MODEL_DATA") for ms in ms_list]
+
     return WSCleanResult(
         cmd=cmd,
         options=wsclean_options,
-        ms=ms.with_options(model_column="MODEL_DATA"),
+        ms=ms_list[0],
+        ms_list=ms_list,
         bind_dirs=tuple(bind_dir_paths),
         move_hold_directories=(move_directory, hold_directory),
         image_prefix_str=str(name_argument_path),
@@ -922,21 +1096,62 @@ def rotate_cube(output_cube_path: str | Path, inplace: bool = True) -> Path:
     output_path = Path(output_cube_path)
     logger.info(f"Rotating FITS axes of {output_path.name}")
 
-    # Read original data and header
-    with fits.open(output_path, mode="readonly", memmap=True) as hdul:
-        header = hdul[0].header.copy()
-        data_cube = hdul[0].data.copy()
+    if not Path(output_cube_path).exists():
+        logger.warning(f"{output_cube_path=} does not appear to exist. Returning.")
+        return Path(output_cube_path)
+
+    header = fits.getheader(output_path)
+
+    # Cubes formed from planes that were themselves cut from a rotated cube are
+    # already in the desired order, and rotating again would undo it
+    try:
+        if find_target_axis(header=header).axis == header["NAXIS"]:
+            logger.info(f"{output_path.name} is already (chan, pol, dec, ra)")
+            return output_path
+    except TargetAxisMissingException:
+        logger.warning(f"No frequency axis in {output_path.name}, not rotating")
+        return output_path
 
     # Swap axes in header
     tmp_header = header.copy()
     for a, b in ((3, 4), (4, 3)):
-        header[f"CTYPE{a}"] = tmp_header[f"CTYPE{b}"]
-        header[f"CRPIX{a}"] = tmp_header[f"CRPIX{b}"]
-        header[f"CRVAL{a}"] = tmp_header[f"CRVAL{b}"]
-        header[f"CDELT{a}"] = tmp_header[f"CDELT{b}"]
-        header[f"CUNIT{a}"] = tmp_header[f"CUNIT{b}"]
+        # Can not rotate if the keys do not exist. This
+        # can happen if uneven plans in cube
+        if f"CTYPE{b}" not in tmp_header:
+            continue
+
+        for key in ("NAXIS", "CTYPE", "CRPIX", "CRVAL", "CDELT", "CUNIT"):
+            # A key absent on the source axis (e.g. CUNIT on STOKES) has to be
+            # removed from the destination, else a stale value is left behind
+            if f"{key}{b}" in tmp_header:
+                header[f"{key}{a}"] = tmp_header[f"{key}{b}"]
+            else:
+                header.pop(f"{key}{a}", None)
+
+    # Swapping a length-one axis leaves the byte order on disk unchanged, so the
+    # moveaxis is a contiguous view of the memmap and nothing is read into memory.
+    # Reading a whole cube in is enough to blow a worker's memory budget
+    if header["NAXIS"] == 4 and min(header["NAXIS3"], header["NAXIS4"]) == 1:
+        logger.info(f"Rotating {output_path.name} via a header rewrite only")
+        original_header = fits.getheader(output_path)
+        original_header_string = original_header.tostring()
+        new_header_string = header.tostring()
+        logger.info(
+            f"Old header length {len(original_header_string)} bytes, new header length {len(new_header_string)} bytes"
+        )
+        assert len(original_header_string) == len(new_header_string), (
+            f"Header length mismatch: {len(original_header_string)} != {len(new_header_string)}. "
+            "This should not happen, and indicates a bug in the header rotation code."
+        )
+        logger.info("Writing new header to FITS cube in place")
+        with open(output_path, mode="r+b") as f:
+            f.write(new_header_string.encode("ascii"))
+
+        return output_path
 
     # Move data axis: (pol, chan, dec, ra) → (chan, pol, dec, ra)
+    with fits.open(output_path, mode="readonly", memmap=True) as hdul:
+        data_cube = hdul[0].data.copy()
     rotated_data = np.moveaxis(data_cube, 1, 0)
 
     if inplace:
@@ -962,6 +1177,8 @@ def combine_image_set_to_cube(
     image_set: ImageSet,
     remove_original_images: bool = False,
     inplace: bool = True,
+    compress: bool = False,
+    compress_method: Literal["gzip", "pgzip"] = "pgzip",
 ) -> ImageSet:
     """Combine wsclean subband channel images into a cube. Each collection attribute
     of the input `image_set` will be inspected. The MFS images will be ignored.
@@ -973,6 +1190,8 @@ def combine_image_set_to_cube(
         remove_original_images (bool, optional): If True, images that went into the cube are removed. Defaults to False.
         inplace (bool, optional): If True, modify the file in-place. If False, write to a temporary file and
         then replace the original. Default True
+        compress (bool, optional): Gzip-compress each cube once written. Defaults to False.
+        compress_method (Literal["gzip", "pgzip"], optional): Compression backend used when `compress` is set. Defaults to "pgzip".
 
     Returns:
         ImageSet: Updated iamgeset describing the new outputs
@@ -1005,7 +1224,9 @@ def combine_image_set_to_cube(
         )
 
         logger.info(f"Combining {len(subband_images)} images. {subband_images=}")
-        freqs = combine_fits(file_list=subband_images, out_cube=output_cube_name)
+        freqs = combine_fits(
+            file_list=subband_images, out_cube=output_cube_name, create_blanks=True
+        )
 
         rotate_cube(output_cube_name, inplace=inplace)
 
@@ -1014,6 +1235,11 @@ def combine_image_set_to_cube(
 
         output_freqs_name = Path(output_cube_name).with_suffix(".freqs_Hz.txt")
         np.savetxt(output_freqs_name, freqs.to("Hz").value)
+
+        if compress:
+            output_cube_name = compress_cube(
+                Path(output_cube_name), method=compress_method
+            )
 
         image_set_dict[mode] = [Path(output_cube_name)] + [
             image for image in image_set_dict[mode] if image not in subband_images
@@ -1083,6 +1309,7 @@ def run_wsclean_imager(
     wsclean_result: WSCleanResult,
     container: Path,
     make_cube_from_subbands: bool = True,
+    fitscube_options: FitsCubeOptions | None = None,
 ) -> ImageSet:
     """Run a provided wsclean command. Optionally will clean up files,
     including the dirty beams, psfs and other assorted things.
@@ -1111,13 +1338,20 @@ def run_wsclean_imager(
     move_hold_directories = wsclean_result.move_hold_directories
     image_prefix_str = wsclean_result.image_prefix_str
 
-    sclient_bind_dirs = [Path(ms.path).parent.absolute()]
+    if isinstance(ms, MS):
+        sclient_bind_dirs = [Path(ms.path).parent.absolute()]
+    else:
+        sclient_bind_dirs = [Path(_ms.path).parent.absolute() for _ms in ms.mss]
     if bind_dirs:
         sclient_bind_dirs = sclient_bind_dirs + list(bind_dirs)
 
     prefix = image_prefix_str if image_prefix_str else None
     if prefix is None:
-        prefix = str(ms.path.parent / ms.path.name)
+        prefix = (
+            str(ms.path.parent / ms.path.name)
+            if isinstance(ms, MS)
+            else str(ms.mss[0].path.parent / ms.path.name)
+        )
         logger.warning(f"Setting prefix to {prefix}. Likely this is not correct. ")
 
     if move_hold_directories:
@@ -1183,10 +1417,14 @@ def run_wsclean_imager(
         image_set = image_set.with_options(source_list=source_list_path)
 
     if make_cube_from_subbands:
+        if not fitscube_options:
+            fitscube_options = FitsCubeOptions()
         image_set = combine_image_set_to_cube(
             image_set=image_set,
-            remove_original_images=True,
-            inplace=wsclean_result.options.flint_make_cube_inplace,
+            remove_original_images=fitscube_options.remove_original_images,
+            inplace=fitscube_options.inplace,
+            compress=fitscube_options.compress,
+            compress_method=fitscube_options.compress_method,
         )
 
     image_set = rename_wsclean_prefix_in_image_set(input_image_set=image_set)
@@ -1197,15 +1435,16 @@ def run_wsclean_imager(
 
 
 def wsclean_imager(
-    ms: Path | MS,
+    ms: Path | MS | tuple[MS | Path, ...] | list[MS | Path],
     wsclean_container: Path,
     update_wsclean_options: dict[str, Any] | None = None,
+    update_fitscube_options: dict[str, Any] | None = None,
     make_cube_from_subbands: bool = True,
 ) -> WSCleanResult:
     """Create and run a wsclean imager command against a measurement set.
 
     Args:
-        ms (Union[Path,MS]): Path to the measurement set that will be imaged
+        ms (Path | MS | tuple[MS | Path, ...] | list[MS | Path]): Path to the measurement set that will be imaged
         wsclean_container (Path): Path to the container with wsclean installed
         update_wsclean_options (Optional[Dict[str, Any]], optional): Additional options to update the generated WscleanOptions with. Keys should be attributes of WscleanOptions. Defaults to None.
 
@@ -1213,13 +1452,22 @@ def wsclean_imager(
         WSCleanResult: _description_
     """
 
-    # TODO: This should be expanded to support multiple measurement sets
-    ms = MS.cast(ms)
+    ms_list: list[MS] = standardise_ms_to_list_ms(ms=ms)
+    assert isinstance(ms, list), f"Should be list, got {ms}"
+    assert all(isinstance(_ms, MS) for _ms in ms_list)
+
+    # Help out the linter
+    del ms
 
     wsclean_options = WSCleanOptions()
     if update_wsclean_options:
         logger.info("Updatting wsclean options with user-provided items. ")
         wsclean_options = wsclean_options.with_options(**update_wsclean_options)
+
+    fitscube_options = FitsCubeOptions()
+    if update_fitscube_options:
+        logger.info("Updatting fitscube options with user-provided items. ")
+        fitscube_options = fitscube_options.with_options(**update_fitscube_options)
 
     if isinstance(wsclean_options.temp_dir, str):
         logger.info(f"Resolving potential expansion for {wsclean_options.temp_dir=}")
@@ -1227,15 +1475,18 @@ def wsclean_imager(
         logger.info(f"Updating wsclean options with {temp_dir=}")
         wsclean_options = wsclean_options.with_options(temp_dir=temp_dir)
 
-    assert ms.column is not None, "A MS column needs to be elected for imaging. "
-    wsclean_options = wsclean_options.with_options(data_column=ms.column)
+    assert ms_list[0].column is not None, (
+        "A MS column needs to be elected for imaging. "
+    )
+    wsclean_options = wsclean_options.with_options(data_column=ms_list[0].column)
     wsclean_result = create_wsclean_cmd(
-        ms=ms,
+        ms_list=ms_list,
         wsclean_options=wsclean_options,
     )
     image_set = run_wsclean_imager(
         wsclean_result=wsclean_result,
         container=wsclean_container,
+        fitscube_options=fitscube_options,
         make_cube_from_subbands=make_cube_from_subbands,
     )
 
@@ -1253,9 +1504,10 @@ def get_parser() -> ArgumentParser:
     wsclean_parser.add_argument(
         "ms", type=Path, help="Path to a measurement set to image"
     )
-    wsclean_parser.add_argument(
-        "-v", "--verbose", action="store_true", help="Extra output logging."
-    )
+    # The wsclean options class has a verbose option. Since we can not
+    # change that we are simply using the shortform option only.
+    # TODO: Could consider using something like 'debug' here, ya sea dog
+    wsclean_parser.add_argument("-v", action="store_true", help="Extra output logging.")
     wsclean_parser.add_argument(
         "--wsclean-container",
         type=Path,
@@ -1275,7 +1527,7 @@ def cli() -> None:
     args = parser.parse_args()
 
     if args.mode == "image":
-        if args.verbose:
+        if args.v:
             import logging
 
             logger.setLevel(logging.DEBUG)

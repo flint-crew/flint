@@ -5,19 +5,21 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, ParamSpec, TypeVar
 
-from prefect import Task, task
+from prefect import Task
 
 from flint.imager.wsclean import WSCleanResult
 from flint.logging import logger
-from flint.ms import subtract_model_from_data_column
+from flint.ms import describe_ms, subtract_model_from_data_column
 from flint.options import MS
 from flint.peel.jolly import jolly_roger_tractor
 from flint.predict.addmodel import AddModelOptions, add_model
+from flint.prefect.caching import task
 
 P = ParamSpec("P")
 R = TypeVar("R")
 
 task_subtract_model_from_ms = task(subtract_model_from_data_column)
+task_describe_ms = task(describe_ms)
 
 
 @task
@@ -92,8 +94,9 @@ def task_jolly_roger_tractor(
 
     # TODO: How should the columns be handled here? Do we want to
     # only update in place?
+    # copied as an unmapped dict is shared by reference across mapped runs
     update_tukey_tractor_options = (
-        update_tukey_tractor_options if update_tukey_tractor_options else {}
+        dict(update_tukey_tractor_options) if update_tukey_tractor_options else {}
     )
     data_column = ms.column
 

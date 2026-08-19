@@ -7,8 +7,9 @@ import asyncio
 from argparse import ArgumentParser
 from pathlib import Path
 
+from capn_crunch import BaseOptions
+
 from flint.logging import logger
-from flint.options import BaseOptions
 from flint.sclient import pull_container
 
 

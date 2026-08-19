@@ -7,11 +7,11 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 from astropy.io import fits
+from capn_crunch import BaseOptions, add_options_to_parser, create_options_from_parser
 
 from flint.exceptions import AttemptRerunException
 from flint.logging import logger
 from flint.naming import create_aegean_names
-from flint.options import BaseOptions, add_options_to_parser, create_options_from_parser
 from flint.sclient import run_singularity_command
 
 
@@ -155,6 +155,10 @@ def run_bane_and_aegean(
     logger.debug(f"{aegean_names=}")
 
     bane_command_str = _get_bane_command(image=image, bane_options=bane_options)
+
+    logger.info(
+        f"Running BANE and Aegean on {image=}. This will use the container {aegean_container=}."
+    )
 
     bind_dir = [image.absolute().parent]
     run_singularity_command(

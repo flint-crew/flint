@@ -5,15 +5,17 @@ for general usage.
 from __future__ import annotations
 
 import datetime
+import importlib.resources
 import os
 import shutil
 import signal
 import subprocess
 import uuid
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 from socket import gethostname
-from typing import Any, Generator, NamedTuple
+from typing import Any, NamedTuple
 
 import astropy.units as u
 import numpy as np
@@ -430,12 +432,7 @@ def get_packaged_resource_path(package: str, filename: str) -> Path:
         Path: The absolute path to the packaged resource file
     """
     logger.info(f"Loading {package=} for {filename=}")
-    try:
-        import importlib_resources as importlib_resources
-    except ImportWarning:
-        from importlib import resources as importlib_resources
-
-    p = importlib_resources.files(package)
+    p = importlib.resources.files(package)
     logger.info(f"{p=}")
     full_path = Path(p) / filename  # type: ignore
 
@@ -634,7 +631,9 @@ def estimate_image_centre(image_path: Path) -> SkyCoord:
 
 
 def zip_folder(
-    in_path: Path, out_zip: Path | None = None, archive_format: str = "tar"
+    in_path: Path,
+    out_zip: Path | None = None,
+    archive_format: str = "tar",
 ) -> Path:
     """Zip a directory and remove the original.
 
@@ -642,7 +641,6 @@ def zip_folder(
         in_path (Path): The path that will be zipped up.
         out_zip (Path, optional): Name of the output file. A `archive_format` extension will be added by `shutil.make_archive`. Defaults to None.
         archive_format (str, optional): The format of the archive. See `shutil.make_archive`. Defaults to "tar".
-
     Returns:
         Path: the path of the compressed zipped folder
     """

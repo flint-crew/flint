@@ -12,12 +12,12 @@ from astropy import units as u
 from astropy.coordinates import SkyCoord
 from astropy.table import QTable, Table
 from astropy.table.row import Row
+from capn_crunch import BaseOptions, add_options_to_parser, create_options_from_parser
 from scipy.optimize import curve_fit
 
 from flint.catalogue import KNOWN_REFERENCE_CATALOGUES, Catalogue
 from flint.logging import logger
 from flint.ms import get_freqs_from_ms, get_phase_dir_from_ms
-from flint.options import BaseOptions, add_options_to_parser, create_options_from_parser
 from flint.utils import get_packaged_resource_path
 
 KNOWN_PB_TYPES = ("gaussian", "sincsquared", "airy")
@@ -649,7 +649,7 @@ def make_calibrate_model(out_path: Path, sources: list[tuple[Row, CurvedPL]]) ->
         Path: Output path of the model file
     """
     logger.info(
-        f"Creating AO calibrate sky-model, witing {len(sources)} components to {out_path}."
+        f"Creating AO calibrate sky-model, writing {len(sources)} components to {out_path}."
     )
 
     ref_nu = sources[0][1].ref_nu

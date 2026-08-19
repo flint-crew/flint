@@ -29,6 +29,7 @@ def hello_world_container(tmp_path_factory) -> Path:
 
 
 @pytest.mark.require_singularity
+@pytest.mark.flaky(reruns=3, reruns_delay=2)
 def test_pull_apptainer(hello_world_container):
     """Attempt to pull down an example container"""
 
@@ -37,6 +38,7 @@ def test_pull_apptainer(hello_world_container):
 
 
 @pytest.mark.require_singularity
+@pytest.mark.flaky(reruns=3, reruns_delay=2)
 def test_run_singularity_command(hello_world_container):
     """Make sure that the running of a container works"""
     run_singularity_command(image=hello_world_container, command="echo 'JackSparrow'")

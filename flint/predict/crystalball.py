@@ -6,13 +6,13 @@ from argparse import ArgumentParser
 from pathlib import Path
 from typing import Any
 
+from capn_crunch import BaseOptions, add_options_to_parser, create_options_from_parser
 from crystalball.crystalball import predict
 from dask.distributed import Client
 
 from flint.imager.wsclean import get_wsclean_output_source_list_path
 from flint.logging import logger
 from flint.ms import MS
-from flint.options import BaseOptions, add_options_to_parser, create_options_from_parser
 
 
 class CrystalBallOptions(BaseOptions):

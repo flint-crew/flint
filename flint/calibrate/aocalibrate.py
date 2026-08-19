@@ -4,11 +4,10 @@ from __future__ import annotations  # used to keep mypy/pylance happy in AOSolut
 
 import struct
 from argparse import ArgumentParser
+from collections.abc import Collection, Iterable
 from pathlib import Path
 from typing import (
     Any,
-    Collection,
-    Iterable,
     NamedTuple,
 )
 
@@ -462,7 +461,7 @@ def find_existing_solutions(
     calibrate_cmds = [
         CalibrateCommand(
             cmd="None",
-            ms=MS(ms),
+            ms=MS(path=ms),
             solution_path=solution_path,
             model=Path("None"),
             preflagged=True,
