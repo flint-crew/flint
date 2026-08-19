@@ -40,10 +40,57 @@ STAGE_CLUSTER_CONFIG_ATTRS = (
     "spice_cluster_config",
 )
 
-# Required fields on the rm-synth/spice options classes that process_racs_all always
-# recomputes from the polarisation stage's output before use (see process_racs_all).
-# Excluded from the combined CLI so the user isn't forced to supply dummy values.
+# Fields on the rm-synth/spice options classes that process_racs_all always recomputes
+# from the polarisation stage's output. Excluded from the combined CLI.
 COMPUTED_FIELDS = {"stokes_q_cube", "stokes_u_cube", "cubes"}
+
+
+def _check_stage_prerequisites(
+    pipeline_options: RACSAllPipelineOptions,
+    racs_all_options: RACSAllOptions,
+    pol_field_options: PolFieldOptions,
+    spice_field_options: SpiceFieldOptions,
+) -> None:
+    """Prerequisites of every enabled stage, checked before the first stage runs.
+
+    The stage flows keep their own checks so they stay independently runnable.
+    Repeating the checks here turns a missing container into a failure in seconds
+    rather than one after imaging and polarisation have already completed.
+
+    Raises:
+        ValueError: A required option is unset, or a supplied path does not exist
+    """
+    paths: dict[str, Path | None] = {}
+
+    if not pipeline_options.skip_imaging:
+        paths |= {
+            "flagger_container": racs_all_options.flagger_container,
+            "casa_container": racs_all_options.casa_container,
+            "wsclean_container": racs_all_options.wsclean_container,
+            "yandasoft_container": racs_all_options.yandasoft_container,
+            "potato_container": racs_all_options.potato_container,
+        }
+
+    if not pipeline_options.skip_polarisation:
+        for name in ("wsclean_container", "yandasoft_container"):
+            if getattr(pol_field_options, name) is None:
+                raise ValueError(f"polarisation stage requires {name}")
+            paths[f"polarisation {name}"] = getattr(pol_field_options, name)
+
+    if not pipeline_options.skip_spice:
+        if spice_field_options.catalogue is None:
+            if spice_field_options.aegean_container is None:
+                raise ValueError(
+                    "spice stage without a catalogue requires aegean_container for "
+                    "source finding. Pass --skip-spice to disable the stage."
+                )
+            paths["aegean_container"] = spice_field_options.aegean_container
+        else:
+            paths["spice catalogue"] = spice_field_options.catalogue
+
+    for name, path in paths.items():
+        if path is not None and not path.exists():
+            raise ValueError(f"{name} is set to {path}, which does not exist")
 
 
 def _check_racs_all_pipeline_options(pipeline_options: RACSAllPipelineOptions) -> None:
@@ -51,7 +98,6 @@ def _check_racs_all_pipeline_options(pipeline_options: RACSAllPipelineOptions) -
 
     A downstream stage may not be enabled while the upstream stage it depends on
     (for its in-memory input) is skipped.
-
     """
     if not pipeline_options.skip_polarisation and pipeline_options.skip_imaging:
         raise ValueError(
@@ -100,18 +146,22 @@ def _check_spice_mfs_dependency(
         raise ValueError(
             "spice stage with no spice_field_options.catalogue requires the "
             "'total' polarisation strategy to set flint_save_mfs_products=True "
-            "(needed as the aegean source-finding reference image)"
+            "(needed as the aegean source-finding reference image). Pass "
+            "--skip-spice to disable the stage."
         )
 
 
 def _exclude_fields_cli_class(
     options_class: type[BaseOptions], exclude_fields: set[str]
 ) -> type[BaseOptions]:
-    """Build a subclass of ``options_class`` exposing only the fields not in
+    """Build a sibling of ``options_class`` exposing only the fields not in
     ``exclude_fields``, so it can be added to a parser that already exposes
     those fields via another options class without a duplicate-flag error.
-    Generalises ``pol_field_options_cli_class`` to an arbitrary, accumulated
-    set of already-registered field names."""
+
+    The result derives from ``options_class.__base__``, so it is a sibling rather
+    than a subclass. Generalises ``pol_field_options_cli_class`` to an arbitrary,
+    accumulated set of already-registered field names.
+    """
     unique_fields = {
         name: (field.annotation, field)
         for name, field in options_class.model_fields.items()
@@ -136,6 +186,12 @@ def process_racs_all(
     _check_spice_mfs_dependency(
         pipeline_options=pipeline_options,
         racs_all_options=racs_all_options,
+        spice_field_options=spice_field_options,
+    )
+    _check_stage_prerequisites(
+        pipeline_options=pipeline_options,
+        racs_all_options=racs_all_options,
+        pol_field_options=pol_field_options,
         spice_field_options=spice_field_options,
     )
 
@@ -189,11 +245,15 @@ def process_racs_all(
     )
     terminal_results.extend(pol_result.terminal_futures)
 
+    # One root for every downstream stage, split into a subdirectory per stage.
+    output_root = pipeline_options.output_path or continuum_result.output_science_path
+
     if not pipeline_options.skip_rmsynth:
         resolved_rmsynth_field_options = rmsynth_field_options.with_options(
             stokes_q_cube=pol_result.stokes_cubes["q"],
             stokes_u_cube=pol_result.stokes_cubes["u"],
             stokes_i_cube=pol_result.stokes_cubes.get("i"),
+            output_path=rmsynth_field_options.output_path or output_root / "rmsynth",
         )
         assert pipeline_options.rmsynth_cluster_config is not None
         rmsynth_results = process_rmsynth.with_options(
@@ -213,6 +273,7 @@ def process_racs_all(
         resolved_spice_field_options = spice_field_options.with_options(
             cubes=list(pol_result.stokes_cubes.values()),
             reference_image=resolved_reference_image,
+            output_path=spice_field_options.output_path or output_root / "spice",
         )
         assert pipeline_options.spice_cluster_config is not None
         spice_results = process_spice_compression.with_options(
@@ -303,13 +364,10 @@ def cli() -> None:
 
     args = parser.parse_args()
 
-    # stokes_q_cube/stokes_u_cube/cubes are excluded from the parser (COMPUTED_FIELDS)
-    # but create_options_from_parser still needs the keys present; the values are
-    # never read since process_racs_all always overrides them before use.
-    unused = Path("UNUSED")
-    args.stokes_q_cube = unused
-    args.stokes_u_cube = unused
-    args.cubes = [unused]
+    # Excluded from the parser (COMPUTED_FIELDS), but create_options_from_parser
+    # reads every field off the namespace. process_racs_all sets the real values.
+    for field in COMPUTED_FIELDS:
+        setattr(args, field, [] if field == "cubes" else None)
 
     pipeline_options = create_options_from_parser(
         parser_namespace=args, options_class=RACSAllPipelineOptions

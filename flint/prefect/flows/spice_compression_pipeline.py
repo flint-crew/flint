@@ -16,6 +16,7 @@ from radio_beam import Beam
 from flint.configuration import get_options_from_strategy, load_and_copy_strategy
 from flint.convol import BeamShape
 from flint.logging import logger
+from flint.naming import get_sbid_from_path
 from flint.options import SpiceFieldOptions, SpiceOptions
 from flint.prefect.clusters import get_dask_runner
 from flint.prefect.common.spice import (
@@ -23,14 +24,20 @@ from flint.prefect.common.spice import (
     task_get_spice_boxes,
     task_spice_fits,
 )
-from flint.prefect.common.utils import task_getattr
+from flint.prefect.common.utils import task_archive_sbid, task_getattr
 from flint.source_finding.aegean import run_bane_and_aegean
+from flint.spice import any_box_overlaps
 
 task_run_bane_and_aegean = task(run_bane_and_aegean)
 
 
 @flow(name="Flint SPICE Compression Pipeline")
 def process_spice_compression(spice_field_options: SpiceFieldOptions) -> list[Path]:
+    if not spice_field_options.cubes:
+        raise ValueError(
+            "``cubes`` is required. The racs-all flow sets it from the polarisation stage."
+        )
+
     strategy = load_and_copy_strategy(
         output_split_science_path=spice_field_options.cubes[0].parent,
         imaging_strategy=spice_field_options.imaging_strategy,
@@ -71,7 +78,7 @@ def process_spice_compression(spice_field_options: SpiceFieldOptions) -> list[Pa
         Beam.from_fits_header(fits.getheader(reference_image))
     )
 
-    island_boxes = task_get_spice_boxes.submit(
+    island_sky_boxes = task_get_spice_boxes.submit(
         reference_image=reference_image,
         catalogue=catalogue_path,
         spice_options=spice_options,
@@ -79,8 +86,27 @@ def process_spice_compression(spice_field_options: SpiceFieldOptions) -> list[Pa
         is_user_catalogue=is_user_catalogue,
     )
 
+    resolved_sky_boxes = island_sky_boxes.result()
+    overlapping = [
+        cube
+        for cube in spice_field_options.cubes
+        if any_box_overlaps(fits_path=cube, sky_boxes=resolved_sky_boxes)
+    ]
+    if not overlapping:
+        raise ValueError(
+            f"No island overlaps any of the {len(spice_field_options.cubes)} supplied "
+            "cubes. Check the catalogue and reference image match the field."
+        )
+    if len(overlapping) != len(spice_field_options.cubes):
+        logger.warning(
+            f"{len(spice_field_options.cubes) - len(overlapping)} cube(s) have no "
+            "islands and will be compressed without spicing"
+        )
+
     spiced_cubes = task_spice_fits.map(
-        fits_path=spice_field_options.cubes, boxes=unmapped(island_boxes)
+        fits_path=spice_field_options.cubes,
+        sky_boxes=unmapped(resolved_sky_boxes),
+        output_path=unmapped(spice_field_options.output_path),
     )
 
     compressed_cubes = task_compress_cube.map(
@@ -90,13 +116,27 @@ def process_spice_compression(spice_field_options: SpiceFieldOptions) -> list[Pa
     )
 
     logger.info(f"Compressed {len(compressed_cubes)} cubes")
+    written_paths = compressed_cubes.result()
 
-    return compressed_cubes.result()
+    if spice_field_options.sbid_copy_path:
+        task_archive_sbid.submit(
+            science_folder_path=spice_field_options.output_path
+            or spice_field_options.cubes[0].parent,
+            copy_path=spice_field_options.sbid_copy_path,
+        ).result()
+
+    return written_paths
 
 
 def setup_run_spice_compression(
     cluster_config: str | Path, spice_field_options: SpiceFieldOptions
 ) -> None:
+    if spice_field_options.sbid_copy_path and spice_field_options.cubes:
+        science_sbid = get_sbid_from_path(path=spice_field_options.cubes[0])
+        spice_field_options = spice_field_options.with_options(
+            sbid_copy_path=spice_field_options.sbid_copy_path / f"{science_sbid}"
+        )
+
     dask_task_runner = get_dask_runner(cluster=cluster_config)
 
     process_spice_compression.with_options(task_runner=dask_task_runner)(

@@ -14,7 +14,7 @@ from prefect import flow
 
 from flint.configuration import get_options_from_strategy, load_and_copy_strategy
 from flint.logging import logger
-from flint.naming import create_name_from_common_fields
+from flint.naming import create_name_from_common_fields, get_sbid_from_path
 from flint.options import RMCleanOptions, RMSynthFieldOptions, RMSynthOptions
 from flint.prefect.clusters import get_dask_runner
 from flint.prefect.common.rmsynth import (
@@ -22,10 +22,21 @@ from flint.prefect.common.rmsynth import (
     task_rmsynth,
     task_write_rm_products,
 )
+from flint.prefect.common.utils import task_archive_sbid
+from flint.rmsynth import needs_rmclean
 
 
 @flow(name="Flint RM-Synthesis Pipeline")
 def process_rmsynth(rmsynth_field_options: RMSynthFieldOptions) -> list[Path]:
+    if (
+        rmsynth_field_options.stokes_q_cube is None
+        or rmsynth_field_options.stokes_u_cube is None
+    ):
+        raise ValueError(
+            "stokes_q_cube and stokes_u_cube are required. The racs-all flow sets "
+            "them from the polarisation stage."
+        )
+
     strategy = load_and_copy_strategy(
         output_split_science_path=rmsynth_field_options.stokes_q_cube.parent,
         imaging_strategy=rmsynth_field_options.imaging_strategy,
@@ -56,12 +67,9 @@ def process_rmsynth(rmsynth_field_options: RMSynthFieldOptions) -> list[Path]:
         stokes_i_cube=rmsynth_field_options.stokes_i_cube,
     )
 
-    run_clean = any(
-        label in ("clean", "model")
-        for label in (
-            *rmsynth_field_options.cube_products,
-            *rmsynth_field_options.moment_products,
-        )
+    run_clean = needs_rmclean(
+        cube_products=rmsynth_field_options.cube_products,
+        moment_products=rmsynth_field_options.moment_products,
     )
     clean_result = (
         task_rmclean.submit(
@@ -77,6 +85,9 @@ def process_rmsynth(rmsynth_field_options: RMSynthFieldOptions) -> list[Path]:
             rmsynth_field_options.stokes_u_cube,
         )
     )
+    if rmsynth_field_options.output_path is not None:
+        rmsynth_field_options.output_path.mkdir(parents=True, exist_ok=True)
+        output_prefix = rmsynth_field_options.output_path / output_prefix.name
 
     output_paths = task_write_rm_products.submit(
         synth_results=synth_result,
@@ -89,12 +100,29 @@ def process_rmsynth(rmsynth_field_options: RMSynthFieldOptions) -> list[Path]:
         output_prefix=output_prefix,
     )
 
-    return output_paths.result()
+    written_paths = output_paths.result()
+
+    if rmsynth_field_options.sbid_copy_path:
+        task_archive_sbid.submit(
+            science_folder_path=output_prefix.parent,
+            copy_path=rmsynth_field_options.sbid_copy_path,
+        ).result()
+
+    return written_paths
 
 
 def setup_run_rmsynth(
     cluster_config: str | Path, rmsynth_field_options: RMSynthFieldOptions
 ) -> None:
+    if (
+        rmsynth_field_options.sbid_copy_path
+        and rmsynth_field_options.stokes_q_cube is not None
+    ):
+        science_sbid = get_sbid_from_path(path=rmsynth_field_options.stokes_q_cube)
+        rmsynth_field_options = rmsynth_field_options.with_options(
+            sbid_copy_path=rmsynth_field_options.sbid_copy_path / f"{science_sbid}"
+        )
+
     dask_task_runner = get_dask_runner(cluster=cluster_config)
 
     process_rmsynth.with_options(task_runner=dask_task_runner)(

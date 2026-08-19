@@ -44,6 +44,23 @@ FDFLabel = Literal["dirty", "clean", "model"]
 _MOMENT_NAMES = ("mom0", "mom1", "mom2")
 
 
+def needs_rmclean(
+    cube_products: list[FDFLabel], moment_products: list[FDFLabel]
+) -> bool:
+    """Whether any requested product requires RM-CLEAN to be run.
+
+    Args:
+        cube_products (list[FDFLabel]): Requested FDF cubes
+        moment_products (list[FDFLabel]): Requested Faraday moment maps
+
+    Returns:
+        bool: True if RM-CLEAN is needed
+    """
+    return any(
+        label in ("clean", "model") for label in (*cube_products, *moment_products)
+    )
+
+
 def _check_cubes_memmappable(*cubes: Path | None) -> None:
     """rm-lite reads each spatial block by reopening the cube with ``memmap=True``.
     astropy cannot memmap a gzip file, so every block read decompresses the whole
@@ -254,69 +271,6 @@ def write_stokes_i_fit_maps_to_fits(
         )
         output_paths.append(output_path)
     return output_paths
-
-
-def rmsynth_and_write_products(
-    stokes_q_cube: Path,
-    stokes_u_cube: Path,
-    rmsynth_options: RMSynthOptions,
-    rmclean_options: RMCleanOptions,
-    cube_products: list[FDFLabel],
-    moment_products: list[FDFLabel],
-    output_prefix: Path,
-    stokes_i_cube: Path | None = None,
-    dask_client: Client | None = None,
-) -> list[Path]:
-    """Run RM-synthesis (and RM-CLEAN if needed) and write the requested output products.
-
-    Thin wrapper around ``run_rmsynth_3d``/``run_rmclean_3d``/``write_rm_products``,
-    kept so callers that want the combined behaviour in one call still have it.
-
-    Args:
-        stokes_q_cube (Path): Path to the Stokes Q FITS cube
-        stokes_u_cube (Path): Path to the Stokes U FITS cube
-        rmsynth_options (RMSynthOptions): Options controlling RM-synthesis
-        rmclean_options (RMCleanOptions): Options controlling RM-CLEAN
-        cube_products (list[FDFLabel]): Which FDF cube(s) to write ('dirty', 'clean', 'model')
-        moment_products (list[FDFLabel]): Which FDF(s) to compute Faraday moment maps from
-        output_prefix (Path): Common prefix for the output files
-        stokes_i_cube (Path | None, optional): Path to a Stokes I FITS cube for the fractional-polarisation correction. Defaults to None.
-        dask_client (Client | None, optional): A distributed Client (e.g. the one backing a Prefect ``DaskTaskRunner``) to compute across, rather than just the local worker. Defaults to None.
-
-    Returns:
-        list[Path]: Every FITS path written
-    """
-    if not cube_products and not moment_products:
-        logger.info("No RM-synthesis products requested, skipping.")
-        return []
-
-    synth_results = run_rmsynth_3d(
-        stokes_q_cube=stokes_q_cube,
-        stokes_u_cube=stokes_u_cube,
-        rmsynth_options=rmsynth_options,
-        stokes_i_cube=stokes_i_cube,
-    )
-
-    run_clean = any(
-        label in ("clean", "model") for label in (*cube_products, *moment_products)
-    )
-    clean_results = (
-        run_rmclean_3d(rm_synth_results=synth_results, rmclean_options=rmclean_options)
-        if run_clean
-        else None
-    )
-
-    return write_rm_products(
-        synth_results=synth_results,
-        clean_results=clean_results,
-        stokes_q_cube=stokes_q_cube,
-        rmsynth_options=rmsynth_options,
-        rmclean_options=rmclean_options,
-        cube_products=cube_products,
-        moment_products=moment_products,
-        output_prefix=output_prefix,
-        dask_client=dask_client,
-    )
 
 
 def _lazy_faraday_moments(

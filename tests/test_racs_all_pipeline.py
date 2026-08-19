@@ -20,6 +20,7 @@ from flint.options import (
 from flint.prefect.flows.racs_all_pipeline import (
     _check_racs_all_pipeline_options,
     _check_spice_mfs_dependency,
+    _check_stage_prerequisites,
     get_parser,
     process_racs_all,
 )
@@ -45,11 +46,11 @@ def test_get_parser_excludes_computed_stage_outputs() -> None:
     assert not hasattr(args, "stokes_u_cube")
     assert not hasattr(args, "cubes")
 
-    # create_options_from_parser needs these keys present even though excluded
-    # from the CLI; cli() injects placeholders before calling it, as done here.
-    args.stokes_q_cube = Path("UNUSED")
-    args.stokes_u_cube = Path("UNUSED")
-    args.cubes = [Path("UNUSED")]
+    # create_options_from_parser reads every field off the namespace, so cli()
+    # sets the computed ones to their empty defaults first, as done here.
+    args.stokes_q_cube = None
+    args.stokes_u_cube = None
+    args.cubes = []
 
     rmsynth_field_options = create_options_from_parser(
         parser_namespace=args, options_class=RMSynthFieldOptions
@@ -57,8 +58,8 @@ def test_get_parser_excludes_computed_stage_outputs() -> None:
     spice_field_options = create_options_from_parser(
         parser_namespace=args, options_class=SpiceFieldOptions
     )
-    assert rmsynth_field_options.stokes_q_cube == Path("UNUSED")
-    assert spice_field_options.cubes == [Path("UNUSED")]
+    assert rmsynth_field_options.stokes_q_cube is None
+    assert spice_field_options.cubes == []
 
 
 @pytest.fixture
@@ -197,3 +198,89 @@ def test_get_parser_pol_cube_channel_width_is_independent() -> None:
 
     assert racs_all_options.cube_channel_width == 1e6
     assert pol_field_options.pol_cube_channel_width == 2e6
+
+
+def _containers(tmp_path: Path) -> dict[str, Path]:
+    paths = {}
+    for name in ("wsclean", "yandasoft", "aegean"):
+        path = tmp_path / f"{name}.sif"
+        path.touch()
+        paths[name] = path
+    return paths
+
+
+def test_stage_prerequisites_accepts_existing_containers(
+    tmp_path: Path, racs_all_options: RACSAllOptions
+) -> None:
+    containers = _containers(tmp_path)
+    _check_stage_prerequisites(
+        pipeline_options=RACSAllPipelineOptions(skip_imaging=True),
+        racs_all_options=racs_all_options,
+        pol_field_options=PolFieldOptions(
+            wsclean_container=containers["wsclean"],
+            yandasoft_container=containers["yandasoft"],
+        ),
+        spice_field_options=SpiceFieldOptions(aegean_container=containers["aegean"]),
+    )
+
+
+def test_stage_prerequisites_rejects_missing_container_path(
+    tmp_path: Path, racs_all_options: RACSAllOptions
+) -> None:
+    containers = _containers(tmp_path)
+    with pytest.raises(ValueError, match="does not exist"):
+        _check_stage_prerequisites(
+            pipeline_options=RACSAllPipelineOptions(skip_imaging=True),
+            racs_all_options=racs_all_options,
+            pol_field_options=PolFieldOptions(
+                wsclean_container=containers["wsclean"],
+                yandasoft_container=tmp_path / "absent.sif",
+            ),
+            spice_field_options=SpiceFieldOptions(
+                aegean_container=containers["aegean"]
+            ),
+        )
+
+
+def test_stage_prerequisites_requires_aegean_without_catalogue(
+    tmp_path: Path, racs_all_options: RACSAllOptions
+) -> None:
+    containers = _containers(tmp_path)
+    with pytest.raises(ValueError, match="aegean_container"):
+        _check_stage_prerequisites(
+            pipeline_options=RACSAllPipelineOptions(skip_imaging=True),
+            racs_all_options=racs_all_options,
+            pol_field_options=PolFieldOptions(
+                wsclean_container=containers["wsclean"],
+                yandasoft_container=containers["yandasoft"],
+            ),
+            spice_field_options=SpiceFieldOptions(),
+        )
+
+
+def test_stage_prerequisites_skipped_stages_are_not_checked(
+    racs_all_options: RACSAllOptions,
+) -> None:
+    _check_stage_prerequisites(
+        pipeline_options=RACSAllPipelineOptions(
+            skip_imaging=True,
+            skip_polarisation=True,
+            skip_rmsynth=True,
+            skip_spice=True,
+        ),
+        racs_all_options=racs_all_options,
+        pol_field_options=PolFieldOptions(),
+        spice_field_options=SpiceFieldOptions(),
+    )
+
+
+def test_stage_prerequisites_requires_polarisation_containers(
+    racs_all_options: RACSAllOptions,
+) -> None:
+    with pytest.raises(ValueError, match="polarisation stage requires"):
+        _check_stage_prerequisites(
+            pipeline_options=RACSAllPipelineOptions(skip_imaging=True, skip_spice=True),
+            racs_all_options=racs_all_options,
+            pol_field_options=PolFieldOptions(),
+            spice_field_options=SpiceFieldOptions(),
+        )

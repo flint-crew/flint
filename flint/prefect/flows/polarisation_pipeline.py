@@ -83,10 +83,17 @@ def process_science_fields_pol(
     mss_by_beam: MSsByBeam | None = None,
     compress_cubes: bool | None = None,
 ) -> PolPipelineResult:
-    """``compress_cubes`` overrides the strategy ``fitscube`` compress setting. A
-    calling flow that reads these cubes afterwards (rm-synth, spice) has to set it
-    False: astropy cannot memmap a gzip file, so a chunked read inflates the whole
-    cube into memory. None honours the strategy."""
+    """Image a field in polarisation and co-add the per-beam products.
+
+    Args:
+        flint_ms_directory (Path): Directory holding the measurement sets to image
+        pol_field_options (PolFieldOptions): Options controlling the polarisation imaging
+        mss_by_beam (MSsByBeam | None, optional): Already Flint-processed measurement sets handed down by a calling flow, rather than rediscovered on disk. Defaults to None.
+        compress_cubes (bool | None, optional): Overrides the strategy ``fitscube`` compress setting. A calling flow that reads these cubes afterwards (rm-synth, spice) has to set it False, since astropy cannot memmap a gzip file and a chunked read would inflate the whole cube into memory. None honours the strategy. Defaults to None.
+
+    Returns:
+        PolPipelineResult: Stokes cubes, co-added MFS products, and the futures to wait on
+    """
     strategy = load_and_copy_strategy(
         output_split_science_path=flint_ms_directory,
         imaging_strategy=pol_field_options.imaging_strategy,
@@ -352,7 +359,6 @@ def process_science_fields_pol(
                 field_summary=field_summary,
                 fitscube_options=fitscube_options,
                 suffix_str=POL_NAME_SUFFIX,
-                plane_post_process=None,
             )
             stokes_image_cubes[stokes] = stokes_cubes[0]
             cube_results.extend(stokes_cubes)

@@ -276,7 +276,7 @@ class RMSynthOptions(BaseOptions):
     debias_filter_size: int = 5
     """Median filter size (pixels) used by mom0 debiasing"""
     write_fdfs_to_zarr: bool = False
-    """Write requested FDF cubes (rmsynth_cube_products) as a chunked zarr store instead of FITS. Recommended for large cubes"""
+    """Write the requested FDF cubes as a chunked zarr store instead of FITS. Recommended for large cubes"""
     estimate_stokes_i_noise: bool = False
     """Derive a per-channel Stokes I error from the Stokes I cube when fitting the fractional-polarisation model"""
 
@@ -305,26 +305,25 @@ class SpiceOptions(BaseOptions):
 
     Mask everything outside small boxes around catalogued sources, crop to
     their union, and compress. Column names/units for a user-supplied
-    ``PolFieldOptions.spice_catalogue`` are specified via the
-    ``catalogue_*`` fields
+    ``SpiceFieldOptions.catalogue`` are specified via the ``catalogue_*`` fields
     """
 
     n_beamwidths: float = 3.0
     """Padding added to each side of an island's bounding box, in units of the restoring beam major axis"""
     catalogue_island_col: str | None = None
-    """Column grouping components into islands in a user-supplied spice_catalogue. None treats each row as its own island"""
+    """Column grouping components into islands in a user-supplied catalogue. None treats each row as its own island"""
     catalogue_ra_col: str | None = None
-    """RA column in a user-supplied spice_catalogue. Required whenever spice_catalogue is set"""
+    """RA column in a user-supplied catalogue. Required whenever a catalogue is supplied"""
     catalogue_dec_col: str | None = None
-    """Dec column in a user-supplied spice_catalogue. Required whenever spice_catalogue is set"""
+    """Dec column in a user-supplied catalogue. Required whenever a catalogue is supplied"""
     catalogue_radec_unit: str = "deg"
     """Astropy unit string for catalogue_ra_col/catalogue_dec_col"""
     catalogue_maj_col: str | None = None
-    """Major-axis column in a user-supplied spice_catalogue. None disables ellipse sizing (point-source + beamwidth padding only)"""
+    """Major-axis column in a user-supplied catalogue. None disables ellipse sizing (point-source + beamwidth padding only)"""
     catalogue_min_col: str | None = None
-    """Minor-axis column in a user-supplied spice_catalogue"""
+    """Minor-axis column in a user-supplied catalogue"""
     catalogue_pa_col: str | None = None
-    """Position-angle column in a user-supplied spice_catalogue"""
+    """Position-angle column in a user-supplied catalogue"""
     catalogue_shape_unit: str = "arcsec"
     """Astropy unit string for catalogue_maj_col/catalogue_min_col. catalogue_pa_col is always degrees"""
     catalogue_sizes_deconvolved: bool | None = None
@@ -348,10 +347,10 @@ class RMSynthFieldOptions(BaseOptions):
     algorithm parameters, which are drawn from ``imaging_strategy`` rather
     than exposed here."""
 
-    stokes_q_cube: Path
-    """Path to the Stokes Q FITS cube"""
-    stokes_u_cube: Path
-    """Path to the Stokes U FITS cube"""
+    stokes_q_cube: Path | None = None
+    """Path to the Stokes Q FITS cube. Computed by the racs-all flow, so required only when running this pipeline standalone"""
+    stokes_u_cube: Path | None = None
+    """Path to the Stokes U FITS cube. Computed by the racs-all flow, so required only when running this pipeline standalone"""
     stokes_i_cube: Path | None = None
     """Path to a Stokes I FITS cube, used to fit a per-pixel fractional-polarisation correction. Defaults to None."""
     imaging_strategy: Path | None = None
@@ -360,6 +359,8 @@ class RMSynthFieldOptions(BaseOptions):
     """Which Faraday dispersion function (FDF) cubes to write as FITS. Nothing by default, as these cubes can be large."""
     moment_products: list[Literal["dirty", "clean", "model"]] = ["clean"]
     """Which FDF(s) to compute Faraday moment maps from."""
+    output_path: Path | None = None
+    """Directory the FDF cube and moment products are written into. Defaults to alongside the input Stokes cubes"""
     sbid_copy_path: Path | None = None
     """Path that final processed products will be copied into. If None no copying of file products is performed. See ArchiveOptions. """
 
@@ -370,8 +371,8 @@ class SpiceFieldOptions(BaseOptions):
     trimming/compression algorithm parameters, which are drawn from
     ``imaging_strategy`` rather than exposed here."""
 
-    cubes: list[Path]
-    """Stokes cubes to trim and compress"""
+    cubes: list[Path] = []
+    """Stokes cubes to trim and compress. Computed by the racs-all flow, so required only when running this pipeline standalone"""
     reference_image: Path | None = None
     """A 2D MFS image whose WCS/shape sources the source-finding boxes. Required only when catalogue is not set (built-in aegean source finding)"""
     catalogue: Path | None = None
@@ -380,6 +381,8 @@ class SpiceFieldOptions(BaseOptions):
     """Path to the singularity aegean container. Required when catalogue is not set (built-in source finding)"""
     imaging_strategy: Path | None = None
     """Path to a FLINT imaging yaml file that contains the SpiceOptions settings to use"""
+    output_path: Path | None = None
+    """Directory the spiced cubes are written into, replacing the originals. Defaults to leaving each cube in place"""
     sbid_copy_path: Path | None = None
     """Path that final processed products will be copied into. If None no copying of file products is performed. See ArchiveOptions. """
 
@@ -452,21 +455,6 @@ class RACSAllOptions(BaseOptions):
     """The oath to a concatenated holography FITS file that contains low-, mid- and high-band cubes"""
 
 
-def racs_all_options_to_pol_field_options(
-    racs_all_options: RACSAllOptions,
-) -> PolFieldOptions:
-    """Build a default ``PolFieldOptions`` from the fields of ``RACSAllOptions`` that
-    share a name and meaning between the two (containers, beam/pb cutoffs, etc).
-    Fields that only exist on ``PolFieldOptions`` are left at their default. Used
-    when a caller does not supply its own ``PolFieldOptions`` (e.g. calling the
-    racs-all flow directly rather than through its CLI, where every
-    ``PolFieldOptions`` field is exposed)."""
-    shared_fields = set(RACSAllOptions.model_fields) & set(PolFieldOptions.model_fields)
-    return PolFieldOptions(
-        **{name: getattr(racs_all_options, name) for name in shared_fields}
-    )
-
-
 def pol_field_options_cli_class(
     racs_all_options_class: type[RACSAllOptions] = RACSAllOptions,
 ) -> type[PolFieldOptions]:
@@ -496,6 +484,8 @@ class RACSAllPipelineOptions(BaseOptions):
     with each stage individually skippable.
     """
 
+    output_path: Path | None = None
+    """Root directory the rm-synth and spice stages write their products under, in per-stage subdirectories. Defaults to the continuum stage's science path"""
     skip_imaging: bool = False
     """Skip the continuum imaging/self-calibration stage"""
     skip_polarisation: bool = False

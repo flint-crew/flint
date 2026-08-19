@@ -11,7 +11,13 @@ from astropy.wcs import WCS
 
 from flint.exceptions import NotSupportedError
 from flint.options import RMCleanOptions, RMSynthOptions
-from flint.rmsynth import rmsynth_and_write_products, run_rmsynth_3d
+from flint.rmsynth import (
+    FDFLabel,
+    needs_rmclean,
+    run_rmclean_3d,
+    run_rmsynth_3d,
+    write_rm_products,
+)
 
 N_CHAN = 20
 NY = 5
@@ -78,11 +84,48 @@ def qu_cubes(tmp_path: Path) -> tuple[Path, Path]:
     return _make_qu_cubes(tmp_path)
 
 
+def _synth_and_write(
+    stokes_q_cube: Path,
+    stokes_u_cube: Path,
+    rmsynth_options: RMSynthOptions,
+    rmclean_options: RMCleanOptions,
+    cube_products: list[FDFLabel],
+    moment_products: list[FDFLabel],
+    output_prefix: Path,
+    stokes_i_cube: Path | None = None,
+) -> list[Path]:
+    """Same sequence of calls that ``flint.prefect.flows.rmsynth_pipeline`` makes"""
+    if not cube_products and not moment_products:
+        return []
+
+    synth_results = run_rmsynth_3d(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        rmsynth_options=rmsynth_options,
+        stokes_i_cube=stokes_i_cube,
+    )
+    clean_results = (
+        run_rmclean_3d(rm_synth_results=synth_results, rmclean_options=rmclean_options)
+        if needs_rmclean(cube_products=cube_products, moment_products=moment_products)
+        else None
+    )
+    return write_rm_products(
+        synth_results=synth_results,
+        clean_results=clean_results,
+        stokes_q_cube=stokes_q_cube,
+        rmsynth_options=rmsynth_options,
+        rmclean_options=rmclean_options,
+        cube_products=cube_products,
+        moment_products=moment_products,
+        output_prefix=output_prefix,
+    )
+
+
 def test_rmsynth_all_products(tmp_path: Path, qu_cubes: tuple[Path, Path]) -> None:
     stokes_q_cube, stokes_u_cube = qu_cubes
     output_prefix = tmp_path / "test_field"
 
-    output_paths = rmsynth_and_write_products(
+    output_paths = _synth_and_write(
         stokes_q_cube=stokes_q_cube,
         stokes_u_cube=stokes_u_cube,
         rmsynth_options=RMSynthOptions(),
@@ -123,7 +166,7 @@ def test_rmsynth_dirty_only_skips_rmclean(
         "flint.rmsynth.run_rmclean_3d", lambda *args, **kwargs: calls.append(1)
     )
 
-    output_paths = rmsynth_and_write_products(
+    output_paths = _synth_and_write(
         stokes_q_cube=stokes_q_cube,
         stokes_u_cube=stokes_u_cube,
         rmsynth_options=RMSynthOptions(),
@@ -146,7 +189,7 @@ def test_rmsynth_with_stokes_i_writes_fit_maps(
     stokes_i_cube = _make_i_cube(tmp_path)
     output_prefix = tmp_path / "test_field"
 
-    output_paths = rmsynth_and_write_products(
+    output_paths = _synth_and_write(
         stokes_q_cube=stokes_q_cube,
         stokes_u_cube=stokes_u_cube,
         stokes_i_cube=stokes_i_cube,
@@ -178,7 +221,7 @@ def test_rmsynth_debias_moments_runs(
     stokes_q_cube, stokes_u_cube = qu_cubes
     output_prefix = tmp_path / "test_field"
 
-    output_paths = rmsynth_and_write_products(
+    output_paths = _synth_and_write(
         stokes_q_cube=stokes_q_cube,
         stokes_u_cube=stokes_u_cube,
         rmsynth_options=RMSynthOptions(debias_moments=True),
@@ -203,7 +246,7 @@ def test_rmsynth_write_fdfs_to_zarr(
     stokes_q_cube, stokes_u_cube = qu_cubes
     output_prefix = tmp_path / "test_field"
 
-    output_paths = rmsynth_and_write_products(
+    output_paths = _synth_and_write(
         stokes_q_cube=stokes_q_cube,
         stokes_u_cube=stokes_u_cube,
         rmsynth_options=RMSynthOptions(write_fdfs_to_zarr=True),
@@ -245,7 +288,7 @@ def test_moment_only_never_computes_a_full_cube(
 
     monkeypatch.setattr(dask, "compute", _spy_compute)
 
-    rmsynth_and_write_products(
+    _synth_and_write(
         stokes_q_cube=stokes_q_cube,
         stokes_u_cube=stokes_u_cube,
         rmsynth_options=RMSynthOptions(),
@@ -267,7 +310,7 @@ def test_rmsynth_no_products_is_noop(
 ) -> None:
     stokes_q_cube, stokes_u_cube = qu_cubes
 
-    output_paths = rmsynth_and_write_products(
+    output_paths = _synth_and_write(
         stokes_q_cube=stokes_q_cube,
         stokes_u_cube=stokes_u_cube,
         rmsynth_options=RMSynthOptions(),
