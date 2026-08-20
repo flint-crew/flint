@@ -1,7 +1,4 @@
-"""Plumbing tests for RM-synthesis via rm-lite. rm-lite's own synthesis
-correctness is its responsibility, not flint-pol's -- these tests only check
-that FITS in -> WCS/product-selection -> FITS out behaves as expected.
-"""
+"""Plumbing tests for RM-synthesis via rm-lite"""
 
 from __future__ import annotations
 
@@ -12,8 +9,15 @@ import pytest
 from astropy.io import fits
 from astropy.wcs import WCS
 
+from flint.exceptions import NotSupportedError
 from flint.options import RMCleanOptions, RMSynthOptions
-from flint.rmsynth import rmsynth_and_write_products
+from flint.rmsynth import (
+    FDFLabel,
+    needs_rmclean,
+    run_rmclean_3d,
+    run_rmsynth_3d,
+    write_rm_products,
+)
 
 N_CHAN = 20
 NY = 5
@@ -80,11 +84,50 @@ def qu_cubes(tmp_path: Path) -> tuple[Path, Path]:
     return _make_qu_cubes(tmp_path)
 
 
+def _synth_and_write(
+    stokes_q_cube: Path,
+    stokes_u_cube: Path,
+    rmsynth_options: RMSynthOptions,
+    rmclean_options: RMCleanOptions,
+    cube_products: list[FDFLabel],
+    moment_products: list[FDFLabel],
+    output_prefix: Path,
+    stokes_i_cube: Path | None = None,
+) -> list[Path]:
+    """Mirror of the call sequence in ``flint.prefect.flows.rmsynth_pipeline``,
+    keeping these unit tests off prefect and dask. The flow itself is tested in
+    ``tests/test_prefect_rmsynth_flow.py``."""
+    if not cube_products and not moment_products:
+        return []
+
+    synth_results = run_rmsynth_3d(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        rmsynth_options=rmsynth_options,
+        stokes_i_cube=stokes_i_cube,
+    )
+    clean_results = (
+        run_rmclean_3d(rm_synth_results=synth_results, rmclean_options=rmclean_options)
+        if needs_rmclean(cube_products=cube_products, moment_products=moment_products)
+        else None
+    )
+    return write_rm_products(
+        synth_results=synth_results,
+        clean_results=clean_results,
+        stokes_q_cube=stokes_q_cube,
+        rmsynth_options=rmsynth_options,
+        rmclean_options=rmclean_options,
+        cube_products=cube_products,
+        moment_products=moment_products,
+        output_prefix=output_prefix,
+    )
+
+
 def test_rmsynth_all_products(tmp_path: Path, qu_cubes: tuple[Path, Path]) -> None:
     stokes_q_cube, stokes_u_cube = qu_cubes
     output_prefix = tmp_path / "test_field"
 
-    output_paths = rmsynth_and_write_products(
+    output_paths = _synth_and_write(
         stokes_q_cube=stokes_q_cube,
         stokes_u_cube=stokes_u_cube,
         rmsynth_options=RMSynthOptions(),
@@ -94,16 +137,16 @@ def test_rmsynth_all_products(tmp_path: Path, qu_cubes: tuple[Path, Path]) -> No
         output_prefix=output_prefix,
     )
 
-    assert len(output_paths) == 3 + 3 * 3
+    # One zarr store holding all three cubes, plus three moments per label
+    assert len(output_paths) == 1 + 3 * 3
     for path in output_paths:
         assert path.exists()
 
-    for label in ("dirty", "clean", "model"):
-        cube_path = Path(f"{output_prefix}.fdf.{label}.cube.fits")
-        assert cube_path.exists()
-        header = fits.getheader(cube_path)
-        assert header["CTYPE3"] == "FDEPTH"
+    assert not list(tmp_path.glob("*.fdf.*.cube.fits")), (
+        "FDF cubes are zarr-only; a FITS cube means the gather path came back"
+    )
 
+    for label in ("dirty", "clean", "model"):
         for moment in ("mom0", "mom1", "mom2"):
             moment_path = Path(f"{output_prefix}.fdf.{label}.{moment}.fits")
             assert moment_path.exists()
@@ -125,7 +168,7 @@ def test_rmsynth_dirty_only_skips_rmclean(
         "flint.rmsynth.run_rmclean_3d", lambda *args, **kwargs: calls.append(1)
     )
 
-    output_paths = rmsynth_and_write_products(
+    output_paths = _synth_and_write(
         stokes_q_cube=stokes_q_cube,
         stokes_u_cube=stokes_u_cube,
         rmsynth_options=RMSynthOptions(),
@@ -148,7 +191,7 @@ def test_rmsynth_with_stokes_i_writes_fit_maps(
     stokes_i_cube = _make_i_cube(tmp_path)
     output_prefix = tmp_path / "test_field"
 
-    output_paths = rmsynth_and_write_products(
+    output_paths = _synth_and_write(
         stokes_q_cube=stokes_q_cube,
         stokes_u_cube=stokes_u_cube,
         stokes_i_cube=stokes_i_cube,
@@ -180,7 +223,7 @@ def test_rmsynth_debias_moments_runs(
     stokes_q_cube, stokes_u_cube = qu_cubes
     output_prefix = tmp_path / "test_field"
 
-    output_paths = rmsynth_and_write_products(
+    output_paths = _synth_and_write(
         stokes_q_cube=stokes_q_cube,
         stokes_u_cube=stokes_u_cube,
         rmsynth_options=RMSynthOptions(debias_moments=True),
@@ -199,16 +242,16 @@ def test_rmsynth_debias_moments_runs(
     assert len(output_paths) == 6
 
 
-def test_rmsynth_write_fdfs_to_zarr(
+def test_rmsynth_writes_fdf_cubes_to_zarr(
     tmp_path: Path, qu_cubes: tuple[Path, Path]
 ) -> None:
     stokes_q_cube, stokes_u_cube = qu_cubes
     output_prefix = tmp_path / "test_field"
 
-    output_paths = rmsynth_and_write_products(
+    output_paths = _synth_and_write(
         stokes_q_cube=stokes_q_cube,
         stokes_u_cube=stokes_u_cube,
-        rmsynth_options=RMSynthOptions(write_fdfs_to_zarr=True),
+        rmsynth_options=RMSynthOptions(),
         rmclean_options=RMCleanOptions(),
         cube_products=["dirty", "clean"],
         moment_products=["clean"],
@@ -222,8 +265,48 @@ def test_rmsynth_write_fdfs_to_zarr(
     import zarr
 
     group = zarr.open(str(zarr_store), mode="r")
-    assert set(group.keys()) == {"dirty", "clean"}
+    assert set(group.keys()) == {"dirty", "clean", "phi_arr_radm2"}
     assert group["dirty"].shape[1:] == (NY, NX)
+    # Without the Faraday depth axis the store is not self-describing
+    assert group["phi_arr_radm2"].shape[0] == group["dirty"].shape[0]
+
+
+def test_moment_only_never_computes_a_full_cube(
+    tmp_path: Path, qu_cubes: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Moment maps must be computed as lazy (ny, nx) reductions, never by
+    gathering the (n_phi, ny, nx) FDF cube into the calling process. Gathering
+    is invisible on these tiny test cubes but is tens of GB on a real mosaic."""
+    import dask
+
+    stokes_q_cube, stokes_u_cube = qu_cubes
+    real_compute = dask.compute
+    computed_shapes: list[tuple[int, ...]] = []
+
+    def _spy_compute(*args, **kwargs):
+        results = real_compute(*args, **kwargs)
+        computed_shapes.extend(
+            np.shape(result) for result in results if hasattr(result, "shape")
+        )
+        return results
+
+    monkeypatch.setattr(dask, "compute", _spy_compute)
+
+    _synth_and_write(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        rmsynth_options=RMSynthOptions(),
+        rmclean_options=RMCleanOptions(),
+        cube_products=[],
+        moment_products=["dirty", "clean", "model"],
+        output_prefix=tmp_path / "test_field",
+    )
+
+    assert computed_shapes, "expected a batched dask.compute call"
+    # Every gathered array is a 2D map; a 3D shape means an FDF cube came back.
+    assert all(len(shape) == 2 for shape in computed_shapes), computed_shapes
+    # 3 labels x mom0/mom1/mom2, and nothing else.
+    assert len(computed_shapes) == 9
 
 
 def test_rmsynth_no_products_is_noop(
@@ -231,7 +314,7 @@ def test_rmsynth_no_products_is_noop(
 ) -> None:
     stokes_q_cube, stokes_u_cube = qu_cubes
 
-    output_paths = rmsynth_and_write_products(
+    output_paths = _synth_and_write(
         stokes_q_cube=stokes_q_cube,
         stokes_u_cube=stokes_u_cube,
         rmsynth_options=RMSynthOptions(),
@@ -245,3 +328,14 @@ def test_rmsynth_no_products_is_noop(
     assert not list(tmp_path.glob("*.fits")) or all(
         p in (stokes_q_cube, stokes_u_cube) for p in tmp_path.glob("*.fits")
     )
+
+
+def test_rmsynth_rejects_compressed_cubes(tmp_path: Path) -> None:
+    """A gzipped cube cannot be memmapped, so rm-lite's per-block reopens would
+    each inflate the whole cube into memory."""
+    with pytest.raises(NotSupportedError):
+        run_rmsynth_3d(
+            stokes_q_cube=tmp_path / "q.fits.gz",
+            stokes_u_cube=tmp_path / "u.fits.gz",
+            rmsynth_options=RMSynthOptions(),
+        )

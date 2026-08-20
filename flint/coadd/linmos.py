@@ -72,6 +72,19 @@ class BoundingBox(BaseOptions):
     original_shape: tuple[int, int]
     """The original shape of the image. If constructed against a cube this is the shape of a single plane."""
 
+    def clip(self) -> BoundingBox | None:
+        """Clip to ``original_shape``, or None if the box falls entirely off it
+
+        Returns:
+            BoundingBox | None: The clipped box, or None if nothing remains
+        """
+        ny, nx = self.original_shape
+        xmin, xmax = max(0, self.xmin), min(ny, self.xmax)
+        ymin, ymax = max(0, self.ymin), min(nx, self.ymax)
+        if xmin >= xmax or ymin >= ymax:
+            return None
+        return self.with_options(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax)
+
 
 class LinmosParsetSummary(NamedTuple):
     """Container for key components around a linmos parset file"""

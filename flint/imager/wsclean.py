@@ -211,6 +211,8 @@ class WSCleanOptions(BaseOptions):
     """If True do not log the wsclean output"""
     flint_name_suffix: str | None = None
     """An additional trailing token appended to the constructed wsclean ``-name``, e.g. to disambiguate outputs from different pipelines imaging the same measurement set"""
+    flint_save_mfs_products: bool = False
+    """Save the MFS image, model and residual products (co-added and leakage-corrected the same way as the science image), rather than just the image"""
 
 
 class WSCleanResult(BaseOptions):
@@ -1330,6 +1332,7 @@ def run_wsclean_imager(
     container: Path,
     make_cube_from_subbands: bool = True,
     fitscube_options: FitsCubeOptions | None = None,
+    extra_output_types: tuple[str, ...] | None = None,
 ) -> ImageSet:
     """Run a provided wsclean command. Optionally will clean up files,
     including the dirty beams, psfs and other assorted things.
@@ -1346,6 +1349,7 @@ def run_wsclean_imager(
         move_hold_directories (Optional[Tuple[Path,Optional[Path]]], optional): The `move_directory` and `hold_directory` passed to the temporary context manager. If None no `hold_then_move_into` manager is used. Defaults to None.
         make_cube_from_subbands (bool, optional): Form a single FITS cube from the set of sub-band images wsclean produces. Defaults to False.
         image_prefix_str (Optional[str], optional): The name used to search for wsclean outputs. If None, it is guessed from the name and location of the MS. Defaults to None.
+        extra_output_types (tuple[str, ...] | None, optional): Additional output types (beyond ``image``/``residual``) to search for and attach to the returned ``ImageSet``, e.g. ``("model",)``. Defaults to None.
 
     Returns:
         ImageSet: The executed wsclean output products.
@@ -1424,7 +1428,7 @@ def run_wsclean_imager(
         subbands=wsclean_result.options.channels_out,
         pols=pols,
         verify_exists=True,
-        output_types=("image", "residual"),
+        output_types=("image", "residual", *(extra_output_types or ())),
         check_exists_when_adding=True,
     )
 
@@ -1457,6 +1461,7 @@ def wsclean_imager(
     update_wsclean_options: dict[str, Any] | None = None,
     update_fitscube_options: dict[str, Any] | None = None,
     make_cube_from_subbands: bool = True,
+    extra_output_types: tuple[str, ...] | None = None,
 ) -> WSCleanResult:
     """Create and run a wsclean imager command against a measurement set.
 
@@ -1505,6 +1510,7 @@ def wsclean_imager(
         container=wsclean_container,
         fitscube_options=fitscube_options,
         make_cube_from_subbands=make_cube_from_subbands,
+        extra_output_types=extra_output_types,
     )
 
     return wsclean_result.with_options(image_set=image_set)
