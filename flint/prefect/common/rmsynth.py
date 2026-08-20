@@ -21,8 +21,39 @@ from flint.rmsynth import (
     write_rm_products,
 )
 
-task_rmsynth = task(run_rmsynth_3d)
-task_rmclean = task(run_rmclean_3d)
+
+# task_rmsynth = task(run_rmsynth_3d)
+@task
+def task_rmsynth(
+    stokes_q_cube: Path,
+    stokes_u_cube: Path,
+    rmsynth_options: RMSynthOptions,
+    stokes_i_cube: Path | None = None,
+) -> RMSynth3DResults:
+
+    from prefect_dask import get_dask_client
+
+    with get_dask_client():
+        return run_rmsynth_3d(
+            stokes_q_cube=stokes_q_cube,
+            stokes_u_cube=stokes_u_cube,
+            rmsynth_options=rmsynth_options,
+            stokes_i_cube=stokes_i_cube,
+        )
+
+
+# task_rmclean = task(run_rmclean_3d)
+@task
+def task_rmclean(
+    rm_synth_results: RMSynth3DResults, rmclean_options: RMCleanOptions
+) -> RMClean3DResults:
+    from prefect_dask import get_dask_client
+
+    with get_dask_client():
+        return run_rmclean_3d(
+            rm_synth_results=rm_synth_results,
+            rmclean_options=rmclean_options,
+        )
 
 
 @task
@@ -37,6 +68,7 @@ def task_write_rm_products(
     output_prefix: Path,
 ) -> list[Path]:
     """Batch-compute and write the requested RM-synthesis/RM-CLEAN products"""
+    # TJG: I didn't put this one here
     from prefect_dask import get_dask_client
 
     with get_dask_client(set_as_default=False) as client:
