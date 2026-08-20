@@ -94,7 +94,9 @@ def _synth_and_write(
     output_prefix: Path,
     stokes_i_cube: Path | None = None,
 ) -> list[Path]:
-    """Same sequence of calls that ``flint.prefect.flows.rmsynth_pipeline`` makes"""
+    """Mirror of the call sequence in ``flint.prefect.flows.rmsynth_pipeline``,
+    keeping these unit tests off prefect and dask. The flow itself is tested in
+    ``tests/test_prefect_rmsynth_flow.py``."""
     if not cube_products and not moment_products:
         return []
 
