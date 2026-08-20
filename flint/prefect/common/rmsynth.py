@@ -68,7 +68,6 @@ def task_write_rm_products(
     output_prefix: Path,
 ) -> list[Path]:
     """Batch-compute and write the requested RM-synthesis/RM-CLEAN products"""
-    # TJG: I didn't put this one here
     from prefect_dask import get_dask_client
 
     with get_dask_client(set_as_default=False) as client:

@@ -25,21 +25,44 @@ from .test_rmsynth import NX, NY, PHI_TRUE_RADM2, _make_qu_cubes
 STEM = "SB12345.BENCH_0000+00.ch0000-0019"
 
 
-def _renamed_qu_cubes(tmp_path: Path) -> tuple[Path, Path]:
+def _add_degenerate_axis(path: Path) -> Path:
+    """Rewrite a (nfreq, ny, nx) cube in the ASKAP/CASA (nfreq, 1, ny, nx) layout,
+    moving the spectral axis to FITS axis 4 and inserting a degenerate Stokes axis."""
+    data, header = fits.getdata(path, header=True)
+    for key in ("CTYPE", "CRVAL", "CRPIX", "CDELT", "CUNIT"):
+        if f"{key}3" in header:
+            header[f"{key}4"] = header.pop(f"{key}3")
+    header["CTYPE3"] = "STOKES"
+    header["CRVAL3"] = 1.0
+    header["CRPIX3"] = 1.0
+    header["CDELT3"] = 1.0
+    fits.writeto(path, data[:, np.newaxis], header, overwrite=True)
+    return path
+
+
+def _renamed_qu_cubes(
+    tmp_path: Path, degenerate_axis: bool = False
+) -> tuple[Path, Path]:
     q_path, u_path = _make_qu_cubes(tmp_path)
-    return (
+    paths = (
         q_path.rename(tmp_path / f"{STEM}.q.linmos.fits"),
         u_path.rename(tmp_path / f"{STEM}.u.linmos.fits"),
     )
+    return paths if not degenerate_axis else tuple(map(_add_degenerate_axis, paths))
 
 
 @pytest.mark.slow
+@pytest.mark.parametrize("degenerate_axis", [False, True], ids=["3d", "askap-4d"])
 def test_process_rmsynth_on_dask_cluster(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, degenerate_axis: bool
 ) -> None:
     """Most of the runtime here is cluster start up and the worker imports of
-    flint/rm_lite/finufft, so shrinking the cubes further does not help."""
-    stokes_q_cube, stokes_u_cube = _renamed_qu_cubes(tmp_path)
+    flint/rm_lite/finufft, so shrinking the cubes further does not help. The
+    askap-4d case guards against rm-lite mishandling the degenerate Stokes axis
+    that real ASKAP/CASA cubes carry, which 2026.8.0 regressed on."""
+    stokes_q_cube, stokes_u_cube = _renamed_qu_cubes(
+        tmp_path, degenerate_axis=degenerate_axis
+    )
     monkeypatch.setenv("OMP_NUM_THREADS", "1")
 
     rmsynth_field_options = RMSynthFieldOptions(
