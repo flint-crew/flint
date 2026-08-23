@@ -29,21 +29,18 @@ def task_rmsynth(
     stokes_u_cube: Path,
     rmsynth_options: RMSynthOptions,
     stokes_i_cube: Path | None = None,
-    stokes_i_error_cube: Path | None = None,
 ) -> RMSynth3DResults:
     from prefect_dask import get_dask_client
 
     # Set as the default scheduler, not just borrowed: rm-lite's per-channel
-    # noise estimates (Q/U weights, and the Stokes I error behind the SNR cut)
-    # are eager `dask.compute` calls inside `rmsynth_3d_from_fits`, so without a
-    # default client they would read whole cubes on this one worker.
+    # noise estimates are eager `dask.compute` calls, so without a default
+    # client they would read whole cubes on this one worker.
     with get_dask_client():
         return run_rmsynth_3d(
             stokes_q_cube=stokes_q_cube,
             stokes_u_cube=stokes_u_cube,
             rmsynth_options=rmsynth_options,
             stokes_i_cube=stokes_i_cube,
-            stokes_i_error_cube=stokes_i_error_cube,
         )
 
 

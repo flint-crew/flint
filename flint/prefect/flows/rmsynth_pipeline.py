@@ -65,7 +65,6 @@ def process_rmsynth(rmsynth_field_options: RMSynthFieldOptions) -> list[Path]:
         stokes_u_cube=rmsynth_field_options.stokes_u_cube,
         rmsynth_options=rmsynth_options,
         stokes_i_cube=rmsynth_field_options.stokes_i_cube,
-        stokes_i_error_cube=rmsynth_field_options.stokes_i_error_cube,
     )
 
     run_clean = needs_rmclean(

@@ -1,44 +1,5 @@
 # Change log
 
-# Unreleased
-
-- RM-synthesis performance and noise handling for the RACS-all band
-  (800-1088 + 1290-1444 + 1511-1799 MHz at 8 MHz)
-  - `RMSynthOptions.estimate_stokes_i_noise` now defaults to `True`. Without a
-    Stokes I noise, rm-lite's frequency-averaged SNR is infinite for every
-    pixel, so `stokes_i_snr_cut` silently passed all of them and each got a
-    bounded `curve_fit` (~25 ms per noise pixel, against ~17 us for a rejected
-    one). A second-order power law fitted to pure noise is also unconstrained
-    and routinely dips to ~1e-10 mid-band, so dividing Q/U by it gave an
-    infinite FDF, an infinite `mom0`, and an RM-CLEAN that ran to `max_iter` on
-    that pixel
-  - `flint.rmsynth.run_rmsynth_3d` warns when `stokes_i_snr_cut` is set but
-    neither a noise estimate nor an error cube gives it anything to cut on
-  - Added `RMSynthFieldOptions.stokes_i_error_cube`, wired through to rm-lite's
-    `stokes_i_error_file`, for a per-pixel Stokes I noise
-  - Added `RMSynthOptions.moment_threshold_snr`, applied to every Faraday
-    moment map flint writes. The dirty moments were previously unthresholded,
-    which left `mom0` with a large positive noise floor everywhere (`mom0` sums
-    `|FDF|` over the whole Faraday depth axis) and made `mom1`/`mom2`
-    noise-weighted. `RMCleanOptions.moment_threshold_snr` keeps its old meaning
-    and only reaches rm-lite's internal maps, which flint does not write
-  - Exposed the multiscale RM-CLEAN parameters on `RMCleanOptions`
-    (`multiscale_scales`, `multiscale_n_scales`, `multiscale_kernel`,
-    `multiscale_max_iter_sub_minor`, `multiscale_sub_minor_fraction`,
-    `multiscale_selection_margin`)
-  - Fixed RM-CLEAN being recomputed once per requested FDF cube. Every product
-    descends from one `dask.delayed` call per spatial chunk, but
-    `dask.array.Array.to_zarr` optimises the graph it captures, and the
-    blockwise fuse pass inlines that shared RM-CLEAN task into each consumer
-    branch. `cube_products: [clean, model]` ran RM-CLEAN twice per chunk, three
-    cubes three times, and one cube plus its moment maps twice.
-    `write_rm_products` now issues a single `dask.array.store` for every cube
-    with fusion disabled for it and for the batched compute. `moment_products`
-    alone -- the default -- was never affected
-  - Documented the `rmsynth`/`rmclean` strategy modes in `docs/config.md`,
-    including how `phi_max_radm2` is derived when left unset and why that
-    depends on whether the band's blank gap channels are on the frequency grid
-
 # v0.3.0
 
 - Attempts to clean up the prefect tasks related to convolution and linmos

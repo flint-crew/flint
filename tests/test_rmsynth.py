@@ -12,7 +12,6 @@ from astropy.wcs import WCS
 from flint.exceptions import NotSupportedError
 from flint.options import RMCleanOptions, RMSynthOptions
 from flint.rmsynth import (
-    _RM_LITE_SUPPORTS_REUSE_RMSF,
     FDFLabel,
     needs_rmclean,
     run_rmclean_3d,
@@ -94,7 +93,6 @@ def _synth_and_write(
     moment_products: list[FDFLabel],
     output_prefix: Path,
     stokes_i_cube: Path | None = None,
-    stokes_i_error_cube: Path | None = None,
 ) -> list[Path]:
     """Mirror of the call sequence in ``flint.prefect.flows.rmsynth_pipeline``,
     keeping these unit tests off prefect and dask. The flow itself is tested in
@@ -107,7 +105,6 @@ def _synth_and_write(
         stokes_u_cube=stokes_u_cube,
         rmsynth_options=rmsynth_options,
         stokes_i_cube=stokes_i_cube,
-        stokes_i_error_cube=stokes_i_error_cube,
     )
     clean_results = (
         run_rmclean_3d(rm_synth_results=synth_results, rmclean_options=rmclean_options)
@@ -383,7 +380,7 @@ def test_estimate_stokes_i_noise_defaults_on() -> None:
 
 
 def test_warns_when_stokes_i_snr_cut_is_inert(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """A cut with no noise behind it passes every pixel, so every pixel gets a
     curve_fit. Correct, but ~1000x slower than intended, hence the warning."""
@@ -391,22 +388,17 @@ def test_warns_when_stokes_i_snr_cut_is_inert(
 
     caplog.set_level("WARNING")
     _warn_if_snr_cut_inert(
-        RMSynthOptions(estimate_stokes_i_noise=False, stokes_i_snr_cut=5.0), None
+        RMSynthOptions(estimate_stokes_i_noise=False, stokes_i_snr_cut=5.0)
     )
     assert "will do nothing" in caplog.text
 
-    # Either source of a Stokes I noise makes it meaningful again, and so does
-    # turning the cut off deliberately.
-    for options, error_cube in (
-        (RMSynthOptions(estimate_stokes_i_noise=True, stokes_i_snr_cut=5.0), None),
-        (
-            RMSynthOptions(estimate_stokes_i_noise=False, stokes_i_snr_cut=5.0),
-            tmp_path / "i_err.fits",
-        ),
-        (RMSynthOptions(estimate_stokes_i_noise=False, stokes_i_snr_cut=None), None),
+    # A noise estimate makes it meaningful again, and so does turning the cut off
+    for options in (
+        RMSynthOptions(estimate_stokes_i_noise=True, stokes_i_snr_cut=5.0),
+        RMSynthOptions(estimate_stokes_i_noise=False, stokes_i_snr_cut=None),
     ):
         caplog.clear()
-        _warn_if_snr_cut_inert(options, error_cube)
+        _warn_if_snr_cut_inert(options)
         assert caplog.text == ""
 
 
@@ -439,78 +431,6 @@ def test_stokes_i_fit_on_noise_stays_finite(tmp_path: Path) -> None:
         assert np.isfinite(mom0).all(), f"{label} mom0 has non-finite pixels"
         # Nothing clears the moment threshold, so there is no polarised flux
         assert np.allclose(mom0, 0.0), f"{label} mom0 found flux in pure noise"
-
-
-def test_moment_threshold_applies_to_the_dirty_fdf(tmp_path: Path) -> None:
-    """mom0 sums |FDF| over every Faraday depth, so an unthresholded off-source
-    pixel integrates hundreds of noise samples into a large positive floor. The
-    cut has to reach the dirty moments, not just the cleaned ones."""
-    q_cube, u_cube, _ = _make_noise_only_cubes(tmp_path, prefix="thresh")
-
-    thresholded = tmp_path / "thresholded"
-    _synth_and_write(
-        stokes_q_cube=q_cube,
-        stokes_u_cube=u_cube,
-        rmsynth_options=RMSynthOptions(moment_threshold_snr=5.0),
-        rmclean_options=RMCleanOptions(),
-        cube_products=[],
-        moment_products=["dirty"],
-        output_prefix=thresholded,
-    )
-    unthresholded = tmp_path / "unthresholded"
-    _synth_and_write(
-        stokes_q_cube=q_cube,
-        stokes_u_cube=u_cube,
-        rmsynth_options=RMSynthOptions(moment_threshold_snr=0.0),
-        rmclean_options=RMCleanOptions(),
-        cube_products=[],
-        moment_products=["dirty"],
-        output_prefix=unthresholded,
-    )
-
-    cut = fits.getdata(Path(f"{thresholded}.fdf.dirty.mom0.fits"))
-    uncut = fits.getdata(Path(f"{unthresholded}.fdf.dirty.mom0.fits"))
-    assert np.allclose(cut, 0.0), "noise survived the dirty moment threshold"
-    assert np.nanmedian(uncut) > 0.0, "expected a noise floor with no threshold"
-
-
-def test_stokes_i_error_cube_reaches_rm_lite(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A supplied per-pixel error cube is what the SNR cut should measure
-    against, so it has to arrive at rm-lite rather than being dropped."""
-    captured: dict[str, object] = {}
-
-    def _spy(**kwargs):
-        captured.update(kwargs)
-        raise RuntimeError("stop after capturing the call")
-
-    monkeypatch.setattr("flint.rmsynth.rmsynth_3d_from_fits", _spy)
-
-    with pytest.raises(RuntimeError):
-        run_rmsynth_3d(
-            stokes_q_cube=tmp_path / "q.fits",
-            stokes_u_cube=tmp_path / "u.fits",
-            stokes_i_cube=tmp_path / "i.fits",
-            stokes_i_error_cube=tmp_path / "i_err.fits",
-            rmsynth_options=RMSynthOptions(),
-        )
-
-    assert captured["stokes_i_error_file"] == tmp_path / "i_err.fits"
-    assert captured["stokes_i_file"] == tmp_path / "i.fits"
-
-
-def test_rmsynth_rejects_compressed_stokes_i_error_cube(tmp_path: Path) -> None:
-    """The error cube is read block-by-block like the others, so it is subject
-    to the same no-gzip rule."""
-    with pytest.raises(NotSupportedError):
-        run_rmsynth_3d(
-            stokes_q_cube=tmp_path / "q.fits",
-            stokes_u_cube=tmp_path / "u.fits",
-            stokes_i_cube=tmp_path / "i.fits",
-            stokes_i_error_cube=tmp_path / "i_err.fits.gz",
-            rmsynth_options=RMSynthOptions(),
-        )
 
 
 @pytest.mark.parametrize(
@@ -601,14 +521,10 @@ def test_reuse_rmsf_defaults_on() -> None:
     assert RMSynthOptions().reuse_rmsf is True
 
 
-@pytest.mark.skipif(
-    not _RM_LITE_SUPPORTS_REUSE_RMSF,
-    reason="installed rm-lite predates the reuse_rmsf argument",
-)
 def test_reuse_rmsf_reaches_rm_lite(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """When the installed rm-lite takes the argument, flint must forward it."""
+    """flint must forward the argument to rm-lite."""
     captured: dict[str, object] = {}
 
     def _spy(**kwargs):
