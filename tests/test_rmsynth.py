@@ -546,13 +546,14 @@ def test_rmclean_runs_once_per_chunk_whatever_is_requested(
 
     stokes_q_cube, stokes_u_cube = qu_cubes
 
-    calls = []
+    calls: list[int] = []
     original = rmclean_mod._clean_block
-    monkeypatch.setattr(
-        rmclean_mod,
-        "_clean_block",
-        lambda *args, **kwargs: (calls.append(1), original(*args, **kwargs))[1],
-    )
+
+    def counting_clean_block(*args: object, **kwargs: object) -> object:
+        calls.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(rmclean_mod, "_clean_block", counting_clean_block)
     # write_rm_products picks the process scheduler when cleaning, which would
     # put the counter in a subprocess. Fusion, not the scheduler, is what
     # duplicates the task, so counting under threads measures the same thing.
