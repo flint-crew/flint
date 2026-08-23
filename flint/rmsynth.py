@@ -6,10 +6,11 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import dask
 import numpy as np
+import zarr
 from astropy.io import fits
 from astropy.wcs import WCS
 from dask.distributed import Client
@@ -353,21 +354,61 @@ def write_rm_products(
     # to write it as FITS is tens of GB on a real mosaic.
     zarr_store_path = Path(f"{output_prefix}.fdf.zarr") if cube_products else None
 
-    compute_targets: dict[str, dask.array.Array] = {}
-    for label in cube_products:
-        compute_targets[f"zarr_{label}"] = fdf_sources[label].to_zarr(
-            str(zarr_store_path), component=label, overwrite=True, compute=False
-        )
+    # Blockwise fusion has to be off for both the `dask.array.store` below and
+    # the `dask.compute` at the end of this function, or the FDF cubes cost an
+    # extra RM-CLEAN pass each -- see the comment on `zarr_arrays`. Only worth it
+    # when a cube is actually requested: with fusion off, dask keeps each
+    # elementwise step of a moment reduction as its own chunk-sized key instead
+    # of folding it into the task that produced it, which raises peak memory on
+    # the moment-only path (the default) for no gain there.
+    fuse_config = {"optimization.fuse.active": False} if cube_products else {}
+
+    compute_targets: dict[str, Any] = {}
     if cube_products:
-        # Without the Faraday depth axis the cubes are not self-describing
-        compute_targets["zarr_phi"] = dask.array.from_array(
-            synth_results.phi_arr_radm2
-        ).to_zarr(
-            str(zarr_store_path),
-            component="phi_arr_radm2",
+        # One `dask.array.store` for every cube rather than a `to_zarr` each.
+        #
+        # `to_zarr` is `zarr.create` plus its own `store` call, and `store`
+        # optimises the graph it captures there and then. The fuse pass inlines
+        # the shared per-chunk RM-CLEAN task into each consumer branch, so the
+        # captured graph carries its own private copy: asking for the clean and
+        # model cubes ran RM-CLEAN twice per chunk, three cubes three times, and
+        # even one cube plus its moment maps twice -- although they all descend
+        # from a single `dask.delayed` call and are computed together below.
+        # Because the copy is made when the `Delayed` is built, `optimize_graph`
+        # at compute time cannot undo it; fusion has to be off both here and for
+        # the compute, since fusing there re-splits the branches again.
+        #
+        # Nothing is lost: these tasks are a whole spatial chunk of RM-CLEAN
+        # each, so saving a task boundary is worth far less than not running
+        # RM-CLEAN again.
+        zarr_arrays = [
+            zarr.create(
+                shape=fdf_sources[label].shape,
+                chunks=[chunk[0] for chunk in fdf_sources[label].chunks],
+                dtype=fdf_sources[label].dtype,
+                store=str(zarr_store_path),
+                path=label,
+                overwrite=True,
+            )
+            for label in cube_products
+        ]
+        with dask.config.set(fuse_config):
+            compute_targets["zarr_cubes"] = dask.array.store(
+                [fdf_sources[label] for label in cube_products],
+                zarr_arrays,
+                lock=False,
+                compute=False,
+            )
+        # Without the Faraday depth axis the cubes are not self-describing. Tiny,
+        # and with no upstream graph to share, so it is written here and now.
+        zarr.create(
+            shape=synth_results.phi_arr_radm2.shape,
+            chunks=synth_results.phi_arr_radm2.shape,
+            dtype=synth_results.phi_arr_radm2.dtype,
+            store=str(zarr_store_path),
+            path="phi_arr_radm2",
             overwrite=True,
-            compute=False,
-        )
+        )[:] = synth_results.phi_arr_radm2
 
     # Moments enter the batch as their lazy (ny, nx) maps, never as the FDF cube
     # they reduce: gathering the cube here would pull the whole (n_phi, ny, nx)
@@ -430,12 +471,14 @@ def write_rm_products(
         else ("processes" if run_clean else "threads")
     )
     compute_keys = list(compute_targets.keys())
+    with dask.config.set(fuse_config):
+        computed_values = dask.compute(
+            *(compute_targets[key] for key in compute_keys), scheduler=scheduler
+        )
     computed = dict(
         zip(
             compute_keys,
-            dask.compute(
-                *(compute_targets[key] for key in compute_keys), scheduler=scheduler
-            ),
+            computed_values,
         )
     )
 

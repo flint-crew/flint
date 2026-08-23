@@ -510,3 +510,82 @@ def test_rmsynth_rejects_compressed_stokes_i_error_cube(tmp_path: Path) -> None:
             stokes_i_error_cube=tmp_path / "i_err.fits.gz",
             rmsynth_options=RMSynthOptions(),
         )
+
+
+@pytest.mark.parametrize(
+    ("cube_products", "moment_products"),
+    [
+        ([], ["clean"]),
+        ([], ["clean", "model"]),
+        (["clean"], ["clean"]),
+        (["clean", "model"], ["clean", "model"]),
+        (["dirty", "clean", "model"], ["dirty", "clean", "model"]),
+    ],
+    ids=["moments", "two-moments", "cube+moments", "two-cubes", "everything"],
+)
+def test_rmclean_runs_once_per_chunk_whatever_is_requested(
+    tmp_path: Path,
+    qu_cubes: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    cube_products: list[FDFLabel],
+    moment_products: list[FDFLabel],
+) -> None:
+    """RM-CLEAN is the expensive part of the stage, and every requested product
+    descends from one ``dask.delayed`` call per spatial chunk, so it must run
+    once per chunk no matter how many products are asked for.
+
+    It is easy to lose: ``dask.array.Array.to_zarr`` optimises the graph it
+    captures, and the blockwise fuse pass inlines the shared RM-CLEAN task into
+    each consumer branch, giving every cube its own private copy. Before this
+    was pinned down, two cubes ran RM-CLEAN twice per chunk and three ran it
+    three times -- invisible in the output, just twice or three times the
+    runtime of the slowest stage.
+    """
+    import dask
+    import rm_lite.tools_3d.rmclean as rmclean_mod
+
+    stokes_q_cube, stokes_u_cube = qu_cubes
+
+    calls = []
+    original = rmclean_mod._clean_block
+    monkeypatch.setattr(
+        rmclean_mod,
+        "_clean_block",
+        lambda *args, **kwargs: (calls.append(1), original(*args, **kwargs))[1],
+    )
+    # write_rm_products picks the process scheduler when cleaning, which would
+    # put the counter in a subprocess. Fusion, not the scheduler, is what
+    # duplicates the task, so counting under threads measures the same thing.
+    real_compute = dask.compute
+    monkeypatch.setattr(
+        dask,
+        "compute",
+        lambda *a, **k: real_compute(*a, **{**k, "scheduler": "threads"}),
+    )
+
+    synth_results = run_rmsynth_3d(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        rmsynth_options=RMSynthOptions(),
+    )
+    n_chunks = (
+        synth_results.fdf_dirty_cube.numblocks[1]
+        * synth_results.fdf_dirty_cube.numblocks[2]
+    )
+    clean_results = run_rmclean_3d(
+        rm_synth_results=synth_results, rmclean_options=RMCleanOptions()
+    )
+    write_rm_products(
+        synth_results=synth_results,
+        clean_results=clean_results,
+        stokes_q_cube=stokes_q_cube,
+        rmsynth_options=RMSynthOptions(),
+        cube_products=cube_products,
+        moment_products=moment_products,
+        output_prefix=tmp_path / "test_field",
+    )
+
+    assert len(calls) == n_chunks, (
+        f"RM-CLEAN ran {len(calls) / n_chunks:.0f}x per chunk for "
+        f"cubes={cube_products}, moments={moment_products}"
+    )

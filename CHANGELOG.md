@@ -26,6 +26,15 @@
     (`multiscale_scales`, `multiscale_n_scales`, `multiscale_kernel`,
     `multiscale_max_iter_sub_minor`, `multiscale_sub_minor_fraction`,
     `multiscale_selection_margin`)
+  - Fixed RM-CLEAN being recomputed once per requested FDF cube. Every product
+    descends from one `dask.delayed` call per spatial chunk, but
+    `dask.array.Array.to_zarr` optimises the graph it captures, and the
+    blockwise fuse pass inlines that shared RM-CLEAN task into each consumer
+    branch. `cube_products: [clean, model]` ran RM-CLEAN twice per chunk, three
+    cubes three times, and one cube plus its moment maps twice.
+    `write_rm_products` now issues a single `dask.array.store` for every cube
+    with fusion disabled for it and for the batched compute. `moment_products`
+    alone -- the default -- was never affected
   - Documented the `rmsynth`/`rmclean` strategy modes in `docs/config.md`,
     including how `phi_max_radm2` is derived when left unset and why that
     depends on whether the band's blank gap channels are on the frequency grid
