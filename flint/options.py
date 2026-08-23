@@ -266,7 +266,7 @@ class RMSynthOptions(BaseOptions):
     fit_function: Literal["log", "linear"] = "log"
     """Stokes I fit function: 'log' is a power law, 'linear' is a polynomial"""
     stokes_i_snr_cut: float | None = 5.0
-    """Below this frequency-averaged Stokes I SNR a pixel falls back to a flat model. None fits every pixel"""
+    """Below this frequency-averaged Stokes I SNR a pixel falls back to a flat model (no spectral correction, not blanked). None fits every pixel. Needs a Stokes I noise to compare against, i.e. ``estimate_stokes_i_noise`` or ``RMSynthFieldOptions.stokes_i_error_cube``; with neither, rm-lite's SNR is infinite for every pixel and this cut silently does nothing. That is the difference between fitting the handful of real sources and running a bounded ``curve_fit`` on every noise pixel in the cube (~25 ms each), so ``flint.rmsynth.run_rmsynth_3d`` warns when the combination is a no-op"""
     compute_model_error: bool = False
     """Monte-Carlo the Stokes I fit's per-pixel model error via n_error_samples resamples. Only used if a Stokes I cube is given"""
     n_error_samples: int = 1000
@@ -275,8 +275,10 @@ class RMSynthOptions(BaseOptions):
     """Also compute a debiased (via rm_lite's debias_fdf) mom0/mom1/mom2 set per requested FDF"""
     debias_filter_size: int = 5
     """Median filter size (pixels) used by mom0 debiasing"""
-    estimate_stokes_i_noise: bool = False
-    """Derive a per-channel Stokes I error from the Stokes I cube when fitting the fractional-polarisation model"""
+    moment_threshold_snr: float = 5.0
+    """SNR cut (times the theoretical FDF noise) applied to FDF amplitudes before flint computes any Faraday moment map, whichever FDF they come from. Without a cut, mom0 integrates |FDF| noise over every Faraday depth and so has a large positive floor everywhere (mom1/mom2 become meaningless with it), which is why this applies to the dirty moments too and not just the cleaned ones. Distinct from the identically named ``RMCleanOptions`` field, which only reaches rm-lite's own moment maps -- flint computes its own, see ``flint.rmsynth.write_rm_products``"""
+    estimate_stokes_i_noise: bool = True
+    """Derive a per-channel Stokes I error from the Stokes I cube (a robust MAD per channel plane) when fitting the fractional-polarisation model. On by default because ``stokes_i_snr_cut`` is inert without a noise estimate, see there. Ignored when ``RMSynthFieldOptions.stokes_i_error_cube`` supplies a per-pixel error instead"""
 
 
 class RMCleanOptions(BaseOptions):
@@ -293,9 +295,21 @@ class RMCleanOptions(BaseOptions):
     gain: float = 0.1
     """CLEAN loop gain"""
     moment_threshold_snr: float = 5.0
-    """SNR cut (times the theoretical FDF noise) applied before computing Faraday moment maps"""
+    """SNR cut (times the theoretical FDF noise) handed to rm-lite for the moment maps it computes inside RM-CLEAN. Those maps are not what flint writes: ``flint.rmsynth.write_rm_products`` builds its own from the requested FDFs so they stay lazy, and cuts them at ``RMSynthOptions.moment_threshold_snr``"""
     multiscale: bool = False
-    """Use multiscale RM-CLEAN, which can recover Faraday-thick structure"""
+    """Use multiscale RM-CLEAN, which can recover Faraday-thick structure. Experimental in rm-lite, and far slower than single-scale: it fits a Gaussian to every scale kernel of every pixel it cleans. Note rm-lite 2026.8.1 raises on a fully blanked (all-NaN) spectrum here, which a mosaic edge is full of"""
+    multiscale_scales: list[float] | None = None
+    """Explicit multiscale scales in RMSF FWHM units. None auto-selects WSClean-style"""
+    multiscale_n_scales: int | None = None
+    """Cap on the number of auto-selected multiscale scales. None leaves it uncapped"""
+    multiscale_kernel: Literal["tapered_quad", "gaussian"] = "tapered_quad"
+    """Scale kernel shape used by multiscale RM-CLEAN"""
+    multiscale_max_iter_sub_minor: int = 10_000
+    """Maximum sub-minor (per-scale Hogbom) iterations in multiscale RM-CLEAN"""
+    multiscale_sub_minor_fraction: float = 0.5
+    """Fraction of the peak at which multiscale RM-CLEAN re-selects a scale"""
+    multiscale_selection_margin: float = 0.08
+    """Parsimony margin for multiscale scale selection: among scales scoring within this fraction of the best, the smallest wins"""
 
 
 class SpiceOptions(BaseOptions):
@@ -351,6 +365,8 @@ class RMSynthFieldOptions(BaseOptions):
     """Path to the Stokes U FITS cube. Computed by the racs-all flow, so required only when running this pipeline standalone"""
     stokes_i_cube: Path | None = None
     """Path to a Stokes I FITS cube, used to fit a per-pixel fractional-polarisation correction. Defaults to None."""
+    stokes_i_error_cube: Path | None = None
+    """Path to a Stokes I error FITS cube matching ``stokes_i_cube``, used to weight the per-pixel fit and to set the per-pixel SNR the ``RMSynthOptions.stokes_i_snr_cut`` compares against. Takes precedence over ``RMSynthOptions.estimate_stokes_i_noise``, whose per-channel estimate is the fallback when this is None"""
     imaging_strategy: Path | None = None
     """Path to a FLINT imaging yaml file that contains the RMSynthOptions/RMCleanOptions settings to use"""
     cube_products: list[Literal["dirty", "clean", "model"]] = []

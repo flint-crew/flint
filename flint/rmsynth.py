@@ -75,11 +75,39 @@ def _check_cubes_memmappable(*cubes: Path | None) -> None:
         raise NotSupportedError(msg)
 
 
+def _warn_if_snr_cut_inert(
+    rmsynth_options: RMSynthOptions, stokes_i_error_cube: Path | None
+) -> None:
+    """Warn when ``stokes_i_snr_cut`` is set but nothing gives it a noise to cut on.
+
+    rm-lite's frequency-averaged Stokes I SNR is ``mean(I) * sqrt(n) / rms(error)``,
+    and it deliberately returns infinity when the error spectrum is all-zero or
+    non-finite so that an SNR cut degrades to a no-op rather than rejecting
+    everything. With no error cube and no per-channel estimate the error *is*
+    all-zero, so every pixel scores infinity, passes the cut, and gets a full
+    bounded ``curve_fit`` -- around 25 ms on a pure-noise spectrum, which is
+    almost every pixel in a field cube. Loud rather than silent because the
+    result is correct but a thousand times slower than it needs to be.
+    """
+    if rmsynth_options.stokes_i_snr_cut is None:
+        return
+    if stokes_i_error_cube is not None or rmsynth_options.estimate_stokes_i_noise:
+        return
+    logger.warning(
+        f"stokes_i_snr_cut={rmsynth_options.stokes_i_snr_cut} will do nothing: "
+        "neither stokes_i_error_cube nor estimate_stokes_i_noise gives it a Stokes I "
+        "noise to compare against, so every pixel scores an infinite SNR and is "
+        "fitted. Set estimate_stokes_i_noise=True (the default) to fit only real "
+        "sources."
+    )
+
+
 def run_rmsynth_3d(
     stokes_q_cube: Path,
     stokes_u_cube: Path,
     rmsynth_options: RMSynthOptions,
     stokes_i_cube: Path | None = None,
+    stokes_i_error_cube: Path | None = None,
 ) -> RMSynth3DResults:
     """Run 3D RM-synthesis on Stokes Q/U FITS cubes.
 
@@ -88,15 +116,22 @@ def run_rmsynth_3d(
         stokes_u_cube (Path): Path to the Stokes U FITS cube
         rmsynth_options (RMSynthOptions): Options controlling the synthesis
         stokes_i_cube (Path | None, optional): Path to a Stokes I FITS cube, used to fit a per-pixel fractional-polarisation correction. FDF stays in Q/U flux if not given. Defaults to None.
+        stokes_i_error_cube (Path | None, optional): Path to a Stokes I error cube matching ``stokes_i_cube``, weighting the per-pixel fit and giving the SNR cut a per-pixel noise. Defaults to None, i.e. the per-channel estimate from ``RMSynthOptions.estimate_stokes_i_noise``.
 
     Returns:
         RMSynth3DResults: Lazy dirty FDF cube, RMSF cube, and associated parameters
     """
-    _check_cubes_memmappable(stokes_q_cube, stokes_u_cube, stokes_i_cube)
+    _check_cubes_memmappable(
+        stokes_q_cube, stokes_u_cube, stokes_i_cube, stokes_i_error_cube
+    )
+
+    if stokes_i_cube is not None:
+        _warn_if_snr_cut_inert(rmsynth_options, stokes_i_error_cube)
 
     stokes_i_kwargs = (
         {
             "stokes_i_file": stokes_i_cube,
+            "stokes_i_error_file": stokes_i_error_cube,
             "fit_order": rmsynth_options.fit_order,
             "fit_function": rmsynth_options.fit_function,
             "stokes_i_snr_cut": rmsynth_options.stokes_i_snr_cut,
@@ -133,6 +168,22 @@ def run_rmclean_3d(
     Returns:
         RMClean3DResults: Lazy clean/model/residual FDF cubes and moment maps
     """
+    multiscale_kwargs = (
+        {
+            "multiscale_scales": np.asarray(
+                rmclean_options.multiscale_scales, dtype=float
+            )
+            if rmclean_options.multiscale_scales
+            else None,
+            "multiscale_n_scales": rmclean_options.multiscale_n_scales,
+            "multiscale_kernel": rmclean_options.multiscale_kernel,
+            "multiscale_max_iter_sub_minor": rmclean_options.multiscale_max_iter_sub_minor,
+            "multiscale_sub_minor_fraction": rmclean_options.multiscale_sub_minor_fraction,
+            "multiscale_selection_margin": rmclean_options.multiscale_selection_margin,
+        }
+        if rmclean_options.multiscale
+        else {}
+    )
     return run_rmclean_from_synth(
         rm_synth_3d_results=rm_synth_results,
         auto_mask=rmclean_options.auto_mask,
@@ -141,6 +192,7 @@ def run_rmclean_3d(
         gain=rmclean_options.gain,
         moment_threshold_snr=rmclean_options.moment_threshold_snr,
         multiscale=rmclean_options.multiscale,
+        **multiscale_kwargs,
     )
 
 
@@ -263,7 +315,6 @@ def write_rm_products(
     clean_results: RMClean3DResults | None,
     stokes_q_cube: Path,
     rmsynth_options: RMSynthOptions,
-    rmclean_options: RMCleanOptions,
     cube_products: list[FDFLabel],
     moment_products: list[FDFLabel],
     output_prefix: Path,
@@ -275,8 +326,7 @@ def write_rm_products(
         synth_results (RMSynth3DResults): Results from ``run_rmsynth_3d``
         clean_results (RMClean3DResults | None): Results from ``run_rmclean_3d``, or None if 'clean'/'model' were not requested
         stokes_q_cube (Path): Path to the Stokes Q FITS cube (its header is reused for output WCS)
-        rmsynth_options (RMSynthOptions): Options controlling RM-synthesis
-        rmclean_options (RMCleanOptions): Options controlling RM-CLEAN
+        rmsynth_options (RMSynthOptions): Options controlling RM-synthesis, including the Faraday moment threshold
         cube_products (list[FDFLabel]): Which FDF cube(s) to write ('dirty', 'clean', 'model')
         moment_products (list[FDFLabel]): Which FDF(s) to compute Faraday moment maps from
         output_prefix (Path): Common prefix for the output files
@@ -322,22 +372,23 @@ def write_rm_products(
     # Moments enter the batch as their lazy (ny, nx) maps, never as the FDF cube
     # they reduce: gathering the cube here would pull the whole (n_phi, ny, nx)
     # array into this one worker, which for a mosaic-sized cube is tens of GB per
-    # requested label. RM-CLEAN already applies this same threshold to its own
-    # (unused) moment maps, so it is derived once here from the shared noise.
-    clean_moment_threshold = (
-        rmclean_options.moment_threshold_snr
+    # requested label.
+    #
+    # Every FDF gets the same amplitude cut, the dirty one included. mom0 is
+    # sum(|FDF|) over the whole Faraday depth axis, so with no cut an off-source
+    # pixel integrates hundreds of noise samples into a large positive floor
+    # (mom1/mom2 are then weighted by that noise and mean nothing). rm-lite
+    # applies this same cut inside RM-CLEAN to its own moment maps, which flint
+    # does not use, so it is rederived here from the shared theoretical noise.
+    moment_threshold = (
+        rmsynth_options.moment_threshold_snr
         * synth_results.theoretical_noise.fdf_error_noise
     )
-    moment_thresholds: dict[FDFLabel, float | None] = {
-        "dirty": None,
-        "clean": clean_moment_threshold,
-        "model": clean_moment_threshold,
-    }
     for label in moment_products:
         moments = _lazy_faraday_moments(
             fdf_cube=fdf_sources[label],
             synth_results=synth_results,
-            threshold=moment_thresholds[label],
+            threshold=moment_threshold,
         )
         for name, moment_map in zip(_MOMENT_NAMES, moments):
             compute_targets[f"moment.{label}.{name}"] = moment_map

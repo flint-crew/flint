@@ -29,16 +29,21 @@ def task_rmsynth(
     stokes_u_cube: Path,
     rmsynth_options: RMSynthOptions,
     stokes_i_cube: Path | None = None,
+    stokes_i_error_cube: Path | None = None,
 ) -> RMSynth3DResults:
-
     from prefect_dask import get_dask_client
 
+    # Set as the default scheduler, not just borrowed: rm-lite's per-channel
+    # noise estimates (Q/U weights, and the Stokes I error behind the SNR cut)
+    # are eager `dask.compute` calls inside `rmsynth_3d_from_fits`, so without a
+    # default client they would read whole cubes on this one worker.
     with get_dask_client():
         return run_rmsynth_3d(
             stokes_q_cube=stokes_q_cube,
             stokes_u_cube=stokes_u_cube,
             rmsynth_options=rmsynth_options,
             stokes_i_cube=stokes_i_cube,
+            stokes_i_error_cube=stokes_i_error_cube,
         )
 
 
@@ -62,7 +67,6 @@ def task_write_rm_products(
     clean_results: RMClean3DResults | None,
     stokes_q_cube: Path,
     rmsynth_options: RMSynthOptions,
-    rmclean_options: RMCleanOptions,
     cube_products: list[FDFLabel],
     moment_products: list[FDFLabel],
     output_prefix: Path,
@@ -77,7 +81,6 @@ def task_write_rm_products(
             clean_results=clean_results,
             stokes_q_cube=stokes_q_cube,
             rmsynth_options=rmsynth_options,
-            rmclean_options=rmclean_options,
             cube_products=cube_products,
             moment_products=moment_products,
             output_prefix=output_prefix,

@@ -93,6 +93,7 @@ def _synth_and_write(
     moment_products: list[FDFLabel],
     output_prefix: Path,
     stokes_i_cube: Path | None = None,
+    stokes_i_error_cube: Path | None = None,
 ) -> list[Path]:
     """Mirror of the call sequence in ``flint.prefect.flows.rmsynth_pipeline``,
     keeping these unit tests off prefect and dask. The flow itself is tested in
@@ -105,6 +106,7 @@ def _synth_and_write(
         stokes_u_cube=stokes_u_cube,
         rmsynth_options=rmsynth_options,
         stokes_i_cube=stokes_i_cube,
+        stokes_i_error_cube=stokes_i_error_cube,
     )
     clean_results = (
         run_rmclean_3d(rm_synth_results=synth_results, rmclean_options=rmclean_options)
@@ -116,7 +118,6 @@ def _synth_and_write(
         clean_results=clean_results,
         stokes_q_cube=stokes_q_cube,
         rmsynth_options=rmsynth_options,
-        rmclean_options=rmclean_options,
         cube_products=cube_products,
         moment_products=moment_products,
         output_prefix=output_prefix,
@@ -337,5 +338,175 @@ def test_rmsynth_rejects_compressed_cubes(tmp_path: Path) -> None:
         run_rmsynth_3d(
             stokes_q_cube=tmp_path / "q.fits.gz",
             stokes_u_cube=tmp_path / "u.fits.gz",
+            rmsynth_options=RMSynthOptions(),
+        )
+
+
+def _make_noise_only_cubes(
+    tmp_path: Path, prefix: str = "noise"
+) -> tuple[Path, Path, Path]:
+    """Q/U/I cubes of pure noise, no source anywhere.
+
+    The point of a noise-only cube is that everything the pipeline reports for
+    it is a property of the noise handling rather than of a signal: no pixel
+    should be fitted, cleaned, or given a polarised flux.
+    """
+    freq_hz = np.linspace(800e6, 1800e6, 40)
+    rng = np.random.default_rng(20)
+    shape = (freq_hz.size, 8, 8)
+
+    wcs = WCS(naxis=3)
+    wcs.wcs.ctype = ["RA---SIN", "DEC--SIN", "FREQ"]
+    wcs.wcs.crval = [180.0, -30.0, freq_hz[0]]
+    wcs.wcs.crpix = [shape[2] / 2, shape[1] / 2, 1]
+    wcs.wcs.cdelt = [-1e-3, 1e-3, freq_hz[1] - freq_hz[0]]
+    wcs.wcs.cunit = ["deg", "deg", "Hz"]
+    header = wcs.to_header()
+
+    paths = []
+    for stokes in ("q", "u", "i"):
+        cube = rng.normal(0.0, 1e-3, shape).astype(np.float32)
+        path = tmp_path / f"{prefix}.{stokes}.fits"
+        fits.writeto(path, cube, header, overwrite=True)
+        paths.append(path)
+    return paths[0], paths[1], paths[2]
+
+
+def test_estimate_stokes_i_noise_defaults_on() -> None:
+    """The Stokes I SNR cut is inert without a noise to compare against, so the
+    estimate that gives it one has to be on by default -- see
+    ``_warn_if_snr_cut_inert``."""
+    options = RMSynthOptions()
+    assert options.estimate_stokes_i_noise is True
+    assert options.stokes_i_snr_cut is not None
+
+
+def test_warns_when_stokes_i_snr_cut_is_inert(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A cut with no noise behind it passes every pixel, so every pixel gets a
+    curve_fit. Correct, but ~1000x slower than intended, hence the warning."""
+    from flint.rmsynth import _warn_if_snr_cut_inert
+
+    caplog.set_level("WARNING")
+    _warn_if_snr_cut_inert(
+        RMSynthOptions(estimate_stokes_i_noise=False, stokes_i_snr_cut=5.0), None
+    )
+    assert "will do nothing" in caplog.text
+
+    # Either source of a Stokes I noise makes it meaningful again, and so does
+    # turning the cut off deliberately.
+    for options, error_cube in (
+        (RMSynthOptions(estimate_stokes_i_noise=True, stokes_i_snr_cut=5.0), None),
+        (
+            RMSynthOptions(estimate_stokes_i_noise=False, stokes_i_snr_cut=5.0),
+            tmp_path / "i_err.fits",
+        ),
+        (RMSynthOptions(estimate_stokes_i_noise=False, stokes_i_snr_cut=None), None),
+    ):
+        caplog.clear()
+        _warn_if_snr_cut_inert(options, error_cube)
+        assert caplog.text == ""
+
+
+def test_stokes_i_fit_on_noise_stays_finite(tmp_path: Path) -> None:
+    """With the SNR cut working, a noise-only cube must come back with no
+    polarised flux and nothing infinite.
+
+    A power law fitted to a noise spectrum is unconstrained and can dip to
+    ~1e-10 mid-band; Q/U divided by that is an infinite FDF and an infinite
+    mom0. The cut is what stops those pixels being fitted at all.
+    """
+    q_cube, u_cube, i_cube = _make_noise_only_cubes(tmp_path)
+    output_prefix = tmp_path / "noise_field"
+
+    _synth_and_write(
+        stokes_q_cube=q_cube,
+        stokes_u_cube=u_cube,
+        stokes_i_cube=i_cube,
+        rmsynth_options=RMSynthOptions(
+            estimate_stokes_i_noise=True, stokes_i_snr_cut=5.0
+        ),
+        rmclean_options=RMCleanOptions(),
+        cube_products=[],
+        moment_products=["dirty", "clean"],
+        output_prefix=output_prefix,
+    )
+
+    for label in ("dirty", "clean"):
+        mom0 = fits.getdata(Path(f"{output_prefix}.fdf.{label}.mom0.fits"))
+        assert np.isfinite(mom0).all(), f"{label} mom0 has non-finite pixels"
+        # Nothing clears the moment threshold, so there is no polarised flux
+        assert np.allclose(mom0, 0.0), f"{label} mom0 found flux in pure noise"
+
+
+def test_moment_threshold_applies_to_the_dirty_fdf(tmp_path: Path) -> None:
+    """mom0 sums |FDF| over every Faraday depth, so an unthresholded off-source
+    pixel integrates hundreds of noise samples into a large positive floor. The
+    cut has to reach the dirty moments, not just the cleaned ones."""
+    q_cube, u_cube, _ = _make_noise_only_cubes(tmp_path, prefix="thresh")
+
+    thresholded = tmp_path / "thresholded"
+    _synth_and_write(
+        stokes_q_cube=q_cube,
+        stokes_u_cube=u_cube,
+        rmsynth_options=RMSynthOptions(moment_threshold_snr=5.0),
+        rmclean_options=RMCleanOptions(),
+        cube_products=[],
+        moment_products=["dirty"],
+        output_prefix=thresholded,
+    )
+    unthresholded = tmp_path / "unthresholded"
+    _synth_and_write(
+        stokes_q_cube=q_cube,
+        stokes_u_cube=u_cube,
+        rmsynth_options=RMSynthOptions(moment_threshold_snr=0.0),
+        rmclean_options=RMCleanOptions(),
+        cube_products=[],
+        moment_products=["dirty"],
+        output_prefix=unthresholded,
+    )
+
+    cut = fits.getdata(Path(f"{thresholded}.fdf.dirty.mom0.fits"))
+    uncut = fits.getdata(Path(f"{unthresholded}.fdf.dirty.mom0.fits"))
+    assert np.allclose(cut, 0.0), "noise survived the dirty moment threshold"
+    assert np.nanmedian(uncut) > 0.0, "expected a noise floor with no threshold"
+
+
+def test_stokes_i_error_cube_reaches_rm_lite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A supplied per-pixel error cube is what the SNR cut should measure
+    against, so it has to arrive at rm-lite rather than being dropped."""
+    captured: dict[str, object] = {}
+
+    def _spy(**kwargs):
+        captured.update(kwargs)
+        raise RuntimeError("stop after capturing the call")
+
+    monkeypatch.setattr("flint.rmsynth.rmsynth_3d_from_fits", _spy)
+
+    with pytest.raises(RuntimeError):
+        run_rmsynth_3d(
+            stokes_q_cube=tmp_path / "q.fits",
+            stokes_u_cube=tmp_path / "u.fits",
+            stokes_i_cube=tmp_path / "i.fits",
+            stokes_i_error_cube=tmp_path / "i_err.fits",
+            rmsynth_options=RMSynthOptions(),
+        )
+
+    assert captured["stokes_i_error_file"] == tmp_path / "i_err.fits"
+    assert captured["stokes_i_file"] == tmp_path / "i.fits"
+
+
+def test_rmsynth_rejects_compressed_stokes_i_error_cube(tmp_path: Path) -> None:
+    """The error cube is read block-by-block like the others, so it is subject
+    to the same no-gzip rule."""
+    with pytest.raises(NotSupportedError):
+        run_rmsynth_3d(
+            stokes_q_cube=tmp_path / "q.fits",
+            stokes_u_cube=tmp_path / "u.fits",
+            stokes_i_cube=tmp_path / "i.fits",
+            stokes_i_error_cube=tmp_path / "i_err.fits.gz",
             rmsynth_options=RMSynthOptions(),
         )
