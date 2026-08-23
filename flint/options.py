@@ -259,6 +259,8 @@ class RMSynthOptions(BaseOptions):
     """Briggs robust parameter, required if weight_type is 'briggs'"""
     nufft_nthreads: int = 1
     """finufft OpenMP threads per dask chunk"""
+    reuse_rmsf: bool = True
+    """Compute one RMSF per chunk and reuse it for every pixel when they all share the same channel flagging, instead of running the NUFFT once per pixel for the same answer. rm-lite checks the condition per chunk, so a chunk with blanked pixels mixed in still gets per-pixel RMSFs, and this only ever declines a saving rather than asserting one. Worth ~20x on the RMSF stage for a typical cube, where flagging is per-channel and so shared by every pixel"""
     target_chunk_mb: float = 256
     """Target per-chunk memory footprint, in MB, when reading the Q/U cubes"""
     fit_order: int = 2

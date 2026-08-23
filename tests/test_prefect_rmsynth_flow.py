@@ -48,7 +48,10 @@ def _renamed_qu_cubes(
         q_path.rename(tmp_path / f"{STEM}.q.linmos.fits"),
         u_path.rename(tmp_path / f"{STEM}.u.linmos.fits"),
     )
-    return paths if not degenerate_axis else tuple(map(_add_degenerate_axis, paths))
+    if not degenerate_axis:
+        return paths
+    # Explicit pair rather than `tuple(map(...))`, which types as tuple[Path, ...]
+    return _add_degenerate_axis(paths[0]), _add_degenerate_axis(paths[1])
 
 
 @pytest.mark.slow

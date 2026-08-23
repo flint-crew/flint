@@ -590,3 +590,60 @@ def test_rmclean_runs_once_per_chunk_whatever_is_requested(
         f"RM-CLEAN ran {len(calls) / n_chunks:.0f}x per chunk for "
         f"cubes={cube_products}, moments={moment_products}"
     )
+
+
+def test_reuse_rmsf_reaches_rm_lite_and_defaults_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The RMSF is only consumed by RM-CLEAN, and rm-lite otherwise recomputes
+    it per pixel even though every pixel with the same channel flagging gets the
+    same answer. On by default because rm-lite checks the condition itself, so
+    it can only decline the saving, never assert one wrongly."""
+    assert RMSynthOptions().reuse_rmsf is True
+
+    captured: dict[str, object] = {}
+
+    def _spy(**kwargs):
+        captured.update(kwargs)
+        raise RuntimeError("stop after capturing the call")
+
+    monkeypatch.setattr("flint.rmsynth.rmsynth_3d_from_fits", _spy)
+
+    for reuse in (True, False):
+        captured.clear()
+        with pytest.raises(RuntimeError):
+            run_rmsynth_3d(
+                stokes_q_cube=tmp_path / "q.fits",
+                stokes_u_cube=tmp_path / "u.fits",
+                rmsynth_options=RMSynthOptions(reuse_rmsf=reuse),
+            )
+        assert captured["reuse_rmsf"] is reuse
+
+
+def test_reuse_rmsf_does_not_change_the_products(
+    tmp_path: Path, qu_cubes: tuple[Path, Path]
+) -> None:
+    """Reusing the RMSF must be invisible in the outputs, not merely close."""
+    stokes_q_cube, stokes_u_cube = qu_cubes
+
+    outputs = {}
+    for reuse in (True, False):
+        prefix = tmp_path / f"reuse_{reuse}"
+        _synth_and_write(
+            stokes_q_cube=stokes_q_cube,
+            stokes_u_cube=stokes_u_cube,
+            rmsynth_options=RMSynthOptions(reuse_rmsf=reuse),
+            rmclean_options=RMCleanOptions(),
+            cube_products=[],
+            moment_products=["clean"],
+            output_prefix=prefix,
+        )
+        outputs[reuse] = [
+            fits.getdata(Path(f"{prefix}.fdf.clean.{moment}.fits"))
+            for moment in ("mom0", "mom1", "mom2")
+        ]
+
+    for reused, per_pixel, moment in zip(
+        outputs[True], outputs[False], ("mom0", "mom1", "mom2"), strict=True
+    ):
+        assert np.array_equal(reused, per_pixel, equal_nan=True), moment

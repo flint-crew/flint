@@ -152,6 +152,7 @@ def run_rmsynth_3d(
         weight_type=rmsynth_options.weight_type,
         robust=rmsynth_options.robust,
         nufft_nthreads=rmsynth_options.nufft_nthreads,
+        reuse_rmsf=rmsynth_options.reuse_rmsf,
         target_chunk_mb=rmsynth_options.target_chunk_mb,
         **stokes_i_kwargs,
     )
