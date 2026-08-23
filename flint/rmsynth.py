@@ -143,15 +143,8 @@ def run_rmclean_3d(
         gain=rmclean_options.gain,
         moment_threshold_snr=rmclean_options.moment_threshold_snr,
         multiscale=rmclean_options.multiscale,
-        multiscale_scales=np.asarray(rmclean_options.multiscale_scales, dtype=float)
-        if rmclean_options.multiscale_scales
-        else None,
-        multiscale_n_scales=rmclean_options.multiscale_n_scales,
-        multiscale_kernel=rmclean_options.multiscale_kernel,
-        multiscale_max_iter_sub_minor=rmclean_options.multiscale_max_iter_sub_minor,
-        multiscale_sub_minor_fraction=rmclean_options.multiscale_sub_minor_fraction,
-        multiscale_selection=rmclean_options.multiscale_selection,
-        multiscale_selection_margin=rmclean_options.multiscale_selection_margin,
+        # rm-lite's other multiscale parameters are not forwarded while
+        # multiscale RM-CLEAN is experimental there; see `RMCleanOptions`.
     )
 
 

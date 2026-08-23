@@ -318,23 +318,19 @@ class RMCleanOptions(BaseOptions):
     gain: float = 0.1
     """CLEAN loop gain"""
     moment_threshold_snr: float = 5.0
-    """SNR cut (times the theoretical FDF noise) handed to rm-lite for the moment maps it computes inside RM-CLEAN. Those maps are not what flint writes: ``flint.rmsynth.write_rm_products`` builds its own from the requested FDFs so they stay lazy, and cuts them at ``RMSynthOptions.moment_threshold_snr``"""
+    """SNR cut (times the theoretical FDF noise) applied before computing Faraday moment maps, the dirty ones included"""
     multiscale: bool = False
     """Use multiscale RM-CLEAN, which can recover Faraday-thick structure"""
-    multiscale_scales: list[float] | None = None
-    """Explicit multiscale scales in RMSF FWHM units. None auto-selects WSClean-style"""
-    multiscale_n_scales: int | None = None
-    """Cap on the number of auto-selected multiscale scales. None leaves it uncapped"""
-    multiscale_kernel: Literal["tapered_quad", "gaussian"] = "tapered_quad"
-    """Scale kernel shape used by multiscale RM-CLEAN"""
-    multiscale_max_iter_sub_minor: int = 10_000
-    """Maximum sub-minor (per-scale Hogbom) iterations in multiscale RM-CLEAN"""
-    multiscale_sub_minor_fraction: float = 0.5
-    """Fraction of the peak at which multiscale RM-CLEAN re-selects a scale"""
-    multiscale_selection: Literal["snr", "hybrid"] = "hybrid"
-    """Multiscale scale-selection strategy"""
-    multiscale_selection_margin: float = 0.08
-    """Parsimony margin for multiscale scale selection: among scales scoring within this fraction of the best, the smallest wins"""
+    # rm-lite's multiscale RM-CLEAN takes seven more parameters -- scales,
+    # n_scales, kernel, max_iter_sub_minor, sub_minor_fraction, selection and
+    # selection_margin. They are deliberately not exposed while multiscale is
+    # experimental there: nothing here needs tuning yet, and an option flint
+    # ships is one it has to keep meaning the same thing.
+    #
+    # To add them later: give each a `multiscale_`-prefixed field here and pass
+    # it through in `flint.rmsynth.run_rmclean_3d`, which already forwards
+    # `multiscale` itself. `scales` wants a `list[float] | None` converted to an
+    # array at the call, since rm-lite takes an ndarray and None auto-selects.
 
 
 class SpiceOptions(BaseOptions):
