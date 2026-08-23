@@ -12,6 +12,7 @@ from astropy.wcs import WCS
 from flint.exceptions import NotSupportedError
 from flint.options import RMCleanOptions, RMSynthOptions
 from flint.rmsynth import (
+    _RM_LITE_SUPPORTS_REUSE_RMSF,
     FDFLabel,
     needs_rmclean,
     run_rmclean_3d,
@@ -592,15 +593,22 @@ def test_rmclean_runs_once_per_chunk_whatever_is_requested(
     )
 
 
-def test_reuse_rmsf_reaches_rm_lite_and_defaults_on(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_reuse_rmsf_defaults_on() -> None:
     """The RMSF is only consumed by RM-CLEAN, and rm-lite otherwise recomputes
     it per pixel even though every pixel with the same channel flagging gets the
     same answer. On by default because rm-lite checks the condition itself, so
     it can only decline the saving, never assert one wrongly."""
     assert RMSynthOptions().reuse_rmsf is True
 
+
+@pytest.mark.skipif(
+    not _RM_LITE_SUPPORTS_REUSE_RMSF,
+    reason="installed rm-lite predates the reuse_rmsf argument",
+)
+def test_reuse_rmsf_reaches_rm_lite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the installed rm-lite takes the argument, flint must forward it."""
     captured: dict[str, object] = {}
 
     def _spy(**kwargs):

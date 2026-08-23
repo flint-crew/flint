@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import inspect
 import os
 from pathlib import Path
 from typing import Any, Literal
@@ -42,6 +43,16 @@ from flint.options import RMCleanOptions, RMSynthOptions
 
 FDFLabel = Literal["dirty", "clean", "model"]
 _MOMENT_NAMES = ("mom0", "mom1", "mom2")
+
+# `reuse_rmsf` landed in rm-lite after 2026.8.1, the release flint currently
+# pins, so pass it only when the installed rm-lite actually accepts it. Either
+# way the answer is the same: without it rm-lite computes the RMSF per pixel,
+# which is what `reuse_rmsf=False` asks for anyway -- just slower. The saving
+# appears on its own once the pin moves to a release that has it, and this shim
+# (and the branch in `run_rmsynth_3d`) can go at that point.
+_RM_LITE_SUPPORTS_REUSE_RMSF = (
+    "reuse_rmsf" in inspect.signature(rmsynth_3d_from_fits).parameters
+)
 
 
 def needs_rmclean(
@@ -129,6 +140,18 @@ def run_rmsynth_3d(
     if stokes_i_cube is not None:
         _warn_if_snr_cut_inert(rmsynth_options, stokes_i_error_cube)
 
+    reuse_rmsf_kwargs = (
+        {"reuse_rmsf": rmsynth_options.reuse_rmsf}
+        if _RM_LITE_SUPPORTS_REUSE_RMSF
+        else {}
+    )
+    if not _RM_LITE_SUPPORTS_REUSE_RMSF and rmsynth_options.reuse_rmsf:
+        logger.debug(
+            "The installed rm-lite has no reuse_rmsf argument, so the RMSF is "
+            "computed per pixel. Same result, but slower on a cube whose pixels "
+            "all share the same channel flagging."
+        )
+
     stokes_i_kwargs = (
         {
             "stokes_i_file": stokes_i_cube,
@@ -152,8 +175,8 @@ def run_rmsynth_3d(
         weight_type=rmsynth_options.weight_type,
         robust=rmsynth_options.robust,
         nufft_nthreads=rmsynth_options.nufft_nthreads,
-        reuse_rmsf=rmsynth_options.reuse_rmsf,
         target_chunk_mb=rmsynth_options.target_chunk_mb,
+        **reuse_rmsf_kwargs,
         **stokes_i_kwargs,
     )
 
