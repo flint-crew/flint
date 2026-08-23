@@ -94,6 +94,7 @@ def process_rmsynth(rmsynth_field_options: RMSynthFieldOptions) -> list[Path]:
         clean_results=clean_result,
         stokes_q_cube=rmsynth_field_options.stokes_q_cube,
         rmsynth_options=rmsynth_options,
+        rmclean_options=rmclean_options,
         cube_products=rmsynth_field_options.cube_products,
         moment_products=rmsynth_field_options.moment_products,
         output_prefix=output_prefix,

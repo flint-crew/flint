@@ -171,6 +171,7 @@ def run_rmclean_3d(
         multiscale_kernel=rmclean_options.multiscale_kernel,
         multiscale_max_iter_sub_minor=rmclean_options.multiscale_max_iter_sub_minor,
         multiscale_sub_minor_fraction=rmclean_options.multiscale_sub_minor_fraction,
+        multiscale_selection=rmclean_options.multiscale_selection,
         multiscale_selection_margin=rmclean_options.multiscale_selection_margin,
     )
 
@@ -294,6 +295,7 @@ def write_rm_products(
     clean_results: RMClean3DResults | None,
     stokes_q_cube: Path,
     rmsynth_options: RMSynthOptions,
+    rmclean_options: RMCleanOptions,
     cube_products: list[FDFLabel],
     moment_products: list[FDFLabel],
     output_prefix: Path,
@@ -305,7 +307,8 @@ def write_rm_products(
         synth_results (RMSynth3DResults): Results from ``run_rmsynth_3d``
         clean_results (RMClean3DResults | None): Results from ``run_rmclean_3d``, or None if 'clean'/'model' were not requested
         stokes_q_cube (Path): Path to the Stokes Q FITS cube (its header is reused for output WCS)
-        rmsynth_options (RMSynthOptions): Options controlling RM-synthesis, including the Faraday moment threshold
+        rmsynth_options (RMSynthOptions): Options controlling RM-synthesis
+        rmclean_options (RMCleanOptions): Options controlling RM-CLEAN, whose ``moment_threshold_snr`` cuts every Faraday moment map
         cube_products (list[FDFLabel]): Which FDF cube(s) to write ('dirty', 'clean', 'model')
         moment_products (list[FDFLabel]): Which FDF(s) to compute Faraday moment maps from
         output_prefix (Path): Common prefix for the output files
@@ -389,7 +392,7 @@ def write_rm_products(
     # applies this same cut inside RM-CLEAN to its own moment maps, which flint
     # does not use, so it is rederived here from the shared theoretical noise.
     moment_threshold = (
-        rmsynth_options.moment_threshold_snr
+        rmclean_options.moment_threshold_snr
         * synth_results.theoretical_noise.fdf_error_noise
     )
     for label in moment_products:

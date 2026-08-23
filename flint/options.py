@@ -277,8 +277,6 @@ class RMSynthOptions(BaseOptions):
     """Also compute a debiased (via rm_lite's debias_fdf) mom0/mom1/mom2 set per requested FDF"""
     debias_filter_size: int = 5
     """Median filter size (pixels) used by mom0 debiasing"""
-    moment_threshold_snr: float = 5.0
-    """SNR cut (times the theoretical FDF noise) applied before computing Faraday moment maps"""
     estimate_stokes_i_noise: bool = True
     """Derive a per-channel Stokes I error from the Stokes I cube when fitting the fractional-polarisation model. On by default because ``stokes_i_snr_cut`` is inert without it"""
 
@@ -310,6 +308,8 @@ class RMCleanOptions(BaseOptions):
     """Maximum sub-minor (per-scale Hogbom) iterations in multiscale RM-CLEAN"""
     multiscale_sub_minor_fraction: float = 0.5
     """Fraction of the peak at which multiscale RM-CLEAN re-selects a scale"""
+    multiscale_selection: Literal["snr", "hybrid"] = "hybrid"
+    """Multiscale scale-selection strategy"""
     multiscale_selection_margin: float = 0.08
     """Parsimony margin for multiscale scale selection: among scales scoring within this fraction of the best, the smallest wins"""
 
