@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 from astropy.io import fits
 from astropy.wcs import WCS
+from pydantic import ValidationError
 
 from flint.exceptions import NotSupportedError
 from flint.options import RMCleanOptions, RMSynthOptions
@@ -380,27 +381,49 @@ def test_estimate_stokes_i_noise_defaults_on() -> None:
     assert options.stokes_i_snr_cut is not None
 
 
-def test_warns_when_stokes_i_snr_cut_is_inert(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """A cut with no noise behind it passes every pixel, so every pixel gets a
-    curve_fit. Correct, but ~1000x slower than intended, hence the warning."""
-    from flint.rmsynth import _warn_if_snr_cut_inert
+def test_snr_cut_without_a_noise_estimate_is_refused() -> None:
+    """The combination is broken, not merely slow, so it must not be
+    constructible: rm-lite scores every pixel as infinite SNR without a noise
+    estimate, so the cut passes all of them and a power law fitted to noise can
+    pass close enough to zero that Q/U divided by it is infinite."""
+    with pytest.raises(ValidationError, match="requires estimate_stokes_i_noise"):
+        RMSynthOptions(stokes_i_snr_cut=5.0, estimate_stokes_i_noise=False)
 
-    caplog.set_level("WARNING")
-    _warn_if_snr_cut_inert(
-        RMSynthOptions(estimate_stokes_i_noise=False, stokes_i_snr_cut=5.0)
+    # ... including when reached through with_options rather than the constructor
+    with pytest.raises(ValidationError, match="requires estimate_stokes_i_noise"):
+        RMSynthOptions().with_options(estimate_stokes_i_noise=False)
+
+    # Turning the cut off deliberately is allowed, and so is the default pairing
+    assert (
+        RMSynthOptions(
+            stokes_i_snr_cut=None, estimate_stokes_i_noise=False
+        ).stokes_i_snr_cut
+        is None
     )
-    assert "will do nothing" in caplog.text
+    assert RMSynthOptions().estimate_stokes_i_noise is True
 
-    # A noise estimate makes it meaningful again, and so does turning the cut off
-    for options in (
-        RMSynthOptions(estimate_stokes_i_noise=True, stokes_i_snr_cut=5.0),
-        RMSynthOptions(estimate_stokes_i_noise=False, stokes_i_snr_cut=None),
-    ):
-        caplog.clear()
-        _warn_if_snr_cut_inert(options)
-        assert caplog.text == ""
+
+def test_snr_cut_rule_is_enforced_from_a_strategy_file(tmp_path: Path) -> None:
+    """A strategy file is the likely way in, so it has to fail there too rather
+    than after imaging has already run."""
+    strategy_path = tmp_path / "strategy.yaml"
+    strategy_path.write_text(
+        "defaults:\n"
+        "  rmsynth:\n"
+        "    estimate_stokes_i_noise: false\n"
+        "version: 0.2\n"
+        "rmsynth:\n"
+        "  rmsynth:\n"
+        "    estimate_stokes_i_noise: false\n"
+    )
+    from flint.configuration import get_options_from_strategy, load_strategy_yaml
+
+    strategy = load_strategy_yaml(input_yaml=strategy_path, verify=False)
+    options = get_options_from_strategy(
+        strategy=strategy, operation="rmsynth", mode="rmsynth"
+    )
+    with pytest.raises(ValidationError, match="requires estimate_stokes_i_noise"):
+        RMSynthOptions(**options)
 
 
 def test_stokes_i_fit_on_noise_stays_finite(tmp_path: Path) -> None:

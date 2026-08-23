@@ -17,7 +17,7 @@ import yaml
 from astropy.coordinates import EarthLocation, SkyCoord
 from astropy.time import Time
 from capn_crunch import BaseOptions
-from pydantic import create_model
+from pydantic import create_model, model_validator
 
 from flint.exceptions import MSError
 from flint.logging import logger
@@ -261,6 +261,29 @@ class RMSynthOptions(BaseOptions):
     """finufft OpenMP threads per dask chunk"""
     reuse_rmsf: bool = True
     """Reuse one RMSF per chunk when every pixel shares the same channel flagging"""
+
+    @model_validator(mode="after")
+    def _snr_cut_needs_a_noise_estimate(self) -> RMSynthOptions:
+        """Reject a Stokes I SNR cut that has nothing to measure against.
+
+        rm-lite scores a pixel whose Stokes I error is all-zero as infinite SNR,
+        so without an estimate the cut passes every pixel: each gets a full
+        ``curve_fit``, and a power law fitted to noise can pass close enough to
+        zero that dividing Q/U by it gives an infinite FDF. That is a broken
+        configuration rather than a slow one, so it is refused here instead of
+        being warned about once the run is already underway.
+        """
+        if self.stokes_i_snr_cut is not None and not self.estimate_stokes_i_noise:
+            msg = (
+                f"stokes_i_snr_cut={self.stokes_i_snr_cut} requires "
+                "estimate_stokes_i_noise=True. Without a Stokes I noise estimate "
+                "rm-lite scores every pixel as infinite SNR, so the cut passes all "
+                "of them. Set estimate_stokes_i_noise=True, or stokes_i_snr_cut=None "
+                "to fit every pixel deliberately."
+            )
+            raise ValueError(msg)
+        return self
+
     target_chunk_mb: float = 256
     """Target per-chunk memory footprint, in MB, when reading the Q/U cubes"""
     fit_order: int = 2
@@ -268,7 +291,7 @@ class RMSynthOptions(BaseOptions):
     fit_function: Literal["log", "linear"] = "log"
     """Stokes I fit function: 'log' is a power law, 'linear' is a polynomial"""
     stokes_i_snr_cut: float | None = 5.0
-    """Below this frequency-averaged Stokes I SNR a pixel falls back to a flat model. None fits every pixel. Needs ``estimate_stokes_i_noise``, else rm-lite scores every pixel as infinite SNR and the cut does nothing"""
+    """Below this frequency-averaged Stokes I SNR a pixel falls back to a flat model. None fits every pixel"""
     compute_model_error: bool = False
     """Monte-Carlo the Stokes I fit's per-pixel model error via n_error_samples resamples. Only used if a Stokes I cube is given"""
     n_error_samples: int = 1000

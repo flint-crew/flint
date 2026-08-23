@@ -76,24 +76,6 @@ def _check_cubes_memmappable(*cubes: Path | None) -> None:
         raise NotSupportedError(msg)
 
 
-def _warn_if_snr_cut_inert(rmsynth_options: RMSynthOptions) -> None:
-    """Warn when ``stokes_i_snr_cut`` is set but has no noise to cut on.
-
-    rm-lite scores a pixel with an all-zero Stokes I error as infinite SNR, so
-    without a noise estimate the cut passes every pixel and each one gets a full
-    ``curve_fit`` -- correct, but ~1000x slower than intended.
-    """
-    if rmsynth_options.stokes_i_snr_cut is None:
-        return
-    if rmsynth_options.estimate_stokes_i_noise:
-        return
-    logger.warning(
-        f"stokes_i_snr_cut={rmsynth_options.stokes_i_snr_cut} will do nothing "
-        "without estimate_stokes_i_noise: every pixel scores an infinite SNR "
-        "and is fitted."
-    )
-
-
 def run_rmsynth_3d(
     stokes_q_cube: Path,
     stokes_u_cube: Path,
@@ -112,9 +94,6 @@ def run_rmsynth_3d(
         RMSynth3DResults: Lazy dirty FDF cube, RMSF cube, and associated parameters
     """
     _check_cubes_memmappable(stokes_q_cube, stokes_u_cube, stokes_i_cube)
-
-    if stokes_i_cube is not None:
-        _warn_if_snr_cut_inert(rmsynth_options)
 
     stokes_i_kwargs = (
         {
