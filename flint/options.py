@@ -317,12 +317,6 @@ class RMCleanOptions(BaseOptions):
     """CLEAN loop gain"""
     moment_threshold_snr: float = 5.0
     """SNR cut (times the theoretical FDF noise) applied before computing Faraday moment maps, the dirty ones included"""
-    # Multiscale RM-CLEAN is deliberately not exposed. It is experimental in
-    # rm-lite, and an option flint ships is one it has to keep meaning the same
-    # thing; flint does not support it for now. `run_rmclean_3d` passes nothing
-    # for it, so rm-lite's own `multiscale=False` applies. Because this model
-    # forbids extra fields, a strategy that sets `multiscale` under `rmclean` is
-    # refused at load rather than silently ignored, which is the point.
 
 
 class SpiceOptions(BaseOptions):
