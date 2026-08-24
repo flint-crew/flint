@@ -620,6 +620,31 @@ def test_snr_cut_rule_is_enforced_from_a_strategy_file(tmp_path: Path) -> None:
         RMSynthOptions(**options)
 
 
+def test_multiscale_rmclean_is_refused_rather_than_ignored(tmp_path: Path) -> None:
+    """flint does not support multiscale RM-CLEAN for now. A strategy asking for
+    it has to be told so at load, rather than have the request quietly dropped
+    and the run look like it honoured the setting.
+    """
+    strategy_path = tmp_path / "strategy.yaml"
+    strategy_path.write_text(
+        "defaults:\n"
+        "  rmsynth:\n"
+        "    auto_mask: 7\n"
+        "version: 0.2\n"
+        "rmsynth:\n"
+        "  rmclean:\n"
+        "    multiscale: true\n"
+    )
+    from flint.configuration import get_options_from_strategy, load_strategy_yaml
+
+    strategy = load_strategy_yaml(input_yaml=strategy_path, verify=False)
+    options = get_options_from_strategy(
+        strategy=strategy, operation="rmsynth", mode="rmclean"
+    )
+    with pytest.raises(ValidationError, match="multiscale"):
+        RMCleanOptions(**options)
+
+
 def test_stokes_i_fit_on_noise_stays_finite(tmp_path: Path) -> None:
     """With the SNR cut working, a noise-only cube must come back with no
     polarised flux and nothing infinite.

@@ -148,9 +148,9 @@ def run_rmclean_3d(
         max_iter=rmclean_options.max_iter,
         gain=rmclean_options.gain,
         moment_threshold_snr=rmclean_options.moment_threshold_snr,
-        multiscale=rmclean_options.multiscale,
-        # rm-lite's other multiscale parameters are not forwarded while
-        # multiscale RM-CLEAN is experimental there; see `RMCleanOptions`.
+        # Multiscale RM-CLEAN is not supported for now, so nothing is passed for
+        # it and rm-lite's own `multiscale=False` applies; see `RMCleanOptions`
+        # for what enabling it here would take.
     )
 
 

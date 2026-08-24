@@ -317,18 +317,20 @@ class RMCleanOptions(BaseOptions):
     """CLEAN loop gain"""
     moment_threshold_snr: float = 5.0
     """SNR cut (times the theoretical FDF noise) applied before computing Faraday moment maps, the dirty ones included"""
-    multiscale: bool = False
-    """Use multiscale RM-CLEAN, which can recover Faraday-thick structure"""
-    # rm-lite's multiscale RM-CLEAN takes seven more parameters -- scales,
-    # n_scales, kernel, max_iter_sub_minor, sub_minor_fraction, selection and
-    # selection_margin. They are deliberately not exposed while multiscale is
-    # experimental there: nothing here needs tuning yet, and an option flint
-    # ships is one it has to keep meaning the same thing.
+    # Multiscale RM-CLEAN is deliberately not exposed. It is experimental in
+    # rm-lite, and an option flint ships is one it has to keep meaning the same
+    # thing; flint does not support it for now. `run_rmclean_3d` passes nothing
+    # for it, so rm-lite's own `multiscale=False` applies. Because this model
+    # forbids extra fields, a strategy that sets `multiscale` under `rmclean` is
+    # refused at load rather than silently ignored, which is the point.
     #
-    # To add them later: give each a `multiscale_`-prefixed field here and pass
-    # it through in `flint.rmsynth.run_rmclean_3d`, which already forwards
-    # `multiscale` itself. `scales` wants a `list[float] | None` converted to an
-    # array at the call, since rm-lite takes an ndarray and None auto-selects.
+    # To support it later: add `multiscale: bool = False` here and forward it in
+    # `flint.rmsynth.run_rmclean_3d`. rm-lite takes seven more parameters to tune
+    # it -- scales, n_scales, kernel, max_iter_sub_minor, sub_minor_fraction,
+    # selection and selection_margin -- each of which would want a
+    # `multiscale_`-prefixed field. `scales` wants a `list[float] | None`
+    # converted to an array at the call, since rm-lite takes an ndarray and None
+    # auto-selects.
 
 
 class SpiceOptions(BaseOptions):
