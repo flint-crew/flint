@@ -54,7 +54,6 @@ def _renamed_qu_cubes(
     return _add_degenerate_axis(paths[0]), _add_degenerate_axis(paths[1])
 
 
-@pytest.mark.slow
 @pytest.mark.parametrize("degenerate_axis", [False, True], ids=["3d", "askap-4d"])
 def test_process_rmsynth_on_dask_cluster(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, degenerate_axis: bool
@@ -143,7 +142,6 @@ def test_process_rmsynth_no_products_submits_nothing(
     assert not list(tmp_path.glob("*.fdf.*"))
 
 
-@pytest.mark.slow
 def test_process_rmsynth_with_stokes_i_on_dask_cluster(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
