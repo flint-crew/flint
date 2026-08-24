@@ -30,9 +30,11 @@ def task_rmsynth(
     rmsynth_options: RMSynthOptions,
     stokes_i_cube: Path | None = None,
 ) -> RMSynth3DResults:
-
     from prefect_dask import get_dask_client
 
+    # Set as the default scheduler, not just borrowed: rm-lite's per-channel
+    # noise estimates are eager `dask.compute` calls, so without a default
+    # client they would read whole cubes on this one worker.
     with get_dask_client():
         return run_rmsynth_3d(
             stokes_q_cube=stokes_q_cube,

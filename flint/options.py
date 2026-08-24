@@ -17,7 +17,7 @@ import yaml
 from astropy.coordinates import EarthLocation, SkyCoord
 from astropy.time import Time
 from capn_crunch import BaseOptions
-from pydantic import create_model
+from pydantic import create_model, model_validator
 
 from flint.exceptions import MSError
 from flint.logging import logger
@@ -259,6 +259,29 @@ class RMSynthOptions(BaseOptions):
     """Briggs robust parameter, required if weight_type is 'briggs'"""
     nufft_nthreads: int = 1
     """finufft OpenMP threads per dask chunk"""
+
+    @model_validator(mode="after")
+    def _snr_cut_needs_a_noise_estimate(self) -> RMSynthOptions:
+        """Reject a Stokes I SNR cut that has nothing to measure against.
+
+        rm-lite scores a pixel whose Stokes I error is all-zero as infinite SNR,
+        so without an estimate the cut passes every pixel: each gets a full
+        ``curve_fit``, and a power law fitted to noise can pass close enough to
+        zero that dividing Q/U by it gives an infinite FDF. That is a broken
+        configuration rather than a slow one, so it is refused here instead of
+        being warned about once the run is already underway.
+        """
+        if self.stokes_i_snr_cut is not None and not self.estimate_stokes_i_noise:
+            msg = (
+                f"stokes_i_snr_cut={self.stokes_i_snr_cut} requires "
+                "estimate_stokes_i_noise=True. Without a Stokes I noise estimate "
+                "rm-lite scores every pixel as infinite SNR, so the cut passes all "
+                "of them. Set estimate_stokes_i_noise=True, or stokes_i_snr_cut=None "
+                "to fit every pixel deliberately."
+            )
+            raise ValueError(msg)
+        return self
+
     target_chunk_mb: float = 256
     """Target per-chunk memory footprint, in MB, when reading the Q/U cubes"""
     fit_order: int = 2
@@ -275,7 +298,7 @@ class RMSynthOptions(BaseOptions):
     """Also compute a debiased (via rm_lite's debias_fdf) mom0/mom1/mom2 set per requested FDF"""
     debias_filter_size: int = 5
     """Median filter size (pixels) used by mom0 debiasing"""
-    estimate_stokes_i_noise: bool = False
+    estimate_stokes_i_noise: bool = True
     """Derive a per-channel Stokes I error from the Stokes I cube when fitting the fractional-polarisation model"""
 
 
@@ -293,9 +316,7 @@ class RMCleanOptions(BaseOptions):
     gain: float = 0.1
     """CLEAN loop gain"""
     moment_threshold_snr: float = 5.0
-    """SNR cut (times the theoretical FDF noise) applied before computing Faraday moment maps"""
-    multiscale: bool = False
-    """Use multiscale RM-CLEAN, which can recover Faraday-thick structure"""
+    """SNR cut (times the theoretical FDF noise) applied before computing Faraday moment maps, the dirty ones included"""
 
 
 class SpiceOptions(BaseOptions):
