@@ -275,8 +275,8 @@ requires-dist = [
     { name = "racs-tools", specifier = ">=4.2.1" },
     { name = "radio-beam", specifier = ">=0.3.4" },
     { name = "reproject" },
-    { name = "rm-lite", marker = "extra == 'all'", specifier = "==2026.8.2" },
-    { name = "rm-lite", marker = "extra == 'rmsynth'", specifier = "==2026.8.2" },
+    { name = "rm-lite", marker = "extra == 'all'", specifier = "==2026.8.3" },
+    { name = "rm-lite", marker = "extra == 'rmsynth'", specifier = "==2026.8.3" },
     { name = "ruff", marker = "extra == 'all'" },
     { name = "ruff", marker = "extra == 'dev'" },
     { name = "scikit-image" },
@@ -3490,7 +3490,7 @@ wheels = [
 
 [[package]]
 name = "rm-lite"
-version = "2026.8.2"
+version = "2026.8.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "astropy" },
@@ -3502,9 +3502,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "zarr" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/49/de/e9896fa6641bb8d07663b2fd606c65948fb89c4e7068dec3efd571d3f2f8/rm_lite-2026.8.2.tar.gz", hash = "sha256:baeac7993f1947d8968d8ab23905739a7dc1714fecc238e56a6b36e2d67f3cfd", size = 417447, upload-time = "2026-08-24T07:34:13.147Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9b/81/f7d9c06e603f86013d07caeaa83efdd6fe825bd35832b2fe817d3d17ec3b/rm_lite-2026.8.3.tar.gz", hash = "sha256:9a1b5c04999d44e12fd5f6f34afad88e8d8e08294e57b91ca5ac68cbb3a624a7", size = 418615, upload-time = "2026-08-24T22:49:05.563Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/11/b2/7205d6371ddf046fedd7bc207657d5bee97847403fe564d4a4a0b5c98019/rm_lite-2026.8.2-py3-none-any.whl", hash = "sha256:d465c94ed0b8e670ac19ea3851839611740167c84c6f4f51ace4133e94f4d329", size = 102425, upload-time = "2026-08-24T07:34:11.605Z" },
+    { url = "https://files.pythonhosted.org/packages/64/25/481efd0856453363dec50a56eea1e88b9297541f4a080aad40fd818226f6/rm_lite-2026.8.3-py3-none-any.whl", hash = "sha256:ec7517eb6c88754c7a63a3c0b4f69fb39ee21703624542370c9416450de934c0", size = 102638, upload-time = "2026-08-24T22:49:03.684Z" },
 ]
 
 [[package]]
