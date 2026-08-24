@@ -217,6 +217,130 @@ def test_rmsynth_with_stokes_i_writes_fit_maps(
         assert alpha_error_path.exists()
         assert fits.getheader(alpha_error_path)["NAXIS"] == 2
 
+    # A spectral index or a reference flux is unreadable without the frequency it
+    # is defined at and the functional form it belongs to.
+    header = fits.getheader(Path(f"{output_prefix}.stokesi.alpha.fits"))
+    assert header["FITFUNC"] == "log"
+    assert 700e6 < header["REFFREQ"] < 1300e6
+
+
+@pytest.mark.parametrize(
+    ("fit_function", "expected_names"),
+    [("log", ("flux", "alpha", "beta")), ("linear", ("c0", "c1", "c2"))],
+)
+def test_rmsynth_writes_a_named_map_per_stokes_i_model_term(
+    tmp_path: Path,
+    qu_cubes: tuple[Path, Path],
+    fit_function: str,
+    expected_names: tuple[str, ...],
+) -> None:
+    """Each fitted Stokes I model term gets its own named map, since the names
+    are what make the terms usable, and they differ by fit function."""
+    stokes_q_cube, stokes_u_cube = qu_cubes
+    stokes_i_cube = _make_i_cube(tmp_path)
+    output_prefix = tmp_path / "test_field"
+
+    output_paths = _synth_and_write(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        stokes_i_cube=stokes_i_cube,
+        rmsynth_options=RMSynthOptions(
+            estimate_stokes_i_noise=True, fit_function=fit_function
+        ),
+        rmclean_options=RMCleanOptions(),
+        cube_products=[],
+        moment_products=["dirty"],
+        output_prefix=output_prefix,
+    )
+
+    for index, name in enumerate(expected_names):
+        term_path = Path(f"{output_prefix}.stokesi.coeff.{name}.fits")
+        assert term_path in output_paths
+        header = fits.getheader(term_path)
+        assert header["NAXIS"] == 2
+        assert header["SICOEFF"] == name
+        assert header["SICOEFFI"] == index
+        assert header["FITFUNC"] == fit_function
+        assert 700e6 < header["REFFREQ"] < 1300e6
+
+        error_path = Path(f"{output_prefix}.stokesi.coeff.{name}_error.fits")
+        assert error_path in output_paths
+        assert fits.getheader(error_path)["NAXIS"] == 2
+
+    # Under the log fit, term 1 *is* the spectral index, so it has to match the
+    # standalone alpha map. Not so for the linear fit, where alpha is
+    # d ln I / d ln nu at the reference frequency rather than any single c_i.
+    if fit_function == "log":
+        assert np.allclose(
+            fits.getdata(Path(f"{output_prefix}.stokesi.alpha.fits")),
+            fits.getdata(Path(f"{output_prefix}.stokesi.coeff.alpha.fits")),
+            equal_nan=True,
+        )
+
+
+def test_stokes_i_model_rebuilds_from_the_written_term_maps(
+    tmp_path: Path, qu_cubes: tuple[Path, Path]
+) -> None:
+    """The point of writing the terms is that the model can be evaluated at any
+    frequency from them alone. Rebuild it from the written maps and their
+    headers, and check it against the model cube rm-lite fitted.
+
+    ``fit_order=-3`` lets the AIC pick the order, so this also pins the
+    zero-versus-NaN convention: our Stokes I spectrum is a pure power law, so the
+    higher terms are dropped, and a dropped term has to come back as zero -- it
+    contributes nothing to the model -- rather than NaN, which would poison the
+    sum below.
+    """
+    stokes_q_cube, stokes_u_cube = qu_cubes
+    stokes_i_cube = _make_i_cube(tmp_path)
+    output_prefix = tmp_path / "test_field"
+    rmsynth_options = RMSynthOptions(estimate_stokes_i_noise=True, fit_order=-3)
+
+    synth_results = run_rmsynth_3d(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        rmsynth_options=rmsynth_options,
+        stokes_i_cube=stokes_i_cube,
+    )
+    write_rm_products(
+        synth_results=synth_results,
+        clean_results=None,
+        stokes_q_cube=stokes_q_cube,
+        rmsynth_options=rmsynth_options,
+        rmclean_options=RMCleanOptions(),
+        cube_products=[],
+        moment_products=["dirty"],
+        output_prefix=output_prefix,
+    )
+
+    names = synth_results.stokes_i_coeff_names
+    assert names is not None
+    terms = np.stack(
+        [
+            fits.getdata(Path(f"{output_prefix}.stokesi.coeff.{name}.fits"))
+            for name in names
+        ]
+    )
+    header = fits.getheader(Path(f"{output_prefix}.stokesi.coeff.{names[0]}.fits"))
+    assert header["FITFUNC"] == "log"
+
+    # A dropped term is zero, not NaN, and model_order says how many were fitted.
+    order_map = fits.getdata(Path(f"{output_prefix}.stokesi.model_order.fits"))
+    dropped = terms[int(order_map.max()) + 1 :]
+    assert dropped.size, "expected the AIC to drop at least one term here"
+    assert np.all(dropped == 0.0)
+
+    freq_hz = np.linspace(700e6, 1300e6, N_CHAN)
+    log_freq_ratio = np.log10(freq_hz / header["REFFREQ"])[:, None, None]
+    exponent = sum(
+        terms[power] * log_freq_ratio**power for power in range(1, len(names))
+    )
+    rebuilt = terms[0] * 10.0**exponent
+
+    assert np.allclose(
+        rebuilt, np.asarray(synth_results.stokes_i_model_cube), rtol=1e-5
+    )
+
 
 def test_rmsynth_debias_moments_runs(
     tmp_path: Path, qu_cubes: tuple[Path, Path]

@@ -91,7 +91,8 @@ def run_rmsynth_3d(
         stokes_i_cube (Path | None, optional): Path to a Stokes I FITS cube, used to fit a per-pixel fractional-polarisation correction. FDF stays in Q/U flux if not given. Defaults to None.
 
     Returns:
-        RMSynth3DResults: Lazy dirty FDF cube, RMSF cube, and associated parameters
+        RMSynth3DResults: Lazy dirty FDF cube, the RMSF spectrum every pixel
+        shares, and associated parameters
     """
     _check_cubes_memmappable(stokes_q_cube, stokes_u_cube, stokes_i_cube)
 
@@ -118,6 +119,12 @@ def run_rmsynth_3d(
         robust=rmsynth_options.robust,
         nufft_nthreads=rmsynth_options.nufft_nthreads,
         target_chunk_mb=rmsynth_options.target_chunk_mb,
+        # `per_pixel_rmsf` is deliberately left off. A pixel's RMSF depends only
+        # on which channels it has flagged, and flint flags per channel, so the
+        # single `rmsf_arr` spectrum rm-lite returns describes the whole cube. The
+        # per-pixel cube is ~2x the FDF's size and would hold that one spectrum in
+        # every pixel. Only worth turning on for per-pixel blanking that the
+        # channel weights do not carry, which flint does not produce.
         **stokes_i_kwargs,
     )
 
@@ -204,27 +211,75 @@ _STOKES_I_MAP_SUFFIXES = {
     "stokes_i_alpha_error": "stokesi.alpha_error",
     "stokes_i_model_order": "stokesi.model_order",
 }
+_STOKES_I_COEFF_SUFFIX = "stokesi.coeff"
+
+
+def _stokes_i_fit_header(
+    reference_header: fits.Header,
+    ref_freq_hz: float | None,
+    fit_function: str | None,
+    coeff: tuple[int, str] | None = None,
+) -> fits.Header:
+    """Build the celestial-WCS header for a Stokes I fit map, stamped with what
+    is needed to read it. A spectral index or a reference flux means nothing
+    without the frequency it is defined at and the functional form it belongs to,
+    so those travel in the header rather than only in flint's file naming.
+
+    Args:
+        reference_header (fits.Header): Header to derive the spatial WCS from
+        ref_freq_hz (float | None): Frequency the model terms are defined at, omitted from the header if rm-lite did not report one
+        fit_function (str | None): The Stokes I fit function the terms belong to ('log' or 'linear'), omitted from the header if not known
+        coeff (tuple[int, str] | None, optional): The (popt index, name) of the model term this map holds, for the per-term maps. Defaults to None.
+
+    Returns:
+        fits.Header: The header to write the map with
+    """
+    header = WCS(reference_header).celestial.to_header()
+    if ref_freq_hz is not None:
+        header["REFFREQ"] = (
+            float(ref_freq_hz),
+            "Stokes I model reference frequency [Hz]",
+        )
+    if fit_function is not None:
+        header["FITFUNC"] = (fit_function, "Stokes I fit function")
+    if coeff is not None:
+        index, name = coeff
+        header["SICOEFF"] = (name, "Stokes I model term in this map")
+        header["SICOEFFI"] = (index, "Index of this term in the fitted popt")
+        header.add_comment("0 means the AIC dropped this term: it contributes nothing.")
+        header.add_comment("NaN means the pixel was never fitted (below the SNR cut).")
+    return header
 
 
 def write_stokes_i_fit_maps_to_fits(
     stokes_i_maps: dict[str, np.ndarray],
     reference_header: fits.Header,
     output_prefix: Path,
+    ref_freq_hz: float | None = None,
+    fit_function: str | None = None,
 ) -> list[Path]:
     """Write the per-pixel Stokes I fractional-polarisation fit maps: the fitted
     reference flux, spectral index (alpha) and its error, and the fitted
     polynomial order. Cheap 2D maps, always written when a Stokes I cube is used
     and rm-lite actually returned that particular map (e.g. ``alpha_error`` is
-    only produced if a Stokes I noise estimate was available).
+    only produced if the model error was computed).
 
     Args:
         stokes_i_maps (dict[str, np.ndarray]): Already-computed maps, keyed by
             one of ``_STOKES_I_MAP_SUFFIXES``'s keys.
+        reference_header (fits.Header): Header to derive the spatial WCS from
+        output_prefix (Path): Common prefix for the output files
+        ref_freq_hz (float | None, optional): Frequency the fit is referenced to, recorded in each header. Defaults to None.
+        fit_function (str | None, optional): The Stokes I fit function, recorded in each header. Defaults to None.
 
     Returns:
         list[Path]: The written map paths, one per entry in ``stokes_i_maps``
     """
-    header = WCS(reference_header).celestial.to_header()
+    header = _stokes_i_fit_header(
+        reference_header=reference_header,
+        ref_freq_hz=ref_freq_hz,
+        fit_function=fit_function,
+    )
     output_paths = []
     for key, data in stokes_i_maps.items():
         output_path = Path(f"{output_prefix}.{_STOKES_I_MAP_SUFFIXES[key]}.fits")
@@ -232,6 +287,87 @@ def write_stokes_i_fit_maps_to_fits(
             output_path, np.asarray(data, dtype=np.float32), header, overwrite=True
         )
         output_paths.append(output_path)
+    return output_paths
+
+
+def write_stokes_i_coeff_maps_to_fits(
+    coeff_cube: np.ndarray,
+    coeff_names: tuple[str, ...],
+    reference_header: fits.Header,
+    output_prefix: Path,
+    ref_freq_hz: float | None = None,
+    fit_function: str | None = None,
+    coeff_error_cube: np.ndarray | None = None,
+) -> list[Path]:
+    """Write the fitted Stokes I model terms, one FITS per named term rather than
+    one anonymous (n_coeff, ny, nx) cube.
+
+    The terms plus the reference frequency and the fit function *are* the whole
+    Stokes I model, so anything downstream can evaluate Stokes I at any frequency
+    from these maps alone without carrying the model cube -- but only if it knows
+    which plane holds which term, which is why each gets its own named file and
+    its ``REFFREQ``/``FITFUNC`` header.
+
+    Two values are meaningful rather than missing, and are recorded in the header
+    as well: a zero is the actual value of a term the AIC dropped (it contributes
+    nothing to the model, and ``stokesi.model_order`` says how many terms were
+    really fitted), while a NaN is a pixel that was never fitted at all.
+
+    Args:
+        coeff_cube (np.ndarray): Already-computed model terms, shape (n_coeff, ny, nx) in popt order
+        coeff_names (tuple[str, ...]): Name of each plane of ``coeff_cube``, e.g. ('flux', 'alpha', 'beta')
+        reference_header (fits.Header): Header to derive the spatial WCS from
+        output_prefix (Path): Common prefix for the output files
+        ref_freq_hz (float | None, optional): Frequency the terms are defined at, recorded in each header. Defaults to None.
+        fit_function (str | None, optional): The Stokes I fit function the terms belong to, recorded in each header. Defaults to None.
+        coeff_error_cube (np.ndarray | None, optional): 1-sigma marginal error on each term, shaped like ``coeff_cube``, written alongside with an ``_error`` suffix. Defaults to None.
+
+    Returns:
+        list[Path]: The written map paths, one per term, plus one more per term if
+        ``coeff_error_cube`` is given
+    """
+    if len(coeff_names) != coeff_cube.shape[0]:
+        msg = (
+            f"rm-lite named {len(coeff_names)} Stokes I model terms {coeff_names} "
+            f"but returned {coeff_cube.shape[0]} planes, so the maps cannot be "
+            "named. This is an rm-lite API mismatch, not a configuration error."
+        )
+        raise ValueError(msg)
+
+    output_paths = []
+    for index, name in enumerate(coeff_names):
+        header = _stokes_i_fit_header(
+            reference_header=reference_header,
+            ref_freq_hz=ref_freq_hz,
+            fit_function=fit_function,
+            coeff=(index, name),
+        )
+        output_path = Path(f"{output_prefix}.{_STOKES_I_COEFF_SUFFIX}.{name}.fits")
+        fits.writeto(
+            output_path,
+            np.asarray(coeff_cube[index], dtype=np.float32),
+            header,
+            overwrite=True,
+        )
+        output_paths.append(output_path)
+
+        if coeff_error_cube is None:
+            continue
+        # Marginal, i.e. sqrt(diag(pcov)): it ignores the strong correlations
+        # between the terms, so it is not the error on the model itself.
+        error_header = header.copy()
+        error_header.add_comment(
+            "1-sigma marginal error; ignores inter-term correlation."
+        )
+        error_path = Path(f"{output_prefix}.{_STOKES_I_COEFF_SUFFIX}.{name}_error.fits")
+        fits.writeto(
+            error_path,
+            np.asarray(coeff_error_cube[index], dtype=np.float32),
+            error_header,
+            overwrite=True,
+        )
+        output_paths.append(error_path)
+
     return output_paths
 
 
@@ -384,18 +520,40 @@ def write_rm_products(
             )
             for name, moment_map in zip(_MOMENT_NAMES, debiased):
                 compute_targets[f"debiased.{label}.{name}"] = moment_map
-    # stokes_i_alpha_error_map is None unless estimate_stokes_i_noise (or a
-    # supplied Stokes I error) gives the fit something to propagate; the other
-    # maps are None only if the Stokes I fit didn't run at all. Skip whichever
-    # are None rather than feeding them to dask.compute/FITS writers.
+    # stokes_i_alpha_error_map is None unless compute_model_error gives the fit
+    # something to propagate; the other maps are None only if the Stokes I fit
+    # didn't run at all. Skip whichever are None rather than feeding them to
+    # dask.compute/FITS writers.
     stokes_i_maps = {
         "stokes_i_ref_flux": synth_results.stokes_i_ref_flux_map,
         "stokes_i_alpha": synth_results.stokes_i_alpha_map,
         "stokes_i_alpha_error": synth_results.stokes_i_alpha_error_map,
         "stokes_i_model_order": synth_results.stokes_i_model_order_map,
     }
-    stokes_i_maps = {k: v for k, v in stokes_i_maps.items() if v is not None}
+    # Cast before the gather, not after. rm-lite builds these in float64 and the
+    # FITS writers put them out as float32, so gathering them at full width buys
+    # nothing and doubles what this one process has to hold: at 16032^2 each plane
+    # is 2.1 GB as float64 against 1.0 GB as float32.
+    stokes_i_maps = {
+        k: v.astype(np.float32) for k, v in stokes_i_maps.items() if v is not None
+    }
     compute_targets.update(stokes_i_maps)
+
+    # The fitted Stokes I model terms, (n_coeff, ny, nx) each -- n_coeff of the
+    # maps above rather than anything cube-sized, since n_coeff is 3 or 4. Both
+    # are None unless a Stokes I cube was actually *fitted*: a supplied model has
+    # no fitted terms to report. They are batched here and split into one named
+    # map per term after the compute.
+    stokes_i_coeff_cubes = {
+        "stokes_i_coeff": synth_results.stokes_i_coeff_cube,
+        "stokes_i_coeff_error": synth_results.stokes_i_coeff_error_cube,
+    }
+    stokes_i_coeff_cubes = {
+        k: v.astype(np.float32)
+        for k, v in stokes_i_coeff_cubes.items()
+        if v is not None
+    }
+    compute_targets.update(stokes_i_coeff_cubes)
 
     # Batch every lazy array/delayed write needed by the requested products
     # into a single dask.compute call, including the zarr writes above:
@@ -451,7 +609,31 @@ def write_rm_products(
                 stokes_i_maps={key: computed[key] for key in stokes_i_maps},
                 reference_header=reference_header,
                 output_prefix=output_prefix,
+                ref_freq_hz=synth_results.stokes_i_ref_freq_hz,
+                fit_function=rmsynth_options.fit_function,
             )
         )
+
+    if "stokes_i_coeff" in stokes_i_coeff_cubes:
+        # The plane names are what make the terms usable, so without them the
+        # maps are not worth writing -- but they arrive with the cube, so this
+        # would take an rm-lite change to reach.
+        if synth_results.stokes_i_coeff_names is None:
+            logger.warning(
+                "rm-lite returned Stokes I model terms with no names for them, so "
+                "the per-term maps cannot be written."
+            )
+        else:
+            output_paths.extend(
+                write_stokes_i_coeff_maps_to_fits(
+                    coeff_cube=computed["stokes_i_coeff"],
+                    coeff_names=synth_results.stokes_i_coeff_names,
+                    reference_header=reference_header,
+                    output_prefix=output_prefix,
+                    ref_freq_hz=synth_results.stokes_i_ref_freq_hz,
+                    fit_function=rmsynth_options.fit_function,
+                    coeff_error_cube=computed.get("stokes_i_coeff_error"),
+                )
+            )
 
     return output_paths
