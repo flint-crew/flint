@@ -259,8 +259,6 @@ class RMSynthOptions(BaseOptions):
     """Briggs robust parameter, required if weight_type is 'briggs'"""
     nufft_nthreads: int = 1
     """finufft OpenMP threads per dask chunk"""
-    reuse_rmsf: bool = True
-    """Reuse one RMSF per chunk when every pixel shares the same channel flagging"""
 
     @model_validator(mode="after")
     def _snr_cut_needs_a_noise_estimate(self) -> RMSynthOptions:
