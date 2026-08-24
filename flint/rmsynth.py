@@ -148,9 +148,6 @@ def run_rmclean_3d(
         max_iter=rmclean_options.max_iter,
         gain=rmclean_options.gain,
         moment_threshold_snr=rmclean_options.moment_threshold_snr,
-        # Multiscale RM-CLEAN is not supported for now, so nothing is passed for
-        # it and rm-lite's own `multiscale=False` applies; see `RMCleanOptions`
-        # for what enabling it here would take.
     )
 
 
@@ -205,15 +202,6 @@ def write_moment_maps_to_fits(
     return output_paths
 
 
-_STOKES_I_MAP_SUFFIXES = {
-    "stokes_i_ref_flux": "stokesi.ref_flux",
-    "stokes_i_alpha": "stokesi.alpha",
-    "stokes_i_alpha_error": "stokesi.alpha_error",
-    "stokes_i_model_order": "stokesi.model_order",
-}
-_STOKES_I_COEFF_SUFFIX = "stokesi.coeff"
-
-
 def _stokes_i_fit_header(
     reference_header: fits.Header,
     ref_freq_hz: float | None,
@@ -266,7 +254,8 @@ def write_stokes_i_fit_maps_to_fits(
 
     Args:
         stokes_i_maps (dict[str, np.ndarray]): Already-computed maps, keyed by
-            one of ``_STOKES_I_MAP_SUFFIXES``'s keys.
+            one of ``stokes_i_ref_flux``, ``stokes_i_alpha``,
+            ``stokes_i_alpha_error`` or ``stokes_i_model_order``.
         reference_header (fits.Header): Header to derive the spatial WCS from
         output_prefix (Path): Common prefix for the output files
         ref_freq_hz (float | None, optional): Frequency the fit is referenced to, recorded in each header. Defaults to None.
@@ -275,6 +264,12 @@ def write_stokes_i_fit_maps_to_fits(
     Returns:
         list[Path]: The written map paths, one per entry in ``stokes_i_maps``
     """
+    suffixes = {
+        "stokes_i_ref_flux": "stokesi.ref_flux",
+        "stokes_i_alpha": "stokesi.alpha",
+        "stokes_i_alpha_error": "stokesi.alpha_error",
+        "stokes_i_model_order": "stokesi.model_order",
+    }
     header = _stokes_i_fit_header(
         reference_header=reference_header,
         ref_freq_hz=ref_freq_hz,
@@ -282,7 +277,7 @@ def write_stokes_i_fit_maps_to_fits(
     )
     output_paths = []
     for key, data in stokes_i_maps.items():
-        output_path = Path(f"{output_prefix}.{_STOKES_I_MAP_SUFFIXES[key]}.fits")
+        output_path = Path(f"{output_prefix}.{suffixes[key]}.fits")
         fits.writeto(
             output_path, np.asarray(data, dtype=np.float32), header, overwrite=True
         )
@@ -299,8 +294,7 @@ def write_stokes_i_coeff_maps_to_fits(
     fit_function: str | None = None,
     coeff_error_cube: np.ndarray | None = None,
 ) -> list[Path]:
-    """Write the fitted Stokes I model terms, one FITS per named term rather than
-    one anonymous (n_coeff, ny, nx) cube.
+    """Write the fitted Stokes I model terms.
 
     The terms plus the reference frequency and the fit function *are* the whole
     Stokes I model, so anything downstream can evaluate Stokes I at any frequency
@@ -334,6 +328,7 @@ def write_stokes_i_coeff_maps_to_fits(
         )
         raise ValueError(msg)
 
+    suffix = "stokesi.coeff"
     output_paths = []
     for index, name in enumerate(coeff_names):
         header = _stokes_i_fit_header(
@@ -342,7 +337,7 @@ def write_stokes_i_coeff_maps_to_fits(
             fit_function=fit_function,
             coeff=(index, name),
         )
-        output_path = Path(f"{output_prefix}.{_STOKES_I_COEFF_SUFFIX}.{name}.fits")
+        output_path = Path(f"{output_prefix}.{suffix}.{name}.fits")
         fits.writeto(
             output_path,
             np.asarray(coeff_cube[index], dtype=np.float32),
@@ -359,7 +354,7 @@ def write_stokes_i_coeff_maps_to_fits(
         error_header.add_comment(
             "1-sigma marginal error; ignores inter-term correlation."
         )
-        error_path = Path(f"{output_prefix}.{_STOKES_I_COEFF_SUFFIX}.{name}_error.fits")
+        error_path = Path(f"{output_prefix}.{suffix}.{name}_error.fits")
         fits.writeto(
             error_path,
             np.asarray(coeff_error_cube[index], dtype=np.float32),
@@ -415,7 +410,7 @@ def write_rm_products(
         clean_results (RMClean3DResults | None): Results from ``run_rmclean_3d``, or None if 'clean'/'model' were not requested
         stokes_q_cube (Path): Path to the Stokes Q FITS cube (its header is reused for output WCS)
         rmsynth_options (RMSynthOptions): Options controlling RM-synthesis
-        rmclean_options (RMCleanOptions): Options controlling RM-CLEAN, whose ``moment_threshold_snr`` cuts every Faraday moment map
+        rmclean_options (RMCleanOptions): Options controlling RM-CLEAN
         cube_products (list[FDFLabel]): Which FDF cube(s) to write ('dirty', 'clean', 'model')
         moment_products (list[FDFLabel]): Which FDF(s) to compute Faraday moment maps from
         output_prefix (Path): Common prefix for the output files

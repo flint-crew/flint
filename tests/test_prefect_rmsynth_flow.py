@@ -19,7 +19,7 @@ from prefect_dask import DaskTaskRunner
 from flint.options import RMSynthFieldOptions
 from flint.prefect.flows.rmsynth_pipeline import process_rmsynth
 
-from .test_rmsynth import NX, NY, PHI_TRUE_RADM2, _make_qu_cubes
+from .test_rmsynth import NX, NY, PHI_TRUE_RADM2, _make_i_cube, _make_qu_cubes
 
 # create_name_from_common_fields rejects names it cannot decompose
 STEM = "SB12345.BENCH_0000+00.ch0000-0019"
@@ -141,3 +141,65 @@ def test_process_rmsynth_no_products_submits_nothing(
 
     assert output_paths == []
     assert not list(tmp_path.glob("*.fdf.*"))
+
+
+@pytest.mark.slow
+def test_process_rmsynth_with_stokes_i_on_dask_cluster(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The fractional-polarisation path across a real cluster. The Stokes I fit
+    products are the only ones built by a ``map_blocks`` whose output flint
+    slices apart after the gather, so they are the ones a pickling or chunking
+    problem would strand as None or as the wrong plane -- and an unfitted run
+    reports None for all of them, so the failure would only show on the path
+    that fits.
+    """
+    stokes_q_cube, stokes_u_cube = _renamed_qu_cubes(tmp_path)
+    stokes_i_cube = _make_i_cube(tmp_path)
+    monkeypatch.setenv("OMP_NUM_THREADS", "1")
+
+    rmsynth_field_options = RMSynthFieldOptions(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        stokes_i_cube=stokes_i_cube,
+        cube_products=[],
+        moment_products=["clean"],
+    )
+
+    with prefect_test_harness(), disable_run_logger():
+        cluster = LocalCluster(
+            n_workers=2,
+            threads_per_worker=1,
+            processes=True,
+            memory_limit="2GB",
+            dashboard_address=None,
+            silence_logs=40,
+        )
+        try:
+            output_paths = process_rmsynth.with_options(
+                task_runner=DaskTaskRunner(address=cluster.scheduler_address)
+            )(rmsynth_field_options=rmsynth_field_options)
+        finally:
+            cluster.close()
+
+    # `_make_i_cube` is a pure power law, so the log fit's terms are flux, alpha
+    # and beta, and every pixel is bright enough to clear the SNR cut
+    term_paths = {
+        term: tmp_path / f"{STEM}.stokesi.coeff.{term}.fits"
+        for term in ("flux", "alpha", "beta")
+    }
+    assert set(output_paths) >= set(term_paths.values()), (
+        "the fitted Stokes I model terms came back None or unnamed on the cluster"
+    )
+    for term, path in term_paths.items():
+        data, header = fits.getdata(path, header=True)
+        assert data.shape == (NY, NX)
+        assert np.all(np.isfinite(data)), f"{term} was not fitted"
+        assert header["SICOEFF"] == term
+        assert header["FITFUNC"] == "log"
+        assert header["REFFREQ"] > 0
+
+    alpha = fits.getdata(term_paths["alpha"])
+    assert np.allclose(alpha, -0.7, atol=0.1), (
+        "the fitted spectral index does not match the Stokes I cube's -0.7"
+    )

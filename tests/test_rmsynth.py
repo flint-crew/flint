@@ -755,3 +755,79 @@ def test_rmclean_runs_once_per_chunk_whatever_is_requested(
         f"RM-CLEAN ran {len(calls) / n_chunks:.0f}x per chunk for "
         f"cubes={cube_products}, moments={moment_products}"
     )
+
+
+def test_stokes_i_fit_does_not_multiply_with_requested_products(
+    tmp_path: Path, qu_cubes: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The per-pixel Stokes I fit is the most expensive step of the stage, so the
+    number of FDF products asked for must not scale it -- the same guard as
+    ``test_rmclean_runs_once_per_chunk_whatever_is_requested``, for the other
+    expensive kernel.
+
+    The count is compared between product mixes rather than against a fixed
+    number on purpose. rm-lite's ``run_rmclean`` takes the dirty cube through
+    ``to_delayed()``, which optimises and so re-keys the synthesis graph, so the
+    copy RM-CLEAN consumes is not the one the Stokes I maps are sliced from and
+    the fit currently runs twice per chunk however little is requested. That is
+    upstream and constant; what flint controls, and what this pins, is that its
+    own batching adds nothing on top.
+    """
+    import dask
+    import rm_lite.tools_3d.rmsynth as rmsynth_mod
+
+    stokes_q_cube, stokes_u_cube = qu_cubes
+    stokes_i_cube = _make_i_cube(tmp_path)
+
+    calls: list[int] = []
+    original = rmsynth_mod._fit_stokes_i_block
+
+    def counting_fit_block(*args: object, **kwargs: object) -> object:
+        calls.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(rmsynth_mod, "_fit_stokes_i_block", counting_fit_block)
+    # As above: the counter has to stay in this process, and it is the graph
+    # rather than the scheduler that decides how often the fit is called.
+    real_compute = dask.compute
+    monkeypatch.setattr(
+        dask,
+        "compute",
+        lambda *a, **k: real_compute(*a, **{**k, "scheduler": "threads"}),
+    )
+
+    # Built once, and never computed, only to read the chunking off it
+    n_chunks = run_rmsynth_3d(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        rmsynth_options=RMSynthOptions(),
+        stokes_i_cube=stokes_i_cube,
+    ).fdf_dirty_cube.numblocks[1:]
+    n_chunks = n_chunks[0] * n_chunks[1]
+
+    counts: dict[str, float] = {}
+    product_mixes: tuple[tuple[list[FDFLabel], list[FDFLabel]], ...] = (
+        ([], ["clean"]),
+        ([], ["dirty", "clean"]),
+        (["clean"], ["clean"]),
+        (["dirty", "clean"], ["dirty", "clean"]),
+    )
+    for cube_products, moment_products in product_mixes:
+        calls.clear()
+        _synth_and_write(
+            stokes_q_cube=stokes_q_cube,
+            stokes_u_cube=stokes_u_cube,
+            stokes_i_cube=stokes_i_cube,
+            rmsynth_options=RMSynthOptions(),
+            rmclean_options=RMCleanOptions(),
+            cube_products=cube_products,
+            moment_products=moment_products,
+            output_prefix=tmp_path / "test_field",
+        )
+        counts[f"cubes={cube_products}, moments={moment_products}"] = (
+            len(calls) / n_chunks
+        )
+
+    assert len(set(counts.values())) == 1, (
+        f"the Stokes I fit count moves with the requested products: {counts}"
+    )

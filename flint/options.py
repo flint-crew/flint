@@ -299,7 +299,7 @@ class RMSynthOptions(BaseOptions):
     debias_filter_size: int = 5
     """Median filter size (pixels) used by mom0 debiasing"""
     estimate_stokes_i_noise: bool = True
-    """Derive a per-channel Stokes I error from the Stokes I cube when fitting the fractional-polarisation model. On by default because ``stokes_i_snr_cut`` is inert without it"""
+    """Derive a per-channel Stokes I error from the Stokes I cube when fitting the fractional-polarisation model"""
 
 
 class RMCleanOptions(BaseOptions):
@@ -323,14 +323,6 @@ class RMCleanOptions(BaseOptions):
     # for it, so rm-lite's own `multiscale=False` applies. Because this model
     # forbids extra fields, a strategy that sets `multiscale` under `rmclean` is
     # refused at load rather than silently ignored, which is the point.
-    #
-    # To support it later: add `multiscale: bool = False` here and forward it in
-    # `flint.rmsynth.run_rmclean_3d`. rm-lite takes seven more parameters to tune
-    # it -- scales, n_scales, kernel, max_iter_sub_minor, sub_minor_fraction,
-    # selection and selection_margin -- each of which would want a
-    # `multiscale_`-prefixed field. `scales` wants a `list[float] | None`
-    # converted to an array at the call, since rm-lite takes an ndarray and None
-    # auto-selects.
 
 
 class SpiceOptions(BaseOptions):
