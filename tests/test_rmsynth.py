@@ -18,6 +18,7 @@ from flint.rmsynth import (
     run_rmclean_3d,
     run_rmsynth_3d,
     write_rm_products,
+    write_stokes_i_coeff_maps_to_fits,
 )
 
 N_CHAN = 20
@@ -276,6 +277,75 @@ def test_rmsynth_writes_a_named_map_per_stokes_i_model_term(
             fits.getdata(Path(f"{output_prefix}.stokesi.coeff.alpha.fits")),
             equal_nan=True,
         )
+
+
+def test_stokes_i_coeff_maps_without_an_error_cube(tmp_path: Path) -> None:
+    """The error cube is optional, so the term maps are written without it."""
+    reference_header = fits.getheader(_make_i_cube(tmp_path))
+    output_prefix = tmp_path / "test_field"
+
+    output_paths = write_stokes_i_coeff_maps_to_fits(
+        coeff_cube=np.zeros((2, NY, NX)),
+        coeff_names=("flux", "alpha"),
+        reference_header=reference_header,
+        output_prefix=output_prefix,
+    )
+
+    assert output_paths == [
+        Path(f"{output_prefix}.stokesi.coeff.flux.fits"),
+        Path(f"{output_prefix}.stokesi.coeff.alpha.fits"),
+    ]
+    assert not list(tmp_path.glob("*_error.fits"))
+    # Nothing told us what the terms are referenced to, so nothing is claimed.
+    header = fits.getheader(output_paths[0])
+    assert "REFFREQ" not in header
+    assert "FITFUNC" not in header
+
+
+def test_stokes_i_coeff_maps_refuse_a_name_and_plane_mismatch(tmp_path: Path) -> None:
+    """Writing the planes under the wrong names would be worse than not writing
+    them, so a disagreement between the two is refused rather than truncated."""
+    with pytest.raises(ValueError, match="named 2 Stokes I model terms"):
+        write_stokes_i_coeff_maps_to_fits(
+            coeff_cube=np.zeros((3, NY, NX)),
+            coeff_names=("flux", "alpha"),
+            reference_header=fits.getheader(_make_i_cube(tmp_path)),
+            output_prefix=tmp_path / "test_field",
+        )
+
+
+def test_unnamed_stokes_i_model_terms_are_skipped_with_a_warning(
+    tmp_path: Path, qu_cubes: tuple[Path, Path], caplog: pytest.LogCaptureFixture
+) -> None:
+    """rm-lite names the terms whenever it returns them, so this state takes an
+    rm-lite regression to reach. Unnamed planes are not worth writing, but they
+    are not worth losing the rest of the products over either.
+    """
+    stokes_q_cube, stokes_u_cube = qu_cubes
+    rmsynth_options = RMSynthOptions(estimate_stokes_i_noise=True)
+    synth_results = run_rmsynth_3d(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        rmsynth_options=rmsynth_options,
+        stokes_i_cube=_make_i_cube(tmp_path),
+    )
+    assert synth_results.stokes_i_coeff_names is not None
+
+    output_paths = write_rm_products(
+        synth_results=synth_results._replace(stokes_i_coeff_names=None),
+        clean_results=None,
+        stokes_q_cube=stokes_q_cube,
+        rmsynth_options=rmsynth_options,
+        rmclean_options=RMCleanOptions(),
+        cube_products=[],
+        moment_products=["dirty"],
+        output_prefix=tmp_path / "test_field",
+    )
+
+    assert not any("coeff" in path.name for path in output_paths)
+    assert any("no names for them" in record.message for record in caplog.records)
+    # The maps that are still nameable are written regardless.
+    assert any(path.name.endswith("stokesi.alpha.fits") for path in output_paths)
 
 
 def test_stokes_i_model_rebuilds_from_the_written_term_maps(
