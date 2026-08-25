@@ -93,7 +93,7 @@ casa =[
     "fixms>=0.4.0"
 ]
 rmsynth = [
-    "rm-lite>=2026.7.7",
+    "rm-lite==2026.8.3",
 ]
 all = [
     "askap-flint[dev,casa,rmsynth]",
@@ -126,7 +126,10 @@ flint_flow_bandpass_calibrate = "flint.prefect.flows.bandpass_pipeline:cli"
 flint_flow_continuum_pipeline = "flint.prefect.flows.continuum_pipeline:cli"
 flint_flow_subtract_cube_pipeline = "flint.prefect.flows.subtract_cube_pipeline:cli"
 flint_flow_polarisation_pipeline = "flint.prefect.flows.polarisation_pipeline:cli"
-flint_flow_racs_all_pipeline = "flint.prefect.flows.racs_all_continuum_selfcal:cli"
+flint_flow_racs_all_continuum_pipeline = "flint.prefect.flows.racs_all_continuum_selfcal:cli"
+flint_flow_rmsynth_pipeline = "flint.prefect.flows.rmsynth_pipeline:cli"
+flint_flow_spice_compression_pipeline = "flint.prefect.flows.spice_compression_pipeline:cli"
+flint_flow_racs_all_pipeline = "flint.prefect.flows.racs_all_pipeline:cli"
 
 # [tool.mypy]
 # files = ["flint", "tests"]

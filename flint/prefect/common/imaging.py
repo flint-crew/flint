@@ -6,7 +6,7 @@ imaging flows.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Collection
+from collections.abc import Collection
 from pathlib import Path
 from typing import Any, ParamSpec, TypeVar
 
@@ -122,7 +122,10 @@ def task_get_channel_images_from_paths(paths: list[Path]) -> list[Path]:
 
 @task
 def task_get_mfs_image_from_paths(paths: list[Path]) -> Path:
-    """Inverse of ``task_get_channel_images_from_paths`` -- the single MFS image"""
+    """Get the single MFS image from a list of paths.
+
+    Inverse of ``task_get_channel_images_from_paths``
+    """
     mfs_paths = [path for path in paths if "MFS" in path.name]
     assert len(mfs_paths) == 1, f"Expected a single MFS image, got {mfs_paths=}"
     return mfs_paths[0]
@@ -361,6 +364,7 @@ def task_wsclean_imager(
     channel_range: tuple[int, int] | None = None,
     scan_range: tuple[int, int] | None = None,
     make_cube_from_subbands: bool = True,
+    extra_output_types: tuple[str, ...] | None = None,
 ) -> WSCleanResult:
     """Run the wsclean imager against an input measurement set
 
@@ -374,6 +378,7 @@ def task_wsclean_imager(
         fits_mask (Optional[FITSMaskNames], optional): A path to a clean guard mask. Defaults to None.
         channel_range (Optional[Tuple[int,int]], optional): Add to the wsclean options the specific channel range to be imaged. Defaults to None.
         scan_range (Optional[Tuple[int,int]], optional): Add to the wsclean options the specific scan range to be imaged. Defaults to None.
+        extra_output_types (tuple[str, ...] | None, optional): Additional output types (beyond ``image``/``residual``) to search for and attach to the returned ``ImageSet``. Defaults to None.
 
     Returns:
         WSCleanResult: A resulting wsclean command and resulting meta-data
@@ -405,6 +410,7 @@ def task_wsclean_imager(
         update_wsclean_options=update_wsclean_options,
         make_cube_from_subbands=make_cube_from_subbands,
         update_fitscube_options=update_fitscube_options,
+        extra_output_types=extra_output_types,
     )
 
 
@@ -994,8 +1000,6 @@ def linmos_channel_groups_to_cubes(
     field_summary: FieldSummary | None = None,
     suffix_str: str | None = None,
     holofile: Path | None = None,
-    plane_post_process: Callable[[PrefectFuture[Path]], PrefectFuture[Path]]
-    | None = None,
 ) -> list[PrefectFuture[Path]]:
     """Co-add beam images one channel at a time, in parallel, then stack the
     resulting mosaics back into image and weight cubes.
@@ -1014,7 +1018,6 @@ def linmos_channel_groups_to_cubes(
         field_summary (FieldSummary | None, optional): Description of the field, used to get the ``pol_axis``. Defaults to None.
         suffix_str (str | None, optional): Additional suffix added to the linmos and cube names. Defaults to None.
         holofile (Path | None, optional): Holography file overriding the one in ``linmos_options``. Defaults to None.
-        plane_post_process (Callable[[PrefectFuture[Path]], PrefectFuture[Path]] | None, optional): Applied to each per-channel image/weight plane future right after it's co-added, before cubing (e.g. spice's mask/crop). Defaults to None.
 
     Returns:
         list[PrefectFuture[Path]]: The image and weight cubes being created
@@ -1047,9 +1050,6 @@ def linmos_channel_groups_to_cubes(
         )
         image_plane = task_getattr.submit(linmos_result, "image_fits")
         weight_plane = task_getattr.submit(linmos_result, "weight_fits")
-        if plane_post_process is not None:
-            image_plane = plane_post_process(image_plane)
-            weight_plane = plane_post_process(weight_plane)
         image_planes.append(image_plane)
         weight_planes.append(weight_plane)
 
