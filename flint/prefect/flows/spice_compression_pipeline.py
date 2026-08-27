@@ -57,6 +57,7 @@ def process_spice_compression(spice_field_options: SpiceFieldOptions) -> list[Pa
             "aegean_container is required when no catalogue is supplied"
         )
         reference_image = spice_field_options.reference_image
+        logger.info(f"Running source finder against {reference_image=}")
         aegean_outputs = task_run_bane_and_aegean.submit(
             image=reference_image,
             aegean_container=spice_field_options.aegean_container,
@@ -75,6 +76,7 @@ def process_spice_compression(spice_field_options: SpiceFieldOptions) -> list[Pa
         )
     )
 
+    logger.info(f"Getting Beam information from {reference_image=}")
     beam_shape = BeamShape.from_radio_beam(
         Beam.from_fits_header(fits.getheader(reference_image))
     )
