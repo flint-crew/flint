@@ -82,6 +82,9 @@ def run_rmsynth_3d(
     stokes_u_cube: Path,
     rmsynth_options: RMSynthOptions,
     stokes_i_cube: Path | None = None,
+    stokes_q_weight_cube: Path | None = None,
+    stokes_u_weight_cube: Path | None = None,
+    stokes_i_weight_cube: Path | None = None,
 ) -> RMSynth3DResults:
     """Run 3D RM-synthesis on Stokes Q/U FITS cubes.
 
@@ -95,15 +98,14 @@ def run_rmsynth_3d(
         RMSynth3DResults: Lazy dirty FDF cube, the RMSF spectrum every pixel
         shares, and associated parameters
     """
-    _check_cubes_memmappable(stokes_q_cube, stokes_u_cube, stokes_i_cube)
-
+    _check_cubes_memmappable(stokes_q_cube, stokes_u_cube, stokes_i_cube,stokes_q_weight_cube, stokes_u_weight_cube)
     stokes_i_kwargs = (
         {
             "stokes_i_file": stokes_i_cube,
+            "stokes_i_error_file": stokes_i_weight_cube,
             "fit_order": rmsynth_options.fit_order,
             "fit_function": rmsynth_options.fit_function,
             "stokes_i_snr_cut": rmsynth_options.stokes_i_snr_cut,
-            "estimate_stokes_i_noise": rmsynth_options.estimate_stokes_i_noise,
             "compute_model_error": rmsynth_options.compute_model_error,
             "n_error_samples": rmsynth_options.n_error_samples,
         }
@@ -113,6 +115,9 @@ def run_rmsynth_3d(
     return rmsynth_3d_from_fits(
         stokes_q_file=stokes_q_cube,
         stokes_u_file=stokes_u_cube,
+        stokes_q_error_file=stokes_q_weight_cube,
+        stokes_u_error_file=stokes_u_weight_cube,
+        noise_files_are_weight=True,
         phi_max_radm2=rmsynth_options.phi_max_radm2,
         d_phi_radm2=rmsynth_options.d_phi_radm2,
         n_samples=rmsynth_options.n_samples,
@@ -121,12 +126,6 @@ def run_rmsynth_3d(
         nufft_nthreads=rmsynth_options.nufft_nthreads,
         target_chunk_mb=rmsynth_options.target_chunk_mb,
         log_level=logging.INFO,
-        # `per_pixel_rmsf` is deliberately left off. A pixel's RMSF depends only
-        # on which channels it has flagged, and flint flags per channel, so the
-        # single `rmsf_arr` spectrum rm-lite returns describes the whole cube. The
-        # per-pixel cube is ~2x the FDF's size and would hold that one spectrum in
-        # every pixel. Only worth turning on for per-pixel blanking that the
-        # channel weights do not carry, which flint does not produce.
         **stokes_i_kwargs,
     )
 

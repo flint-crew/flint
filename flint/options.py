@@ -259,29 +259,6 @@ class RMSynthOptions(BaseOptions):
     """Briggs robust parameter, required if weight_type is 'briggs'"""
     nufft_nthreads: int = 1
     """finufft OpenMP threads per dask chunk"""
-
-    @model_validator(mode="after")
-    def _snr_cut_needs_a_noise_estimate(self) -> RMSynthOptions:
-        """Reject a Stokes I SNR cut that has nothing to measure against.
-
-        rm-lite scores a pixel whose Stokes I error is all-zero as infinite SNR,
-        so without an estimate the cut passes every pixel: each gets a full
-        ``curve_fit``, and a power law fitted to noise can pass close enough to
-        zero that dividing Q/U by it gives an infinite FDF. That is a broken
-        configuration rather than a slow one, so it is refused here instead of
-        being warned about once the run is already underway.
-        """
-        if self.stokes_i_snr_cut is not None and not self.estimate_stokes_i_noise:
-            msg = (
-                f"stokes_i_snr_cut={self.stokes_i_snr_cut} requires "
-                "estimate_stokes_i_noise=True. Without a Stokes I noise estimate "
-                "rm-lite scores every pixel as infinite SNR, so the cut passes all "
-                "of them. Set estimate_stokes_i_noise=True, or stokes_i_snr_cut=None "
-                "to fit every pixel deliberately."
-            )
-            raise ValueError(msg)
-        return self
-
     target_chunk_mb: float = 256
     """Target per-chunk memory footprint, in MB, when reading the Q/U cubes"""
     fit_order: int = 2
@@ -298,9 +275,8 @@ class RMSynthOptions(BaseOptions):
     """Also compute a debiased (via rm_lite's debias_fdf) mom0/mom1/mom2 set per requested FDF"""
     debias_filter_size: int = 5
     """Median filter size (pixels) used by mom0 debiasing"""
-    estimate_stokes_i_noise: bool = True
-    """Derive a per-channel Stokes I error from the Stokes I cube when fitting the fractional-polarisation model"""
-
+    per_pixel_rmsf: bool = False
+    """ Compute the RMSF for each pixel in the cube """
 
 class RMCleanOptions(BaseOptions):
     """Options controlling ``rm_lite.tools_3d.rmclean.run_rmclean_from_synth``.
@@ -372,6 +348,12 @@ class RMSynthFieldOptions(BaseOptions):
     """Path to the Stokes U FITS cube. Computed by the racs-all flow, so required only when running this pipeline standalone"""
     stokes_i_cube: Path | None = None
     """Path to a Stokes I FITS cube, used to fit a per-pixel fractional-polarisation correction. Defaults to None."""
+    stokes_q_weight_cube: Path | None = None
+    """Path to Stokes Q weights cube produced by LINMOS"""
+    stokes_u_weight_cube: Path | None = None
+    """Path to Stokes U weights cube produced by LINMOS"""
+    stokes_i_weight_cube: Path | None = None
+    """Path to Stokes I weights cube produced by LINMOS"""
     imaging_strategy: Path | None = None
     """Path to a FLINT imaging yaml file that contains the RMSynthOptions/RMCleanOptions settings to use"""
     cube_products: list[Literal["dirty", "clean", "model"]] = []

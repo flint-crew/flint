@@ -22,13 +22,15 @@ from flint.rmsynth import (
 )
 
 
-# task_rmsynth = task(run_rmsynth_3d)
 @task
 def task_rmsynth(
     stokes_q_cube: Path,
     stokes_u_cube: Path,
     rmsynth_options: RMSynthOptions,
     stokes_i_cube: Path | None = None,
+    stokes_q_weight_cube: Path | None = None,
+    stokes_u_weight_cube: Path | None = None,
+    stokes_i_weight_cube: Path | None = None,
 ) -> RMSynth3DResults:
     from prefect_dask import get_dask_client
 
@@ -39,12 +41,14 @@ def task_rmsynth(
         return run_rmsynth_3d(
             stokes_q_cube=stokes_q_cube,
             stokes_u_cube=stokes_u_cube,
+            stokes_q_weight_cube=stokes_q_weight_cube,
+            stokes_u_weight_cube=stokes_u_weight_cube,
             rmsynth_options=rmsynth_options,
             stokes_i_cube=stokes_i_cube,
+            stokes_i_weight_cube=stokes_i_weight_cube,
         )
 
 
-# task_rmclean = task(run_rmclean_3d)
 @task
 def task_rmclean(
     rm_synth_results: RMSynth3DResults, rmclean_options: RMCleanOptions
