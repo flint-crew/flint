@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import Any, Literal
@@ -119,6 +120,7 @@ def run_rmsynth_3d(
         robust=rmsynth_options.robust,
         nufft_nthreads=rmsynth_options.nufft_nthreads,
         target_chunk_mb=rmsynth_options.target_chunk_mb,
+        log_level=logging.INFO,
         # `per_pixel_rmsf` is deliberately left off. A pixel's RMSF depends only
         # on which channels it has flagged, and flint flags per channel, so the
         # single `rmsf_arr` spectrum rm-lite returns describes the whole cube. The
@@ -148,6 +150,7 @@ def run_rmclean_3d(
         max_iter=rmclean_options.max_iter,
         gain=rmclean_options.gain,
         moment_threshold_snr=rmclean_options.moment_threshold_snr,
+        log_level=logging.INFO,
     )
 
 
