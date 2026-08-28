@@ -197,7 +197,7 @@ def test_rmsynth_with_stokes_i_writes_fit_maps(
         stokes_q_cube=stokes_q_cube,
         stokes_u_cube=stokes_u_cube,
         stokes_i_cube=stokes_i_cube,
-        rmsynth_options=RMSynthOptions(estimate_stokes_i_noise=True),
+        rmsynth_options=RMSynthOptions(),
         rmclean_options=RMCleanOptions(),
         cube_products=[],
         moment_products=["dirty"],
@@ -245,9 +245,7 @@ def test_rmsynth_writes_a_named_map_per_stokes_i_model_term(
         stokes_q_cube=stokes_q_cube,
         stokes_u_cube=stokes_u_cube,
         stokes_i_cube=stokes_i_cube,
-        rmsynth_options=RMSynthOptions(
-            estimate_stokes_i_noise=True, fit_function=fit_function
-        ),
+        rmsynth_options=RMSynthOptions(fit_function=fit_function),
         rmclean_options=RMCleanOptions(),
         cube_products=[],
         moment_products=["dirty"],
@@ -322,7 +320,7 @@ def test_unnamed_stokes_i_model_terms_are_skipped_with_a_warning(
     are not worth losing the rest of the products over either.
     """
     stokes_q_cube, stokes_u_cube = qu_cubes
-    rmsynth_options = RMSynthOptions(estimate_stokes_i_noise=True)
+    rmsynth_options = RMSynthOptions()
     synth_results = run_rmsynth_3d(
         stokes_q_cube=stokes_q_cube,
         stokes_u_cube=stokes_u_cube,
@@ -364,7 +362,7 @@ def test_stokes_i_model_rebuilds_from_the_written_term_maps(
     stokes_q_cube, stokes_u_cube = qu_cubes
     stokes_i_cube = _make_i_cube(tmp_path)
     output_prefix = tmp_path / "test_field"
-    rmsynth_options = RMSynthOptions(estimate_stokes_i_noise=True, fit_order=-3)
+    rmsynth_options = RMSynthOptions(fit_order=-3)
 
     synth_results = run_rmsynth_3d(
         stokes_q_cube=stokes_q_cube,
@@ -660,9 +658,7 @@ def test_stokes_i_fit_on_noise_stays_finite(tmp_path: Path) -> None:
         stokes_q_cube=q_cube,
         stokes_u_cube=u_cube,
         stokes_i_cube=i_cube,
-        rmsynth_options=RMSynthOptions(
-            estimate_stokes_i_noise=True, stokes_i_snr_cut=5.0
-        ),
+        rmsynth_options=RMSynthOptions(stokes_i_snr_cut=5.0),
         rmclean_options=RMCleanOptions(),
         cube_products=[],
         moment_products=["dirty", "clean"],
