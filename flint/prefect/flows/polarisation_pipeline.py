@@ -70,6 +70,8 @@ class PolPipelineResult(BaseOptions):
 
     stokes_cubes: dict[str, Path]
     """The full, unspiced Stokes cube written for each imaged polarisation (e.g. 'i', 'q', 'u', 'v')"""
+    weight_cubes: dict[str, Path]
+    """The full Stokes weights written for each imaged polarisation (e.g. 'i', 'q', 'u', 'v')"""
     mfs_products: dict[str, dict[str, Path]]
     """MFS image/model/residual products co-added per Stokes parameter, keyed by Stokes ('i', 'q', 'u', 'v') then product type ('image', 'model', 'residual'). Only populated for Stokes imaged under a polarisation with ``WSCleanOptions.flint_save_mfs_products`` set"""
     terminal_futures: list[PrefectFuture[Any]]
@@ -103,7 +105,7 @@ def process_science_fields_pol(
 
     if strategy is None:
         logger.info("No strategy provided. Returning.")
-        return PolPipelineResult(stokes_cubes={}, mfs_products={}, terminal_futures=[])
+        return PolPipelineResult(stokes_cubes={}, weight_cubes={}, mfs_products={}, terminal_futures=[])
 
     if mss_by_beam is not None:
         # Already Flint-processed, self-calibrated MSs handed down by the calling
@@ -340,6 +342,7 @@ def process_science_fields_pol(
 
     cube_results: list[PrefectFuture[Path]] = []
     stokes_image_cubes: dict[str, PrefectFuture[Path]] = {}
+    stokes_weight_cubes: dict[str, PrefectFuture[Path]] = {}
     all_input_images: list[Path] = []
     for stokes, channel_groups in stokes_channel_groups.items():
         with tags(f"stokes-{stokes}"):
@@ -360,7 +363,7 @@ def process_science_fields_pol(
                 fitscube_options=fitscube_options,
                 suffix_str=POL_NAME_SUFFIX,
             )
-            stokes_image_cubes[stokes] = stokes_cubes[0]
+            stokes_image_cubes[stokes], stokes_weight_cubes[stokes] = stokes_cubes
             cube_results.extend(stokes_cubes)
 
     # Remove the convolved per-beam channel images now that every cube is built.
@@ -424,6 +427,9 @@ def process_science_fields_pol(
     return PolPipelineResult(
         stokes_cubes={
             stokes: future.result() for stokes, future in stokes_image_cubes.items()
+        },
+        weight_cubes={
+            stokes: future.result() for stokes, future in stokes_weight_cubes.items()
         },
         mfs_products={
             stokes: {

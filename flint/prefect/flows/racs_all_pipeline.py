@@ -253,6 +253,9 @@ def process_racs_all(
             stokes_q_cube=pol_result.stokes_cubes["q"],
             stokes_u_cube=pol_result.stokes_cubes["u"],
             stokes_i_cube=pol_result.stokes_cubes.get("i"),
+            stokes_i_weight_cube=pol_result.weight_cubes.get("i"),
+            stokes_q_weight_cube=pol_result.weight_cubes["q"],
+            stokes_u_weight_cube=pol_result.weight_cubes["u"],
             output_path=rmsynth_field_options.output_path or output_root / "rmsynth",
         )
         assert pipeline_options.rmsynth_cluster_config is not None
