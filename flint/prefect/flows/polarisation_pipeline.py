@@ -105,7 +105,9 @@ def process_science_fields_pol(
 
     if strategy is None:
         logger.info("No strategy provided. Returning.")
-        return PolPipelineResult(stokes_cubes={}, weight_cubes={}, mfs_products={}, terminal_futures=[])
+        return PolPipelineResult(
+            stokes_cubes={}, weight_cubes={}, mfs_products={}, terminal_futures=[]
+        )
 
     if mss_by_beam is not None:
         # Already Flint-processed, self-calibrated MSs handed down by the calling

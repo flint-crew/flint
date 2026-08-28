@@ -98,7 +98,13 @@ def run_rmsynth_3d(
         RMSynth3DResults: Lazy dirty FDF cube, the RMSF spectrum every pixel
         shares, and associated parameters
     """
-    _check_cubes_memmappable(stokes_q_cube, stokes_u_cube, stokes_i_cube,stokes_q_weight_cube, stokes_u_weight_cube)
+    _check_cubes_memmappable(
+        stokes_q_cube,
+        stokes_u_cube,
+        stokes_i_cube,
+        stokes_q_weight_cube,
+        stokes_u_weight_cube,
+    )
     stokes_i_kwargs = (
         {
             "stokes_i_file": stokes_i_cube,

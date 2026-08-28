@@ -17,7 +17,7 @@ import yaml
 from astropy.coordinates import EarthLocation, SkyCoord
 from astropy.time import Time
 from capn_crunch import BaseOptions
-from pydantic import create_model, model_validator
+from pydantic import create_model
 
 from flint.exceptions import MSError
 from flint.logging import logger
@@ -277,6 +277,7 @@ class RMSynthOptions(BaseOptions):
     """Median filter size (pixels) used by mom0 debiasing"""
     per_pixel_rmsf: bool = False
     """ Compute the RMSF for each pixel in the cube """
+
 
 class RMCleanOptions(BaseOptions):
     """Options controlling ``rm_lite.tools_3d.rmclean.run_rmclean_from_synth``.
