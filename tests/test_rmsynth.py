@@ -81,6 +81,36 @@ def _make_i_cube(tmp_path: Path) -> Path:
     return i_path
 
 
+def _make_weight_cube(
+    tmp_path: Path,
+    shape: tuple[int, int, int],
+    freq_hz: np.ndarray,
+    sigma: float,
+    name: str,
+) -> Path:
+    """Write a constant per-channel weight cube (1/sigma**2) for use as a
+    ``*_weight_cube`` with ``noise_files_are_weight=True``."""
+    n_chan, ny, nx = shape
+    weight_cube = np.full(shape, 1.0 / sigma**2, dtype=np.float32)
+
+    wcs = WCS(naxis=3)
+    wcs.wcs.ctype = ["RA---SIN", "DEC--SIN", "FREQ"]
+    wcs.wcs.crval = [180.0, -30.0, freq_hz[0]]
+    wcs.wcs.crpix = [nx / 2, ny / 2, 1]
+    wcs.wcs.cdelt = [-1e-3, 1e-3, freq_hz[1] - freq_hz[0]]
+    wcs.wcs.cunit = ["deg", "deg", "Hz"]
+    header = wcs.to_header()
+
+    weight_path = tmp_path / f"{name}.weight.fits"
+    fits.writeto(weight_path, weight_cube, header, overwrite=True)
+    return weight_path
+
+
+def _make_i_weight_cube(tmp_path: Path, sigma: float = 1e-3) -> Path:
+    freq_hz = np.linspace(700e6, 1300e6, N_CHAN)
+    return _make_weight_cube(tmp_path, (N_CHAN, NY, NX), freq_hz, sigma, "stokesi")
+
+
 @pytest.fixture
 def qu_cubes(tmp_path: Path) -> tuple[Path, Path]:
     return _make_qu_cubes(tmp_path)
@@ -95,10 +125,8 @@ def _synth_and_write(
     moment_products: list[FDFLabel],
     output_prefix: Path,
     stokes_i_cube: Path | None = None,
+    stokes_i_weight_cube: Path | None = None,
 ) -> list[Path]:
-    """Mirror of the call sequence in ``flint.prefect.flows.rmsynth_pipeline``,
-    keeping these unit tests off prefect and dask. The flow itself is tested in
-    ``tests/test_prefect_rmsynth_flow.py``."""
     if not cube_products and not moment_products:
         return []
 
@@ -107,6 +135,7 @@ def _synth_and_write(
         stokes_u_cube=stokes_u_cube,
         rmsynth_options=rmsynth_options,
         stokes_i_cube=stokes_i_cube,
+        stokes_i_weight_cube=stokes_i_weight_cube,
     )
     clean_results = (
         run_rmclean_3d(rm_synth_results=synth_results, rmclean_options=rmclean_options)
@@ -202,6 +231,7 @@ def test_rmsynth_with_stokes_i_writes_fit_maps(
         cube_products=[],
         moment_products=["dirty"],
         output_prefix=output_prefix,
+        stokes_i_weight_cube=_make_i_weight_cube(tmp_path),
     )
 
     for suffix in ("ref_flux", "alpha", "model_order"):
@@ -250,6 +280,7 @@ def test_rmsynth_writes_a_named_map_per_stokes_i_model_term(
         cube_products=[],
         moment_products=["dirty"],
         output_prefix=output_prefix,
+        stokes_i_weight_cube=_make_i_weight_cube(tmp_path),
     )
 
     for index, name in enumerate(expected_names):
@@ -326,6 +357,7 @@ def test_unnamed_stokes_i_model_terms_are_skipped_with_a_warning(
         stokes_u_cube=stokes_u_cube,
         rmsynth_options=rmsynth_options,
         stokes_i_cube=_make_i_cube(tmp_path),
+        stokes_i_weight_cube=_make_i_weight_cube(tmp_path),
     )
     assert synth_results.stokes_i_coeff_names is not None
 
@@ -369,6 +401,7 @@ def test_stokes_i_model_rebuilds_from_the_written_term_maps(
         stokes_u_cube=stokes_u_cube,
         rmsynth_options=rmsynth_options,
         stokes_i_cube=stokes_i_cube,
+        stokes_i_weight_cube=_make_i_weight_cube(tmp_path),
     )
     write_rm_products(
         synth_results=synth_results,
@@ -536,7 +569,7 @@ def test_rmsynth_rejects_compressed_cubes(tmp_path: Path) -> None:
 
 def _make_noise_only_cubes(
     tmp_path: Path, prefix: str = "noise"
-) -> tuple[Path, Path, Path]:
+) -> tuple[Path, Path, Path, Path]:
     """Q/U/I cubes of pure noise, no source anywhere.
 
     The point of a noise-only cube is that everything the pipeline reports for
@@ -561,61 +594,12 @@ def _make_noise_only_cubes(
         path = tmp_path / f"{prefix}.{stokes}.fits"
         fits.writeto(path, cube, header, overwrite=True)
         paths.append(path)
-    return paths[0], paths[1], paths[2]
-
-
-def test_estimate_stokes_i_noise_defaults_on() -> None:
-    """The Stokes I SNR cut is inert without a noise to compare against, so the
-    estimate that gives it one has to be on by default -- see
-    ``_warn_if_snr_cut_inert``."""
-    options = RMSynthOptions()
-    assert options.estimate_stokes_i_noise is True
-    assert options.stokes_i_snr_cut is not None
-
-
-def test_snr_cut_without_a_noise_estimate_is_refused() -> None:
-    """The combination is broken, not merely slow, so it must not be
-    constructible: rm-lite scores every pixel as infinite SNR without a noise
-    estimate, so the cut passes all of them and a power law fitted to noise can
-    pass close enough to zero that Q/U divided by it is infinite."""
-    with pytest.raises(ValidationError, match="requires estimate_stokes_i_noise"):
-        RMSynthOptions(stokes_i_snr_cut=5.0, estimate_stokes_i_noise=False)
-
-    # ... including when reached through with_options rather than the constructor
-    with pytest.raises(ValidationError, match="requires estimate_stokes_i_noise"):
-        RMSynthOptions().with_options(estimate_stokes_i_noise=False)
-
-    # Turning the cut off deliberately is allowed, and so is the default pairing
-    assert (
-        RMSynthOptions(
-            stokes_i_snr_cut=None, estimate_stokes_i_noise=False
-        ).stokes_i_snr_cut
-        is None
+    return (
+        paths[0],
+        paths[1],
+        paths[2],
+        _make_weight_cube(tmp_path, shape, freq_hz, sigma=1e-3, name=f"{prefix}.i"),
     )
-    assert RMSynthOptions().estimate_stokes_i_noise is True
-
-
-def test_snr_cut_rule_is_enforced_from_a_strategy_file(tmp_path: Path) -> None:
-    """A strategy file is the likely way in, so it has to fail there too rather
-    than after imaging has already run."""
-    strategy_path = tmp_path / "strategy.yaml"
-    strategy_path.write_text(
-        "defaults:\n"
-        "  rmsynth:\n"
-        "    estimate_stokes_i_noise: false\n"
-        "version: 0.2\n"
-        "rmsynth:\n"
-        "  rmsynth:\n"
-        "    estimate_stokes_i_noise: false\n"
-    )
-    from flint.configuration import get_options_from_strategy, load_strategy_yaml
-
-    strategy = load_strategy_yaml(input_yaml=strategy_path, verify=False)
-    options = get_options_from_strategy(
-        strategy=strategy, operation="rmsynth", mode="rmsynth"
-    )
-    with pytest.raises(ValidationError, match="requires estimate_stokes_i_noise"):
-        RMSynthOptions(**options)
 
 
 def test_multiscale_rmclean_is_refused_rather_than_ignored(tmp_path: Path) -> None:
@@ -651,7 +635,7 @@ def test_stokes_i_fit_on_noise_stays_finite(tmp_path: Path) -> None:
     ~1e-10 mid-band; Q/U divided by that is an infinite FDF and an infinite
     mom0. The cut is what stops those pixels being fitted at all.
     """
-    q_cube, u_cube, i_cube = _make_noise_only_cubes(tmp_path)
+    q_cube, u_cube, i_cube, i_weight_cube = _make_noise_only_cubes(tmp_path)
     output_prefix = tmp_path / "noise_field"
 
     _synth_and_write(
@@ -663,6 +647,7 @@ def test_stokes_i_fit_on_noise_stays_finite(tmp_path: Path) -> None:
         cube_products=[],
         moment_products=["dirty", "clean"],
         output_prefix=output_prefix,
+        stokes_i_weight_cube=i_weight_cube,
     )
 
     for label in ("dirty", "clean"):
@@ -770,19 +755,19 @@ def test_stokes_i_fit_does_not_multiply_with_requested_products(
     own batching adds nothing on top.
     """
     import dask
-    import rm_lite.tools_3d.rmsynth as rmsynth_mod
+    import rm_lite.utils.fitting as fitting_mod
 
     stokes_q_cube, stokes_u_cube = qu_cubes
     stokes_i_cube = _make_i_cube(tmp_path)
 
     calls: list[int] = []
-    original = rmsynth_mod._fit_stokes_i_block
+    original = fitting_mod._fit_stokes_i_block
 
     def counting_fit_block(*args: object, **kwargs: object) -> object:
         calls.append(1)
         return original(*args, **kwargs)
 
-    monkeypatch.setattr(rmsynth_mod, "_fit_stokes_i_block", counting_fit_block)
+    monkeypatch.setattr(fitting_mod, "_fit_stokes_i_block", counting_fit_block)
     # As above: the counter has to stay in this process, and it is the graph
     # rather than the scheduler that decides how often the fit is called.
     real_compute = dask.compute
@@ -791,6 +776,7 @@ def test_stokes_i_fit_does_not_multiply_with_requested_products(
         "compute",
         lambda *a, **k: real_compute(*a, **{**k, "scheduler": "threads"}),
     )
+    stokes_i_weight_cube = _make_i_weight_cube(tmp_path)
 
     # Built once, and never computed, only to read the chunking off it
     n_chunks = run_rmsynth_3d(
@@ -798,6 +784,7 @@ def test_stokes_i_fit_does_not_multiply_with_requested_products(
         stokes_u_cube=stokes_u_cube,
         rmsynth_options=RMSynthOptions(),
         stokes_i_cube=stokes_i_cube,
+        stokes_i_weight_cube=stokes_i_weight_cube,
     ).fdf_dirty_cube.numblocks[1:]
     n_chunks = n_chunks[0] * n_chunks[1]
 
@@ -814,6 +801,7 @@ def test_stokes_i_fit_does_not_multiply_with_requested_products(
             stokes_q_cube=stokes_q_cube,
             stokes_u_cube=stokes_u_cube,
             stokes_i_cube=stokes_i_cube,
+            stokes_i_weight_cube=stokes_i_weight_cube,
             rmsynth_options=RMSynthOptions(),
             rmclean_options=RMCleanOptions(),
             cube_products=cube_products,
