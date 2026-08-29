@@ -276,14 +276,9 @@ class RMSynthOptions(BaseOptions):
     debias_filter_size: int = 5
     """Median filter size (pixels) used by mom0 debiasing"""
     per_pixel_rmsf: bool = False
-    """Compute the RMSF for each pixel in the cube. ~2x the FDF's size, and only
-    worth turning on for per-pixel blanking that the channel weights do not carry"""
+    """Compute the RMSF for each pixel rather than one shared by the cube. Roughly doubles the FDF's size"""
     estimate_stokes_i_noise: bool = True
-    """Derive a per-channel Stokes I error from the Stokes I cube itself when no
-    Stokes I weight cube is given. rm-lite refuses a ``stokes_i_snr_cut`` with
-    nothing to measure SNR against, and scoring every pixel as infinite SNR would
-    fit noise as if it were signal, so the estimate is the fallback that keeps the
-    cut meaningful. A supplied weight cube takes precedence over it"""
+    """Derive the per-channel Stokes I error from the Stokes I cube when no Stokes I weight cube is given. A weight cube takes precedence"""
 
 
 class RMCleanOptions(BaseOptions):
