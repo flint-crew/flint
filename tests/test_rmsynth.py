@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -746,6 +747,30 @@ def test_unusable_linmos_weights_are_refused(tmp_path: Path) -> None:
         per_channel_weights_from_linmos(
             stokes_q_weight_cube=q_weight, stokes_u_weight_cube=mismatched
         )
+
+
+def test_one_linmos_weight_cube_falls_back_to_the_qu_noise_estimate(
+    tmp_path: Path, qu_cubes: tuple[Path, Path], caplog: pytest.LogCaptureFixture
+) -> None:
+    """rm-lite needs both Q and U to build the channel weights, so one on its own
+    is a wiring mistake. Estimating from the Q/U cubes is the right fallback --
+    the run is still correct, just not linmos-weighted -- but it is silent
+    otherwise, and a half-wired pipeline would look like a working one."""
+    stokes_q_cube, stokes_u_cube = qu_cubes
+
+    with caplog.at_level(logging.WARNING, logger="flint"):
+        synth_results = run_rmsynth_3d(
+            stokes_q_cube=stokes_q_cube,
+            stokes_u_cube=stokes_u_cube,
+            rmsynth_options=RMSynthOptions(),
+            stokes_q_weight_cube=_make_linmos_weight_cube(
+                tmp_path, "q", blank_outside=1.5
+            ),
+        )
+
+    assert "Only one of the Stokes Q/U linmos weight cubes" in caplog.text
+    # Fell back rather than failed, and the fallback is the eager MAD estimate
+    assert float(synth_results.theoretical_noise.fdf_error_noise) > 0
 
 
 def test_rmsynth_with_linmos_weights_stays_cleanable(
