@@ -659,7 +659,6 @@ def _within_cutoff(blank_outside: float) -> np.ndarray:
 def _make_linmos_weight_cube(
     tmp_path: Path,
     name: str,
-    taper: bool = True,
     blank_outside: float | None = None,
     blank_channels: tuple[int, ...] = (),
     taper_per_channel: bool = False,
@@ -677,7 +676,7 @@ def _make_linmos_weight_cube(
     yy, xx = np.mgrid[0:NY, 0:NX]
     radius = np.hypot(yy - (NY - 1) / 2, xx - (NX - 1) / 2)
 
-    plane = np.exp(-(radius**2) / 2.0) if taper else np.ones((NY, NX))
+    plane = np.exp(-(radius**2) / 2.0)
     if blank_outside is not None:
         plane = np.where(radius > blank_outside, 0.0, plane)
 
@@ -804,6 +803,45 @@ def test_linmos_weights_give_each_pixel_its_own_rmsf(
         rm_synth_results=synth_results, rmclean_options=RMCleanOptions()
     )
     assert np.asarray(clean_results.clean_fdf_cube).shape[-2:] == (NY, NX)
+
+
+def test_channels_linmos_blanked_everywhere_drop_out(
+    tmp_path: Path, qu_cubes: tuple[Path, Path]
+) -> None:
+    """An all-zero weight plane is linmos saying that channel was flagged across
+    the whole field. It has to leave the synthesis rather than divide into it:
+    zero weight is a channel that contributes nothing, not one whose 1/0 poisons
+    every pixel that would have used it."""
+    stokes_q_cube, stokes_u_cube = qu_cubes
+    blanked_channels = (0, 5, N_CHAN - 1)
+
+    synth_results = run_rmsynth_3d(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        rmsynth_options=RMSynthOptions(),
+        stokes_q_weight_cube=_make_linmos_weight_cube(
+            tmp_path, "q", blank_outside=1.5, blank_channels=blanked_channels
+        ),
+        stokes_u_weight_cube=_make_linmos_weight_cube(
+            tmp_path, "u", blank_outside=1.5, blank_channels=blanked_channels
+        ),
+    )
+    clean_results = run_rmclean_3d(
+        rm_synth_results=synth_results, rmclean_options=RMCleanOptions()
+    )
+
+    inside_cutoff = _within_cutoff(1.5)
+    clean_cube = np.asarray(clean_results.clean_fdf_cube)
+    noise = np.asarray(synth_results.theoretical_noise.fdf_error_noise)
+
+    assert np.all(np.isfinite(clean_cube[:, inside_cutoff]))
+    assert np.all(np.isfinite(noise[inside_cutoff]))
+
+    phi_arr_radm2 = np.asarray(synth_results.phi_arr_radm2)
+    peak_phi = phi_arr_radm2[np.abs(clean_cube[:, inside_cutoff]).mean(axis=1).argmax()]
+    assert peak_phi == pytest.approx(PHI_TRUE_RADM2, abs=5.0), (
+        "losing three channels must not move the recovered Faraday depth"
+    )
 
 
 def test_linmos_weights_through_to_the_moment_maps(
