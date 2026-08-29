@@ -6,10 +6,12 @@ from __future__ import annotations
 
 import logging
 import os
+import warnings
 from pathlib import Path
 from typing import Any, Literal
 
 import dask
+import dask.array as da
 import numpy as np
 import zarr
 from astropy.io import fits
@@ -32,6 +34,7 @@ from rm_lite.tools_3d.rmsynth import (  # noqa: E402
     RMSynth3DResults,
     rmsynth_3d_from_fits,
 )
+from rm_lite.utils.dask_io import read_fits_cube_channel_chunks  # noqa: E402
 from rm_lite.utils.synthesis import (  # noqa: E402
     FaradayMoments,
     calc_faraday_moments,
@@ -77,6 +80,88 @@ def _check_cubes_memmappable(*cubes: Path | None) -> None:
         raise NotSupportedError(msg)
 
 
+def per_channel_weights_from_linmos(
+    stokes_q_weight_cube: Path,
+    stokes_u_weight_cube: Path,
+    target_chunk_mb: float = 256,
+) -> np.ndarray:
+    """Collapse the linmos Q/U weight cubes to the per-channel weight spectrum.
+
+    RM-synthesis weights channels, not pixels: rm-lite derives one RMSF and one
+    theoretical FDF noise for the whole cube from a single ``(n_freq,)`` weight
+    vector, and its ``_shared_rmsf`` is only valid if every pixel shares that
+    vector. A linmos weight cube is the opposite -- it is dominated by the
+    primary-beam taper, and is zero outside ``LinmosOptions.cutoff`` -- so
+    handing the cube straight to rm-lite as an error file would let one pixel's
+    beam response stand in for the whole field's channel weighting, and would
+    fold the blanked-out edge into the whole-cube noise.
+
+    So the spatial axes are reduced here instead, to the median over the pixels
+    linmos actually filled. The median (rather than the mean) keeps the taper
+    and the blanked edge from dragging a channel's weight around, leaving the
+    channel-to-channel ratio -- all RM-synthesis uses -- set by sensitivity
+    rather than by how much of the field happened to be covered. A channel
+    linmos blanked entirely keeps a zero weight, which drops it from the
+    synthesis as intended.
+
+    Computed eagerly, not left lazy: rm-lite's theoretical noise is a scalar
+    reduction over this array, and a lazy one propagates a dask scalar into
+    ``run_rmclean_from_synth``, which formats it into a log line.
+
+    Args:
+        stokes_q_weight_cube (Path): Path to the linmos Stokes Q weight cube
+        stokes_u_weight_cube (Path): Path to the linmos Stokes U weight cube
+        target_chunk_mb (float, optional): Target per-chunk memory footprint, in MB, for the frequency-chunked reads. Defaults to 256.
+
+    Returns:
+        np.ndarray: Per-channel weights, shape (n_freq,), zero where a channel
+        carries no valid weight
+    """
+    q_planes, _ = read_fits_cube_channel_chunks(
+        stokes_q_weight_cube, target_chunk_mb=target_chunk_mb
+    )
+    u_planes, _ = read_fits_cube_channel_chunks(
+        stokes_u_weight_cube, target_chunk_mb=target_chunk_mb
+    )
+    if q_planes.shape != u_planes.shape:
+        msg = (
+            f"The Stokes Q and U weight cubes disagree on shape: "
+            f"{q_planes.shape} against {u_planes.shape}. They come from the same "
+            "linmos run over the same channels, so a mismatch means the wrong "
+            "pair was paired up."
+        )
+        raise NotSupportedError(msg)
+
+    # Frequency-chunked, so each block holds whole channel planes and the
+    # per-channel median never needs pixels from another block.
+    mean_weights = (q_planes + u_planes) / 2.0
+    valid = da.isfinite(mean_weights) & (mean_weights > 0)
+    with warnings.catch_warnings():
+        # A channel linmos blanked everywhere is all-NaN by construction here,
+        # and is meant to median to nan and then to a zero weight below
+        warnings.filterwarnings("ignore", "All-NaN slice encountered", RuntimeWarning)
+        per_channel = da.nanmedian(
+            da.where(valid, mean_weights, np.nan), axis=(1, 2)
+        ).compute()
+
+    # An all-blank channel medians to nan; it has no sensitivity, so weight zero
+    weight_arr = np.nan_to_num(np.asarray(per_channel, dtype=np.float64), nan=0.0)
+    n_blank = int((weight_arr <= 0).sum())
+    if n_blank:
+        logger.info(
+            f"{n_blank} of {weight_arr.size} channels carry no linmos weight and "
+            "will be dropped from the RM-synthesis"
+        )
+    if not weight_arr.any():
+        msg = (
+            f"{stokes_q_weight_cube} and {stokes_u_weight_cube} are zero or blank "
+            "in every channel, so every channel would be dropped from the "
+            "RM-synthesis. Check that linmos produced usable weights."
+        )
+        raise NotSupportedError(msg)
+    return weight_arr
+
+
 def run_rmsynth_3d(
     stokes_q_cube: Path,
     stokes_u_cube: Path,
@@ -93,6 +178,9 @@ def run_rmsynth_3d(
         stokes_u_cube (Path): Path to the Stokes U FITS cube
         rmsynth_options (RMSynthOptions): Options controlling the synthesis
         stokes_i_cube (Path | None, optional): Path to a Stokes I FITS cube, used to fit a per-pixel fractional-polarisation correction. FDF stays in Q/U flux if not given. Defaults to None.
+        stokes_q_weight_cube (Path | None, optional): Path to the linmos Stokes Q weight cube, used as the per-channel weights instead of a noise estimate from the Q/U cubes. Both Q and U must be given for either to be used. Defaults to None.
+        stokes_u_weight_cube (Path | None, optional): Path to the linmos Stokes U weight cube. See ``stokes_q_weight_cube``. Defaults to None.
+        stokes_i_weight_cube (Path | None, optional): Path to the linmos Stokes I weight cube, used to weight the per-pixel Stokes I fit and to score it against ``stokes_i_snr_cut``. Falls back to ``RMSynthOptions.estimate_stokes_i_noise`` if not given. Defaults to None.
 
     Returns:
         RMSynth3DResults: Lazy dirty FDF cube, the RMSF spectrum every pixel
@@ -104,7 +192,26 @@ def run_rmsynth_3d(
         stokes_i_cube,
         stokes_q_weight_cube,
         stokes_u_weight_cube,
+        stokes_i_weight_cube,
     )
+    if (stokes_q_weight_cube is None) != (stokes_u_weight_cube is None):
+        logger.warning(
+            "Only one of the Stokes Q/U linmos weight cubes was given "
+            f"({stokes_q_weight_cube=}, {stokes_u_weight_cube=}); the channel "
+            "weights need both, so they will be estimated from the Q/U cubes instead"
+        )
+    # rm-lite would otherwise read these as error cubes and reduce them over the
+    # whole cube; collapse them to the per-channel spectrum it weights with
+    weight_arr = (
+        per_channel_weights_from_linmos(
+            stokes_q_weight_cube=stokes_q_weight_cube,
+            stokes_u_weight_cube=stokes_u_weight_cube,
+            target_chunk_mb=rmsynth_options.target_chunk_mb,
+        )
+        if stokes_q_weight_cube is not None and stokes_u_weight_cube is not None
+        else None
+    )
+
     stokes_i_kwargs = (
         {
             "stokes_i_file": stokes_i_cube,
@@ -112,6 +219,9 @@ def run_rmsynth_3d(
             "fit_order": rmsynth_options.fit_order,
             "fit_function": rmsynth_options.fit_function,
             "stokes_i_snr_cut": rmsynth_options.stokes_i_snr_cut,
+            # Only consulted when no Stokes I weight cube is given: rm-lite
+            # refuses a stokes_i_snr_cut it has no error to measure against.
+            "estimate_stokes_i_noise": rmsynth_options.estimate_stokes_i_noise,
             "compute_model_error": rmsynth_options.compute_model_error,
             "n_error_samples": rmsynth_options.n_error_samples,
         }
@@ -121,14 +231,16 @@ def run_rmsynth_3d(
     return rmsynth_3d_from_fits(
         stokes_q_file=stokes_q_cube,
         stokes_u_file=stokes_u_cube,
-        stokes_q_error_file=stokes_q_weight_cube,
-        stokes_u_error_file=stokes_u_weight_cube,
+        weight_arr=weight_arr,
+        # Only reaches the Stokes I error cube now that the Q/U weights are
+        # collapsed here: a per-pixel error is what the Stokes I fit wants
         noise_files_are_weight=True,
         phi_max_radm2=rmsynth_options.phi_max_radm2,
         d_phi_radm2=rmsynth_options.d_phi_radm2,
         n_samples=rmsynth_options.n_samples,
         weight_type=rmsynth_options.weight_type,
         robust=rmsynth_options.robust,
+        per_pixel_rmsf=rmsynth_options.per_pixel_rmsf,
         nufft_nthreads=rmsynth_options.nufft_nthreads,
         target_chunk_mb=rmsynth_options.target_chunk_mb,
         log_level=logging.INFO,

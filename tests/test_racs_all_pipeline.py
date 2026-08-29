@@ -173,6 +173,28 @@ def test_process_racs_all_everything_disabled_returns_immediately(
     assert result == []
 
 
+def test_pol_stage_with_nothing_to_do_still_feeds_rm_synth() -> None:
+    """``process_racs_all`` reads ``weight_cubes`` off the polarisation result,
+    so a polarisation stage that imaged nothing has to return an empty one
+    rather than fail to construct. Both of its give-up paths go through
+    ``_no_products``, which is what this pins."""
+    from unittest.mock import MagicMock
+
+    from prefect.futures import PrefectFuture
+
+    from flint.prefect.flows.polarisation_pipeline import _no_products
+
+    future = MagicMock(spec=PrefectFuture)
+    for result in (_no_products(), _no_products(terminal_futures=[future])):
+        assert result.stokes_cubes == {}
+        assert result.weight_cubes == {}
+        assert result.mfs_products == {}
+
+    # The give-up path that has already built a field summary still propagates it
+    assert _no_products().terminal_futures == []
+    assert _no_products(terminal_futures=[future]).terminal_futures == [future]
+
+
 def test_get_parser_pol_cube_channel_width_is_independent() -> None:
     """The polarisation cube channelisation is deliberately its own option: a
     field name shared with RACSAllOptions is deduplicated in this combined CLI,

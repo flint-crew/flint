@@ -78,6 +78,30 @@ class PolPipelineResult(BaseOptions):
     """Every future the polarisation stage produced, propagated so Prefect still detects any of their failures"""
 
 
+def _no_products(
+    terminal_futures: list[PrefectFuture[Any]] | None = None,
+) -> PolPipelineResult:
+    """The result of a polarisation stage that imaged nothing.
+
+    Built here rather than at each early return so that a field added to
+    ``PolPipelineResult`` cannot turn one of them into a ValidationError: the
+    downstream rm-synth stage reads ``weight_cubes`` off this, and an early
+    return that forgot it failed only once the flow was already running.
+
+    Args:
+        terminal_futures (list[PrefectFuture[Any]] | None, optional): Futures produced before the stage gave up, propagated so Prefect still detects their failures. Defaults to None.
+
+    Returns:
+        PolPipelineResult: An empty result carrying only ``terminal_futures``
+    """
+    return PolPipelineResult(
+        stokes_cubes={},
+        weight_cubes={},
+        mfs_products={},
+        terminal_futures=terminal_futures or [],
+    )
+
+
 @flow(name="Flint Polarisation Pipeline")
 def process_science_fields_pol(
     flint_ms_directory: Path,
@@ -105,9 +129,7 @@ def process_science_fields_pol(
 
     if strategy is None:
         logger.info("No strategy provided. Returning.")
-        return PolPipelineResult(
-            stokes_cubes={}, weight_cubes={}, mfs_products={}, terminal_futures=[]
-        )
+        return _no_products()
 
     if mss_by_beam is not None:
         # Already Flint-processed, self-calibrated MSs handed down by the calling
@@ -190,9 +212,7 @@ def process_science_fields_pol(
 
     if pol_field_options.wsclean_container is None:
         logger.info("No wsclean container provided. Returning. ")
-        return PolPipelineResult(
-            stokes_cubes={}, mfs_products={}, terminal_futures=[field_summary]
-        )
+        return _no_products(terminal_futures=[field_summary])
 
     polarisations: dict[str, str] = strategy.get("polarisation", {"total": {}})
 
