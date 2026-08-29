@@ -126,6 +126,8 @@ def _synth_and_write(
     output_prefix: Path,
     stokes_i_cube: Path | None = None,
     stokes_i_weight_cube: Path | None = None,
+    stokes_q_weight_cube: Path | None = None,
+    stokes_u_weight_cube: Path | None = None,
 ) -> list[Path]:
     if not cube_products and not moment_products:
         return []
@@ -136,6 +138,8 @@ def _synth_and_write(
         rmsynth_options=rmsynth_options,
         stokes_i_cube=stokes_i_cube,
         stokes_i_weight_cube=stokes_i_weight_cube,
+        stokes_q_weight_cube=stokes_q_weight_cube,
+        stokes_u_weight_cube=stokes_u_weight_cube,
     )
     clean_results = (
         run_rmclean_3d(rm_synth_results=synth_results, rmclean_options=rmclean_options)
@@ -800,6 +804,49 @@ def test_linmos_weights_give_each_pixel_its_own_rmsf(
         rm_synth_results=synth_results, rmclean_options=RMCleanOptions()
     )
     assert np.asarray(clean_results.clean_fdf_cube).shape[-2:] == (NY, NX)
+
+
+def test_linmos_weights_through_to_the_moment_maps(
+    tmp_path: Path, qu_cubes: tuple[Path, Path]
+) -> None:
+    """Weights plus moment maps is what the racs-all flow actually runs, and it
+    is where the per-pixel shapes have to agree: the moment threshold is
+    ``moment_threshold_snr * theoretical_noise``, now an (ny, nx) map, while the
+    RMSF FWHM it is applied alongside stays a scalar. A mismatch between those
+    two would not raise -- it would broadcast into the wrong threshold per pixel
+    and quietly reshape every moment map."""
+    stokes_q_cube, stokes_u_cube = qu_cubes
+    output_prefix = tmp_path / "field"
+
+    output_paths = _synth_and_write(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        rmsynth_options=RMSynthOptions(),
+        rmclean_options=RMCleanOptions(),
+        cube_products=[],
+        moment_products=["clean"],
+        output_prefix=output_prefix,
+        stokes_q_weight_cube=_make_linmos_weight_cube(
+            tmp_path, "q", blank_outside=1.5, taper_per_channel=True
+        ),
+        stokes_u_weight_cube=_make_linmos_weight_cube(
+            tmp_path, "u", blank_outside=1.5, taper_per_channel=True
+        ),
+    )
+
+    assert {path.name for path in output_paths} == {
+        f"{output_prefix.name}.fdf.clean.{moment}.fits"
+        for moment in ("mom0", "mom1", "mom2")
+    }
+
+    mom1 = fits.getdata(Path(f"{output_prefix}.fdf.clean.mom1.fits"))
+    inside_cutoff = _within_cutoff(1.5)
+    assert np.allclose(mom1[inside_cutoff], PHI_TRUE_RADM2, atol=5.0), (
+        "the per-pixel noise map must threshold each pixel, not reshape the field"
+    )
+    assert np.all(np.isnan(mom1[~inside_cutoff])), (
+        "pixels linmos blanked have no weight, so they get no moment"
+    )
 
 
 def _make_noise_only_cubes(
