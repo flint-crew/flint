@@ -195,6 +195,28 @@ def test_pol_stage_with_nothing_to_do_still_feeds_rm_synth() -> None:
     assert _no_products(terminal_futures=[future]).terminal_futures == [future]
 
 
+def test_pol_stage_without_a_strategy_returns_an_empty_result(tmp_path: Path) -> None:
+    """The give-up path that is reachable without any imaging setup, run through
+    the real flow rather than through ``_no_products`` directly: returning an
+    empty result is only useful if the flow actually gets there instead of
+    raising on the way, which is how the missing ``weight_cubes`` surfaced."""
+    from prefect.logging import disable_run_logger
+
+    from flint.options import PolFieldOptions
+    from flint.prefect.flows.polarisation_pipeline import process_science_fields_pol
+
+    with prefect_test_harness(), disable_run_logger():
+        result = process_science_fields_pol(
+            flint_ms_directory=tmp_path,
+            pol_field_options=PolFieldOptions(),
+        )
+
+    assert result.stokes_cubes == {}
+    assert result.weight_cubes == {}
+    assert result.mfs_products == {}
+    assert result.terminal_futures == []
+
+
 def test_get_parser_pol_cube_channel_width_is_independent() -> None:
     """The polarisation cube channelisation is deliberately its own option: a
     field name shared with RACSAllOptions is deduplicated in this combined CLI,
