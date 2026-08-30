@@ -7,6 +7,8 @@ from __future__ import annotations
 import logging
 import os
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Literal
 
@@ -15,7 +17,7 @@ import numpy as np
 import zarr
 from astropy.io import fits
 from astropy.wcs import WCS
-from dask.distributed import Client, as_completed
+from dask.distributed import Client, as_completed, get_worker, rejoin, secede
 
 # finufft's PyPI wheel vendors its own libomp.dylib (macOS) rather than
 # linking the environment's shared one; having both loaded aborts the
@@ -445,6 +447,37 @@ def _describe_rm_workload(
     )
 
 
+@contextmanager
+def _seceded_if_on_a_worker() -> Iterator[None]:
+    """Give this worker's compute slot back for the duration of a blocking wait.
+
+    ``task_write_rm_products`` is a prefect task, so under ``DaskTaskRunner`` it
+    runs *on a worker*, and ``prefect_dask.get_dask_client`` hands back a plain
+    ``Client`` rather than a ``worker_client`` -- it does not secede. Waiting on
+    futures from there holds the worker's thread while the tasks being waited on
+    need worker threads to run, and with one thread per worker that deadlocks the
+    cluster outright.
+
+    ``dask.compute(scheduler=client)`` never showed this because ``Client.get``
+    secedes for you when it is called inside a worker. Draining the futures by
+    hand is what makes it ours to do.
+
+    A no-op off a worker, which is the local-scheduler and standalone case.
+    """
+    try:
+        get_worker()
+    except ValueError:
+        # Not on a worker, so there is no slot to give back
+        yield
+        return
+
+    secede()
+    try:
+        yield
+    finally:
+        rejoin()
+
+
 def _compute_rm_products(
     compute_targets: dict[str, Any],
     fuse_config: dict[str, Any],
@@ -497,16 +530,18 @@ def _compute_rm_products(
     future_to_key = dict(zip(futures, compute_keys))
 
     computed: dict[str, Any] = {}
-    for future in as_completed(futures):
-        key = future_to_key[future]
-        # `.result()` re-raises whatever the worker raised, so a failed product
-        # still surfaces here rather than being dropped from `computed`
-        computed[key] = future.result()
-        # Elapsed since submission, not this product's own runtime: they share
-        # one graph, so "how far into the run are we" is the answerable question
-        logger.info(
-            f"[{len(computed):>2}/{len(compute_keys)}] {key} at {_elapsed(start)}"
-        )
+    with _seceded_if_on_a_worker():
+        for future in as_completed(futures):
+            key = future_to_key[future]
+            # `.result()` re-raises whatever the worker raised, so a failed
+            # product still surfaces here rather than being dropped
+            computed[key] = future.result()
+            # Elapsed since submission, not this product's own runtime: they
+            # share one graph, so "how far into the run are we" is the
+            # answerable question
+            logger.info(
+                f"[{len(computed):>2}/{len(compute_keys)}] {key} at {_elapsed(start)}"
+            )
 
     logger.info(f"Computed {len(compute_keys)} RM products in {_elapsed(start)}")
     return computed

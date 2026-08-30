@@ -1141,6 +1141,49 @@ def test_rmclean_runs_once_per_chunk_on_a_distributed_client(
     )
 
 
+def test_computing_from_inside_a_worker_does_not_deadlock() -> None:
+    """The products are computed from a prefect task, which under
+    ``DaskTaskRunner`` runs on a worker.
+
+    ``prefect_dask.get_dask_client`` hands back a plain ``Client``, not a
+    ``worker_client``, so nothing secedes on our behalf. Waiting on futures from
+    a worker thread while the tasks being waited on need worker threads is a
+    deadlock, and with one thread per worker it is a certainty rather than a
+    race. ``dask.compute(scheduler=client)`` never showed it, because
+    ``Client.get`` secedes for you.
+
+    One worker with one thread is the whole reproduction: the submitted call
+    holds that thread, so anything it waits on can never be scheduled.
+    """
+    import dask
+    from distributed import Client, LocalCluster, get_client
+
+    from flint.rmsynth import _compute_rm_products
+
+    def compute_on_the_worker() -> dict[str, object]:
+        return _compute_rm_products(
+            compute_targets={"only": dask.delayed(int)(7)},
+            fuse_config={},
+            scheduler=get_client(),
+            workload="1 product (test)",
+        )
+
+    cluster = LocalCluster(
+        n_workers=1,
+        threads_per_worker=1,
+        processes=False,
+        dashboard_address=None,
+        silence_logs=logging.ERROR,
+    )
+    try:
+        with Client(cluster) as client:
+            future = client.submit(compute_on_the_worker)
+            # Without seceding this never returns; the timeout is the assertion
+            assert future.result(timeout=90) == {"only": 7}
+    finally:
+        cluster.close()
+
+
 def test_a_failed_product_is_raised_not_dropped(tmp_path: Path) -> None:
     """Draining futures as they complete must not swallow one that failed.
 
