@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -1056,6 +1057,170 @@ def test_rmclean_runs_once_per_chunk_whatever_is_requested(
         f"RM-CLEAN ran {len(calls) / n_chunks:.0f}x per chunk for "
         f"cubes={cube_products}, moments={moment_products}"
     )
+
+
+def _rmclean_call_counter(tally_path: Path):
+    """A ``_rmclean_on_block`` wrapper that tallies calls through a file.
+
+    A closure counting into a list cannot work here: `distributed` serialises
+    the task graph even when its workers are threads in this process, so the
+    worker gets a copy of the list and the appends never come back. A file is
+    the counter that survives that round trip.
+    """
+    import rm_lite.tools_3d.rmclean as rmclean_mod
+
+    original = rmclean_mod._rmclean_on_block
+
+    def counting(*args: object, **kwargs: object) -> object:
+        with open(tally_path, "a") as handle:
+            handle.write("x")
+        return original(*args, **kwargs)
+
+    return counting
+
+
+def test_rmclean_runs_once_per_chunk_on_a_distributed_client(
+    tmp_path: Path, qu_cubes: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same once-per-chunk guarantee as the threaded test, on the path a real
+    pipeline run takes.
+
+    ``_compute_rm_products`` submits to a distributed Client as futures so it can
+    report each product as it lands. Submitting them one at a time instead would
+    rebuild the shared synthesis/RM-CLEAN graph per product -- invisible in the
+    output, just N times the runtime of the slowest stage. The threaded test
+    cannot see this path at all, since it forces the local scheduler.
+    """
+    import rm_lite.tools_3d.rmclean as rmclean_mod
+    from distributed import Client, LocalCluster
+
+    stokes_q_cube, stokes_u_cube = qu_cubes
+    tally = tmp_path / "rmclean_calls"
+    tally.write_text("")
+    monkeypatch.setattr(rmclean_mod, "_rmclean_on_block", _rmclean_call_counter(tally))
+
+    # processes=False keeps the workers in this process, so the monkeypatch is
+    # in place for them -- the graph is still serialised, hence the file tally
+    cluster = LocalCluster(
+        n_workers=2,
+        threads_per_worker=1,
+        processes=False,
+        dashboard_address=None,
+        silence_logs=logging.ERROR,
+    )
+    try:
+        with Client(cluster) as client:
+            synth_results = run_rmsynth_3d(
+                stokes_q_cube=stokes_q_cube,
+                stokes_u_cube=stokes_u_cube,
+                rmsynth_options=RMSynthOptions(),
+            )
+            clean_results = run_rmclean_3d(
+                rm_synth_results=synth_results, rmclean_options=RMCleanOptions()
+            )
+            n_chunks = int(
+                np.prod([len(chunk) for chunk in synth_results.fdf_dirty_cube.chunks])
+            )
+            # Three FDFs' worth of moments off one shared graph
+            write_rm_products(
+                synth_results=synth_results,
+                clean_results=clean_results,
+                stokes_q_cube=stokes_q_cube,
+                rmsynth_options=RMSynthOptions(),
+                rmclean_options=RMCleanOptions(),
+                cube_products=[],
+                moment_products=["clean", "dirty", "model"],
+                output_prefix=tmp_path / "field",
+                dask_client=client,
+            )
+    finally:
+        cluster.close()
+
+    assert len(tally.read_text()) == n_chunks, (
+        "nine moment maps off three FDFs must still clean each chunk once"
+    )
+
+
+def test_computing_from_inside_a_worker_does_not_deadlock() -> None:
+    """The products are computed from a prefect task, which under
+    ``DaskTaskRunner`` runs on a worker.
+
+    ``prefect_dask.get_dask_client`` hands back a plain ``Client``, not a
+    ``worker_client``, so nothing secedes on our behalf. Waiting on futures from
+    a worker thread while the tasks being waited on need worker threads is a
+    deadlock, and with one thread per worker it is a certainty rather than a
+    race. ``dask.compute(scheduler=client)`` never showed it, because
+    ``Client.get`` secedes for you.
+
+    One worker with one thread is the whole reproduction: the submitted call
+    holds that thread, so anything it waits on can never be scheduled.
+    """
+    import dask
+    from distributed import Client, LocalCluster, get_client
+
+    from flint.rmsynth import _compute_rm_products
+
+    def compute_on_the_worker() -> dict[str, object]:
+        return _compute_rm_products(
+            compute_targets={"only": dask.delayed(int)(7)},
+            fuse_config={},
+            scheduler=get_client(),
+            workload="1 product (test)",
+        )
+
+    cluster = LocalCluster(
+        n_workers=1,
+        threads_per_worker=1,
+        processes=False,
+        dashboard_address=None,
+        silence_logs=logging.ERROR,
+    )
+    try:
+        with Client(cluster) as client:
+            future = client.submit(compute_on_the_worker)
+            # Without seceding this never returns; the timeout is the assertion
+            assert future.result(timeout=90) == {"only": 7}
+    finally:
+        cluster.close()
+
+
+def test_a_failed_product_is_raised_not_dropped(tmp_path: Path) -> None:
+    """Draining futures as they complete must not swallow one that failed.
+
+    ``dask.compute`` raises the worker's exception directly; futures hand it back
+    only when asked, so a product that raised could otherwise go missing from the
+    results and be noticed as a KeyError somewhere further down instead.
+    """
+    import dask
+    from distributed import Client, LocalCluster
+
+    from flint.rmsynth import _compute_rm_products
+
+    def explode() -> None:
+        msg = "this product could not be computed"
+        raise ValueError(msg)
+
+    cluster = LocalCluster(
+        n_workers=1,
+        threads_per_worker=1,
+        processes=False,
+        dashboard_address=None,
+        silence_logs=logging.ERROR,
+    )
+    try:
+        with Client(cluster) as client:
+            with pytest.raises(ValueError, match="could not be computed"):
+                _compute_rm_products(
+                    compute_targets={
+                        "fine": dask.delayed(int)(1),
+                        "broken": dask.delayed(explode)(),
+                    },
+                    fuse_config={},
+                    scheduler=client,
+                    workload="2 products (test)",
+                )
+    finally:
+        cluster.close()
 
 
 def test_stokes_i_fit_does_not_multiply_with_requested_products(

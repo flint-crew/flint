@@ -6,6 +6,9 @@ from __future__ import annotations
 
 import logging
 import os
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Literal
 
@@ -14,7 +17,7 @@ import numpy as np
 import zarr
 from astropy.io import fits
 from astropy.wcs import WCS
-from dask.distributed import Client
+from dask.distributed import Client, as_completed, get_worker, rejoin, secede
 
 # finufft's PyPI wheel vendors its own libomp.dylib (macOS) rather than
 # linking the environment's shared one; having both loaded aborts the
@@ -412,6 +415,138 @@ def _lazy_faraday_moments(
     )
 
 
+def _elapsed(start: float) -> str:
+    """Wall time since ``start``, as a compact human-readable string."""
+    seconds = time.time() - start
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes, seconds = divmod(int(seconds), 60)
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h{minutes:02d}m" if hours else f"{minutes}m{seconds:02d}s"
+
+
+def _describe_rm_workload(
+    synth_results: RMSynth3DResults, compute_keys: list[str]
+) -> str:
+    """One line saying what the coming compute is actually going to chew through.
+
+    Everything here is known before any of it runs, and none of it is otherwise
+    reported: the FDF's shape, how many spatial chunks it is cut into, and
+    whether rm-lite decided every pixel needs its own RMSF (roughly doubling the
+    footprint, and not something flint asked for -- see
+    ``RMSynthOptions.per_pixel_rmsf``).
+    """
+    fdf_cube = synth_results.fdf_dirty_cube
+    n_phi, n_y, n_x = fdf_cube.shape
+    n_chunks = int(np.prod([len(chunk) for chunk in fdf_cube.chunks]))
+    per_pixel_rmsf = synth_results.rmsf_cube is not None
+    return (
+        f"{len(compute_keys)} products over {n_y}x{n_x} pixels and {n_phi} "
+        f"Faraday depths, in {n_chunks} chunks; "
+        f"per-pixel RMSF {'on' if per_pixel_rmsf else 'off'}"
+    )
+
+
+@contextmanager
+def _seceded_if_on_a_worker() -> Iterator[None]:
+    """Give this worker's compute slot back for the duration of a blocking wait.
+
+    ``task_write_rm_products`` is a prefect task, so under ``DaskTaskRunner`` it
+    runs *on a worker*, and ``prefect_dask.get_dask_client`` hands back a plain
+    ``Client`` rather than a ``worker_client`` -- it does not secede. Waiting on
+    futures from there holds the worker's thread while the tasks being waited on
+    need worker threads to run, and with one thread per worker that deadlocks the
+    cluster outright.
+
+    ``dask.compute(scheduler=client)`` never showed this because ``Client.get``
+    secedes for you when it is called inside a worker. Draining the futures by
+    hand is what makes it ours to do.
+
+    A no-op off a worker, which is the local-scheduler and standalone case.
+    """
+    try:
+        get_worker()
+    except ValueError:
+        # Not on a worker, so there is no slot to give back
+        yield
+        return
+
+    secede()
+    try:
+        yield
+    finally:
+        rejoin()
+
+
+def _compute_rm_products(
+    compute_targets: dict[str, Any],
+    fuse_config: dict[str, Any],
+    scheduler: Client | str,
+    workload: str,
+) -> dict[str, Any]:
+    """Compute every product in one shared pass, reporting each as it lands.
+
+    The whole RM-synthesis stage is one ``compute`` over a lazy graph, so
+    without this it is a single silent wait -- hours on a mosaic, with no way to
+    tell a slow run from a stuck one. Submitting the targets together (rather
+    than one compute per product) is what keeps the synthesis and RM-CLEAN graph
+    shared, so it still runs once no matter how many products are asked for --
+    getting that wrong is invisible in the output and simply multiplies the
+    runtime, so ``test_rmclean_runs_once_per_chunk_on_a_distributed_client``
+    holds it for this path.
+
+    Progress needs a distributed ``Client`` to report against futures. The local
+    schedulers take the plain ``dask.compute`` path and are logged start-to-end
+    only -- that is the unit tests and standalone use, not a pipeline run.
+
+    Args:
+        compute_targets (dict[str, Any]): Lazy arrays/delayed writes, keyed by product name
+        fuse_config (dict[str, Any]): Dask fusion settings the submission must be made under
+        scheduler (Client | str): A distributed Client, or a local scheduler name
+        workload (str): Description of the work, logged up front. See ``_describe_rm_workload``
+
+    Returns:
+        dict[str, Any]: The computed value for each key in ``compute_targets``
+    """
+    compute_keys = list(compute_targets.keys())
+    start = time.time()
+
+    if not isinstance(scheduler, Client):
+        logger.info(f"Computing RM products ({workload}), scheduler={scheduler!r}")
+        with dask.config.set(fuse_config):
+            computed_values = dask.compute(
+                *(compute_targets[key] for key in compute_keys), scheduler=scheduler
+            )
+        logger.info(f"Computed {len(compute_keys)} RM products in {_elapsed(start)}")
+        return dict(zip(compute_keys, computed_values))
+
+    logger.info(f"Computing RM products ({workload})")
+    with dask.config.set(fuse_config):
+        # One submission for the whole batch: `client.compute` on a list keeps
+        # the shared graph, where a compute per product would rebuild it each time
+        futures = scheduler.compute(
+            [compute_targets[key] for key in compute_keys], sync=False
+        )
+    future_to_key = dict(zip(futures, compute_keys))
+
+    computed: dict[str, Any] = {}
+    with _seceded_if_on_a_worker():
+        for future in as_completed(futures):
+            key = future_to_key[future]
+            # `.result()` re-raises whatever the worker raised, so a failed
+            # product still surfaces here rather than being dropped
+            computed[key] = future.result()
+            # Elapsed since submission, not this product's own runtime: they
+            # share one graph, so "how far into the run are we" is the
+            # answerable question
+            logger.info(
+                f"[{len(computed):>2}/{len(compute_keys)}] {key} at {_elapsed(start)}"
+            )
+
+    logger.info(f"Computed {len(compute_keys)} RM products in {_elapsed(start)}")
+    return computed
+
+
 def write_rm_products(
     synth_results: RMSynth3DResults,
     clean_results: RMClean3DResults | None,
@@ -584,16 +719,13 @@ def write_rm_products(
         if dask_client is not None
         else ("processes" if run_clean else "threads")
     )
-    compute_keys = list(compute_targets.keys())
-    with dask.config.set(fuse_config):
-        computed_values = dask.compute(
-            *(compute_targets[key] for key in compute_keys), scheduler=scheduler
-        )
-    computed = dict(
-        zip(
-            compute_keys,
-            computed_values,
-        )
+    computed = _compute_rm_products(
+        compute_targets=compute_targets,
+        fuse_config=fuse_config,
+        scheduler=scheduler,
+        workload=_describe_rm_workload(
+            synth_results=synth_results, compute_keys=list(compute_targets)
+        ),
     )
 
     reference_header = fits.getheader(stokes_q_cube)
