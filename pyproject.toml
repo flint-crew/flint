@@ -93,7 +93,7 @@ casa =[
     "fixms>=0.4.0"
 ]
 rmsynth = [
-    "rm-lite==2026.8.5",
+    "rm-lite==2026.8.6",
 ]
 all = [
     "askap-flint[dev,casa,rmsynth]",
