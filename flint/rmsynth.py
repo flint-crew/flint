@@ -93,10 +93,15 @@ def run_rmsynth_3d(
         stokes_u_cube (Path): Path to the Stokes U FITS cube
         rmsynth_options (RMSynthOptions): Options controlling the synthesis
         stokes_i_cube (Path | None, optional): Path to a Stokes I FITS cube, used to fit a per-pixel fractional-polarisation correction. FDF stays in Q/U flux if not given. Defaults to None.
+        stokes_q_weight_cube (Path | None, optional): Path to the linmos Stokes Q weight cube, giving each pixel its own channel weights rather than one spectrum estimated from the Q/U cubes. rm-lite requires both Q and U, or neither. Defaults to None.
+        stokes_u_weight_cube (Path | None, optional): Path to the linmos Stokes U weight cube. See ``stokes_q_weight_cube``. Defaults to None.
+        stokes_i_weight_cube (Path | None, optional): Path to the linmos Stokes I weight cube, used to weight the per-pixel Stokes I fit and to score it against ``stokes_i_snr_cut``. Falls back to ``RMSynthOptions.estimate_stokes_i_noise`` if not given. Defaults to None.
 
     Returns:
-        RMSynth3DResults: Lazy dirty FDF cube, the RMSF spectrum every pixel
-        shares, and associated parameters
+        RMSynth3DResults: Lazy dirty FDF cube, the RMSF, and associated
+        parameters. The linmos weights vary with the primary beam, so pixels
+        rarely share one RMSF and rm-lite turns on the per-pixel RMSF cube
+        itself; see ``RMSynthOptions.per_pixel_rmsf`` for what that costs
     """
     _check_cubes_memmappable(
         stokes_q_cube,
@@ -104,6 +109,7 @@ def run_rmsynth_3d(
         stokes_i_cube,
         stokes_q_weight_cube,
         stokes_u_weight_cube,
+        stokes_i_weight_cube,
     )
     stokes_i_kwargs = (
         {
@@ -112,6 +118,9 @@ def run_rmsynth_3d(
             "fit_order": rmsynth_options.fit_order,
             "fit_function": rmsynth_options.fit_function,
             "stokes_i_snr_cut": rmsynth_options.stokes_i_snr_cut,
+            # Only consulted when no Stokes I weight cube is given: rm-lite
+            # refuses a stokes_i_snr_cut it has no error to measure against.
+            "estimate_stokes_i_noise": rmsynth_options.estimate_stokes_i_noise,
             "compute_model_error": rmsynth_options.compute_model_error,
             "n_error_samples": rmsynth_options.n_error_samples,
         }
@@ -123,12 +132,15 @@ def run_rmsynth_3d(
         stokes_u_file=stokes_u_cube,
         stokes_q_error_file=stokes_q_weight_cube,
         stokes_u_error_file=stokes_u_weight_cube,
+        # linmos writes 1/sigma**2 directly, so rm-lite must not invert and
+        # square these again. Applies to the Stokes I error cube as well
         noise_files_are_weight=True,
         phi_max_radm2=rmsynth_options.phi_max_radm2,
         d_phi_radm2=rmsynth_options.d_phi_radm2,
         n_samples=rmsynth_options.n_samples,
         weight_type=rmsynth_options.weight_type,
         robust=rmsynth_options.robust,
+        per_pixel_rmsf=rmsynth_options.per_pixel_rmsf,
         nufft_nthreads=rmsynth_options.nufft_nthreads,
         target_chunk_mb=rmsynth_options.target_chunk_mb,
         log_level=logging.INFO,

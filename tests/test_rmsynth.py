@@ -126,6 +126,8 @@ def _synth_and_write(
     output_prefix: Path,
     stokes_i_cube: Path | None = None,
     stokes_i_weight_cube: Path | None = None,
+    stokes_q_weight_cube: Path | None = None,
+    stokes_u_weight_cube: Path | None = None,
 ) -> list[Path]:
     if not cube_products and not moment_products:
         return []
@@ -136,6 +138,8 @@ def _synth_and_write(
         rmsynth_options=rmsynth_options,
         stokes_i_cube=stokes_i_cube,
         stokes_i_weight_cube=stokes_i_weight_cube,
+        stokes_q_weight_cube=stokes_q_weight_cube,
+        stokes_u_weight_cube=stokes_u_weight_cube,
     )
     clean_results = (
         run_rmclean_3d(rm_synth_results=synth_results, rmclean_options=rmclean_options)
@@ -567,6 +571,322 @@ def test_rmsynth_rejects_compressed_cubes(tmp_path: Path) -> None:
         )
 
 
+def test_rmsynth_rejects_a_compressed_weight_cube(tmp_path: Path) -> None:
+    """The weight cubes are read block-by-block just like the Stokes cubes, so a
+    gzipped one inflates the whole cube per read in exactly the same way."""
+    stokes_q_cube, stokes_u_cube = _make_qu_cubes(tmp_path)
+    for weights in (
+        {"stokes_q_weight_cube": tmp_path / "q.weight.fits.gz"},
+        {"stokes_u_weight_cube": tmp_path / "u.weight.fits.gz"},
+        {"stokes_i_weight_cube": tmp_path / "i.weight.fits.gz"},
+    ):
+        with pytest.raises(NotSupportedError):
+            run_rmsynth_3d(
+                stokes_q_cube=stokes_q_cube,
+                stokes_u_cube=stokes_u_cube,
+                stokes_i_cube=_make_i_cube(tmp_path),
+                rmsynth_options=RMSynthOptions(),
+                **weights,
+            )
+
+
+def test_stokes_i_noise_is_estimated_when_no_weight_cube_is_given(
+    tmp_path: Path, qu_cubes: tuple[Path, Path]
+) -> None:
+    """The linmos weight cubes are the preferred Stokes I error, but they only
+    exist when the cubes came from the polarisation pipeline. rm-lite refuses a
+    ``stokes_i_snr_cut`` with no error to score against, so a Stokes I cube on its
+    own has to fall back to the per-channel estimate rather than raise."""
+    assert RMSynthOptions().estimate_stokes_i_noise is True
+    assert RMSynthOptions().stokes_i_snr_cut is not None
+
+    stokes_q_cube, stokes_u_cube = qu_cubes
+    output_prefix = tmp_path / "no_i_weights"
+
+    output_paths = _synth_and_write(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        stokes_i_cube=_make_i_cube(tmp_path),
+        rmsynth_options=RMSynthOptions(),
+        rmclean_options=RMCleanOptions(),
+        cube_products=[],
+        moment_products=["dirty"],
+        output_prefix=output_prefix,
+        stokes_i_weight_cube=None,
+    )
+
+    alpha_path = Path(f"{output_prefix}.stokesi.alpha.fits")
+    assert alpha_path in output_paths
+    assert np.all(np.isfinite(fits.getdata(alpha_path)))
+
+
+def test_rmsynth_options_reach_rm_lite(
+    tmp_path: Path, qu_cubes: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every RMSynthOptions field is there to change what rm-lite does, so one
+    that is never passed on is a silently ignored setting rather than a default."""
+    import flint.rmsynth as rmsynth_mod
+
+    captured: dict[str, object] = {}
+
+    def _capture(**kwargs: object) -> None:
+        captured.update(kwargs)
+        msg = "stop before synthesising"
+        raise NotSupportedError(msg)
+
+    monkeypatch.setattr(rmsynth_mod, "rmsynth_3d_from_fits", _capture)
+
+    stokes_q_cube, stokes_u_cube = qu_cubes
+    rmsynth_options = RMSynthOptions(per_pixel_rmsf=True, estimate_stokes_i_noise=False)
+    with pytest.raises(NotSupportedError, match="stop before synthesising"):
+        run_rmsynth_3d(
+            stokes_q_cube=stokes_q_cube,
+            stokes_u_cube=stokes_u_cube,
+            stokes_i_cube=_make_i_cube(tmp_path),
+            rmsynth_options=rmsynth_options,
+        )
+
+    assert captured["per_pixel_rmsf"] is True
+    assert captured["estimate_stokes_i_noise"] is False
+
+
+def _within_cutoff(blank_outside: float) -> np.ndarray:
+    """The (ny, nx) mask ``_make_linmos_weight_cube`` leaves non-zero."""
+    yy, xx = np.mgrid[0:NY, 0:NX]
+    return np.hypot(yy - (NY - 1) / 2, xx - (NX - 1) / 2) <= blank_outside
+
+
+def _make_linmos_weight_cube(
+    tmp_path: Path,
+    name: str,
+    blank_outside: float | None = None,
+    blank_channels: tuple[int, ...] = (),
+    taper_per_channel: bool = False,
+) -> Path:
+    """A weight cube shaped like the one linmos writes: a primary-beam taper,
+    zero outside the ``LinmosOptions.cutoff``, and an all-zero plane for any
+    channel that was flagged everywhere.
+
+    ``taper_per_channel`` narrows the taper with frequency, as a real primary
+    beam does. That is what stops pixels sharing one channel weighting, so it is
+    the case that earns the per-pixel RMSF; the default keeps the taper flat in
+    frequency so the shared spectrum still describes every pixel.
+    """
+    freq_hz = np.linspace(700e6, 1300e6, N_CHAN)
+    yy, xx = np.mgrid[0:NY, 0:NX]
+    radius = np.hypot(yy - (NY - 1) / 2, xx - (NX - 1) / 2)
+
+    plane = np.exp(-(radius**2) / 2.0)
+    if blank_outside is not None:
+        plane = np.where(radius > blank_outside, 0.0, plane)
+
+    if taper_per_channel:
+        # Beam width goes as 1/frequency, so each channel tapers differently
+        scale = (freq_hz / freq_hz[0]) ** 2
+        cube = np.exp(-(radius[None] ** 2) * scale[:, None, None] / 2.0)
+        if blank_outside is not None:
+            cube = np.where(radius[None] > blank_outside, 0.0, cube)
+        cube = (cube / 1e-3**2).astype(np.float32)
+    else:
+        cube = (plane[None] / 1e-3**2).repeat(N_CHAN, axis=0).astype(np.float32)
+    for channel in blank_channels:
+        cube[channel] = 0.0
+
+    wcs = WCS(naxis=3)
+    wcs.wcs.ctype = ["RA---SIN", "DEC--SIN", "FREQ"]
+    wcs.wcs.crval = [180.0, -30.0, freq_hz[0]]
+    wcs.wcs.crpix = [NX / 2, NY / 2, 1]
+    wcs.wcs.cdelt = [-1e-3, 1e-3, freq_hz[1] - freq_hz[0]]
+    wcs.wcs.cunit = ["deg", "deg", "Hz"]
+
+    path = tmp_path / f"{name}.weight.fits"
+    fits.writeto(path, cube, wcs.to_header(), overwrite=True)
+    return path
+
+
+def test_one_linmos_weight_cube_is_refused(
+    tmp_path: Path, qu_cubes: tuple[Path, Path]
+) -> None:
+    """rm-lite builds the weights from Q and U together, so a lone cube is a
+    wiring mistake it refuses rather than half-applies. Pinned here because the
+    racs-all flow passes the pair positionally and a silent drop would look like
+    a linmos-weighted run that never was."""
+    stokes_q_cube, stokes_u_cube = qu_cubes
+
+    with pytest.raises(ValueError, match="[Mm]ust pass both"):
+        run_rmsynth_3d(
+            stokes_q_cube=stokes_q_cube,
+            stokes_u_cube=stokes_u_cube,
+            rmsynth_options=RMSynthOptions(),
+            stokes_q_weight_cube=_make_linmos_weight_cube(
+                tmp_path, "q", blank_outside=1.5
+            ),
+        )
+
+
+def test_rmsynth_with_linmos_weights_stays_cleanable(
+    tmp_path: Path, qu_cubes: tuple[Path, Path]
+) -> None:
+    """The whole point of the weight cubes is the run that follows them.
+
+    A linmos weight cube is dominated by the primary-beam taper, so pixels do
+    not share one channel weighting and rm-lite gives each its own noise and
+    RMSF. That makes the theoretical noise an (ny, nx) map rather than a scalar,
+    and RM-CLEAN scales its mask and threshold by it -- so this is the run that
+    catches a shape or laziness mismatch between the two.
+    """
+    stokes_q_cube, stokes_u_cube = qu_cubes
+
+    synth_results = run_rmsynth_3d(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        rmsynth_options=RMSynthOptions(),
+        stokes_q_weight_cube=_make_linmos_weight_cube(tmp_path, "q", blank_outside=1.5),
+        stokes_u_weight_cube=_make_linmos_weight_cube(tmp_path, "u", blank_outside=1.5),
+    )
+
+    # Per-pixel weights, so a map over the sky rather than one number for it
+    fdf_error_noise = np.asarray(synth_results.theoretical_noise.fdf_error_noise)
+    assert fdf_error_noise.shape == (NY, NX)
+    assert np.all(fdf_error_noise[np.isfinite(fdf_error_noise)] > 0)
+
+    clean_results = run_rmclean_3d(
+        rm_synth_results=synth_results, rmclean_options=RMCleanOptions()
+    )
+    clean_cube = np.asarray(clean_results.clean_fdf_cube)
+
+    # Per-pixel weights mean a pixel linmos blanked has no weight of its own and
+    # so no FDF, rather than borrowing the rest of the field's. Blank there,
+    # finite everywhere the cutoff kept.
+    inside_cutoff = _within_cutoff(1.5)
+    assert np.all(np.isfinite(clean_cube[:, inside_cutoff])), (
+        "pixels inside the linmos cutoff have data and must not come back blank"
+    )
+    assert np.all(np.isnan(clean_cube[:, ~inside_cutoff])), (
+        "pixels linmos blanked carry no weight, so they must stay blank"
+    )
+
+    phi_arr_radm2 = np.asarray(synth_results.phi_arr_radm2)
+    peak_phi = phi_arr_radm2[np.abs(clean_cube[:, inside_cutoff]).mean(axis=1).argmax()]
+    assert peak_phi == pytest.approx(PHI_TRUE_RADM2, abs=5.0)
+
+
+def test_linmos_weights_give_each_pixel_its_own_rmsf(
+    tmp_path: Path, qu_cubes: tuple[Path, Path]
+) -> None:
+    """A per-pixel RMSF is the costly half of per-pixel weights, so flint should
+    not be surprised into it. rm-lite turns it on by itself whenever pixels
+    weight the channels differently -- which is what a frequency-dependent
+    primary beam does -- and the linmos cubes are exactly that case."""
+    stokes_q_cube, stokes_u_cube = qu_cubes
+
+    synth_results = run_rmsynth_3d(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        rmsynth_options=RMSynthOptions(),
+        stokes_q_weight_cube=_make_linmos_weight_cube(
+            tmp_path, "q", blank_outside=1.5, taper_per_channel=True
+        ),
+        stokes_u_weight_cube=_make_linmos_weight_cube(
+            tmp_path, "u", blank_outside=1.5, taper_per_channel=True
+        ),
+    )
+
+    assert synth_results.rmsf_cube is not None, (
+        "pixels weighting channels differently must get the per-pixel RMSF cube"
+    )
+    rmsf_cube = np.asarray(synth_results.rmsf_cube)
+    assert rmsf_cube.shape[-2:] == (NY, NX)
+
+    # RM-CLEAN has to consume that cube rather than the shared spectrum
+    clean_results = run_rmclean_3d(
+        rm_synth_results=synth_results, rmclean_options=RMCleanOptions()
+    )
+    assert np.asarray(clean_results.clean_fdf_cube).shape[-2:] == (NY, NX)
+
+
+def test_channels_linmos_blanked_everywhere_drop_out(
+    tmp_path: Path, qu_cubes: tuple[Path, Path]
+) -> None:
+    """An all-zero weight plane is linmos saying that channel was flagged across
+    the whole field. It has to leave the synthesis rather than divide into it:
+    zero weight is a channel that contributes nothing, not one whose 1/0 poisons
+    every pixel that would have used it."""
+    stokes_q_cube, stokes_u_cube = qu_cubes
+    blanked_channels = (0, 5, N_CHAN - 1)
+
+    synth_results = run_rmsynth_3d(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        rmsynth_options=RMSynthOptions(),
+        stokes_q_weight_cube=_make_linmos_weight_cube(
+            tmp_path, "q", blank_outside=1.5, blank_channels=blanked_channels
+        ),
+        stokes_u_weight_cube=_make_linmos_weight_cube(
+            tmp_path, "u", blank_outside=1.5, blank_channels=blanked_channels
+        ),
+    )
+    clean_results = run_rmclean_3d(
+        rm_synth_results=synth_results, rmclean_options=RMCleanOptions()
+    )
+
+    inside_cutoff = _within_cutoff(1.5)
+    clean_cube = np.asarray(clean_results.clean_fdf_cube)
+    noise = np.asarray(synth_results.theoretical_noise.fdf_error_noise)
+
+    assert np.all(np.isfinite(clean_cube[:, inside_cutoff]))
+    assert np.all(np.isfinite(noise[inside_cutoff]))
+
+    phi_arr_radm2 = np.asarray(synth_results.phi_arr_radm2)
+    peak_phi = phi_arr_radm2[np.abs(clean_cube[:, inside_cutoff]).mean(axis=1).argmax()]
+    assert peak_phi == pytest.approx(PHI_TRUE_RADM2, abs=5.0), (
+        "losing three channels must not move the recovered Faraday depth"
+    )
+
+
+def test_linmos_weights_through_to_the_moment_maps(
+    tmp_path: Path, qu_cubes: tuple[Path, Path]
+) -> None:
+    """Weights plus moment maps is what the racs-all flow actually runs, and it
+    is where the per-pixel shapes have to agree: the moment threshold is
+    ``moment_threshold_snr * theoretical_noise``, now an (ny, nx) map, while the
+    RMSF FWHM it is applied alongside stays a scalar. A mismatch between those
+    two would not raise -- it would broadcast into the wrong threshold per pixel
+    and quietly reshape every moment map."""
+    stokes_q_cube, stokes_u_cube = qu_cubes
+    output_prefix = tmp_path / "field"
+
+    output_paths = _synth_and_write(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        rmsynth_options=RMSynthOptions(),
+        rmclean_options=RMCleanOptions(),
+        cube_products=[],
+        moment_products=["clean"],
+        output_prefix=output_prefix,
+        stokes_q_weight_cube=_make_linmos_weight_cube(
+            tmp_path, "q", blank_outside=1.5, taper_per_channel=True
+        ),
+        stokes_u_weight_cube=_make_linmos_weight_cube(
+            tmp_path, "u", blank_outside=1.5, taper_per_channel=True
+        ),
+    )
+
+    assert {path.name for path in output_paths} == {
+        f"{output_prefix.name}.fdf.clean.{moment}.fits"
+        for moment in ("mom0", "mom1", "mom2")
+    }
+
+    mom1 = fits.getdata(Path(f"{output_prefix}.fdf.clean.mom1.fits"))
+    inside_cutoff = _within_cutoff(1.5)
+    assert np.allclose(mom1[inside_cutoff], PHI_TRUE_RADM2, atol=5.0), (
+        "the per-pixel noise map must threshold each pixel, not reshape the field"
+    )
+    assert np.all(np.isnan(mom1[~inside_cutoff])), (
+        "pixels linmos blanked have no weight, so they get no moment"
+    )
+
+
 def _make_noise_only_cubes(
     tmp_path: Path, prefix: str = "noise"
 ) -> tuple[Path, Path, Path, Path]:
@@ -692,13 +1012,13 @@ def test_rmclean_runs_once_per_chunk_whatever_is_requested(
     stokes_q_cube, stokes_u_cube = qu_cubes
 
     calls: list[int] = []
-    original = rmclean_mod._clean_block
+    original = rmclean_mod._rmclean_on_block
 
     def counting_clean_block(*args: object, **kwargs: object) -> object:
         calls.append(1)
         return original(*args, **kwargs)
 
-    monkeypatch.setattr(rmclean_mod, "_clean_block", counting_clean_block)
+    monkeypatch.setattr(rmclean_mod, "_rmclean_on_block", counting_clean_block)
     # write_rm_products picks the process scheduler when cleaning, which would
     # put the counter in a subprocess. Fusion, not the scheduler, is what
     # duplicates the task, so counting under threads measures the same thing.

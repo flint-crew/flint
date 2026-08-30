@@ -173,6 +173,50 @@ def test_process_racs_all_everything_disabled_returns_immediately(
     assert result == []
 
 
+def test_pol_stage_with_nothing_to_do_still_feeds_rm_synth() -> None:
+    """``process_racs_all`` reads ``weight_cubes`` off the polarisation result,
+    so a polarisation stage that imaged nothing has to return an empty one
+    rather than fail to construct. Both of its give-up paths go through
+    ``_no_products``, which is what this pins."""
+    from unittest.mock import MagicMock
+
+    from prefect.futures import PrefectFuture
+
+    from flint.prefect.flows.polarisation_pipeline import _no_products
+
+    future = MagicMock(spec=PrefectFuture)
+    for result in (_no_products(), _no_products(terminal_futures=[future])):
+        assert result.stokes_cubes == {}
+        assert result.weight_cubes == {}
+        assert result.mfs_products == {}
+
+    # The give-up path that has already built a field summary still propagates it
+    assert _no_products().terminal_futures == []
+    assert _no_products(terminal_futures=[future]).terminal_futures == [future]
+
+
+def test_pol_stage_without_a_strategy_returns_an_empty_result(tmp_path: Path) -> None:
+    """The give-up path that is reachable without any imaging setup, run through
+    the real flow rather than through ``_no_products`` directly: returning an
+    empty result is only useful if the flow actually gets there instead of
+    raising on the way, which is how the missing ``weight_cubes`` surfaced."""
+    from prefect.logging import disable_run_logger
+
+    from flint.options import PolFieldOptions
+    from flint.prefect.flows.polarisation_pipeline import process_science_fields_pol
+
+    with prefect_test_harness(), disable_run_logger():
+        result = process_science_fields_pol(
+            flint_ms_directory=tmp_path,
+            pol_field_options=PolFieldOptions(),
+        )
+
+    assert result.stokes_cubes == {}
+    assert result.weight_cubes == {}
+    assert result.mfs_products == {}
+    assert result.terminal_futures == []
+
+
 def test_get_parser_pol_cube_channel_width_is_independent() -> None:
     """The polarisation cube channelisation is deliberately its own option: a
     field name shared with RACSAllOptions is deduplicated in this combined CLI,
