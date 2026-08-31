@@ -42,7 +42,7 @@ STAGE_CLUSTER_CONFIG_ATTRS = (
 
 # Fields on the rm-synth/spice options classes that process_racs_all always recomputes
 # from the polarisation stage's output. Excluded from the combined CLI.
-COMPUTED_FIELDS = {"stokes_q_cube", "stokes_u_cube", "cubes"}
+COMPUTED_FIELDS = {"stokes_q_cube", "stokes_u_cube", "cubes", "weight_cubes"}
 
 
 def _check_stage_prerequisites(
@@ -275,6 +275,7 @@ def process_racs_all(
         )
         resolved_spice_field_options = spice_field_options.with_options(
             cubes=list(pol_result.stokes_cubes.values()),
+            weight_cubes=list(pol_result.weight_cubes.values()),
             reference_image=resolved_reference_image,
             output_path=spice_field_options.output_path or output_root / "spice",
         )
@@ -290,11 +291,14 @@ def process_racs_all(
         )
         terminal_results.extend(
             compress_cube(
-                stokes_cube,
+                cube,
                 method=pol_fitscube_options.compress_method,
                 max_workers=pol_fitscube_options.max_workers,
             )
-            for stokes_cube in pol_result.stokes_cubes.values()
+            for cube in (
+                *pol_result.stokes_cubes.values(),
+                *pol_result.weight_cubes.values(),
+            )
         )
 
     return terminal_results
@@ -370,7 +374,7 @@ def cli() -> None:
     # Excluded from the parser (COMPUTED_FIELDS), but create_options_from_parser
     # reads every field off the namespace. process_racs_all sets the real values.
     for field in COMPUTED_FIELDS:
-        setattr(args, field, [] if field == "cubes" else None)
+        setattr(args, field, [] if field in ("cubes", "weight_cubes") else None)
 
     pipeline_options = create_options_from_parser(
         parser_namespace=args, options_class=RACSAllPipelineOptions

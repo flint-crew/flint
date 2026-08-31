@@ -36,8 +36,8 @@ def test_get_parser() -> None:
 
 
 def test_get_parser_excludes_computed_stage_outputs() -> None:
-    """stokes_q_cube/stokes_u_cube (rm-synth) and cubes (spice) are computed
-    from the polarisation stage's output inside process_racs_all, so the
+    """stokes_q_cube/stokes_u_cube (rm-synth) and cubes/weight_cubes (spice) are
+    computed from the polarisation stage's output inside process_racs_all, so the
     combined CLI must not force the user to supply dummy positional values
     for them -- only low_data/mid_data/high_data should be positional."""
     args = get_parser().parse_args(["/low", "/mid", "/high"])
@@ -45,12 +45,14 @@ def test_get_parser_excludes_computed_stage_outputs() -> None:
     assert not hasattr(args, "stokes_q_cube")
     assert not hasattr(args, "stokes_u_cube")
     assert not hasattr(args, "cubes")
+    assert not hasattr(args, "weight_cubes")
 
     # create_options_from_parser reads every field off the namespace, so cli()
     # sets the computed ones to their empty defaults first, as done here.
     args.stokes_q_cube = None
     args.stokes_u_cube = None
     args.cubes = []
+    args.weight_cubes = []
 
     rmsynth_field_options = create_options_from_parser(
         parser_namespace=args, options_class=RMSynthFieldOptions
@@ -60,6 +62,7 @@ def test_get_parser_excludes_computed_stage_outputs() -> None:
     )
     assert rmsynth_field_options.stokes_q_cube is None
     assert spice_field_options.cubes == []
+    assert spice_field_options.weight_cubes == []
 
 
 @pytest.fixture

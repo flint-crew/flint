@@ -1,5 +1,7 @@
 """SPICE-style cube trimming: mask everything outside small boxes around
-catalogued sources, crop to their union. See ``flint.options.SpiceOptions``.
+catalogued sources, crop to their union. A set of cubes (image and weight,
+across all Stokes) is trimmed with one shared set of boxes, so they all come
+out on the same grid. See ``flint.options.SpiceOptions``.
 """
 
 from __future__ import annotations
@@ -323,44 +325,108 @@ def keep_mask_from_boxes(
     return mask
 
 
-def any_box_overlaps(fits_path: Path, sky_boxes: list[SkyBoundingBox]) -> bool:
-    """Whether any sky box projects onto ``fits_path``. Reads only the header
+def cube_shape(fits_path: Path) -> tuple[int, ...]:
+    """Shape of a FITS file's primary HDU in numpy order, read from its header"""
+    header = fits.getheader(fits_path)
+
+    return tuple(header[f"NAXIS{axis}"] for axis in range(header["NAXIS"], 0, -1))
+
+
+def check_cubes_share_shape(fits_paths: list[Path]) -> tuple[int, ...]:
+    """The shape shared by every cube. Image and weight cubes across all Stokes
+    come off the same linmos grid, so a disagreement means something upstream
+    has gone wrong. Reads headers only.
 
     Args:
-        fits_path (Path): The image or cube to test
+        fits_paths (list[Path]): The cubes to compare
+
+    Returns:
+        tuple[int, ...]: The shape they share
+
+    Raises:
+        ValueError: The cubes do not all share a shape
+    """
+    shapes = {fits_path: cube_shape(fits_path=fits_path) for fits_path in fits_paths}
+    unique_shapes = set(shapes.values())
+    if len(unique_shapes) != 1:
+        raise ValueError(f"Cubes do not share a shape: {shapes}")
+
+    return unique_shapes.pop()
+
+
+def shared_pixel_boxes(
+    fits_paths: list[Path], sky_boxes: list[SkyBoundingBox]
+) -> list[BoundingBox]:
+    """Project sky boxes onto the pixel grid shared by every cube.
+
+    Spicing all cubes with this one set of boxes is what leaves them on an
+    identical grid afterwards, so the cubes must start on one. Reads headers only.
+
+    Args:
+        fits_paths (list[Path]): The cubes about to be spiced together
         sky_boxes (list[SkyBoundingBox]): Sky boxes to project
 
     Returns:
-        bool: True if at least one box overlaps
-    """
-    header = fits.getheader(fits_path)
-    wcs = WCS(header)
-    image_shape = (header["NAXIS2"], header["NAXIS1"])
+        list[BoundingBox]: Those boxes that land on the shared grid
 
-    return any(
-        sky_box.to_bounding_box(wcs=wcs, image_shape=image_shape) is not None
-        for sky_box in sky_boxes
+    Raises:
+        ValueError: The cubes do not share a grid, or no box overlaps it
+    """
+    if not fits_paths:
+        raise ValueError("No cubes supplied")
+    if not sky_boxes:
+        raise ValueError("No sky boxes supplied")
+
+    shape = check_cubes_share_shape(fits_paths=fits_paths)
+    image_shape = (shape[-2], shape[-1])
+
+    reference_wcs = WCS(fits.getheader(fits_paths[0])).celestial
+    for fits_path in fits_paths[1:]:
+        wcs = WCS(fits.getheader(fits_path)).celestial
+        if not wcs.wcs.compare(reference_wcs.wcs, tolerance=1e-9):
+            raise ValueError(
+                f"{fits_path} is not on the same celestial grid as {fits_paths[0]}"
+            )
+
+    pixel_boxes = [
+        pixel_box
+        for pixel_box in (
+            sky_box.to_bounding_box(wcs=reference_wcs, image_shape=image_shape)
+            for sky_box in sky_boxes
+        )
+        if pixel_box is not None
+    ]
+    if not pixel_boxes:
+        raise ValueError(
+            f"None of the {len(sky_boxes)} island boxes overlap the shared "
+            f"{image_shape} grid of the {len(fits_paths)} supplied cubes. Check the "
+            "catalogue and reference image match the field."
+        )
+
+    logger.info(
+        f"{len(pixel_boxes)} of {len(sky_boxes)} island boxes land on the cubes"
     )
+    return pixel_boxes
 
 
 def spice_fits(
-    fits_path: Path, sky_boxes: list[SkyBoundingBox], output_path: Path | None = None
+    fits_path: Path, pixel_boxes: list[BoundingBox], output_path: Path | None = None
 ) -> Path:
-    """Mask every pixel outside ``boxes`` to NaN and crop to their union.
+    """Mask every pixel outside ``pixel_boxes`` to NaN and crop to their union.
 
-    Boxes are projected through this file's own WCS, so it need not share a pixel
-    grid with the image they were built from. Works on a single plane or a
-    multi-channel cube. A file that no box overlaps is left untouched.
+    Works on a single plane or a multi-channel cube. Extensions such as the beam
+    table are carried through untouched. Every cube spiced with the one set of
+    boxes from ``shared_pixel_boxes`` comes out on the same grid.
 
     Args:
         fits_path (Path): The image or cube to spice
-        sky_boxes (list[SkyBoundingBox]): Sky boxes to keep
+        pixel_boxes (list[BoundingBox]): Pixel boxes to keep, on this file's grid
         output_path (Path | None, optional): Directory to write the spiced cube into, deleting ``fits_path`` once written. Defaults to replacing ``fits_path`` in place.
 
     Returns:
-        Path: The spiced cube, or ``fits_path`` unchanged if no box overlapped it
+        Path: The spiced cube
     """
-    if not sky_boxes:
+    if not pixel_boxes:
         raise ValueError(f"No bounding boxes supplied for {fits_path}")
 
     # A dask worker death after the unlink below leaves the output written and the
@@ -371,34 +437,24 @@ def spice_fits(
             logger.info(f"{spiced_path} already written, nothing to redo")
             return spiced_path
 
+    overall = _merge_bound_boxes(bounding_boxes=pixel_boxes)
+
     with fits.open(fits_path) as hdul:
         header = hdul[0].header.copy()
         image_shape = tuple(hdul[0].data.shape[-2:])
-        wcs = WCS(header)
-
-        pixel_boxes = [
-            pixel_box
-            for pixel_box in (
-                sky_box.to_bounding_box(wcs=wcs, image_shape=image_shape)
-                for sky_box in sky_boxes
-            )
-            if pixel_box is not None
-        ]
-        if not pixel_boxes:
-            logger.warning(
-                f"No island overlaps {fits_path}, leaving it unspiced. "
-                f"Checked {len(sky_boxes)} sky boxes against shape {image_shape}"
-            )
-            return fits_path
-
-        overall = _merge_bound_boxes(bounding_boxes=pixel_boxes)
-        mask = keep_mask_from_boxes(bounding_boxes=pixel_boxes, image_shape=image_shape)
-        mask_cropped = mask[overall.xmin : overall.xmax, overall.ymin : overall.ymax]
         data = np.array(
             hdul[0].data[..., overall.xmin : overall.xmax, overall.ymin : overall.ymax]
         )
         extra_hdus = [hdu.copy() for hdu in hdul[1:]]
 
+    if image_shape != overall.original_shape:
+        raise ValueError(
+            f"{fits_path} has plane shape {image_shape}, but the boxes were built "
+            f"against {overall.original_shape}"
+        )
+
+    mask = keep_mask_from_boxes(bounding_boxes=pixel_boxes, image_shape=image_shape)
+    mask_cropped = mask[overall.xmin : overall.xmax, overall.ymin : overall.ymax]
     data[..., ~mask_cropped] = np.nan
 
     header["CRPIX1"] -= overall.ymin
