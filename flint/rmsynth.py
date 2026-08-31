@@ -437,34 +437,6 @@ def _lazy_faraday_moments(
     )
 
 
-def _lazy_faraday_peaks(
-    fdf_cube: dask.array.Array,
-    synth_results: RMSynth3DResults,
-    threshold: float | np.ndarray | None,
-) -> FaradayPeaks:
-    """Build the lazy peak-statistic maps of an FDF cube.
-
-    The same shape of work as ``_lazy_faraday_moments``: ``calc_faraday_peaks``
-    reduces along the (never-chunked) Faraday-depth axis, so the result is nine
-    lazy (ny, nx) maps each spatial chunk contributes to independently, and the
-    cube itself never has to reach the calling worker.
-
-    rm-lite also returns peaks of its own on ``RMClean3DResults``, but only for
-    the clean FDF and only under its own threshold. Deriving them here instead
-    is what lets any requested FDF have them -- the dirty one included, which
-    needs no RM-CLEAN at all -- under the same cut flint gives its moments.
-    """
-    return calc_faraday_peaks(
-        fdf_cube,
-        phi_arr_radm2=synth_results.phi_arr_radm2,
-        fwhm_rmsf_radm2=synth_results.fwhm_rmsf_radm2,
-        fdf_error=synth_results.theoretical_noise.fdf_error_noise,
-        lam_sq_0_m2=synth_results.lam_sq_0_m2,
-        lambda_sq_arr_m2=synth_results.lambda_sq_arr_m2,
-        threshold=threshold,
-    )
-
-
 def _elapsed(start: float) -> str:
     """Wall time since ``start``, as a compact human-readable string."""
     seconds = time.time() - start
@@ -791,10 +763,18 @@ def write_rm_products(
         assert clean_results is not None  # run_clean is `clean_results is not None`
         compute_targets["rmclean_niter"] = clean_results.iter_count_map
 
+    # rm-lite returns peaks of its own on RMClean3DResults, but only for the
+    # clean FDF and only under its own threshold. Deriving them here is what
+    # lets any requested FDF have them -- the dirty one included, which needs no
+    # RM-CLEAN at all -- under the same cut flint gives its moments.
     for label in peak_products or ():
-        peaks = _lazy_faraday_peaks(
-            fdf_cube=fdf_sources[label],
-            synth_results=synth_results,
+        peaks = calc_faraday_peaks(
+            fdf_sources[label],
+            phi_arr_radm2=synth_results.phi_arr_radm2,
+            fwhm_rmsf_radm2=synth_results.fwhm_rmsf_radm2,
+            fdf_error=synth_results.theoretical_noise.fdf_error_noise,
+            lam_sq_0_m2=synth_results.lam_sq_0_m2,
+            lambda_sq_arr_m2=synth_results.lambda_sq_arr_m2,
             threshold=moment_threshold,
         )
         for field in _PEAK_MAPS:
@@ -895,7 +875,7 @@ def write_rm_products(
         output_paths.extend(
             write_peak_maps_to_fits(
                 peaks=FaradayPeaks(
-                    *(computed[f"peak.{label}.{field}"] for field in _PEAK_MAPS)
+                    **{field: computed[f"peak.{label}.{field}"] for field in _PEAK_MAPS}
                 ),
                 reference_header=reference_header,
                 output_prefix=output_prefix,
