@@ -118,6 +118,14 @@ polarisation:
 rmsynth:
   rmsynth:
     phi_max_radm2: 1000.0
+    # 'auto' derotates the whole cube to one reference lambda^2; 'per_pixel'
+    # gives each pixel its own, which also forces the per-pixel RMSF
+    lam_sq_0_m2: auto
   rmclean:
     auto_mask: 7
     auto_threshold: 1
+    # Peak statistics per FDF, like cube_products/moment_products: peak
+    # polarised intensity (raw and debiased), Faraday depth, polarisation angle
+    # and intrinsic angle, each with its error. Nine (ny, nx) maps per entry --
+    # ~9 GB apiece at 16032^2 -- so empty by default. 'dirty' needs no RM-CLEAN.
+    peak_products: []

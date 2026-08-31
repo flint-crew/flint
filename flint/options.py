@@ -275,6 +275,8 @@ class RMSynthOptions(BaseOptions):
     """Also compute a debiased (via rm_lite's debias_fdf) mom0/mom1/mom2 set per requested FDF"""
     debias_filter_size: int = 5
     """Median filter size (pixels) used by mom0 debiasing"""
+    lam_sq_0_m2: float | Literal["auto", "per_pixel"] = "auto"
+    """Reference lambda^2 the FDF is derotated to. 'auto' picks one value for the whole cube; 'per_pixel' gives each pixel its own, which also forces per_pixel_rmsf since the RMSF then differs pixel to pixel. A float pins it explicitly"""
     per_pixel_rmsf: bool = False
     """Compute the RMSF for each pixel rather than one shared by the cube. Roughly doubles the FDF's size. rm-lite turns this on itself when the weights make pixels disagree, as the linmos weight cubes do"""
     estimate_stokes_i_noise: bool = True
@@ -296,6 +298,8 @@ class RMCleanOptions(BaseOptions):
     """CLEAN loop gain"""
     moment_threshold_snr: float = 5.0
     """SNR cut (times the theoretical FDF noise) applied before computing Faraday moment maps, the dirty ones included"""
+    peak_products: list[Literal["dirty", "clean", "model"]] = []
+    """Which FDF(s) to measure peak statistics from: peak polarised intensity (raw and debiased), Faraday depth, polarisation angle and intrinsic angle, each with its error. Nine (ny, nx) maps per FDF, so empty by default -- at 16032^2 that is ~9 GB per entry"""
 
 
 class SpiceOptions(BaseOptions):

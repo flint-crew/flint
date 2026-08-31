@@ -37,7 +37,9 @@ from rm_lite.tools_3d.rmsynth import (  # noqa: E402
 )
 from rm_lite.utils.synthesis import (  # noqa: E402
     FaradayMoments,
+    FaradayPeaks,
     calc_faraday_moments,
+    calc_faraday_peaks,
 )
 
 from flint.exceptions import NotSupportedError
@@ -47,21 +49,40 @@ from flint.options import RMCleanOptions, RMSynthOptions
 FDFLabel = Literal["dirty", "clean", "model"]
 _MOMENT_NAMES = ("mom0", "mom1", "mom2")
 
+# The FDF peak statistics, as {FaradayPeaks field: (file suffix, BUNIT, comment)}.
+# Units matter more here than for the moments: three of these are angles in
+# degrees and two are Faraday depths, so a map with no BUNIT is easy to misread.
+_PEAK_MAPS = {
+    "peak_pi": ("peak_pi", "Jy/beam", "peak polarised intensity"),
+    "peak_pi_debias": ("peak_pi_debias", "Jy/beam", "debiased peak"),
+    "peak_pi_error": ("peak_pi_error", "Jy/beam", "1-sigma on the peak"),
+    "peak_rm_radm2": ("peak_rm", "rad/m2", "Faraday depth of the peak"),
+    "peak_rm_error_radm2": ("peak_rm_error", "rad/m2", "1-sigma on the depth"),
+    "peak_pa_deg": ("peak_pa", "deg", "polarisation angle at the peak"),
+    "peak_pa_error_deg": ("peak_pa_error", "deg", "1-sigma on the angle"),
+    "peak_pa0_deg": ("peak_pa0", "deg", "intrinsic polarisation angle"),
+    "peak_pa0_error_deg": ("peak_pa0_error", "deg", "1-sigma on the intrinsic angle"),
+}
+
 
 def needs_rmclean(
-    cube_products: list[FDFLabel], moment_products: list[FDFLabel]
+    cube_products: list[FDFLabel],
+    moment_products: list[FDFLabel],
+    peak_products: list[FDFLabel] | None = None,
 ) -> bool:
     """Whether any requested product requires RM-CLEAN to be run.
 
     Args:
         cube_products (list[FDFLabel]): Requested FDF cubes
         moment_products (list[FDFLabel]): Requested Faraday moment maps
+        peak_products (list[FDFLabel] | None, optional): Requested FDF peak-statistic maps. Defaults to None.
 
     Returns:
         bool: True if RM-CLEAN is needed
     """
     return any(
-        label in ("clean", "model") for label in (*cube_products, *moment_products)
+        label in ("clean", "model")
+        for label in (*cube_products, *moment_products, *(peak_products or ()))
     )
 
 
@@ -141,6 +162,7 @@ def run_rmsynth_3d(
         phi_max_radm2=rmsynth_options.phi_max_radm2,
         d_phi_radm2=rmsynth_options.d_phi_radm2,
         n_samples=rmsynth_options.n_samples,
+        lam_sq_0_m2=rmsynth_options.lam_sq_0_m2,
         weight_type=rmsynth_options.weight_type,
         robust=rmsynth_options.robust,
         per_pixel_rmsf=rmsynth_options.per_pixel_rmsf,
@@ -415,6 +437,34 @@ def _lazy_faraday_moments(
     )
 
 
+def _lazy_faraday_peaks(
+    fdf_cube: dask.array.Array,
+    synth_results: RMSynth3DResults,
+    threshold: float | np.ndarray | None,
+) -> FaradayPeaks:
+    """Build the lazy peak-statistic maps of an FDF cube.
+
+    The same shape of work as ``_lazy_faraday_moments``: ``calc_faraday_peaks``
+    reduces along the (never-chunked) Faraday-depth axis, so the result is nine
+    lazy (ny, nx) maps each spatial chunk contributes to independently, and the
+    cube itself never has to reach the calling worker.
+
+    rm-lite also returns peaks of its own on ``RMClean3DResults``, but only for
+    the clean FDF and only under its own threshold. Deriving them here instead
+    is what lets any requested FDF have them -- the dirty one included, which
+    needs no RM-CLEAN at all -- under the same cut flint gives its moments.
+    """
+    return calc_faraday_peaks(
+        fdf_cube,
+        phi_arr_radm2=synth_results.phi_arr_radm2,
+        fwhm_rmsf_radm2=synth_results.fwhm_rmsf_radm2,
+        fdf_error=synth_results.theoretical_noise.fdf_error_noise,
+        lam_sq_0_m2=synth_results.lam_sq_0_m2,
+        lambda_sq_arr_m2=synth_results.lambda_sq_arr_m2,
+        threshold=threshold,
+    )
+
+
 def _elapsed(start: float) -> str:
     """Wall time since ``start``, as a compact human-readable string."""
     seconds = time.time() - start
@@ -547,6 +597,69 @@ def _compute_rm_products(
     return computed
 
 
+def write_rmclean_niter_map_to_fits(
+    niter_map: np.ndarray, reference_header: fits.Header, output_prefix: Path
+) -> Path:
+    """Write the per-pixel RM-CLEAN iteration count.
+
+    One small integer map, written whenever RM-CLEAN runs rather than on
+    request: it is the map that answers "why does this field look wrong" --
+    where CLEAN hit ``max_iter`` instead of converging on the threshold -- and
+    that question gets asked after the run, when producing it on demand would
+    mean repeating the whole stage.
+
+    Args:
+        niter_map (np.ndarray): Computed (ny, nx) iteration count
+        reference_header (fits.Header): Header to derive the spatial WCS from
+        output_prefix (Path): Common prefix for the output file
+
+    Returns:
+        Path: The written map path
+    """
+    header = WCS(reference_header).celestial.to_header()
+    header["BUNIT"] = ("", "CLEAN iterations")
+    output_path = Path(f"{output_prefix}.fdf.clean.niter.fits")
+    # int32 rather than rm-lite's int64: max_iter is 1e5 by default, so half the
+    # bytes carry every value this can hold
+    fits.writeto(
+        output_path, np.asarray(niter_map, dtype=np.int32), header, overwrite=True
+    )
+    return output_path
+
+
+def write_peak_maps_to_fits(
+    peaks: FaradayPeaks,
+    reference_header: fits.Header,
+    output_prefix: Path,
+    label: FDFLabel,
+) -> list[Path]:
+    """Write the already-computed FDF peak-statistic maps to FITS.
+
+    Args:
+        peaks (FaradayPeaks): Computed peak maps, each (ny, nx)
+        reference_header (fits.Header): Header to derive the spatial WCS from
+        output_prefix (Path): Common prefix for the output files
+        label (FDFLabel): Which FDF the peaks came from, used to name the outputs
+
+    Returns:
+        list[Path]: The written map paths, nine per FDF
+    """
+    celestial = WCS(reference_header).celestial.to_header()
+    output_paths = []
+    for field, (suffix, unit, comment) in _PEAK_MAPS.items():
+        header = celestial.copy()
+        header["BUNIT"] = (unit, comment)
+        output_path = Path(f"{output_prefix}.fdf.{label}.{suffix}.fits")
+        fits.writeto(
+            output_path,
+            np.asarray(getattr(peaks, field), dtype=np.float32),
+            header,
+            overwrite=True,
+        )
+        output_paths.append(output_path)
+    return output_paths
+
+
 def write_rm_products(
     synth_results: RMSynth3DResults,
     clean_results: RMClean3DResults | None,
@@ -557,6 +670,7 @@ def write_rm_products(
     moment_products: list[FDFLabel],
     output_prefix: Path,
     dask_client: Client | None = None,
+    peak_products: list[FDFLabel] | None = None,
 ) -> list[Path]:
     """Batch-compute and write the requested RM-synthesis/RM-CLEAN output products.
 
@@ -568,6 +682,7 @@ def write_rm_products(
         rmclean_options (RMCleanOptions): Options controlling RM-CLEAN
         cube_products (list[FDFLabel]): Which FDF cube(s) to write ('dirty', 'clean', 'model')
         moment_products (list[FDFLabel]): Which FDF(s) to compute Faraday moment maps from
+        peak_products (list[FDFLabel] | None, optional): Which FDF(s) to write peak-statistic maps from, nine per entry. Defaults to None.
         output_prefix (Path): Common prefix for the output files
         dask_client (Client | None, optional): A distributed Client (e.g. the one backing a Prefect ``DaskTaskRunner``) to compute across, rather than just the local worker. Defaults to None.
 
@@ -670,6 +785,23 @@ def write_rm_products(
             )
             for name, moment_map in zip(_MOMENT_NAMES, debiased):
                 compute_targets[f"debiased.{label}.{name}"] = moment_map
+    # Unconditional whenever RM-CLEAN ran: one small integer map, and the
+    # diagnostic you want already written rather than a stage to repeat.
+    if run_clean:
+        assert clean_results is not None  # run_clean is `clean_results is not None`
+        compute_targets["rmclean_niter"] = clean_results.iter_count_map
+
+    for label in peak_products or ():
+        peaks = _lazy_faraday_peaks(
+            fdf_cube=fdf_sources[label],
+            synth_results=synth_results,
+            threshold=moment_threshold,
+        )
+        for field in _PEAK_MAPS:
+            compute_targets[f"peak.{label}.{field}"] = getattr(peaks, field).astype(
+                np.float32
+            )
+
     # stokes_i_alpha_error_map is None unless compute_model_error gives the fit
     # something to propagate; the other maps are None only if the Stokes I fit
     # didn't run at all. Skip whichever are None rather than feeding them to
@@ -747,6 +879,27 @@ def write_rm_products(
                 )
                 if rmsynth_options.debias_moments
                 else None,
+            )
+        )
+
+    if "rmclean_niter" in computed:
+        output_paths.append(
+            write_rmclean_niter_map_to_fits(
+                niter_map=computed["rmclean_niter"],
+                reference_header=reference_header,
+                output_prefix=output_prefix,
+            )
+        )
+
+    for label in peak_products or ():
+        output_paths.extend(
+            write_peak_maps_to_fits(
+                peaks=FaradayPeaks(
+                    *(computed[f"peak.{label}.{field}"] for field in _PEAK_MAPS)
+                ),
+                reference_header=reference_header,
+                output_prefix=output_prefix,
+                label=label,
             )
         )
 
