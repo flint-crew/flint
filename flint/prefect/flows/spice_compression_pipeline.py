@@ -1,6 +1,7 @@
 """Standalone SPICE-style cube compression pipeline: trim already-imaged
-Stokes cubes down to small boxes around catalogued sources, crop to their
-union, and compress. See ``flint.spice``.
+Stokes image and weight cubes down to small boxes around catalogued sources,
+crop to their union, and compress. Every cube is trimmed with the same boxes,
+so they all land on a common grid. See ``flint.spice``.
 """
 
 from __future__ import annotations
@@ -27,7 +28,7 @@ from flint.prefect.common.spice import (
 )
 from flint.prefect.common.utils import task_archive_sbid, task_getattr
 from flint.source_finding.aegean import run_bane_and_aegean
-from flint.spice import any_box_overlaps
+from flint.spice import check_cubes_share_shape, shared_pixel_boxes
 
 task_run_bane_and_aegean = task(run_bane_and_aegean)
 
@@ -38,6 +39,8 @@ def process_spice_compression(spice_field_options: SpiceFieldOptions) -> list[Pa
         raise ValueError(
             "``cubes`` is required. The racs-all flow sets it from the polarisation stage."
         )
+
+    cubes = [*spice_field_options.cubes, *spice_field_options.weight_cubes]
 
     strategy = load_and_copy_strategy(
         output_split_science_path=spice_field_options.cubes[0].parent,
@@ -89,37 +92,29 @@ def process_spice_compression(spice_field_options: SpiceFieldOptions) -> list[Pa
         is_user_catalogue=is_user_catalogue,
     )
 
-    resolved_sky_boxes = island_sky_boxes.result()
-    overlapping = [
-        cube
-        for cube in spice_field_options.cubes
-        if any_box_overlaps(fits_path=cube, sky_boxes=resolved_sky_boxes)
-    ]
-    if not overlapping:
-        raise ValueError(
-            f"No island overlaps any of the {len(spice_field_options.cubes)} supplied "
-            "cubes. Check the catalogue and reference image match the field."
-        )
-    if len(overlapping) != len(spice_field_options.cubes):
-        logger.warning(
-            f"{len(spice_field_options.cubes) - len(overlapping)} cube(s) have no "
-            "islands and will be compressed without spicing"
-        )
-
-    spiced_cubes = task_spice_fits.map(
-        fits_path=spice_field_options.cubes,
-        sky_boxes=unmapped(resolved_sky_boxes),
-        output_path=unmapped(spice_field_options.output_path),
+    # One set of boxes for every image and weight cube, so they all come out of
+    # the spicing on the same pixel grid.
+    pixel_boxes = shared_pixel_boxes(
+        fits_paths=cubes, sky_boxes=island_sky_boxes.result()
     )
 
+    spiced_cubes = task_spice_fits.map(
+        fits_path=cubes,
+        pixel_boxes=unmapped(pixel_boxes),
+        output_path=unmapped(spice_field_options.output_path),
+    )
+    spiced_paths = spiced_cubes.result()
+    spiced_shape = check_cubes_share_shape(fits_paths=spiced_paths)
+    logger.info(f"Spiced {len(spiced_paths)} cubes, all of shape {spiced_shape}")
+
     compressed_cubes = task_compress_cube.map(
-        out_cube=spiced_cubes,
+        out_cube=spiced_paths,
         method=unmapped(spice_options.compress_method),
         max_workers=unmapped(spice_options.compress_max_workers),
     )
 
-    logger.info(f"Compressed {len(compressed_cubes)} cubes")
     written_paths = compressed_cubes.result()
+    logger.info(f"Compressed {len(written_paths)} cubes")
 
     if spice_field_options.sbid_copy_path:
         task_archive_sbid.submit(

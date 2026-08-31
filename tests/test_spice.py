@@ -19,9 +19,11 @@ from flint.coadd.linmos import BoundingBox
 from flint.convol import BeamShape
 from flint.options import SpiceOptions
 from flint.spice import (
-    any_box_overlaps,
+    SkyBoundingBox,
+    check_cubes_share_shape,
     island_sky_boxes,
     keep_mask_from_boxes,
+    shared_pixel_boxes,
     spice_fits,
 )
 
@@ -369,7 +371,10 @@ def test_spice_fits_masks_crops_and_replaces(tmp_path: Path, shape):
         is_user_catalogue=False,
     )
 
-    out_path = spice_fits(fits_path=fits_path, sky_boxes=sky_boxes)
+    out_path = spice_fits(
+        fits_path=fits_path,
+        pixel_boxes=shared_pixel_boxes(fits_paths=[fits_path], sky_boxes=sky_boxes),
+    )
     assert out_path == fits_path
 
     with fits.open(out_path) as hdul:
@@ -415,7 +420,10 @@ def test_spice_fits_preserves_extra_hdus(tmp_path: Path):
         spice_options=SpiceOptions(n_beamwidths=1.0),
         is_user_catalogue=False,
     )
-    spice_fits(fits_path=fits_path, sky_boxes=sky_boxes)
+    spice_fits(
+        fits_path=fits_path,
+        pixel_boxes=shared_pixel_boxes(fits_paths=[fits_path], sky_boxes=sky_boxes),
+    )
 
     with fits.open(fits_path) as hdul:
         assert len(hdul) == 2
@@ -427,7 +435,7 @@ def test_spice_fits_no_boxes_raises(tmp_path: Path):
     fits_path = tmp_path / "test.fits"
     _write_test_fits(fits_path, wcs, (NY, NX))
     with pytest.raises(ValueError):
-        spice_fits(fits_path=fits_path, sky_boxes=[])
+        spice_fits(fits_path=fits_path, pixel_boxes=[])
 
 
 def _shifted_wcs(crpix_shift: tuple[float, float]) -> WCS:
@@ -460,7 +468,10 @@ def test_boxes_survive_a_trimmed_reference_grid(tmp_path: Path):
     fits_path = tmp_path / "cube.fits"
     _write_test_fits(fits_path, cube_wcs, (NY, NX))
 
-    spice_fits(fits_path=fits_path, sky_boxes=sky_boxes)
+    spice_fits(
+        fits_path=fits_path,
+        pixel_boxes=shared_pixel_boxes(fits_paths=[fits_path], sky_boxes=sky_boxes),
+    )
 
     with fits.open(fits_path) as hdul:
         data, header = hdul[0].data, hdul[0].header
@@ -471,43 +482,6 @@ def test_boxes_survive_a_trimmed_reference_grid(tmp_path: Path):
     )
     assert np.isfinite(data[int(np.round(y_pix)), int(np.round(x_pix))])
     assert data.shape[-2:] != (NY, NX), "The cube should have been cropped"
-
-
-def test_spice_fits_leaves_a_cube_with_no_islands_untouched(tmp_path: Path):
-    reference_wcs = _make_wcs()
-    sky_boxes = island_sky_boxes(
-        table=_aegean_table([_default_row(0, RA0, DEC0)]),
-        wcs=reference_wcs,
-        beam_shape=BEAM,
-        spice_options=SpiceOptions(n_beamwidths=1.0),
-        is_user_catalogue=False,
-    )
-
-    # A cube pointed far away from the catalogued source
-    elsewhere = _make_wcs()
-    elsewhere.wcs.crval = [RA0 + 20.0, DEC0]
-    fits_path = tmp_path / "elsewhere.fits"
-    _write_test_fits(fits_path, elsewhere, (NY, NX))
-    before = fits_path.read_bytes()
-
-    assert not any_box_overlaps(fits_path=fits_path, sky_boxes=sky_boxes)
-    assert spice_fits(fits_path=fits_path, sky_boxes=sky_boxes) == fits_path
-    assert fits_path.read_bytes() == before, "An unspiced cube must not be rewritten"
-
-
-def test_any_box_overlaps_true_for_the_reference_grid(tmp_path: Path):
-    wcs = _make_wcs()
-    sky_boxes = island_sky_boxes(
-        table=_aegean_table([_default_row(0, RA0, DEC0)]),
-        wcs=wcs,
-        beam_shape=BEAM,
-        spice_options=SpiceOptions(n_beamwidths=1.0),
-        is_user_catalogue=False,
-    )
-    fits_path = tmp_path / "on_grid.fits"
-    _write_test_fits(fits_path, wcs, (NY, NX))
-
-    assert any_box_overlaps(fits_path=fits_path, sky_boxes=sky_boxes)
 
 
 def test_spice_fits_writes_to_output_path_and_removes_the_original(tmp_path: Path):
@@ -524,7 +498,9 @@ def test_spice_fits_writes_to_output_path_and_removes_the_original(tmp_path: Pat
 
     output_path = tmp_path / "spice"
     spiced = spice_fits(
-        fits_path=fits_path, sky_boxes=sky_boxes, output_path=output_path
+        fits_path=fits_path,
+        pixel_boxes=shared_pixel_boxes(fits_paths=[fits_path], sky_boxes=sky_boxes),
+        output_path=output_path,
     )
 
     assert spiced == output_path / "cube.fits"
@@ -534,30 +510,6 @@ def test_spice_fits_writes_to_output_path_and_removes_the_original(tmp_path: Pat
     with fits.open(spiced) as hdul:
         assert hdul[0].data.shape[-2:] != (NY, NX)
         assert any("flint.spice" in str(card) for card in hdul[0].header["HISTORY"])
-
-
-def test_spice_fits_unoverlapped_cube_is_not_moved(tmp_path: Path):
-    wcs = _make_wcs()
-    sky_boxes = island_sky_boxes(
-        table=_aegean_table([_default_row(0, RA0, DEC0)]),
-        wcs=wcs,
-        beam_shape=BEAM,
-        spice_options=SpiceOptions(n_beamwidths=1.0),
-        is_user_catalogue=False,
-    )
-
-    elsewhere = _make_wcs()
-    elsewhere.wcs.crval = [RA0 + 20.0, DEC0]
-    fits_path = tmp_path / "elsewhere.fits"
-    _write_test_fits(fits_path, elsewhere, (NY, NX))
-
-    output_path = tmp_path / "spice"
-    result = spice_fits(
-        fits_path=fits_path, sky_boxes=sky_boxes, output_path=output_path
-    )
-
-    assert result == fits_path
-    assert fits_path.exists(), "An unspiced cube must not be deleted"
 
 
 def test_spice_fits_is_idempotent_after_a_worker_death(tmp_path: Path):
@@ -575,14 +527,97 @@ def test_spice_fits_is_idempotent_after_a_worker_death(tmp_path: Path):
     )
     output_path = tmp_path / "spice"
 
+    pixel_boxes = shared_pixel_boxes(fits_paths=[fits_path], sky_boxes=sky_boxes)
     first = spice_fits(
-        fits_path=fits_path, sky_boxes=sky_boxes, output_path=output_path
+        fits_path=fits_path, pixel_boxes=pixel_boxes, output_path=output_path
     )
     first_bytes = first.read_bytes()
 
     second = spice_fits(
-        fits_path=fits_path, sky_boxes=sky_boxes, output_path=output_path
+        fits_path=fits_path, pixel_boxes=pixel_boxes, output_path=output_path
     )
 
     assert second == first
     assert second.read_bytes() == first_bytes, "The rerun must not re-crop the output"
+
+
+def _sky_boxes(wcs: WCS) -> list[SkyBoundingBox]:
+    return island_sky_boxes(
+        table=_aegean_table([_default_row(0, RA0, DEC0)]),
+        wcs=wcs,
+        beam_shape=BEAM,
+        spice_options=SpiceOptions(n_beamwidths=1.0),
+        is_user_catalogue=False,
+    )
+
+
+def test_image_and_weight_cubes_spice_to_the_same_shape(tmp_path: Path):
+    """The point of the shared boxes: every Stokes image and weight cube comes
+    out on one grid, extensions intact."""
+    wcs = _make_wcs()
+    cubes = []
+    for stokes in ("i", "q"):
+        for mode in ("image", "weight"):
+            fits_path = tmp_path / f"{stokes}.{mode}.fits"
+            _write_test_fits(fits_path, wcs, (3, NY, NX), extra_hdu=True)
+            cubes.append(fits_path)
+
+    pixel_boxes = shared_pixel_boxes(fits_paths=cubes, sky_boxes=_sky_boxes(wcs))
+    output_path = tmp_path / "spice"
+    spiced = [
+        spice_fits(fits_path=cube, pixel_boxes=pixel_boxes, output_path=output_path)
+        for cube in cubes
+    ]
+
+    shape = check_cubes_share_shape(fits_paths=spiced)
+    assert shape[-2:] != (NY, NX), "The cubes should have been cropped"
+    for spiced_path in spiced:
+        with fits.open(spiced_path) as hdul:
+            assert hdul[1].name == "BEAMS"
+
+
+def test_check_cubes_share_shape_rejects_a_mismatch(tmp_path: Path):
+    wcs = _make_wcs()
+    matching = tmp_path / "match.fits"
+    odd = tmp_path / "odd.fits"
+    _write_test_fits(matching, wcs, (3, NY, NX))
+    _write_test_fits(odd, wcs, (2, NY, NX))
+
+    assert check_cubes_share_shape(fits_paths=[matching, matching]) == (3, NY, NX)
+    with pytest.raises(ValueError, match="do not share a shape"):
+        check_cubes_share_shape(fits_paths=[matching, odd])
+
+
+def test_shared_pixel_boxes_rejects_a_differing_grid(tmp_path: Path):
+    """Same shape, shifted WCS -- the same boxes would crop them differently"""
+    wcs = _make_wcs()
+    on_grid = tmp_path / "on_grid.fits"
+    shifted = tmp_path / "shifted.fits"
+    _write_test_fits(on_grid, wcs, (NY, NX))
+    _write_test_fits(shifted, _shifted_wcs((30.0, 20.0)), (NY, NX))
+
+    with pytest.raises(ValueError, match="same celestial grid"):
+        shared_pixel_boxes(fits_paths=[on_grid, shifted], sky_boxes=_sky_boxes(wcs))
+
+
+def test_shared_pixel_boxes_raises_when_no_island_overlaps(tmp_path: Path):
+    wcs = _make_wcs()
+    elsewhere = _make_wcs()
+    elsewhere.wcs.crval = [RA0 + 20.0, DEC0]
+    fits_path = tmp_path / "elsewhere.fits"
+    _write_test_fits(fits_path, elsewhere, (NY, NX))
+
+    with pytest.raises(ValueError, match="island boxes overlap"):
+        shared_pixel_boxes(fits_paths=[fits_path], sky_boxes=_sky_boxes(wcs))
+
+
+def test_spice_fits_rejects_boxes_built_against_another_shape(tmp_path: Path):
+    wcs = _make_wcs()
+    reference = tmp_path / "reference.fits"
+    smaller = tmp_path / "smaller.fits"
+    _write_test_fits(reference, wcs, (NY, NX))
+    _write_test_fits(smaller, wcs, (NY // 2, NX // 2))
+
+    pixel_boxes = shared_pixel_boxes(fits_paths=[reference], sky_boxes=_sky_boxes(wcs))
+    with pytest.raises(ValueError, match="boxes were built against"):
+        spice_fits(fits_path=smaller, pixel_boxes=pixel_boxes)

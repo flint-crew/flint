@@ -380,7 +380,9 @@ class SpiceFieldOptions(BaseOptions):
     ``imaging_strategy`` rather than exposed here."""
 
     cubes: list[Path] = []
-    """Stokes cubes to trim and compress. Computed by the racs-all flow, so required only when running this pipeline standalone"""
+    """Stokes image cubes to trim and compress. Computed by the racs-all flow, so required only when running this pipeline standalone"""
+    weight_cubes: list[Path] = []
+    """LINMOS weight cubes to trim and compress alongside ``cubes``, spiced with the same boxes so they stay on a matching grid. Computed by the racs-all flow"""
     reference_image: Path | None = None
     """A 2D MFS image whose WCS/shape sources the source-finding boxes. Required only when catalogue is not set (built-in aegean source finding)"""
     catalogue: Path | None = None
