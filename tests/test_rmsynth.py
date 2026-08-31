@@ -129,8 +129,9 @@ def _synth_and_write(
     stokes_i_weight_cube: Path | None = None,
     stokes_q_weight_cube: Path | None = None,
     stokes_u_weight_cube: Path | None = None,
+    peak_products: list[FDFLabel] | None = None,
 ) -> list[Path]:
-    if not cube_products and not moment_products:
+    if not cube_products and not moment_products and not peak_products:
         return []
 
     synth_results = run_rmsynth_3d(
@@ -144,7 +145,11 @@ def _synth_and_write(
     )
     clean_results = (
         run_rmclean_3d(rm_synth_results=synth_results, rmclean_options=rmclean_options)
-        if needs_rmclean(cube_products=cube_products, moment_products=moment_products)
+        if needs_rmclean(
+            cube_products=cube_products,
+            moment_products=moment_products,
+            peak_products=peak_products,
+        )
         else None
     )
     return write_rm_products(
@@ -155,6 +160,7 @@ def _synth_and_write(
         rmclean_options=rmclean_options,
         cube_products=cube_products,
         moment_products=moment_products,
+        peak_products=peak_products,
         output_prefix=output_prefix,
     )
 
@@ -173,8 +179,9 @@ def test_rmsynth_all_products(tmp_path: Path, qu_cubes: tuple[Path, Path]) -> No
         output_prefix=output_prefix,
     )
 
-    # One zarr store holding all three cubes, plus three moments per label
-    assert len(output_paths) == 1 + 3 * 3
+    # One zarr store holding all three cubes, three moments per label, and the
+    # CLEAN iteration count that every RM-CLEAN run writes
+    assert len(output_paths) == 1 + 3 * 3 + 1
     for path in output_paths:
         assert path.exists()
 
@@ -470,7 +477,8 @@ def test_rmsynth_debias_moments_runs(
     assert mom0_path.exists()
     assert debiased_mom0_path in output_paths
     assert debiased_mom0_path.exists()
-    assert len(output_paths) == 6
+    # Three moments, three debiased, plus the CLEAN iteration count
+    assert len(output_paths) == 6 + 1
 
 
 def test_rmsynth_writes_fdf_cubes_to_zarr(
@@ -537,7 +545,8 @@ def test_moment_only_never_computes_a_full_cube(
     # Every gathered array is a 2D map; a 3D shape means an FDF cube came back.
     assert all(len(shape) == 2 for shape in computed_shapes), computed_shapes
     # 3 labels x mom0/mom1/mom2, and nothing else.
-    assert len(computed_shapes) == 9
+    # Nine moment maps plus the CLEAN iteration count, all still (ny, nx)
+    assert len(computed_shapes) == 9 + 1
 
 
 def test_rmsynth_no_products_is_noop(
@@ -876,7 +885,7 @@ def test_linmos_weights_through_to_the_moment_maps(
     assert {path.name for path in output_paths} == {
         f"{output_prefix.name}.fdf.clean.{moment}.fits"
         for moment in ("mom0", "mom1", "mom2")
-    }
+    } | {f"{output_prefix.name}.fdf.clean.niter.fits"}
 
     mom1 = fits.getdata(Path(f"{output_prefix}.fdf.clean.mom1.fits"))
     inside_cutoff = _within_cutoff(1.5)
@@ -921,6 +930,107 @@ def _make_noise_only_cubes(
         paths[2],
         _make_weight_cube(tmp_path, shape, freq_hz, sigma=1e-3, name=f"{prefix}.i"),
     )
+
+
+def test_every_fdf_can_have_cubes_moments_and_peaks(
+    tmp_path: Path, qu_cubes: tuple[Path, Path]
+) -> None:
+    """The three product kinds are independent of the three FDFs, so all nine
+    combinations have to be reachable -- a peak map off the dirty FDF included,
+    which is the one that needs no RM-CLEAN at all."""
+    stokes_q_cube, stokes_u_cube = qu_cubes
+    labels: list[FDFLabel] = ["dirty", "clean", "model"]
+    output_prefix = tmp_path / "field"
+
+    output_paths = _synth_and_write(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        rmsynth_options=RMSynthOptions(),
+        rmclean_options=RMCleanOptions(),
+        cube_products=labels,
+        moment_products=labels,
+        peak_products=labels,
+        output_prefix=output_prefix,
+    )
+    names = {path.name for path in output_paths}
+
+    # One zarr store holds every cube; moments and peaks are a file each
+    assert f"{output_prefix.name}.fdf.zarr" in names
+    for label in labels:
+        assert sum(f".{label}.mom" in name for name in names) == 3, label
+        assert sum(f".{label}.peak_" in name for name in names) == 9, label
+
+    # The peak Faraday depth is the recoverable truth in all three
+    for label in labels:
+        peak_rm = fits.getdata(Path(f"{output_prefix}.fdf.{label}.peak_rm.fits"))
+        assert np.nanmedian(peak_rm) == pytest.approx(PHI_TRUE_RADM2, abs=5.0), label
+
+
+def test_dirty_peaks_alone_do_not_run_rmclean(
+    tmp_path: Path, qu_cubes: tuple[Path, Path]
+) -> None:
+    """Peaks off the dirty FDF are measured from the synthesis output, so asking
+    for only those must not drag RM-CLEAN in -- it is the expensive half of the
+    stage. The iteration-count map is the tell: it only exists if CLEAN ran."""
+    assert (
+        needs_rmclean(cube_products=[], moment_products=[], peak_products=["dirty"])
+        is False
+    )
+    assert (
+        needs_rmclean(cube_products=[], moment_products=[], peak_products=["clean"])
+        is True
+    )
+    assert (
+        needs_rmclean(cube_products=[], moment_products=[], peak_products=["model"])
+        is True
+    )
+
+    stokes_q_cube, stokes_u_cube = qu_cubes
+    output_prefix = tmp_path / "field"
+    output_paths = _synth_and_write(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        rmsynth_options=RMSynthOptions(),
+        rmclean_options=RMCleanOptions(),
+        cube_products=[],
+        moment_products=[],
+        peak_products=["dirty"],
+        output_prefix=output_prefix,
+    )
+
+    names = {path.name for path in output_paths}
+    assert len(names) == 9, names
+    assert not any("niter" in name for name in names), (
+        "the CLEAN iteration map means RM-CLEAN ran for dirty-only peaks"
+    )
+
+
+def test_rmclean_niter_map_is_always_written(
+    tmp_path: Path, qu_cubes: tuple[Path, Path]
+) -> None:
+    """Unconditional whenever RM-CLEAN runs, and not an option: it is the map
+    that says where CLEAN hit max_iter instead of converging, and that gets
+    asked after the run, when producing it on demand means repeating the stage."""
+    stokes_q_cube, stokes_u_cube = qu_cubes
+    output_prefix = tmp_path / "field"
+
+    output_paths = _synth_and_write(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        rmsynth_options=RMSynthOptions(),
+        rmclean_options=RMCleanOptions(max_iter=20),
+        cube_products=[],
+        moment_products=["clean"],
+        output_prefix=output_prefix,
+    )
+
+    niter_path = Path(f"{output_prefix}.fdf.clean.niter.fits")
+    assert niter_path in output_paths
+    niter = fits.getdata(niter_path)
+    assert niter.shape == (NY, NX)
+    # Integer, and capped by max_iter rather than running away
+    assert np.issubdtype(niter.dtype, np.integer)
+    assert niter.max() <= 20
 
 
 def test_multiscale_rmclean_is_refused_rather_than_ignored(tmp_path: Path) -> None:

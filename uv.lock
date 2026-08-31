@@ -242,7 +242,7 @@ requires-dist = [
     { name = "configargparse", specifier = ">=1.7" },
     { name = "crystalball", specifier = ">=0.4.3" },
     { name = "dask-jobqueue" },
-    { name = "fitscube", extras = ["pgzip"], specifier = ">=2.5.1" },
+    { name = "fitscube", extras = ["pgzip"], specifier = ">=2.6" },
     { name = "fixms", marker = "extra == 'all'", specifier = ">=0.4.0" },
     { name = "fixms", marker = "extra == 'casa'", specifier = ">=0.4.0" },
     { name = "furo", marker = "extra == 'all'" },
@@ -275,8 +275,8 @@ requires-dist = [
     { name = "racs-tools", specifier = ">=4.2.1" },
     { name = "radio-beam", specifier = ">=0.3.4" },
     { name = "reproject" },
-    { name = "rm-lite", marker = "extra == 'all'", specifier = "==2026.8.6" },
-    { name = "rm-lite", marker = "extra == 'rmsynth'", specifier = "==2026.8.6" },
+    { name = "rm-lite", marker = "extra == 'all'", specifier = "==2026.8.7" },
+    { name = "rm-lite", marker = "extra == 'rmsynth'", specifier = "==2026.8.7" },
     { name = "ruff", marker = "extra == 'all'" },
     { name = "ruff", marker = "extra == 'dev'" },
     { name = "scikit-image" },
@@ -1253,7 +1253,7 @@ wheels = [
 
 [[package]]
 name = "fitscube"
-version = "2.5.1"
+version = "2.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "astropy" },
@@ -1261,9 +1261,9 @@ dependencies = [
     { name = "radio-beam" },
     { name = "tqdm" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8c/62/872a1ed7f41d46e3a27c7b0a5b290e3c18b7a98f32cffecd541aca590ba1/fitscube-2.5.1.tar.gz", hash = "sha256:8ad83bd5a02f9dda108785fcb00a5066ea582cfe81937067d47f52be673c56d0", size = 791105, upload-time = "2026-08-15T07:52:57.53Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e6/82/097d1f2c9441b07f91a75d57ddbe62a32dde8dba11f93968395c349523af/fitscube-2.6.0.tar.gz", hash = "sha256:d073194681e93a0b3069d7e430cf75f0c21882fefc5d54ef631c7c4654109c77", size = 794576, upload-time = "2026-08-31T08:06:08.977Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/35/5d/ec7c95e81adacce2575c3374caa019bbf4e7cda26445345825b2f16f6f30/fitscube-2.5.1-py3-none-any.whl", hash = "sha256:b70992229de4faaf221f7c76713b1fa6a6bdda432bd3d69d5951acdedd93d02d", size = 29316, upload-time = "2026-08-15T07:52:55.917Z" },
+    { url = "https://files.pythonhosted.org/packages/50/a3/010b81e2cca21ea4f362903eb181082aca6cb788597ef0441eea1f9cea5a/fitscube-2.6.0-py3-none-any.whl", hash = "sha256:6094a8af7dc52a0250549e67030398d5ce52e8d38a2a0cc0db0306b05fc33aac", size = 31194, upload-time = "2026-08-31T08:06:07.446Z" },
 ]
 
 [package.optional-dependencies]
@@ -3490,7 +3490,7 @@ wheels = [
 
 [[package]]
 name = "rm-lite"
-version = "2026.8.6"
+version = "2026.8.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "astropy" },
@@ -3502,9 +3502,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "zarr" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/dd/5f/da48831db8f482420cea4216b56d1cba0c3663e08dc4ae90cfc1a01541db/rm_lite-2026.8.6.tar.gz", hash = "sha256:a64af62d157bcae4a3fc7829ab249c86aa2e4b3e3d940f64f574ccb2be117076", size = 439671, upload-time = "2026-08-30T02:17:55.475Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6d/9f/c3d7d0260ae064d4e810b476aa4b7ce56298d0457617dc3b544a2a9611ab/rm_lite-2026.8.7.tar.gz", hash = "sha256:155519c3e4063bfa733c7da7f383001c9e47f6cdc5a51d9f33a6b8a06e60f68f", size = 447821, upload-time = "2026-08-31T02:52:55.402Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a4/9e/a9d6ab3800b931ca139987702d7f2ccbe69583dffb6fb94b843964fd76aa/rm_lite-2026.8.6-py3-none-any.whl", hash = "sha256:eca10f1a67e07c34830dd64a00fcb0dd2ec22df801bcff445b902d2434e81c57", size = 114375, upload-time = "2026-08-30T02:17:53.605Z" },
+    { url = "https://files.pythonhosted.org/packages/44/1d/92c36880b4b3deb64710951fd2232a586010f872c9b80363e4d994fe88fe/rm_lite-2026.8.7-py3-none-any.whl", hash = "sha256:bf1760d5ebaeead154fb5b24cd600e18fe5c742a7044411469b15d8316002e75", size = 117925, upload-time = "2026-08-31T02:52:54.139Z" },
 ]
 
 [[package]]

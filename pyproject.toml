@@ -51,7 +51,7 @@ dependencies = [
     "scikit-image",
     "pandas",
     "ConfigArgParse>=1.7",
-    "fitscube[pgzip]>=2.5.1",
+    "fitscube[pgzip]>=2.6",
     "astroquery>=0.4.8.dev0",
     "crystalball>=0.4.3",
     "jolly-roger>=0.10.1",
@@ -93,7 +93,7 @@ casa =[
     "fixms>=0.4.0"
 ]
 rmsynth = [
-    "rm-lite==2026.8.6",
+    "rm-lite==2026.8.7",
 ]
 all = [
     "askap-flint[dev,casa,rmsynth]",

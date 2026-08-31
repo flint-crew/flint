@@ -42,13 +42,6 @@ def process_rmsynth(rmsynth_field_options: RMSynthFieldOptions) -> list[Path]:
         imaging_strategy=rmsynth_field_options.imaging_strategy,
     )
 
-    if (
-        not rmsynth_field_options.cube_products
-        and not rmsynth_field_options.moment_products
-    ):
-        logger.info("No RM-synthesis products requested, skipping.")
-        return []
-
     rmsynth_options = RMSynthOptions(
         **get_options_from_strategy(
             strategy=strategy, operation="rmsynth", mode="rmsynth"
@@ -59,6 +52,16 @@ def process_rmsynth(rmsynth_field_options: RMSynthFieldOptions) -> list[Path]:
             strategy=strategy, operation="rmsynth", mode="rmclean"
         )
     )
+
+    # After the options are built, not before: peak_products is a product
+    # request like the other two, but it comes from the strategy, not the CLI
+    if (
+        not rmsynth_field_options.cube_products
+        and not rmsynth_field_options.moment_products
+        and not rmclean_options.peak_products
+    ):
+        logger.info("No RM-synthesis products requested, skipping.")
+        return []
 
     synth_result = task_rmsynth.submit(
         stokes_q_cube=rmsynth_field_options.stokes_q_cube,
@@ -73,6 +76,7 @@ def process_rmsynth(rmsynth_field_options: RMSynthFieldOptions) -> list[Path]:
     run_clean = needs_rmclean(
         cube_products=rmsynth_field_options.cube_products,
         moment_products=rmsynth_field_options.moment_products,
+        peak_products=rmclean_options.peak_products,
     )
     clean_result = (
         task_rmclean.submit(
@@ -101,6 +105,7 @@ def process_rmsynth(rmsynth_field_options: RMSynthFieldOptions) -> list[Path]:
         cube_products=rmsynth_field_options.cube_products,
         moment_products=rmsynth_field_options.moment_products,
         output_prefix=output_prefix,
+        peak_products=rmclean_options.peak_products,
     )
 
     written_paths = output_paths.result()
