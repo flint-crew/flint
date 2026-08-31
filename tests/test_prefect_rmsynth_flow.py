@@ -95,7 +95,12 @@ def test_process_rmsynth_on_dask_cluster(
             cluster.close()
 
     zarr_store = tmp_path / f"{STEM}.fdf.zarr"
-    assert set(output_paths) == {zarr_store} | {
+    # The CLEAN iteration count comes out of every RM-CLEAN run, alongside the
+    # zarr store and the requested moments
+    assert set(output_paths) == {
+        zarr_store,
+        tmp_path / f"{STEM}.fdf.clean.niter.fits",
+    } | {
         tmp_path / f"{STEM}.fdf.clean.{moment}.fits"
         for moment in ("mom0", "mom1", "mom2")
     }
