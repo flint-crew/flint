@@ -13,7 +13,7 @@ from configargparse import ArgumentParser
 from prefect import flow
 
 from flint.configuration import get_options_from_strategy, load_and_copy_strategy
-from flint.convol import cubes_share_common_beam
+from flint.convol import BeamShape, common_beam_from_cubes, cubes_share_common_beam
 from flint.logging import logger
 from flint.naming import create_name_from_common_fields, get_sbid_from_path
 from flint.options import (
@@ -24,7 +24,7 @@ from flint.options import (
 )
 from flint.prefect.clusters import get_dask_runner
 from flint.prefect.common.rmsynth import (
-    task_convolve_cubes_to_common_beam,
+    convolve_cubes_to_common_resolution,
     task_rmclean,
     task_rmsynth,
     task_write_rm_products,
@@ -53,6 +53,10 @@ def _resolve_common_resolution_cubes(
     are convolved to a common beam and written as new cubes, leaving the inputs
     alone. The weight cubes are untouched, as convolution preserves the pixel grid.
 
+    The convolution runs plane by plane (see
+    ``convolve_cubes_to_common_resolution``), so every channel of every Stokes
+    is smoothed at once across the cluster.
+
     Args:
         stokes_cubes (dict[str, Path]): The input cube of each Stokes to run against
         output_path (Path | None, optional): Directory any new cubes are written into. Defaults to alongside the inputs.
@@ -62,15 +66,28 @@ def _resolve_common_resolution_cubes(
         tuple[dict[str, Path], list[Path]]: The cube to use for each Stokes, and the new cubes written (empty when the inputs were used as they are)
     """
     cube_paths = list(stokes_cubes.values())
-    if cubes_share_common_beam(cube_paths=cube_paths):
+    common_beam = common_beam_from_cubes(cube_paths=cube_paths, cutoff=beam_cutoff)
+    if common_beam is None:
+        logger.warning(
+            "No usable restoring beam among the Stokes cubes, so there is no "
+            "resolution to make common. Using them as they are."
+        )
+        return stokes_cubes, []
+
+    if cubes_share_common_beam(cube_paths=cube_paths, cutoff=beam_cutoff):
         logger.info("Stokes cubes already share a common resolution")
         return stokes_cubes, []
 
-    convolved_cubes = task_convolve_cubes_to_common_beam.submit(
-        cube_paths=cube_paths, output_path=output_path, cutoff=beam_cutoff
-    ).result()
+    beam_shape = BeamShape.from_radio_beam(radio_beam=common_beam)
+    logger.info(f"Bringing the Stokes cubes to {beam_shape=}")
+    convolved_cubes = convolve_cubes_to_common_resolution(
+        cubes=stokes_cubes,
+        beam_shape=beam_shape,
+        output_path=output_path,
+        beam_cutoff=beam_cutoff,
+    )
 
-    return dict(zip(stokes_cubes, convolved_cubes)), convolved_cubes
+    return convolved_cubes, list(convolved_cubes.values())
 
 
 @flow(name="Flint RM-Synthesis Pipeline")

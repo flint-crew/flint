@@ -9,10 +9,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from flint.convol import convolve_cubes_to_common_beam
+from prefect import unmapped
+
+from flint.convol import BeamShape, convolve_plane_to_beam
 from flint.logging import logger
-from flint.options import RMCleanOptions, RMSynthOptions
+from flint.options import FitsCubeOptions, RMCleanOptions, RMSynthOptions
 from flint.prefect.caching import task
+from flint.prefect.common.imaging import (
+    task_combine_images_to_cube,
+    task_remove_files_folders,
+    task_split_cube_into_planes,
+)
 from flint.rmsynth import (
     FDFLabel,
     RMClean3DResults,
@@ -22,7 +29,101 @@ from flint.rmsynth import (
     write_rm_products,
 )
 
-task_convolve_cubes_to_common_beam = task(convolve_cubes_to_common_beam)
+task_convolve_plane_to_beam = task(convolve_plane_to_beam)
+
+
+def convolve_cubes_to_common_resolution(
+    cubes: dict[str, Path],
+    beam_shape: BeamShape,
+    output_path: Path | None = None,
+    beam_cutoff: float | None = None,
+    convol_suffix: str = "conv",
+) -> dict[str, Path]:
+    """Bring a set of FITS cubes to the one resolution described by
+    ``beam_shape``, writing new cubes and leaving the inputs as they are.
+
+    Each cube is split into its per-channel planes, every plane of every cube is
+    convolved as its own task, and the planes are then stacked back into a cube.
+    A 3D convolution would instead work through one cube at a time on a single
+    worker, and would pull each whole cube into memory to do it.
+
+    Args:
+        cubes (dict[str, Path]): The cubes to convolve, keyed however the caller wants the outputs keyed
+        beam_shape (BeamShape): The resolution every channel is brought to
+        output_path (Path | None, optional): Directory the new cubes are written into. Defaults to alongside each input cube.
+        beam_cutoff (float | None, optional): Channels coarser than this, in arcsec, are blanked rather than convolved to. Defaults to no cutoff.
+        convol_suffix (str, optional): The marker added to the name of a smoothed plane, and of the cube they are stacked into. Defaults to 'conv'.
+
+    Returns:
+        dict[str, Path]: The convolved cube for each key of ``cubes``
+    """
+    fitscube_options = FitsCubeOptions(
+        # The weight cubes are not convolved, so the convolved image cubes have
+        # to stay on the pixel and channel grid of the cubes they came from
+        bounding_box=False,
+        create_blanks=False,
+        # Convolution has already put the pixel values on a new scale, so
+        # leaving exact zeros be avoids reinterpreting them a second time
+        invalidate_zeros=False,
+        # rm-synth and the spice stage both read these cubes plane by plane, and
+        # astropy cannot memmap a gzip file
+        compress=False,
+        remove_original_images=True,
+    )
+
+    if output_path is not None:
+        output_path.mkdir(parents=True, exist_ok=True)
+
+    cube_parent = {
+        key: output_path if output_path is not None else cube.parent
+        for key, cube in cubes.items()
+    }
+    # A plane's name carries only the flint name fields, so cubes that agree on
+    # them (e.g. the same Stokes at differing stages) would clobber each other's
+    # planes were they split into the same directory
+    plane_paths = {
+        key: cube_parent[key] / f"{cube.stem}.planes" for key, cube in cubes.items()
+    }
+
+    split_planes = {
+        key: task_split_cube_into_planes.submit(cube=cube, output_path=plane_paths[key])
+        for key, cube in cubes.items()
+    }
+    # Resolved here so the planes can be mapped over individually below
+    planes_per_cube: dict[str, list[Path]] = {
+        key: future.result() for key, future in split_planes.items()
+    }
+
+    # One task per plane rather than per cube, so every channel of every cube is
+    # convolved across the cluster at once
+    convolved_planes = task_convolve_plane_to_beam.map(
+        plane=[plane for planes in planes_per_cube.values() for plane in planes],
+        beam_shape=unmapped(beam_shape),
+        cutoff=unmapped(beam_cutoff),
+        convol_suffix=unmapped(convol_suffix),
+    ).result()
+
+    cube_futures = {}
+    plane_idx = 0
+    for key, planes in planes_per_cube.items():
+        cube_futures[key] = task_combine_images_to_cube.submit(
+            images=convolved_planes[plane_idx : plane_idx + len(planes)],
+            prefix=str(cube_parent[key] / cubes[key].stem),
+            mode=convol_suffix,
+            fitscube_options=fitscube_options,
+        )
+        plane_idx += len(planes)
+    assert plane_idx == len(convolved_planes), (
+        f"Have {len(convolved_planes)} convolved planes across {plane_idx} channels"
+    )
+
+    convolved_cubes = {key: future.result() for key, future in cube_futures.items()}
+
+    # The convolved planes are removed as each cube is assembled, leaving the
+    # planes they were made from behind
+    task_remove_files_folders.submit(*plane_paths.values()).result()
+
+    return convolved_cubes
 
 
 @task

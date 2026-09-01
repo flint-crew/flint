@@ -482,13 +482,14 @@ def transpose_and_sort_channel_images(
     return [list(channel_group) for channel_group in zip(*sorted_beams)]
 
 
-def split_cube_into_planes(cube: Path) -> list[Path]:
+def split_cube_into_planes(cube: Path, output_path: Path | None = None) -> list[Path]:
     """Extract each channel of a FITS cube into its own image, named following the
     flint processed name format so that the planes may be regrouped across beams
     by ``transpose_and_sort_channel_images``.
 
     Args:
         cube (Path): The FITS cube to split apart
+        output_path (Path | None, optional): Directory the planes are written into. Only the flint name fields are retained, so cubes that share them (e.g. an image cube and its weights) need separate directories. Defaults to alongside ``cube``.
 
     Returns:
         list[Path]: The per-channel images extracted from ``cube``
@@ -513,6 +514,9 @@ def split_cube_into_planes(cube: Path) -> list[Path]:
         msg = f"Expected a flint named cube. Got {cube=}"
         raise NamingException(msg)
 
+    if output_path is not None:
+        output_path.mkdir(parents=True, exist_ok=True)
+
     with fits.open(cube, memmap=True, lazy_load_hdus=True) as open_fits:
         header = open_fits[0].header
     channels = int(header[f"NAXIS{find_target_axis(header=header).axis}"])
@@ -525,7 +529,7 @@ def split_cube_into_planes(cube: Path) -> list[Path]:
             processed_name_components=components._replace(
                 channel_range=(channel, channel)
             ),
-            parent_path=cube.parent,
+            parent_path=cube.parent if output_path is None else output_path,
         )
         return Path(f"{plane_base}.fits")
 
