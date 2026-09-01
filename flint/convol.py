@@ -81,6 +81,14 @@ def check_if_cube_fits(fits_file: Path) -> bool:
     return len(squeeze_data.shape) == 3
 
 
+def _beams_from_cubes(cube_paths: list[Path]) -> list[Beam]:
+    """Every channel beam of every cube, flattened"""
+    cube_data_list = beamcon_3D.make_data(
+        files=cube_paths, outdir=[cube_path.parent for cube_path in cube_paths]
+    )
+    return [beam for cube_data in cube_data_list for beam in cube_data.beams]
+
+
 def cubes_share_common_beam(cube_paths: Collection[Path]) -> bool:
     """Whether a single restoring beam describes every channel of every cube.
     Cubes with no beam information at all have no resolution to make common.
@@ -93,15 +101,26 @@ def cubes_share_common_beam(cube_paths: Collection[Path]) -> bool:
     """
     cube_paths = list(cube_paths)
     try:
-        cube_data_list = beamcon_3D.make_data(
-            files=cube_paths, outdir=[cube_path.parent for cube_path in cube_paths]
-        )
+        beams = _beams_from_cubes(cube_paths=cube_paths)
     except NoBeamException:
         logger.info(f"No beam information found among {cube_paths=}")
         return True
 
-    beams = [beam for cube_data in cube_data_list for beam in cube_data.beams]
     return all(beam == beams[0] for beam in beams)
+
+
+def common_beam_from_cubes(cube_paths: Collection[Path]) -> Beam:
+    """The smallest beam that encompasses every channel of every cube.
+
+    Args:
+        cube_paths (Collection[Path]): The FITS cubes to inspect
+
+    Returns:
+        Beam: The beam every channel of every cube fits inside
+    """
+    beams = _beams_from_cubes(cube_paths=list(cube_paths))
+
+    return Beams(beams=beams).common_beam()
 
 
 def convolve_cubes_to_common_beam(

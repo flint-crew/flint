@@ -93,11 +93,16 @@ def test_process_rmsynth_on_dask_cluster(
             silence_logs=40,
         )
         try:
-            output_paths = process_rmsynth.with_options(
+            rmsynth_result = process_rmsynth.with_options(
                 task_runner=DaskTaskRunner(address=cluster.scheduler_address)
             )(rmsynth_field_options=rmsynth_field_options)
         finally:
             cluster.close()
+
+    output_paths = rmsynth_result.written_paths
+    assert rmsynth_result.convolved_cubes == [], (
+        "the cubes carry one beam already, so nothing should have been convolved"
+    )
 
     zarr_store = tmp_path / f"{STEM}.fdf.zarr"
     # The CLEAN iteration count comes out of every RM-CLEAN run, alongside the
@@ -139,7 +144,7 @@ def test_process_rmsynth_no_products_submits_nothing(
     )
 
     with prefect_test_harness(), disable_run_logger():
-        output_paths = process_rmsynth(
+        rmsynth_result = process_rmsynth(
             rmsynth_field_options=RMSynthFieldOptions(
                 stokes_q_cube=stokes_q_cube,
                 stokes_u_cube=stokes_u_cube,
@@ -148,7 +153,8 @@ def test_process_rmsynth_no_products_submits_nothing(
             )
         )
 
-    assert output_paths == []
+    assert rmsynth_result.written_paths == []
+    assert rmsynth_result.convolved_cubes == []
     assert not list(tmp_path.glob("*.fdf.*"))
 
 
@@ -186,7 +192,7 @@ def test_process_rmsynth_with_stokes_i_on_dask_cluster(
         try:
             output_paths = process_rmsynth.with_options(
                 task_runner=DaskTaskRunner(address=cluster.scheduler_address)
-            )(rmsynth_field_options=rmsynth_field_options)
+            )(rmsynth_field_options=rmsynth_field_options).written_paths
         finally:
             cluster.close()
 
@@ -213,9 +219,11 @@ def test_process_rmsynth_with_stokes_i_on_dask_cluster(
     )
 
 
-def _resolved_options(cubes: dict[str, Path], output_path: Path) -> RMSynthFieldOptions:
+def _resolved_options(
+    cubes: dict[str, Path], output_path: Path
+) -> tuple[RMSynthFieldOptions, list[Path]]:
     @flow
-    def _resolve() -> RMSynthFieldOptions:
+    def _resolve() -> tuple[RMSynthFieldOptions, list[Path]]:
         return _resolve_common_resolution_cubes(
             rmsynth_field_options=RMSynthFieldOptions(
                 stokes_q_cube=cubes["q"],
@@ -244,7 +252,7 @@ def test_resolve_common_resolution_cubes_convolves(tmp_path: Path) -> None:
     cubes = _cubes_with_beams(tmp_path, {"q": 0.0, "u": 0.5, "i": 1.0})
     output_path = tmp_path / "rmsynth"
 
-    resolved = _resolved_options(cubes=cubes, output_path=output_path)
+    resolved, convolved_cubes = _resolved_options(cubes=cubes, output_path=output_path)
 
     resolved_cubes = [
         resolved.stokes_q_cube,
@@ -261,6 +269,7 @@ def test_resolve_common_resolution_cubes_convolves(tmp_path: Path) -> None:
     # The weight cubes are untouched, so the convolved cubes must stay on the
     # input pixel grid
     assert fits.getdata(resolved.stokes_q_cube).shape == fits.getdata(cubes["q"]).shape
+    assert convolved_cubes == resolved_cubes
 
 
 def test_resolve_common_resolution_cubes_reuses_matching_cubes(tmp_path: Path) -> None:
@@ -268,9 +277,12 @@ def test_resolve_common_resolution_cubes_reuses_matching_cubes(tmp_path: Path) -
     cubes = _cubes_with_beams(tmp_path, {"q": 0.0, "u": 0.0, "i": 0.0})
     output_path = tmp_path / "rmsynth"
 
-    resolved = _resolved_options(cubes=cubes, output_path=output_path)
+    resolved, convolved_cubes = _resolved_options(cubes=cubes, output_path=output_path)
 
     assert resolved.stokes_q_cube == cubes["q"]
     assert resolved.stokes_u_cube == cubes["u"]
     assert resolved.stokes_i_cube == cubes["i"]
     assert not output_path.exists()
+    # Empty, not the inputs echoed back: the racs-all flow concatenates these
+    # with the input cubes to spice, and a repeat would be spiced twice
+    assert convolved_cubes == []

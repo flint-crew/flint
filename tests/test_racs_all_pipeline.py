@@ -331,3 +331,124 @@ def test_stage_prerequisites_requires_polarisation_containers(
             pol_field_options=PolFieldOptions(),
             spice_field_options=SpiceFieldOptions(),
         )
+
+
+def _stage_mocks(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, convolved_cubes: list[Path]
+):
+    """Replace every stage subflow of ``process_racs_all`` with a mock, so the
+    wiring between them can be checked without imaging anything."""
+    from unittest.mock import MagicMock
+
+    from flint.prefect.flows.polarisation_pipeline import PolPipelineResult
+    from flint.prefect.flows.rmsynth_pipeline import RMSynthPipelineResult
+
+    def _stage(result):
+        mock = MagicMock()
+        mock.with_options.return_value.return_value = result
+        return mock
+
+    continuum_result = MagicMock()
+    continuum_result.terminal_futures = []
+    continuum_result.output_science_path = tmp_path
+    continuum_result.holography_path = None
+
+    pol_result = PolPipelineResult(
+        stokes_cubes={"q": tmp_path / "q.fits", "u": tmp_path / "u.fits"},
+        weight_cubes={"q": tmp_path / "q.weight.fits", "u": tmp_path / "u.weight.fits"},
+        mfs_products={},
+        terminal_futures=[],
+    )
+    spice_stage = _stage([])
+
+    monkeypatch.setattr(
+        "flint.prefect.flows.racs_all_pipeline.get_dask_runner", lambda cluster: None
+    )
+    monkeypatch.setattr(
+        "flint.prefect.flows.racs_all_pipeline.process_racs_all_continuum",
+        _stage(continuum_result),
+    )
+    monkeypatch.setattr(
+        "flint.prefect.flows.racs_all_pipeline.process_science_fields_pol",
+        _stage(pol_result),
+    )
+    monkeypatch.setattr(
+        "flint.prefect.flows.racs_all_pipeline.process_rmsynth",
+        _stage(
+            RMSynthPipelineResult(
+                written_paths=[tmp_path / "fdf.fits"], convolved_cubes=convolved_cubes
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        "flint.prefect.flows.racs_all_pipeline.process_spice_compression", spice_stage
+    )
+
+    return pol_result, spice_stage
+
+
+def _run_racs_all(tmp_path: Path) -> None:
+    container = tmp_path / "container.sif"
+    container.touch()
+    catalogue = tmp_path / "components.fits"
+    catalogue.touch()
+
+    with prefect_test_harness(), disable_run_logger():
+        process_racs_all(
+            pipeline_options=RACSAllPipelineOptions(
+                imaging_cluster_config=tmp_path,
+                polarisation_cluster_config=tmp_path,
+                rmsynth_cluster_config=tmp_path,
+                spice_cluster_config=tmp_path,
+            ),
+            racs_all_options=RACSAllOptions(
+                low_data=tmp_path, mid_data=tmp_path, high_data=tmp_path
+            ),
+            pol_field_options=PolFieldOptions(
+                wsclean_container=container, yandasoft_container=container
+            ),
+            rmsynth_field_options=RMSynthFieldOptions(),
+            spice_field_options=SpiceFieldOptions(catalogue=catalogue),
+        )
+
+
+def test_rmsynth_convolved_cubes_are_spiced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The common-resolution cubes rm-synth writes are full-size copies of the
+    polarisation cubes, so leaving them out of the spice stage would strand an
+    untrimmed, uncompressed set on disk once the originals have been trimmed."""
+    convolved_cubes = [tmp_path / "q.conv.fits", tmp_path / "u.conv.fits"]
+    pol_result, spice_stage = _stage_mocks(
+        monkeypatch=monkeypatch, tmp_path=tmp_path, convolved_cubes=convolved_cubes
+    )
+
+    _run_racs_all(tmp_path=tmp_path)
+
+    spiced_options = spice_stage.with_options.return_value.call_args.kwargs[
+        "spice_field_options"
+    ]
+    assert spiced_options.cubes == [
+        *pol_result.stokes_cubes.values(),
+        *convolved_cubes,
+    ]
+    # Convolution preserves the pixel grid, so the one weight set serves both
+    assert spiced_options.weight_cubes == list(pol_result.weight_cubes.values())
+
+
+def test_spiced_cubes_are_not_repeated_without_convolution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """rm-synth reports no convolved cubes when the inputs already shared a
+    resolution, so the spice stage never sees the same cube twice."""
+    pol_result, spice_stage = _stage_mocks(
+        monkeypatch=monkeypatch, tmp_path=tmp_path, convolved_cubes=[]
+    )
+
+    _run_racs_all(tmp_path=tmp_path)
+
+    spiced_options = spice_stage.with_options.return_value.call_args.kwargs[
+        "spice_field_options"
+    ]
+    assert spiced_options.cubes == list(pol_result.stokes_cubes.values())
+    assert len(set(spiced_options.cubes)) == len(spiced_options.cubes)

@@ -8,14 +8,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from astropy.io import fits
 from capn_crunch import add_options_to_parser, create_options_from_parser
 from configargparse import ArgumentParser
 from prefect import flow, unmapped
-from radio_beam import Beam
 
 from flint.configuration import get_options_from_strategy, load_and_copy_strategy
-from flint.convol import BeamShape
+from flint.convol import BeamShape, common_beam_from_cubes
 from flint.logging import logger
 from flint.naming import get_sbid_from_path
 from flint.options import SpiceFieldOptions, SpiceOptions
@@ -79,10 +77,12 @@ def process_spice_compression(spice_field_options: SpiceFieldOptions) -> list[Pa
         )
     )
 
-    logger.info(f"Getting Beam information from {reference_image=}")
+    # Sized on the coarsest resolution among the cubes being trimmed, not on the
+    # finer reference image, so a box holds its island in every one of them
     beam_shape = BeamShape.from_radio_beam(
-        Beam.from_fits_header(fits.getheader(reference_image))
+        common_beam_from_cubes(cube_paths=spice_field_options.cubes)
     )
+    logger.info(f"Sizing the island boxes on {beam_shape=}")
 
     island_sky_boxes = task_get_spice_boxes.submit(
         reference_image=reference_image,

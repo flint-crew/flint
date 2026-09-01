@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+import astropy.units as u
 import numpy as np
 import pytest
 from astropy.io import fits
@@ -14,6 +15,7 @@ from astropy.wcs import WCS
 from flint.convol import (
     BeamShape,
     check_if_cube_fits,
+    common_beam_from_cubes,
     convolve_cubes_to_common_beam,
     cubes_share_common_beam,
     get_cube_common_beam,
@@ -307,3 +309,21 @@ def test_convolve_cubes_to_common_beam(tmp_path) -> None:
     for cube, convolved_cube in zip(cubes, convolved):
         assert fits.getdata(convolved_cube).shape == fits.getdata(cube).shape
     assert cubes_share_common_beam(cube_paths=convolved)
+
+
+def test_common_beam_from_cubes(tmp_path: Path) -> None:
+    """The beam every channel of every cube fits inside. The spice stage sizes
+    its island boxes on this, so a box holds its island in the coarsest cube
+    rather than only in the finer reference image."""
+    cubes = [
+        _write_cube_with_beam(tmp_path / "fine.fits", [10.0, 11.0, 12.0]),
+        _write_cube_with_beam(tmp_path / "coarse.fits", [14.0] * 3),
+    ]
+
+    common_beam = common_beam_from_cubes(cube_paths=cubes)
+
+    assert common_beam.major.to(u.arcsec).value >= 14.0
+    # A single cube's own coarsest channel, not the set's
+    assert common_beam_from_cubes(cube_paths=cubes[:1]).major.to(
+        u.arcsec
+    ).value == pytest.approx(12.0, rel=1e-3)

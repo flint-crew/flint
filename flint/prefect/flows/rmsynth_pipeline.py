@@ -16,7 +16,12 @@ from flint.configuration import get_options_from_strategy, load_and_copy_strateg
 from flint.convol import cubes_share_common_beam
 from flint.logging import logger
 from flint.naming import create_name_from_common_fields, get_sbid_from_path
-from flint.options import RMCleanOptions, RMSynthFieldOptions, RMSynthOptions
+from flint.options import (
+    BaseOptions,
+    RMCleanOptions,
+    RMSynthFieldOptions,
+    RMSynthOptions,
+)
 from flint.prefect.clusters import get_dask_runner
 from flint.prefect.common.rmsynth import (
     task_convolve_cubes_to_common_beam,
@@ -28,13 +33,26 @@ from flint.prefect.common.utils import task_archive_sbid
 from flint.rmsynth import needs_rmclean
 
 
+class RMSynthPipelineResult(BaseOptions):
+    """Return value of ``process_rmsynth``, handed in-memory to the
+    spice-compression stage of the ``racs-all`` flow-of-flows."""
+
+    written_paths: list[Path]
+    """The RM-synthesis and RM-CLEAN products written"""
+    convolved_cubes: list[Path]
+    """Any new Stokes cubes written to bring the inputs to a common resolution. Empty when the inputs already shared one and were used as they are, so a caller may concatenate these with the input cubes without ever repeating a path"""
+
+
 def _resolve_common_resolution_cubes(
     rmsynth_field_options: RMSynthFieldOptions,
-) -> RMSynthFieldOptions:
+) -> tuple[RMSynthFieldOptions, list[Path]]:
     """RM-synthesis is only meaningful when every channel of every Stokes shares
     one resolution. Cubes that already do are used as they are; otherwise they
     are convolved to a common beam and written as new cubes, leaving the inputs
     alone. The weight cubes are untouched, as convolution preserves the pixel grid.
+
+    Returns the options to run against, and the new cubes written (empty when
+    the inputs were used as they are).
     """
     stokes_cubes = {
         "q": rmsynth_field_options.stokes_q_cube,
@@ -46,22 +64,25 @@ def _resolve_common_resolution_cubes(
     cube_paths = list(stokes_cubes.values())
     if cubes_share_common_beam(cube_paths=cube_paths):
         logger.info("Stokes cubes already share a common resolution")
-        return rmsynth_field_options
+        return rmsynth_field_options, []
 
     convolved_cubes = task_convolve_cubes_to_common_beam.submit(
         cube_paths=cube_paths, output_path=rmsynth_field_options.output_path
     ).result()
 
-    return rmsynth_field_options.with_options(
+    resolved_options = rmsynth_field_options.with_options(
         **{
             f"stokes_{stokes}_cube": cube
             for stokes, cube in zip(stokes_cubes, convolved_cubes)
         }
     )
+    return resolved_options, convolved_cubes
 
 
 @flow(name="Flint RM-Synthesis Pipeline")
-def process_rmsynth(rmsynth_field_options: RMSynthFieldOptions) -> list[Path]:
+def process_rmsynth(
+    rmsynth_field_options: RMSynthFieldOptions,
+) -> RMSynthPipelineResult:
     if (
         rmsynth_field_options.stokes_q_cube is None
         or rmsynth_field_options.stokes_u_cube is None
@@ -95,9 +116,9 @@ def process_rmsynth(rmsynth_field_options: RMSynthFieldOptions) -> list[Path]:
         and not rmclean_options.peak_products
     ):
         logger.info("No RM-synthesis products requested, skipping.")
-        return []
+        return RMSynthPipelineResult(written_paths=[], convolved_cubes=[])
 
-    rmsynth_field_options = _resolve_common_resolution_cubes(
+    rmsynth_field_options, convolved_cubes = _resolve_common_resolution_cubes(
         rmsynth_field_options=rmsynth_field_options
     )
 
@@ -154,7 +175,9 @@ def process_rmsynth(rmsynth_field_options: RMSynthFieldOptions) -> list[Path]:
             copy_path=rmsynth_field_options.sbid_copy_path,
         ).result()
 
-    return written_paths
+    return RMSynthPipelineResult(
+        written_paths=written_paths, convolved_cubes=convolved_cubes
+    )
 
 
 def setup_run_rmsynth(
