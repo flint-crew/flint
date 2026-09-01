@@ -87,7 +87,9 @@ def _smooth_fits_cube(**kwargs: Any) -> tuple:
 
     racs_tools starts that listener on every call and only enqueues its
     sentinel, so the finished thread stays recorded and python 3.13 rejects the
-    next call with 'Listener already started'.
+    next call with 'Listener already started'. Anything convolving twice in one
+    process hits this: ``flint_convol --mode convol --cubes`` derives the common
+    beam and then convolves, and a dask worker outlives the task it ran.
     """
     try:
         return beamcon_3D.smooth_fits_cube(**kwargs)

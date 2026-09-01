@@ -364,7 +364,8 @@ def test_repeated_convolution_resets_the_racs_tools_log_listener(
         # is why the finished thread is joined rather than stopped
         assert beamcon_3D.log_queue.empty()
 
-    # The dry-run path sends no sentinel of its own, so there stop() is needed
+    # The order flint_convol --mode convol --cubes runs in: the dry run sends no
+    # sentinel of its own, so there stop() is needed
     get_cube_common_beam(cube_paths=cubes)
     assert beamcon_3D.log_listener._thread is None
     convolve_cubes_to_common_beam(cube_paths=cubes, output_path=tmp_path / "third")
