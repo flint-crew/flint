@@ -44,7 +44,7 @@ dependencies = [
     "prefect>=3.4.7",
     "prefect-dask>=0.3.7",
     "dask-jobqueue",
-    "RACS-tools>=4.3.2"
+    "RACS-tools>=4.3.2",
     "aegeantools==2.3.0",
     "radio-beam>=0.3.4",
     "reproject",
