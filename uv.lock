@@ -272,7 +272,7 @@ requires-dist = [
     { name = "pytest-xdist", marker = "extra == 'dev'" },
     { name = "python-casacore", marker = "extra == 'all'", specifier = ">=3.6.0" },
     { name = "python-casacore", marker = "extra == 'casa'", specifier = ">=3.6.0" },
-    { name = "racs-tools", specifier = ">=4.2.1" },
+    { name = "racs-tools", specifier = ">=4.3.2" },
     { name = "radio-beam", specifier = ">=0.3.4" },
     { name = "reproject" },
     { name = "rm-lite", marker = "extra == 'all'", specifier = "==2026.8.7" },
@@ -3244,7 +3244,7 @@ wheels = [
 
 [[package]]
 name = "racs-tools"
-version = "4.3.0"
+version = "4.3.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "astropy" },
@@ -3255,9 +3255,9 @@ dependencies = [
     { name = "spectral-cube" },
     { name = "tqdm" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/29/c2/8dcfd4078e8d95f237663601d0ad6cc8e2a8f85ee49f26f58bac87b8e1c8/racs_tools-4.3.0.tar.gz", hash = "sha256:a1ceefb4fb90c2431f8cdaf36a206d285b7525ffa90fbb4231500904989ca623", size = 32984, upload-time = "2025-08-08T04:51:43.651Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f4/b6/abf40ab734acb4dd8cf797a8d6ad6cb2af5f16296e5bf85f53a033efc340/racs_tools-4.3.2.tar.gz", hash = "sha256:d2b88d1b809b1da6a760badf903ed149aac915b10b40d1a143d1f9a81c7c6b7c", size = 33850, upload-time = "2026-09-01T06:40:09.44Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7b/2b/4f808a80756236f0405ba1789d43e63218278ec6c1ed945827009c83609c/racs_tools-4.3.0-py3-none-any.whl", hash = "sha256:50cab8f2ffd10f477e83c93537c90595e3bb4d2fef6319895492d0e9ce585607", size = 35086, upload-time = "2025-08-08T04:51:42.557Z" },
+    { url = "https://files.pythonhosted.org/packages/6a/37/64efbc697222fc916c8448a62ebc876aa0ee5e7d0182dd8e23f25679ba3d/racs_tools-4.3.2-py3-none-any.whl", hash = "sha256:01e62357f75e2b4d871f1985aa943e846c108bb86711b90db5103e8bb18070ed", size = 36030, upload-time = "2026-09-01T06:40:10.268Z" },
 ]
 
 [[package]]

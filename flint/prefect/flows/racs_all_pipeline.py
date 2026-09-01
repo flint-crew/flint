@@ -248,6 +248,7 @@ def process_racs_all(
     # One root for every downstream stage, split into a subdirectory per stage.
     output_root = pipeline_options.output_path or continuum_result.output_science_path
 
+    rmsynth_convolved_cubes: list[Path] = []
     if not pipeline_options.skip_rmsynth:
         resolved_rmsynth_field_options = rmsynth_field_options.with_options(
             stokes_q_cube=pol_result.stokes_cubes["q"],
@@ -259,13 +260,14 @@ def process_racs_all(
             output_path=rmsynth_field_options.output_path or output_root / "rmsynth",
         )
         assert pipeline_options.rmsynth_cluster_config is not None
-        rmsynth_results = process_rmsynth.with_options(
+        rmsynth_result = process_rmsynth.with_options(
             task_runner=get_dask_runner(
                 cluster=pipeline_options.rmsynth_cluster_config
             ),
             name="RACS All -- rm-synthesis",
         )(rmsynth_field_options=resolved_rmsynth_field_options)
-        terminal_results.extend(rmsynth_results)
+        terminal_results.extend(rmsynth_result.written_paths)
+        rmsynth_convolved_cubes = rmsynth_result.convolved_cubes
 
     if not pipeline_options.skip_spice:
         resolved_reference_image = (
@@ -273,8 +275,11 @@ def process_racs_all(
             if spice_field_options.catalogue is not None
             else pol_result.mfs_products.get("i", {}).get("image")
         )
+        # The common-resolution cubes rm-synth wrote are trimmed alongside the
+        # cubes they came from; they share the pixel grid, so one set of boxes
+        # covers both. Empty unless rm-synth actually had to convolve.
         resolved_spice_field_options = spice_field_options.with_options(
-            cubes=list(pol_result.stokes_cubes.values()),
+            cubes=[*pol_result.stokes_cubes.values(), *rmsynth_convolved_cubes],
             weight_cubes=list(pol_result.weight_cubes.values()),
             reference_image=resolved_reference_image,
             output_path=spice_field_options.output_path or output_root / "spice",
@@ -298,6 +303,7 @@ def process_racs_all(
             for cube in (
                 *pol_result.stokes_cubes.values(),
                 *pol_result.weight_cubes.values(),
+                *rmsynth_convolved_cubes,
             )
         )
 

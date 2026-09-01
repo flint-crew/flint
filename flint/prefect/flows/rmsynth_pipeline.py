@@ -13,11 +13,18 @@ from configargparse import ArgumentParser
 from prefect import flow
 
 from flint.configuration import get_options_from_strategy, load_and_copy_strategy
+from flint.convol import cubes_share_common_beam
 from flint.logging import logger
 from flint.naming import create_name_from_common_fields, get_sbid_from_path
-from flint.options import RMCleanOptions, RMSynthFieldOptions, RMSynthOptions
+from flint.options import (
+    BaseOptions,
+    RMCleanOptions,
+    RMSynthFieldOptions,
+    RMSynthOptions,
+)
 from flint.prefect.clusters import get_dask_runner
 from flint.prefect.common.rmsynth import (
+    task_convolve_cubes_to_common_beam,
     task_rmclean,
     task_rmsynth,
     task_write_rm_products,
@@ -26,8 +33,50 @@ from flint.prefect.common.utils import task_archive_sbid
 from flint.rmsynth import needs_rmclean
 
 
+class RMSynthPipelineResult(BaseOptions):
+    """Return value of ``process_rmsynth``, handed in-memory to the
+    spice-compression stage of the ``racs-all`` flow-of-flows."""
+
+    written_paths: list[Path]
+    """The RM-synthesis and RM-CLEAN products written"""
+    convolved_cubes: list[Path]
+    """Any new Stokes cubes written to bring the inputs to a common resolution. Empty when the inputs already shared one and were used as they are, so a caller may concatenate these with the input cubes without ever repeating a path"""
+
+
+def _resolve_common_resolution_cubes(
+    stokes_cubes: dict[str, Path],
+    output_path: Path | None = None,
+    beam_cutoff: float | None = None,
+) -> tuple[dict[str, Path], list[Path]]:
+    """RM-synthesis is only meaningful when every channel of every Stokes shares
+    one resolution. Cubes that already do are used as they are; otherwise they
+    are convolved to a common beam and written as new cubes, leaving the inputs
+    alone. The weight cubes are untouched, as convolution preserves the pixel grid.
+
+    Args:
+        stokes_cubes (dict[str, Path]): The input cube of each Stokes to run against
+        output_path (Path | None, optional): Directory any new cubes are written into. Defaults to alongside the inputs.
+        beam_cutoff (float | None, optional): Channels coarser than this, in arcsec, are blanked rather than dragging the common beam out to their resolution. Defaults to no cutoff.
+
+    Returns:
+        tuple[dict[str, Path], list[Path]]: The cube to use for each Stokes, and the new cubes written (empty when the inputs were used as they are)
+    """
+    cube_paths = list(stokes_cubes.values())
+    if cubes_share_common_beam(cube_paths=cube_paths):
+        logger.info("Stokes cubes already share a common resolution")
+        return stokes_cubes, []
+
+    convolved_cubes = task_convolve_cubes_to_common_beam.submit(
+        cube_paths=cube_paths, output_path=output_path, cutoff=beam_cutoff
+    ).result()
+
+    return dict(zip(stokes_cubes, convolved_cubes)), convolved_cubes
+
+
 @flow(name="Flint RM-Synthesis Pipeline")
-def process_rmsynth(rmsynth_field_options: RMSynthFieldOptions) -> list[Path]:
+def process_rmsynth(
+    rmsynth_field_options: RMSynthFieldOptions,
+) -> RMSynthPipelineResult:
     if (
         rmsynth_field_options.stokes_q_cube is None
         or rmsynth_field_options.stokes_u_cube is None
@@ -36,6 +85,12 @@ def process_rmsynth(rmsynth_field_options: RMSynthFieldOptions) -> list[Path]:
             "stokes_q_cube and stokes_u_cube are required. The racs-all flow sets "
             "them from the polarisation stage."
         )
+    stokes_cubes = {
+        "q": rmsynth_field_options.stokes_q_cube,
+        "u": rmsynth_field_options.stokes_u_cube,
+    }
+    if rmsynth_field_options.stokes_i_cube is not None:
+        stokes_cubes["i"] = rmsynth_field_options.stokes_i_cube
 
     strategy = load_and_copy_strategy(
         output_split_science_path=rmsynth_field_options.stokes_q_cube.parent,
@@ -61,13 +116,19 @@ def process_rmsynth(rmsynth_field_options: RMSynthFieldOptions) -> list[Path]:
         and not rmclean_options.peak_products
     ):
         logger.info("No RM-synthesis products requested, skipping.")
-        return []
+        return RMSynthPipelineResult(written_paths=[], convolved_cubes=[])
+
+    stokes_cubes, convolved_cubes = _resolve_common_resolution_cubes(
+        stokes_cubes=stokes_cubes,
+        output_path=rmsynth_field_options.output_path,
+        beam_cutoff=rmsynth_field_options.beam_cutoff,
+    )
 
     synth_result = task_rmsynth.submit(
-        stokes_q_cube=rmsynth_field_options.stokes_q_cube,
-        stokes_u_cube=rmsynth_field_options.stokes_u_cube,
+        stokes_q_cube=stokes_cubes["q"],
+        stokes_u_cube=stokes_cubes["u"],
         rmsynth_options=rmsynth_options,
-        stokes_i_cube=rmsynth_field_options.stokes_i_cube,
+        stokes_i_cube=stokes_cubes.get("i"),
         stokes_i_weight_cube=rmsynth_field_options.stokes_i_weight_cube,
         stokes_q_weight_cube=rmsynth_field_options.stokes_q_weight_cube,
         stokes_u_weight_cube=rmsynth_field_options.stokes_u_weight_cube,
@@ -87,10 +148,7 @@ def process_rmsynth(rmsynth_field_options: RMSynthFieldOptions) -> list[Path]:
     )
 
     output_prefix = create_name_from_common_fields(
-        in_paths=(
-            rmsynth_field_options.stokes_q_cube,
-            rmsynth_field_options.stokes_u_cube,
-        )
+        in_paths=(stokes_cubes["q"], stokes_cubes["u"])
     )
     if rmsynth_field_options.output_path is not None:
         rmsynth_field_options.output_path.mkdir(parents=True, exist_ok=True)
@@ -99,7 +157,7 @@ def process_rmsynth(rmsynth_field_options: RMSynthFieldOptions) -> list[Path]:
     output_paths = task_write_rm_products.submit(
         synth_results=synth_result,
         clean_results=clean_result,
-        stokes_q_cube=rmsynth_field_options.stokes_q_cube,
+        stokes_q_cube=stokes_cubes["q"],
         rmsynth_options=rmsynth_options,
         rmclean_options=rmclean_options,
         cube_products=rmsynth_field_options.cube_products,
@@ -116,7 +174,9 @@ def process_rmsynth(rmsynth_field_options: RMSynthFieldOptions) -> list[Path]:
             copy_path=rmsynth_field_options.sbid_copy_path,
         ).result()
 
-    return written_paths
+    return RMSynthPipelineResult(
+        written_paths=written_paths, convolved_cubes=convolved_cubes
+    )
 
 
 def setup_run_rmsynth(

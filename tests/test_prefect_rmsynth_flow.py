@@ -8,17 +8,24 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import astropy.units as u
 import numpy as np
 import pytest
 from astropy.io import fits
 from distributed import LocalCluster
+from prefect import flow
 from prefect.logging import disable_run_logger
 from prefect.testing.utilities import prefect_test_harness
 from prefect_dask import DaskTaskRunner
 
+from flint.convol import common_beam_from_cubes, cubes_share_common_beam
 from flint.options import RMSynthFieldOptions
-from flint.prefect.flows.rmsynth_pipeline import process_rmsynth
+from flint.prefect.flows.rmsynth_pipeline import (
+    _resolve_common_resolution_cubes,
+    process_rmsynth,
+)
 
+from .test_convol import _write_cube_with_beam
 from .test_rmsynth import NX, NY, PHI_TRUE_RADM2, _make_i_cube, _make_qu_cubes
 
 # create_name_from_common_fields rejects names it cannot decompose
@@ -88,11 +95,16 @@ def test_process_rmsynth_on_dask_cluster(
             silence_logs=40,
         )
         try:
-            output_paths = process_rmsynth.with_options(
+            rmsynth_result = process_rmsynth.with_options(
                 task_runner=DaskTaskRunner(address=cluster.scheduler_address)
             )(rmsynth_field_options=rmsynth_field_options)
         finally:
             cluster.close()
+
+    output_paths = rmsynth_result.written_paths
+    assert rmsynth_result.convolved_cubes == [], (
+        "the cubes carry one beam already, so nothing should have been convolved"
+    )
 
     zarr_store = tmp_path / f"{STEM}.fdf.zarr"
     # The CLEAN iteration count comes out of every RM-CLEAN run, alongside the
@@ -134,7 +146,7 @@ def test_process_rmsynth_no_products_submits_nothing(
     )
 
     with prefect_test_harness(), disable_run_logger():
-        output_paths = process_rmsynth(
+        rmsynth_result = process_rmsynth(
             rmsynth_field_options=RMSynthFieldOptions(
                 stokes_q_cube=stokes_q_cube,
                 stokes_u_cube=stokes_u_cube,
@@ -143,7 +155,8 @@ def test_process_rmsynth_no_products_submits_nothing(
             )
         )
 
-    assert output_paths == []
+    assert rmsynth_result.written_paths == []
+    assert rmsynth_result.convolved_cubes == []
     assert not list(tmp_path.glob("*.fdf.*"))
 
 
@@ -181,7 +194,7 @@ def test_process_rmsynth_with_stokes_i_on_dask_cluster(
         try:
             output_paths = process_rmsynth.with_options(
                 task_runner=DaskTaskRunner(address=cluster.scheduler_address)
-            )(rmsynth_field_options=rmsynth_field_options)
+            )(rmsynth_field_options=rmsynth_field_options).written_paths
         finally:
             cluster.close()
 
@@ -206,3 +219,82 @@ def test_process_rmsynth_with_stokes_i_on_dask_cluster(
     assert np.allclose(alpha, -0.7, atol=0.1), (
         "the fitted spectral index does not match the Stokes I cube's -0.7"
     )
+
+
+def _resolved_cubes(
+    cubes: dict[str, Path], output_path: Path, beam_cutoff: float | None = None
+) -> tuple[dict[str, Path], list[Path]]:
+    @flow
+    def _resolve() -> tuple[dict[str, Path], list[Path]]:
+        return _resolve_common_resolution_cubes(
+            stokes_cubes=cubes, output_path=output_path, beam_cutoff=beam_cutoff
+        )
+
+    with prefect_test_harness(), disable_run_logger():
+        return _resolve()
+
+
+def _cubes_with_beams(tmp_path: Path, offsets: dict[str, float]) -> dict[str, Path]:
+    return {
+        pol: _write_cube_with_beam(tmp_path / f"stokes_{pol}.fits", [10.0 + offset] * 3)
+        for pol, offset in offsets.items()
+    }
+
+
+def test_resolve_common_resolution_cubes_convolves(tmp_path: Path) -> None:
+    """Stokes cubes at differing resolutions are replaced by convolved copies
+    written into the output directory, leaving the inputs in place"""
+    cubes = _cubes_with_beams(tmp_path, {"q": 0.0, "u": 0.5, "i": 1.0})
+    output_path = tmp_path / "rmsynth"
+
+    resolved, convolved_cubes = _resolved_cubes(cubes=cubes, output_path=output_path)
+
+    resolved_cubes = list(resolved.values())
+    assert all(cube.exists() for cube in cubes.values()), "an input cube was consumed"
+    assert not set(resolved_cubes) & set(cubes.values())
+    assert all(cube.parent == output_path for cube in resolved_cubes)
+    assert cubes_share_common_beam(cube_paths=resolved_cubes)
+    # Each Stokes must keep its own data, not be paired to another cube's output
+    for stokes, resolved_cube in resolved.items():
+        assert resolved_cube.name.startswith(cubes[stokes].stem)
+    # The weight cubes are untouched, so the convolved cubes must stay on the
+    # input pixel grid
+    assert fits.getdata(resolved["q"]).shape == fits.getdata(cubes["q"]).shape
+    assert convolved_cubes == resolved_cubes
+
+
+def test_resolve_common_resolution_cubes_reuses_matching_cubes(tmp_path: Path) -> None:
+    """Cubes already at one resolution are used as they are"""
+    cubes = _cubes_with_beams(tmp_path, {"q": 0.0, "u": 0.0, "i": 0.0})
+    output_path = tmp_path / "rmsynth"
+
+    resolved, convolved_cubes = _resolved_cubes(cubes=cubes, output_path=output_path)
+
+    assert resolved == cubes
+    assert not output_path.exists()
+    # Empty, not the inputs echoed back: the racs-all flow concatenates these
+    # with the input cubes to spice, and a repeat would be spiced twice
+    assert convolved_cubes == []
+
+
+def test_resolve_common_resolution_cubes_beam_cutoff_blanks_coarse_channels(
+    tmp_path: Path,
+) -> None:
+    """A channel coarser than the cutoff is blanked rather than dragging the
+    common beam of every channel out to its resolution"""
+    cubes = _cubes_with_beams(tmp_path, {"q": 0.0, "u": 0.5})
+    coarse = _write_cube_with_beam(tmp_path / "stokes_i.fits", [10.0, 10.0, 40.0])
+    cubes["i"] = coarse
+
+    resolved, _ = _resolved_cubes(
+        cubes=cubes, output_path=tmp_path / "rmsynth", beam_cutoff=20.0
+    )
+
+    common_beam = common_beam_from_cubes(cube_paths=[resolved["q"]])
+    assert common_beam.major.to(u.arcsec).value < 20.0, (
+        "the 40 arcsec channel was convolved to rather than cut"
+    )
+    assert np.all(np.isnan(fits.getdata(resolved["i"])[2])), (
+        "the channel above the cutoff should be blanked"
+    )
+    assert np.any(np.isfinite(fits.getdata(resolved["i"])[0]))

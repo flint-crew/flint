@@ -363,6 +363,8 @@ class RMSynthFieldOptions(BaseOptions):
     """Path to Stokes I weights cube produced by LINMOS"""
     imaging_strategy: Path | None = None
     """Path to a FLINT imaging yaml file that contains the RMSynthOptions/RMCleanOptions settings to use"""
+    beam_cutoff: float | None = None
+    """Cutoff in arcseconds to use when bringing the input cubes to a common beam. Channels coarser than this are blanked instead of dragging every channel out to their resolution. Defaults to no cutoff"""
     cube_products: list[Literal["dirty", "clean", "model"]] = []
     """Which Faraday dispersion function (FDF) cubes to write as FITS. Nothing by default, as these cubes can be large."""
     moment_products: list[Literal["dirty", "clean", "model"]] = ["clean"]
