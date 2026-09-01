@@ -9,7 +9,7 @@ from argparse import ArgumentParser
 from collections.abc import Collection
 from pathlib import Path
 from shutil import copyfile
-from typing import Any, Literal, NamedTuple
+from typing import Literal, NamedTuple
 
 import astropy.units as u
 import numpy as np
@@ -81,34 +81,6 @@ def check_if_cube_fits(fits_file: Path) -> bool:
     return len(squeeze_data.shape) == 3
 
 
-def _smooth_fits_cube(**kwargs: Any) -> tuple:
-    """``beamcon_3D.smooth_fits_cube``, leaving the racs_tools module-level log
-    listener stopped rather than merely sentinelled.
-
-    racs_tools starts that listener on every call and only enqueues its
-    sentinel, so the finished thread stays recorded and python 3.13 rejects the
-    next call with 'Listener already started'. Anything convolving twice in one
-    process hits this: ``flint_convol --mode convol --cubes`` derives the common
-    beam and then convolves, and a dask worker outlives the task it ran.
-    """
-    try:
-        return beamcon_3D.smooth_fits_cube(**kwargs)
-    finally:
-        log_listener = beamcon_3D.log_listener
-        thread = log_listener._thread
-        if thread is not None:
-            # The sentinel racs_tools sends on its way out has already asked the
-            # monitor to finish, so joining it leaves nothing in the queue. A
-            # dry run sends no sentinel, and only there is stop() needed -- it
-            # enqueues one that no monitor is left to read, which would kill the
-            # next listener the moment it starts.
-            thread.join(timeout=10)
-            if thread.is_alive():
-                log_listener.stop()
-            else:
-                log_listener._thread = None
-
-
 def _beams_from_cubes(cube_paths: list[Path]) -> Beams:
     """Every channel beam of every cube, as one Beams"""
     cube_data_list = beamcon_3D.make_data(
@@ -174,7 +146,7 @@ def convolve_cubes_to_common_beam(
     if output_path is not None:
         output_path.mkdir(parents=True, exist_ok=True)
 
-    _, _, convolved_cubes = _smooth_fits_cube(
+    _, _, convolved_cubes = beamcon_3D.smooth_fits_cube(
         infiles_list=list(cube_paths),
         # 'total' is the one beam across all channels and all cubes that
         # RM-synthesis needs, as opposed to 'natural's beam per channel
@@ -213,7 +185,7 @@ def get_cube_common_beam(
         List[BeamShape]: List of target beam shapes to use, corresponding to each channel
     """
 
-    _, common_beam_data_list = _smooth_fits_cube(
+    _, common_beam_data_list = beamcon_3D.smooth_fits_cube(
         infiles_list=list(cube_paths),
         dryrun=True,
         cutoff=cutoff,
@@ -267,7 +239,7 @@ def convolve_cubes(
     assert len(beam_major_list) == len(beam_minor_list) == len(beam_pa_list)
 
     logger.info("Convoling cubes")
-    cube_data_list, _, _ = _smooth_fits_cube(
+    cube_data_list, _, _ = beamcon_3D.smooth_fits_cube(
         infiles_list=list(cube_paths),
         dryrun=False,
         cutoff=cutoff,
