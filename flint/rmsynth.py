@@ -10,9 +10,10 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import dask
+import dask.array as da
 import numpy as np
 import zarr
 from astropy.io import fits
@@ -46,10 +47,8 @@ from flint.exceptions import NotSupportedError
 from flint.logging import logger
 from flint.options import RMCleanOptions, RMSynthOptions
 
-FDFLabel = Literal["dirty", "clean", "model"]
-# An FDF amplitude cut: one value for the cube, a lazy (ny, nx) map when the
-# noise is per-pixel, or None for no cut at all. See ``_snr_threshold``.
-FDFThreshold = float | np.ndarray | dask.array.Array | None
+FDFLabel: TypeAlias = Literal["dirty", "clean", "model"]
+FDFThreshold: TypeAlias = float | np.ndarray | da.Array | None
 _MOMENT_NAMES = ("mom0", "mom1", "mom2")
 
 # The FDF peak statistics, as {FaradayPeaks field: (file suffix, BUNIT, comment)}.
@@ -426,7 +425,7 @@ def _snr_threshold(snr: float, fdf_error_noise: FDFThreshold) -> FDFThreshold:
     the per-pixel ones the linmos cubes give, so the cut comes back in whichever
     form it arrived in.
     """
-    if snr == 0:
+    if snr == 0 or fdf_error_noise is None:
         return None
     return snr * fdf_error_noise
 
