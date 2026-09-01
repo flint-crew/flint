@@ -123,5 +123,3 @@ rmsynth:
   rmclean:
     auto_mask: 7
     auto_threshold: 1
-    # Any of: dirty, clean, model
-    peak_products: []

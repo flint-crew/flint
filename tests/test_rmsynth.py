@@ -129,7 +129,7 @@ def _synth_and_write(
     stokes_i_weight_cube: Path | None = None,
     stokes_q_weight_cube: Path | None = None,
     stokes_u_weight_cube: Path | None = None,
-    peak_products: list[FDFLabel] | None = None,
+    peak_products: list[FDFLabel] = [],
 ) -> list[Path]:
     if not cube_products and not moment_products and not peak_products:
         return []
@@ -381,6 +381,7 @@ def test_unnamed_stokes_i_model_terms_are_skipped_with_a_warning(
         rmclean_options=RMCleanOptions(),
         cube_products=[],
         moment_products=["dirty"],
+        peak_products=[],
         output_prefix=tmp_path / "test_field",
     )
 
@@ -423,6 +424,7 @@ def test_stokes_i_model_rebuilds_from_the_written_term_maps(
         rmclean_options=RMCleanOptions(),
         cube_products=[],
         moment_products=["dirty"],
+        peak_products=[],
         output_prefix=output_prefix,
     )
 
@@ -1160,6 +1162,7 @@ def test_rmclean_runs_once_per_chunk_whatever_is_requested(
         rmclean_options=RMCleanOptions(),
         cube_products=cube_products,
         moment_products=moment_products,
+        peak_products=[],
         output_prefix=tmp_path / "test_field",
     )
 
@@ -1240,6 +1243,7 @@ def test_rmclean_runs_once_per_chunk_on_a_distributed_client(
                 rmclean_options=RMCleanOptions(),
                 cube_products=[],
                 moment_products=["clean", "dirty", "model"],
+                peak_products=[],
                 output_prefix=tmp_path / "field",
                 dask_client=client,
             )
