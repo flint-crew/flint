@@ -16,8 +16,10 @@ import numpy as np
 from astropy.io import fits
 from astropy.wcs import FITSFixedWarning
 from racs_tools import beamcon_2D, beamcon_3D
+from racs_tools.convolve_uv import my_ceil, round_up
 from radio_beam import Beam, Beams
 from radio_beam.beam import NoBeamException
+from radio_beam.utils import BeamError
 
 from flint.logging import logger
 
@@ -217,7 +219,26 @@ def common_beam_from_cubes(
         return None
 
     logger.info(f"Deriving a common beam from {usable.sum()} of {len(usable)} beams")
-    return beams[usable].common_beam()
+    usable_beams = beams[usable]
+    try:
+        common_beam = usable_beams.common_beam()
+    except BeamError:
+        logger.warning(
+            "Could not find a common beam with the default tolerance, trying again"
+        )
+        common_beam = usable_beams.common_beam(tolerance=1e-5)
+
+    # The minimum enclosing ellipse radio_beam solves for sits right against the
+    # beams it encloses, so a channel whose own beam it barely covers can fail to
+    # deconvolve. Rounding up gives every channel the headroom to reach it, which
+    # is what racs_tools does with the common beams it derives itself.
+    return Beam(
+        major=my_ceil(common_beam.major.to(u.arcsecond).value, precision=1)
+        * u.arcsecond,
+        minor=my_ceil(common_beam.minor.to(u.arcsecond).value, precision=1)
+        * u.arcsecond,
+        pa=round_up(common_beam.pa.to(u.degree).value, decimals=2) * u.degree,
+    )
 
 
 def convolve_plane_to_beam(

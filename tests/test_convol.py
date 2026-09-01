@@ -16,6 +16,7 @@ from radio_beam import Beams
 
 from flint.convol import (
     BeamShape,
+    _beams_from_cubes,
     check_if_cube_fits,
     common_beam_from_cubes,
     convolve_plane_to_beam,
@@ -427,7 +428,17 @@ def test_common_beam_from_cubes(tmp_path: Path) -> None:
     # beam out to its resolution
     cut_beam = common_beam_from_cubes(cube_paths=cubes, cutoff=13.0)
     assert cut_beam is not None
-    assert cut_beam.major.to(u.arcsec).value == pytest.approx(12.0, rel=1e-3)
+    assert cut_beam.major.to(u.arcsec).value == pytest.approx(12.0, rel=1e-2)
+
+    # Every channel has to deconvolve the common beam to reach it, and the
+    # minimum enclosing ellipse sits right against the beams it encloses, so the
+    # solution is rounded up onto a tenth of an arcsecond for headroom
+    for axis in (common_beam.major, common_beam.minor):
+        arcsec = axis.to(u.arcsec).value
+        assert arcsec == pytest.approx(round(arcsec, 1), abs=1e-6)
+        assert (
+            arcsec >= _beams_from_cubes(cube_paths=cubes).major.to(u.arcsec).value.min()
+        )
 
 
 def test_common_beam_from_cubes_without_usable_beams(tmp_path: Path) -> None:
