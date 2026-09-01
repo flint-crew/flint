@@ -66,16 +66,16 @@ def _resolve_common_resolution_cubes(
         tuple[dict[str, Path], list[Path]]: The cube to use for each Stokes, and the new cubes written (empty when the inputs were used as they are)
     """
     cube_paths = list(stokes_cubes.values())
-    if cubes_share_common_beam(cube_paths=cube_paths, cutoff=beam_cutoff):
-        logger.info("Stokes cubes already share a common resolution")
-        return stokes_cubes, []
-
     common_beam = common_beam_from_cubes(cube_paths=cube_paths, cutoff=beam_cutoff)
     if common_beam is None:
-        # Unreachable via cubes_share_common_beam, which reports cubes with no
-        # usable beam as already common, but never hand radio_beam a set it
-        # cannot solve
-        logger.warning("No common beam to bring the Stokes cubes to, using them as is")
+        logger.warning(
+            "No usable restoring beam among the Stokes cubes, so there is no "
+            "resolution to make common. Using them as they are."
+        )
+        return stokes_cubes, []
+
+    if cubes_share_common_beam(cube_paths=cube_paths, cutoff=beam_cutoff):
+        logger.info("Stokes cubes already share a common resolution")
         return stokes_cubes, []
 
     beam_shape = BeamShape.from_radio_beam(radio_beam=common_beam)

@@ -13,7 +13,7 @@ from configargparse import ArgumentParser
 from prefect import flow, unmapped
 
 from flint.configuration import get_options_from_strategy, load_and_copy_strategy
-from flint.convol import BeamShape, common_beam_from_cubes
+from flint.convol import common_beam_shape_from_cubes
 from flint.logging import logger
 from flint.naming import get_sbid_from_path
 from flint.options import SpiceFieldOptions, SpiceOptions
@@ -79,14 +79,9 @@ def process_spice_compression(spice_field_options: SpiceFieldOptions) -> list[Pa
 
     # Sized on the coarsest resolution among the cubes being trimmed, not on the
     # finer reference image, so a box holds its island in every one of them
-    common_beam = common_beam_from_cubes(cube_paths=spice_field_options.cubes)
-    if common_beam is None:
-        msg = (
-            "No usable restoring beam among the cubes to spice, so the island "
-            f"boxes cannot be sized: {spice_field_options.cubes=}"
-        )
-        raise ValueError(msg)
-    beam_shape = BeamShape.from_radio_beam(common_beam)
+    # Raises when no cube carries a usable beam, as there is then no island box
+    # to size
+    beam_shape = common_beam_shape_from_cubes(cube_paths=spice_field_options.cubes)
     logger.info(f"Sizing the island boxes on {beam_shape=}")
 
     island_sky_boxes = task_get_spice_boxes.submit(

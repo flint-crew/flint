@@ -25,13 +25,6 @@ from flint.logging import logger
 
 warnings.simplefilter("ignore", FITSFixedWarning)
 
-# A restoring beam smaller than this is not a real PSF. Blank channels are
-# marked either with an exactly-zero beam (wsclean's convention for a plane
-# with no fitted beam) or with ``np.finfo(np.float32).tiny`` (the sentinel
-# ``fitscube`` writes into a BEAMS table, as CASA rejects a NaN there). Both
-# sit many orders of magnitude below any beam an interferometer can produce.
-MIN_USABLE_BEAM_ARCSEC = 1e-6
-
 
 class BeamShape(NamedTuple):
     """A simple container to represent a fitted 2D gaussian,
@@ -120,9 +113,16 @@ def usable_beam_mask(beams: Beams, cutoff: float | None = None) -> np.ndarray:
     minor = np.asarray(beams.minor.to(u.arcsecond).value, dtype=float)
     pa = np.asarray(beams.pa.to(u.degree).value, dtype=float)
 
+    # A blank channel is marked with an exactly-zero beam (wsclean's convention
+    # for a plane with no fitted PSF) or, in a BEAMS table, with the positive
+    # sentinel `fitscube` writes there because CASA rejects a NaN. `> 0` alone
+    # would let the latter through and have a cube already at one beam
+    # reconvolved for the sake of its blank channels.
+    blank_beam_arcsec = float(np.finfo(np.float32).tiny)
+
     usable = (
-        (major > MIN_USABLE_BEAM_ARCSEC)
-        & (minor > MIN_USABLE_BEAM_ARCSEC)
+        (major > blank_beam_arcsec)
+        & (minor > blank_beam_arcsec)
         & np.isfinite(major)
         & np.isfinite(minor)
         & np.isfinite(pa)
@@ -239,6 +239,30 @@ def common_beam_from_cubes(
         * u.arcsecond,
         pa=round_up(common_beam.pa.to(u.degree).value, decimals=2) * u.degree,
     )
+
+
+def common_beam_shape_from_cubes(
+    cube_paths: Collection[Path], cutoff: float | None = None
+) -> BeamShape:
+    """The common beam of a set of cubes, for a caller that cannot do without
+    one. See ``common_beam_from_cubes``.
+
+    Args:
+        cube_paths (Collection[Path]): The FITS cubes to inspect
+        cutoff (float | None, optional): Channels coarser than this, in arcsec, are left out of the common beam. Defaults to no cutoff.
+
+    Raises:
+        ValueError: If no channel of any cube carries a real restoring beam
+
+    Returns:
+        BeamShape: The beam every usable channel fits inside
+    """
+    common_beam = common_beam_from_cubes(cube_paths=cube_paths, cutoff=cutoff)
+    if common_beam is None:
+        msg = f"No usable restoring beam among {list(cube_paths)=}"
+        raise ValueError(msg)
+
+    return BeamShape.from_radio_beam(radio_beam=common_beam)
 
 
 def convolve_plane_to_beam(

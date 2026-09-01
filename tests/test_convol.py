@@ -12,13 +12,15 @@ from astropy.io import fits
 from astropy.table import Table
 from astropy.wcs import WCS
 from fitscube.extract import ExtractOptions, extract_plane_from_cube
-from radio_beam import Beams
+from radio_beam import Beam, Beams
+from radio_beam.utils import BeamError
 
 from flint.convol import (
     BeamShape,
     _beams_from_cubes,
     check_if_cube_fits,
     common_beam_from_cubes,
+    common_beam_shape_from_cubes,
     convolve_plane_to_beam,
     cubes_share_common_beam,
     get_cube_common_beam,
@@ -452,3 +454,46 @@ def test_common_beam_from_cubes_without_usable_beams(tmp_path: Path) -> None:
     # Nor when every real beam is beyond the cutoff
     coarse = _write_cube_with_beam(tmp_path / "coarse.fits", [40.0] * 3)
     assert common_beam_from_cubes(cube_paths=[coarse], cutoff=20.0) is None
+    # Nor when there is no beam recorded at all
+    no_beam = _write_cube_with_beam(tmp_path / "no_beam.fits", [10.0] * 3)
+    with fits.open(no_beam, mode="update") as open_fits:
+        del open_fits["BEAMS"]
+        del open_fits[0].header["CASAMBM"]
+    assert common_beam_from_cubes(cube_paths=[no_beam]) is None
+
+
+def test_common_beam_from_cubes_retries_on_beam_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """radio_beam can fail to enclose a set of beams at its default tolerance,
+    which is retried at a tenth of it rather than given up on"""
+    cube = _write_cube_with_beam(tmp_path / "fine.fits", [10.0, 11.0, 12.0])
+    solved = Beams.common_beam
+    tolerances: list[float | None] = []
+
+    def _fails_once(self: Beams, **kwargs: float) -> Beam:
+        tolerances.append(kwargs.get("tolerance"))
+        if len(tolerances) == 1:
+            raise BeamError("Could not find common beam")
+        return solved(self, **kwargs)
+
+    monkeypatch.setattr(Beams, "common_beam", _fails_once)
+
+    assert common_beam_from_cubes(cube_paths=[cube]) is not None
+    assert tolerances[0] is None, "the first solve should use the defaults"
+    assert tolerances[1] is not None and tolerances[1] < 1e-4
+
+
+def test_common_beam_shape_from_cubes(tmp_path: Path) -> None:
+    """The spice stage cannot size its island boxes without a beam, so it takes
+    one that raises rather than one it has to None-check"""
+    cube = _write_cube_with_beam(tmp_path / "fine.fits", [10.0, 11.0, 12.0])
+
+    beam_shape = common_beam_shape_from_cubes(cube_paths=[cube])
+
+    assert beam_shape.bmaj_arcsec == pytest.approx(12.0, rel=1e-2)
+
+    tiny = float(np.finfo(np.float32).tiny)
+    blank = _write_cube_with_beam(tmp_path / "blank.fits", [0.0, tiny, 0.0])
+    with pytest.raises(ValueError, match="No usable restoring beam"):
+        common_beam_shape_from_cubes(cube_paths=[blank])

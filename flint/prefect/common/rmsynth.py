@@ -31,30 +31,13 @@ from flint.rmsynth import (
 
 task_convolve_plane_to_beam = task(convolve_plane_to_beam)
 
-CONVOL_SUFFIX = "conv"
-"""Marker added to the name of a cube brought to a common resolution"""
-
-CONVOLVED_CUBE_OPTIONS = FitsCubeOptions(
-    # The weight cubes are not convolved, so the convolved image cubes have to
-    # stay on the pixel and channel grid of the cubes they came from
-    bounding_box=False,
-    create_blanks=False,
-    # Convolution has already put the pixel values on a new scale, so leaving
-    # exact zeros be avoids reinterpreting them a second time
-    invalidate_zeros=False,
-    # rm-synth and the spice stage both read these cubes plane by plane, and
-    # astropy cannot memmap a gzip file
-    compress=False,
-    remove_original_images=True,
-)
-"""How a cube is reassembled from its convolved planes"""
-
 
 def convolve_cubes_to_common_resolution(
     cubes: dict[str, Path],
     beam_shape: BeamShape,
     output_path: Path | None = None,
     beam_cutoff: float | None = None,
+    convol_suffix: str = "conv",
 ) -> dict[str, Path]:
     """Bring a set of FITS cubes to the one resolution described by
     ``beam_shape``, writing new cubes and leaving the inputs as they are.
@@ -69,10 +52,25 @@ def convolve_cubes_to_common_resolution(
         beam_shape (BeamShape): The resolution every channel is brought to
         output_path (Path | None, optional): Directory the new cubes are written into. Defaults to alongside each input cube.
         beam_cutoff (float | None, optional): Channels coarser than this, in arcsec, are blanked rather than convolved to. Defaults to no cutoff.
+        convol_suffix (str, optional): The marker added to the name of a smoothed plane, and of the cube they are stacked into. Defaults to 'conv'.
 
     Returns:
         dict[str, Path]: The convolved cube for each key of ``cubes``
     """
+    fitscube_options = FitsCubeOptions(
+        # The weight cubes are not convolved, so the convolved image cubes have
+        # to stay on the pixel and channel grid of the cubes they came from
+        bounding_box=False,
+        create_blanks=False,
+        # Convolution has already put the pixel values on a new scale, so
+        # leaving exact zeros be avoids reinterpreting them a second time
+        invalidate_zeros=False,
+        # rm-synth and the spice stage both read these cubes plane by plane, and
+        # astropy cannot memmap a gzip file
+        compress=False,
+        remove_original_images=True,
+    )
+
     if output_path is not None:
         output_path.mkdir(parents=True, exist_ok=True)
 
@@ -102,7 +100,7 @@ def convolve_cubes_to_common_resolution(
         plane=[plane for planes in planes_per_cube.values() for plane in planes],
         beam_shape=unmapped(beam_shape),
         cutoff=unmapped(beam_cutoff),
-        convol_suffix=unmapped(CONVOL_SUFFIX),
+        convol_suffix=unmapped(convol_suffix),
     ).result()
 
     cube_futures = {}
@@ -111,8 +109,8 @@ def convolve_cubes_to_common_resolution(
         cube_futures[key] = task_combine_images_to_cube.submit(
             images=convolved_planes[plane_idx : plane_idx + len(planes)],
             prefix=str(cube_parent[key] / cubes[key].stem),
-            mode=CONVOL_SUFFIX,
-            fitscube_options=CONVOLVED_CUBE_OPTIONS,
+            mode=convol_suffix,
+            fitscube_options=fitscube_options,
         )
         plane_idx += len(planes)
     assert plane_idx == len(convolved_planes), (
