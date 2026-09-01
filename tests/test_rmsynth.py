@@ -15,6 +15,7 @@ from flint.exceptions import NotSupportedError
 from flint.options import RMCleanOptions, RMSynthOptions
 from flint.rmsynth import (
     FDFLabel,
+    _snr_threshold,
     needs_rmclean,
     run_rmclean_3d,
     run_rmsynth_3d,
@@ -966,6 +967,81 @@ def test_every_fdf_can_have_cubes_moments_and_peaks(
     for label in labels:
         peak_rm = fits.getdata(Path(f"{output_prefix}.fdf.{label}.peak_rm.fits"))
         assert np.nanmedian(peak_rm) == pytest.approx(PHI_TRUE_RADM2, abs=5.0), label
+
+
+def test_the_peak_and_moment_snr_cuts_are_independent(
+    tmp_path: Path, qu_cubes: tuple[Path, Path]
+) -> None:
+    """One cut used to serve both, so a noise estimate that blanked the moments
+    took the peaks with it and the pair looked like a broken FDF rather than an
+    over-aggressive cut. They are separate options now, and each has to bite on
+    its own products only.
+    """
+    stokes_q_cube, stokes_u_cube = qu_cubes
+
+    def peak_pi_and_mom0(prefix: str, **snrs: float) -> tuple[np.ndarray, np.ndarray]:
+        output_prefix = tmp_path / prefix
+        _synth_and_write(
+            stokes_q_cube=stokes_q_cube,
+            stokes_u_cube=stokes_u_cube,
+            rmsynth_options=RMSynthOptions(),
+            rmclean_options=RMCleanOptions(**snrs),
+            cube_products=[],
+            moment_products=["dirty"],
+            peak_products=["dirty"],
+            output_prefix=output_prefix,
+        )
+        return (
+            fits.getdata(Path(f"{output_prefix}.fdf.dirty.peak_pi.fits")),
+            fits.getdata(Path(f"{output_prefix}.fdf.dirty.mom0.fits")),
+        )
+
+    # A cut nothing can clear on one side leaves the other untouched. mom0 is
+    # nansum, so a fully cut spectrum reads 0 rather than NaN; a cut peak is NaN
+    peak_pi, mom0 = peak_pi_and_mom0("moments_cut", moment_threshold_snr=1e6)
+    assert np.all(np.isfinite(peak_pi)), "the moment cut must not reach the peaks"
+    assert np.all(mom0 == 0.0)
+
+    peak_pi, mom0 = peak_pi_and_mom0("peaks_cut", peak_threshold_snr=1e6)
+    assert np.all(np.isnan(peak_pi))
+    assert np.all(mom0 > 0.0), "the peak cut must not reach the moments"
+
+
+def test_no_peak_cut_by_default_even_where_a_pixel_has_no_weight(
+    tmp_path: Path, qu_cubes: tuple[Path, Path]
+) -> None:
+    """``peak_threshold_snr`` defaults to 0, meaning no cut at all. It cannot be
+    applied as ``0 * noise``: the theoretical noise is inf for a pixel linmos
+    blanked, ``0 * inf`` is NaN, and every comparison against NaN is False -- so
+    the cut meant to pass everything would instead blank the whole map."""
+    assert RMCleanOptions().peak_threshold_snr == 0.0
+    assert _snr_threshold(0.0, np.float64(np.inf)) is None
+    assert _snr_threshold(0.0, np.array([1e-5, np.inf])) is None
+    assert _snr_threshold(5.0, np.float64(2.0)) == 10.0
+
+    stokes_q_cube, stokes_u_cube = qu_cubes
+    output_prefix = tmp_path / "default_cut"
+    _synth_and_write(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        rmsynth_options=RMSynthOptions(),
+        rmclean_options=RMCleanOptions(),
+        cube_products=[],
+        moment_products=[],
+        peak_products=["dirty"],
+        output_prefix=output_prefix,
+        stokes_q_weight_cube=_make_linmos_weight_cube(tmp_path, "q", blank_outside=1.5),
+        stokes_u_weight_cube=_make_linmos_weight_cube(tmp_path, "u", blank_outside=1.5),
+    )
+
+    peak_pi = fits.getdata(Path(f"{output_prefix}.fdf.dirty.peak_pi.fits"))
+    inside_cutoff = _within_cutoff(1.5)
+    assert np.all(np.isfinite(peak_pi[inside_cutoff])), (
+        "no cut was asked for, so every pixel carrying weight keeps its peak"
+    )
+    assert np.all(np.isnan(peak_pi[~inside_cutoff])), (
+        "a pixel linmos blanked has no FDF to peak, cut or no cut"
+    )
 
 
 def test_dirty_peaks_alone_do_not_run_rmclean(

@@ -10,9 +10,10 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import dask
+import dask.array as da
 import numpy as np
 import zarr
 from astropy.io import fits
@@ -46,7 +47,8 @@ from flint.exceptions import NotSupportedError
 from flint.logging import logger
 from flint.options import RMCleanOptions, RMSynthOptions
 
-FDFLabel = Literal["dirty", "clean", "model"]
+FDFLabel: TypeAlias = Literal["dirty", "clean", "model"]
+FDFThreshold: TypeAlias = float | np.ndarray | da.Array | None
 _MOMENT_NAMES = ("mom0", "mom1", "mom2")
 
 # The FDF peak statistics, as {FaradayPeaks field: (file suffix, BUNIT, comment)}.
@@ -411,10 +413,27 @@ def write_stokes_i_coeff_maps_to_fits(
     return output_paths
 
 
+def _snr_threshold(snr: float, fdf_error_noise: FDFThreshold) -> FDFThreshold:
+    """An FDF amplitude cut ``snr`` times the theoretical noise, or None for no cut.
+
+    Zero means no cut, and has to short-circuit rather than multiply through:
+    the theoretical noise is ``inf`` wherever a pixel carries no weight at all
+    (linmos blanks the mosaic edge), and ``0 * inf`` is NaN, which blanks every
+    comparison against it instead of passing everything.
+
+    The noise is a scalar for per-channel weights and a lazy (ny, nx) map for
+    the per-pixel ones the linmos cubes give, so the cut comes back in whichever
+    form it arrived in.
+    """
+    if snr == 0 or fdf_error_noise is None:
+        return None
+    return snr * fdf_error_noise
+
+
 def _lazy_faraday_moments(
     fdf_cube: dask.array.Array,
     synth_results: RMSynth3DResults,
-    threshold: float | None,
+    threshold: FDFThreshold,
     debias: bool = False,
     debias_filter_size: int = 5,
 ) -> FaradayMoments:
@@ -735,9 +754,9 @@ def write_rm_products(
     # (mom1/mom2 are then weighted by that noise and mean nothing). rm-lite
     # applies this same cut inside RM-CLEAN to its own moment maps, which flint
     # does not use, so it is rederived here from the shared theoretical noise.
-    moment_threshold = (
-        rmclean_options.moment_threshold_snr
-        * synth_results.theoretical_noise.fdf_error_noise
+    moment_threshold = _snr_threshold(
+        rmclean_options.moment_threshold_snr,
+        synth_results.theoretical_noise.fdf_error_noise,
     )
     for label in moment_products:
         moments = _lazy_faraday_moments(
@@ -766,7 +785,16 @@ def write_rm_products(
     # rm-lite returns peaks of its own on RMClean3DResults, but only for the
     # clean FDF and only under its own threshold. Deriving them here is what
     # lets any requested FDF have them -- the dirty one included, which needs no
-    # RM-CLEAN at all -- under the same cut flint gives its moments.
+    # RM-CLEAN at all -- under a cut flint chooses.
+    #
+    # A separate cut from the moments, and off by default. The moment cut exists
+    # because mom0 integrates the whole Faraday depth axis; a peak is one sample
+    # and has no such floor, so blanking it discards a real measurement whose
+    # error (peak_pi_error) is written beside it.
+    peak_threshold = _snr_threshold(
+        rmclean_options.peak_threshold_snr,
+        synth_results.theoretical_noise.fdf_error_noise,
+    )
     for label in peak_products:
         peaks = calc_faraday_peaks(
             fdf_sources[label],
@@ -775,7 +803,7 @@ def write_rm_products(
             fdf_error=synth_results.theoretical_noise.fdf_error_noise,
             lam_sq_0_m2=synth_results.lam_sq_0_m2,
             lambda_sq_arr_m2=synth_results.lambda_sq_arr_m2,
-            threshold=moment_threshold,
+            threshold=peak_threshold,
         )
         for field in _PEAK_MAPS:
             compute_targets[f"peak.{label}.{field}"] = getattr(peaks, field).astype(
