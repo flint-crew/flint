@@ -292,8 +292,7 @@ def _get_image_weight_plane(
     if mode not in weight_modes:
         raise ValueError(f"Invalid {mode=} specified. Available modes: {weight_modes}")
 
-    # Stride first (cheap subsampling), then drop non-finite values that
-    # would ruin the statistic
+    # Drop non-finite values that would ruin the statistic
     image_data = image_data[::stride]
     image_data = image_data[np.isfinite(image_data)]
 
