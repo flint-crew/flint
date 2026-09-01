@@ -9,6 +9,7 @@ from typing import Literal, NamedTuple
 
 import numpy as np
 from astropy.io import fits
+from astropy.stats import mad_std
 from capn_crunch import BaseOptions, add_options_to_parser, create_options_from_parser
 
 from flint.exceptions import ShapeMismatchError
@@ -278,38 +279,36 @@ def _get_image_weight_plane(
     Args:
         image_data (np.ndarray): Data to consider
         mode (str, optional): Statistic computation mode. Defaults to "mad".
-        stride (int, optional): Include every n'th pixel when computing the weight. '1' includes all pixels. Defaults to 1.
+        stride (int, optional): Include every n'th pixel when computing the weight. '1' includes all pixels. Defaults to 4.
 
     Raises:
-        ValueError: Raised when modes unknown
+        ValueError: Raised when mode is unknown
 
     Returns:
-        float: The inverse variance weight computerd
+        float: The inverse variance weight computed
     """
 
     weight_modes = ("mad", "std")
-    assert mode in weight_modes, (
-        f"Invalid {mode=} specified. Available modes: {weight_modes}"
-    )
+    if mode not in weight_modes:
+        raise ValueError(f"Invalid {mode=} specified. Available modes: {weight_modes}")
 
-    # remove non-finite numbers that would ruin the statistic
-    image_data = image_data[np.isfinite(image_data)][::stride]
+    # Stride first (cheap subsampling), then drop non-finite values that
+    # would ruin the statistic
+    image_data = image_data[::stride]
+    image_data = image_data[np.isfinite(image_data)]
 
-    if np.all(~np.isfinite(image_data)):
+    if image_data.size == 0:
         return 0.0
 
     if mode == "mad":
-        median = np.median(image_data)
-        mad = np.median(np.abs(image_data - median))
-        weight = 1.0 / mad**2
-    elif mode == "std":
-        std = np.std(image_data)
-        weight = 1.0 / std**2
-    else:
-        raise ValueError(f"Invalid {mode=} specified. Available modes: {weight_modes}")
+        rms = mad_std(image_data, ignore_nan=True)
+    else:  # mode == "std"
+        rms = np.nanstd(image_data)
 
-    float_weight = float(weight)
-    return float_weight if np.isfinite(float_weight) else 0.0
+    # Force RMS to 0 if close
+    rms = 0.0 if np.isclose(rms, 0.0) else rms
+    weight = float(1.0 / (rms**2) if rms > 0.0 else 0.0)
+    return weight if np.isfinite(weight) else 0.0
 
 
 def get_image_weight(
