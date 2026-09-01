@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from flint.convol import convolve_cubes_to_common_beam
 from flint.logging import logger
 from flint.options import RMCleanOptions, RMSynthOptions
 from flint.prefect.caching import task
@@ -20,6 +21,8 @@ from flint.rmsynth import (
     run_rmsynth_3d,
     write_rm_products,
 )
+
+task_convolve_cubes_to_common_beam = task(convolve_cubes_to_common_beam)
 
 
 @task

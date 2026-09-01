@@ -8,10 +8,14 @@ from pathlib import Path
 import numpy as np
 import pytest
 from astropy.io import fits
+from astropy.table import Table
+from astropy.wcs import WCS
 
 from flint.convol import (
     BeamShape,
     check_if_cube_fits,
+    convolve_cubes_to_common_beam,
+    cubes_share_common_beam,
     get_cube_common_beam,
 )
 from flint.utils import get_packaged_resource_path
@@ -210,3 +214,96 @@ def test_get_cube_common_beam_and_convol_cubes(cube_fits) -> None:
 #     )
 #     assert all([isinstance(p, Path) for p in cube_paths])
 #     assert all([p.exists() for p in cube_paths])
+
+
+def _write_cube_with_beam(path: Path, bmaj_arcsec: list[float]) -> Path:
+    """Write a small ASKAP-shaped (chan, stokes, dec, ra) cube whose channels
+    carry the requested major axes"""
+    n_chan = len(bmaj_arcsec)
+    freq_hz = np.linspace(700e6, 1300e6, n_chan)
+
+    wcs = WCS(naxis=4)
+    wcs.wcs.ctype = ["RA---SIN", "DEC--SIN", "STOKES", "FREQ"]
+    wcs.wcs.crval = [180.0, -30.0, 1.0, freq_hz[0]]
+    wcs.wcs.crpix = [8, 8, 1, 1]
+    wcs.wcs.cdelt = [-1e-3, 1e-3, 1.0, freq_hz[1] - freq_hz[0]]
+    wcs.wcs.cunit = ["deg", "deg", "", "Hz"]
+
+    rng = np.random.default_rng(0)
+    primary = fits.PrimaryHDU(
+        data=rng.normal(0, 1e-3, (n_chan, 1, 16, 16)).astype(np.float32),
+        header=wcs.to_header(),
+    )
+    primary.header["BUNIT"] = "Jy/beam"
+    primary.header["CASAMBM"] = True
+
+    beam_table = fits.table_to_hdu(
+        Table(
+            data=[
+                np.array(bmaj_arcsec, dtype="f4"),
+                np.array(bmaj_arcsec, dtype="f4") * 0.8,
+                np.zeros(n_chan, dtype="f4"),
+                np.arange(n_chan, dtype="i4"),
+                np.zeros(n_chan, dtype="i4"),
+            ],
+            names=["BMAJ", "BMIN", "BPA", "CHAN", "POL"],
+            units=["arcsec", "arcsec", "deg", None, None],
+        )
+    )
+    beam_table.header["EXTNAME"] = "BEAMS"
+
+    fits.HDUList([primary, beam_table]).writeto(path, overwrite=True)
+    return path
+
+
+def test_cubes_share_common_beam(tmp_path) -> None:
+    """Cubes only share a resolution when every channel of every cube matches"""
+    matching = [
+        _write_cube_with_beam(tmp_path / f"match_{pol}.fits", [10.0] * 3)
+        for pol in ("q", "u")
+    ]
+    assert cubes_share_common_beam(cube_paths=matching)
+
+    varying = _write_cube_with_beam(tmp_path / "vary.fits", [10.0, 11.0, 12.0])
+    assert not cubes_share_common_beam(cube_paths=[*matching, varying])
+
+    # Differing only across Stokes is enough to need a convolution
+    offset = _write_cube_with_beam(tmp_path / "offset.fits", [10.5] * 3)
+    assert not cubes_share_common_beam(cube_paths=[matching[0], offset])
+
+
+def test_cubes_share_common_beam_without_beams(tmp_path) -> None:
+    """A cube carrying no beam information has no resolution to make common"""
+    cube = _write_cube_with_beam(tmp_path / "no_beam.fits", [10.0] * 3)
+    with fits.open(cube, mode="update") as open_fits:
+        del open_fits["BEAMS"]
+        del open_fits[0].header["CASAMBM"]
+
+    assert cubes_share_common_beam(cube_paths=[cube])
+
+
+def test_convolve_cubes_to_common_beam(tmp_path) -> None:
+    """Convolving leaves the input cubes alone, writes new cubes on the same
+    pixel grid, and brings every channel of every cube to the one beam"""
+    cubes = [
+        _write_cube_with_beam(
+            tmp_path / f"stokes_{pol}.fits",
+            [10.0 + offset, 11.0 + offset, 12.0 + offset],
+        )
+        for pol, offset in (("q", 0.0), ("u", 0.5))
+    ]
+    output_path = tmp_path / "rmsynth"
+
+    convolved = convolve_cubes_to_common_beam(cube_paths=cubes, output_path=output_path)
+
+    assert all(cube.exists() for cube in cubes), "the input cubes were consumed"
+    assert not set(convolved) & set(cubes)
+    assert all(cube.parent == output_path for cube in convolved)
+    # The outputs must pair back to their inputs, which smooth_fits_cube sorts
+    assert [cube.name for cube in convolved] == [
+        "stokes_q.conv.fits",
+        "stokes_u.conv.fits",
+    ]
+    for cube, convolved_cube in zip(cubes, convolved):
+        assert fits.getdata(convolved_cube).shape == fits.getdata(cube).shape
+    assert cubes_share_common_beam(cube_paths=convolved)

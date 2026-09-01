@@ -17,6 +17,7 @@ from astropy.io import fits
 from astropy.wcs import FITSFixedWarning
 from racs_tools import beamcon_2D, beamcon_3D
 from radio_beam import Beam, Beams
+from radio_beam.beam import NoBeamException
 
 from flint.logging import logger
 
@@ -78,6 +79,74 @@ def check_if_cube_fits(fits_file: Path) -> bool:
         return False
 
     return len(squeeze_data.shape) == 3
+
+
+def cubes_share_common_beam(cube_paths: Collection[Path]) -> bool:
+    """Whether a single restoring beam describes every channel of every cube.
+    Cubes with no beam information at all have no resolution to make common.
+
+    Args:
+        cube_paths (Collection[Path]): The FITS cubes to inspect
+
+    Returns:
+        bool: Whether the cubes are already at a common resolution
+    """
+    cube_paths = list(cube_paths)
+    try:
+        cube_data_list = beamcon_3D.make_data(
+            files=cube_paths, outdir=[cube_path.parent for cube_path in cube_paths]
+        )
+    except NoBeamException:
+        logger.info(f"No beam information found among {cube_paths=}")
+        return True
+
+    beams = [beam for cube_data in cube_data_list for beam in cube_data.beams]
+    return all(beam == beams[0] for beam in beams)
+
+
+def convolve_cubes_to_common_beam(
+    cube_paths: Collection[Path],
+    output_path: Path | None = None,
+    convol_suffix: str = "conv",
+) -> list[Path]:
+    """Convolve every channel of every cube to the one smallest beam that
+    encompasses them all. New cubes are written and the inputs are left as they
+    are.
+
+    Args:
+        cube_paths (Collection[Path]): The FITS cubes to bring to one resolution
+        output_path (Path | None, optional): Directory the convolved cubes are written into. Defaults to alongside each input cube.
+        convol_suffix (str, optional): The suffix added to .fits to indicate a smoothed cube. Defaults to 'conv'.
+
+    Returns:
+        list[Path]: The convolved cubes, in the order of ``cube_paths``
+    """
+    logger.info(f"Convolving {len(cube_paths)} cubes to a common resolution")
+    if output_path is not None:
+        output_path.mkdir(parents=True, exist_ok=True)
+
+    _, _, convolved_cubes = beamcon_3D.smooth_fits_cube(
+        infiles_list=list(cube_paths),
+        # 'total' is the one beam across all channels and all cubes that
+        # RM-synthesis needs, as opposed to 'natural's beam per channel
+        mode="total",
+        conv_mode="robust",
+        suffix=convol_suffix,
+        outdir=output_path,
+    )
+
+    # 'total' mode carries the input header's CASAMBM flag into a cube that now
+    # has one beam and no BEAMS table for a reader to find
+    for convolved_cube in convolved_cubes:
+        with fits.open(convolved_cube, mode="update") as open_fits:
+            open_fits[0].header.pop("CASAMBM", None)
+
+    # smooth_fits_cube sorts its inputs, so pair each output back to its input
+    convolved_by_name = {cube.name: cube for cube in convolved_cubes}
+    return [
+        convolved_by_name[Path(cube.name).with_suffix(f".{convol_suffix}.fits").name]
+        for cube in cube_paths
+    ]
 
 
 def get_cube_common_beam(

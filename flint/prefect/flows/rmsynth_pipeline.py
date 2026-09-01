@@ -13,17 +13,51 @@ from configargparse import ArgumentParser
 from prefect import flow
 
 from flint.configuration import get_options_from_strategy, load_and_copy_strategy
+from flint.convol import cubes_share_common_beam
 from flint.logging import logger
 from flint.naming import create_name_from_common_fields, get_sbid_from_path
 from flint.options import RMCleanOptions, RMSynthFieldOptions, RMSynthOptions
 from flint.prefect.clusters import get_dask_runner
 from flint.prefect.common.rmsynth import (
+    task_convolve_cubes_to_common_beam,
     task_rmclean,
     task_rmsynth,
     task_write_rm_products,
 )
 from flint.prefect.common.utils import task_archive_sbid
 from flint.rmsynth import needs_rmclean
+
+
+def _resolve_common_resolution_cubes(
+    rmsynth_field_options: RMSynthFieldOptions,
+) -> RMSynthFieldOptions:
+    """RM-synthesis is only meaningful when every channel of every Stokes shares
+    one resolution. Cubes that already do are used as they are; otherwise they
+    are convolved to a common beam and written as new cubes, leaving the inputs
+    alone. The weight cubes are untouched, as convolution preserves the pixel grid.
+    """
+    stokes_cubes = {
+        "q": rmsynth_field_options.stokes_q_cube,
+        "u": rmsynth_field_options.stokes_u_cube,
+    }
+    if rmsynth_field_options.stokes_i_cube is not None:
+        stokes_cubes["i"] = rmsynth_field_options.stokes_i_cube
+
+    cube_paths = list(stokes_cubes.values())
+    if cubes_share_common_beam(cube_paths=cube_paths):
+        logger.info("Stokes cubes already share a common resolution")
+        return rmsynth_field_options
+
+    convolved_cubes = task_convolve_cubes_to_common_beam.submit(
+        cube_paths=cube_paths, output_path=rmsynth_field_options.output_path
+    ).result()
+
+    return rmsynth_field_options.with_options(
+        **{
+            f"stokes_{stokes}_cube": cube
+            for stokes, cube in zip(stokes_cubes, convolved_cubes)
+        }
+    )
 
 
 @flow(name="Flint RM-Synthesis Pipeline")
@@ -62,6 +96,10 @@ def process_rmsynth(rmsynth_field_options: RMSynthFieldOptions) -> list[Path]:
     ):
         logger.info("No RM-synthesis products requested, skipping.")
         return []
+
+    rmsynth_field_options = _resolve_common_resolution_cubes(
+        rmsynth_field_options=rmsynth_field_options
+    )
 
     synth_result = task_rmsynth.submit(
         stokes_q_cube=rmsynth_field_options.stokes_q_cube,
