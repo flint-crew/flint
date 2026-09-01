@@ -68,21 +68,21 @@ _PEAK_MAPS = {
 def needs_rmclean(
     cube_products: list[FDFLabel],
     moment_products: list[FDFLabel],
-    peak_products: list[FDFLabel] | None = None,
+    peak_products: list[FDFLabel],
 ) -> bool:
     """Whether any requested product requires RM-CLEAN to be run.
 
     Args:
         cube_products (list[FDFLabel]): Requested FDF cubes
         moment_products (list[FDFLabel]): Requested Faraday moment maps
-        peak_products (list[FDFLabel] | None, optional): Requested FDF peak-statistic maps. Defaults to None.
+        peak_products (list[FDFLabel]): Requested FDF peak-statistic maps
 
     Returns:
         bool: True if RM-CLEAN is needed
     """
     return any(
         label in ("clean", "model")
-        for label in (*cube_products, *moment_products, *(peak_products or ()))
+        for label in (*cube_products, *moment_products, *peak_products)
     )
 
 
@@ -640,9 +640,9 @@ def write_rm_products(
     rmclean_options: RMCleanOptions,
     cube_products: list[FDFLabel],
     moment_products: list[FDFLabel],
+    peak_products: list[FDFLabel],
     output_prefix: Path,
     dask_client: Client | None = None,
-    peak_products: list[FDFLabel] | None = None,
 ) -> list[Path]:
     """Batch-compute and write the requested RM-synthesis/RM-CLEAN output products.
 
@@ -654,7 +654,7 @@ def write_rm_products(
         rmclean_options (RMCleanOptions): Options controlling RM-CLEAN
         cube_products (list[FDFLabel]): Which FDF cube(s) to write ('dirty', 'clean', 'model')
         moment_products (list[FDFLabel]): Which FDF(s) to compute Faraday moment maps from
-        peak_products (list[FDFLabel] | None, optional): Which FDF(s) to write peak-statistic maps from, nine per entry. Defaults to None.
+        peak_products (list[FDFLabel]): Which FDF(s) to write peak-statistic maps from, nine per entry
         output_prefix (Path): Common prefix for the output files
         dask_client (Client | None, optional): A distributed Client (e.g. the one backing a Prefect ``DaskTaskRunner``) to compute across, rather than just the local worker. Defaults to None.
 
@@ -767,7 +767,7 @@ def write_rm_products(
     # clean FDF and only under its own threshold. Deriving them here is what
     # lets any requested FDF have them -- the dirty one included, which needs no
     # RM-CLEAN at all -- under the same cut flint gives its moments.
-    for label in peak_products or ():
+    for label in peak_products:
         peaks = calc_faraday_peaks(
             fdf_sources[label],
             phi_arr_radm2=synth_results.phi_arr_radm2,
@@ -871,7 +871,7 @@ def write_rm_products(
             )
         )
 
-    for label in peak_products or ():
+    for label in peak_products:
         output_paths.extend(
             write_peak_maps_to_fits(
                 peaks=FaradayPeaks(

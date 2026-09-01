@@ -85,6 +85,14 @@ def process_rmsynth(
             "stokes_q_cube and stokes_u_cube are required. The racs-all flow sets "
             "them from the polarisation stage."
         )
+    if (
+        not rmsynth_field_options.cube_products
+        and not rmsynth_field_options.moment_products
+        and not rmsynth_field_options.peak_products
+    ):
+        logger.info("No RM-synthesis products requested, skipping.")
+        return RMSynthPipelineResult(written_paths=[], convolved_cubes=[])
+
     stokes_cubes = {
         "q": rmsynth_field_options.stokes_q_cube,
         "u": rmsynth_field_options.stokes_u_cube,
@@ -108,16 +116,6 @@ def process_rmsynth(
         )
     )
 
-    # After the options are built, not before: peak_products is a product
-    # request like the other two, but it comes from the strategy, not the CLI
-    if (
-        not rmsynth_field_options.cube_products
-        and not rmsynth_field_options.moment_products
-        and not rmclean_options.peak_products
-    ):
-        logger.info("No RM-synthesis products requested, skipping.")
-        return RMSynthPipelineResult(written_paths=[], convolved_cubes=[])
-
     stokes_cubes, convolved_cubes = _resolve_common_resolution_cubes(
         stokes_cubes=stokes_cubes,
         output_path=rmsynth_field_options.output_path,
@@ -137,7 +135,7 @@ def process_rmsynth(
     run_clean = needs_rmclean(
         cube_products=rmsynth_field_options.cube_products,
         moment_products=rmsynth_field_options.moment_products,
-        peak_products=rmclean_options.peak_products,
+        peak_products=rmsynth_field_options.peak_products,
     )
     clean_result = (
         task_rmclean.submit(
@@ -162,8 +160,8 @@ def process_rmsynth(
         rmclean_options=rmclean_options,
         cube_products=rmsynth_field_options.cube_products,
         moment_products=rmsynth_field_options.moment_products,
+        peak_products=rmsynth_field_options.peak_products,
         output_prefix=output_prefix,
-        peak_products=rmclean_options.peak_products,
     )
 
     written_paths = output_paths.result()

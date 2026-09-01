@@ -298,8 +298,6 @@ class RMCleanOptions(BaseOptions):
     """CLEAN loop gain"""
     moment_threshold_snr: float = 5.0
     """SNR cut (times the theoretical FDF noise) applied before computing Faraday moment maps, the dirty ones included"""
-    peak_products: list[Literal["dirty", "clean", "model"]] = []
-    """Which FDF(s) to measure peak statistics from: peak polarised intensity (raw and debiased), Faraday depth, polarisation angle and intrinsic angle, each with its error. Nine (ny, nx) maps per FDF, so empty by default -- at 16032^2 that is ~9 GB per entry"""
 
 
 class SpiceOptions(BaseOptions):
@@ -369,6 +367,8 @@ class RMSynthFieldOptions(BaseOptions):
     """Which Faraday dispersion function (FDF) cubes to write as FITS. Nothing by default, as these cubes can be large."""
     moment_products: list[Literal["dirty", "clean", "model"]] = ["clean"]
     """Which FDF(s) to compute Faraday moment maps from."""
+    peak_products: list[Literal["dirty", "clean", "model"]] = []
+    """Which FDF(s) to measure peak statistics from: peak polarised intensity (raw and debiased), Faraday depth, polarisation angle and intrinsic angle, each with its error. Nine (ny, nx) maps per FDF, so empty by default -- at 16032^2 that is ~9 GB per entry"""
     output_path: Path | None = None
     """Directory the FDF cube and moment products are written into. Defaults to alongside the input Stokes cubes"""
     sbid_copy_path: Path | None = None

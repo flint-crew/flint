@@ -74,8 +74,8 @@ def task_write_rm_products(
     rmclean_options: RMCleanOptions,
     cube_products: list[FDFLabel],
     moment_products: list[FDFLabel],
+    peak_products: list[FDFLabel],
     output_prefix: Path,
-    peak_products: list[FDFLabel] | None = None,
 ) -> list[Path]:
     """Batch-compute and write the requested RM-synthesis/RM-CLEAN products"""
     from prefect_dask import get_dask_client
@@ -90,7 +90,7 @@ def task_write_rm_products(
             rmclean_options=rmclean_options,
             cube_products=cube_products,
             moment_products=moment_products,
+            peak_products=peak_products,
             output_prefix=output_prefix,
             dask_client=client,
-            peak_products=peak_products,
         )
