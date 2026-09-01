@@ -298,6 +298,8 @@ class RMCleanOptions(BaseOptions):
     """CLEAN loop gain"""
     moment_threshold_snr: float = 5.0
     """SNR cut (times the theoretical FDF noise) applied before computing Faraday moment maps, the dirty ones included"""
+    peak_threshold_snr: float = 0.0
+    """SNR cut (times the theoretical FDF noise) below which FDF peak statistics are blanked. Zero applies no cut: unlike mom0, a peak is a single sample with no noise floor to integrate, and peak_pi_error is written beside it to judge significance downstream"""
 
 
 class SpiceOptions(BaseOptions):
