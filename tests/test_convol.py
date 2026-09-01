@@ -18,9 +18,11 @@ from radio_beam.utils import BeamError
 from flint.convol import (
     BeamShape,
     _beams_from_cubes,
+    blank_images,
     check_if_cube_fits,
     common_beam_from_cubes,
     common_beam_shape_from_cubes,
+    convolve_images_or_blank,
     convolve_plane_to_beam,
     cubes_share_common_beam,
     get_cube_common_beam,
@@ -497,3 +499,54 @@ def test_common_beam_shape_from_cubes(tmp_path: Path) -> None:
     blank = _write_cube_with_beam(tmp_path / "blank.fits", [0.0, tiny, 0.0])
     with pytest.raises(ValueError, match="No usable restoring beam"):
         common_beam_shape_from_cubes(cube_paths=[blank])
+
+
+def test_blank_images(tmp_path: Path) -> None:
+    """A blanked image holds no data and claims no PSF"""
+    planes = [
+        _write_plane_with_beam(tmp_path / f"stokes_q.ch000{idx}-000{idx}.fits", 10.0)
+        for idx in range(2)
+    ]
+
+    blanked = blank_images(image_paths=planes)
+
+    assert blanked == [
+        tmp_path / "stokes_q.ch0000-0000.conv.fits",
+        tmp_path / "stokes_q.ch0001-0001.conv.fits",
+    ]
+    for plane, blank in zip(planes, blanked):
+        assert plane.exists(), "the input image was consumed"
+        assert np.all(np.isnan(fits.getdata(blank)))
+        assert fits.getdata(blank).shape == fits.getdata(plane).shape
+        assert not header_beam_is_usable(header=fits.getheader(blank))
+
+
+def test_convolve_images_or_blank(tmp_path: Path) -> None:
+    """A defined beam is convolved to, as convolve_images would"""
+    plane = _write_plane_with_beam(tmp_path / "stokes_q.ch0000-0000.fits", 10.0)
+    beam_shape = BeamShape(bmaj_arcsec=14.0, bmin_arcsec=12.0, bpa_deg=0.0)
+
+    convolved = convolve_images_or_blank(image_paths=[plane], beam_shape=beam_shape)
+
+    assert convolved == [tmp_path / "stokes_q.ch0000-0000.conv.fits"]
+    assert fits.getheader(convolved[0])["BMAJ"] * 3600.0 == pytest.approx(14.0)
+    assert np.isfinite(fits.getdata(convolved[0])).any()
+
+
+def test_convolve_images_or_blank_without_a_beam(tmp_path: Path) -> None:
+    """An undefined beam blanks rather than copying the images through at their
+    own differing resolutions, which whatever they are co-added into would then
+    misreport as a single beam"""
+    planes = [
+        _write_plane_with_beam(tmp_path / "stokes_q.ch0000-0000.fits", 40.0),
+        _write_plane_with_beam(tmp_path / "stokes_q.ch0001-0001.fits", 50.0),
+    ]
+    beam_shape = BeamShape(bmaj_arcsec=np.nan, bmin_arcsec=np.nan, bpa_deg=np.nan)
+
+    convolved = convolve_images_or_blank(
+        image_paths=planes, beam_shape=beam_shape, cutoff=20.0
+    )
+
+    for blank in convolved:
+        assert np.all(np.isnan(fits.getdata(blank)))
+        assert not header_beam_is_usable(header=fits.getheader(blank))

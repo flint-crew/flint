@@ -40,7 +40,10 @@ def convolve_cubes_to_common_resolution(
     convol_suffix: str = "conv",
 ) -> dict[str, Path]:
     """Bring a set of FITS cubes to the one resolution described by
-    ``beam_shape``, writing new cubes and leaving the inputs as they are.
+    ``beam_shape``, writing new cubes and leaving the inputs as they are. This is
+    the 'total' resolution mode of racs_tools: one beam for every channel of
+    every cube. The polarisation stage instead leaves its cubes at a 'natural'
+    resolution, one beam per channel, which is what they are archived at.
 
     Each cube is split into its per-channel planes, every plane of every cube is
     convolved as its own task, and the planes are then stacked back into a cube.

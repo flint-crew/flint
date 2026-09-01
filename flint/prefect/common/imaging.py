@@ -6,7 +6,7 @@ imaging flows.
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from pathlib import Path
 from typing import Any, ParamSpec, TypeVar
 
@@ -31,6 +31,7 @@ from flint.coadd.linmos import (
 from flint.convol import (
     BeamShape,
     convolve_images,
+    convolve_images_or_blank,
     get_common_beam,
 )
 from flint.flagging import flag_ms_aoflagger
@@ -99,6 +100,7 @@ task_select_solution_for_ms: Task[P, R] = task(select_aosolution_for_ms)
 task_create_apply_solutions_cmd: Task[P, R] = task(create_apply_solutions_cmd)
 task_rename_column_in_ms: Task[P, R] = task(rename_column_in_ms)
 task_convolve_images = task(convolve_images)
+task_convolve_images_or_blank = task(convolve_images_or_blank)
 task_split_and_get_image_set = task(split_and_get_image_set)
 task_image_set_from_result = task(image_set_from_result)
 task_combine_images_to_cube = task(combine_images_to_cube)
@@ -1129,6 +1131,138 @@ def create_convolve_linmos_cubes(
         wait_for=cube_results,
     )
     return cube_results
+
+
+def convolve_channel_groups_to_natural_resolution(
+    stokes_channel_groups: dict[str, list[list[Path]]],
+    cutoff: float | None = None,
+    fixed_beam_shape: Sequence[float] | None = None,
+) -> dict[str, list[list[Path]]]:
+    """Convolve per-channel beam images to one common beam per channel, which is
+    the 'natural' resolution mode of racs_tools: resolution follows frequency
+    rather than every channel being dragged out to the coarsest in the band.
+    Contrast the 'total' mode of ``convolve_cubes_to_common_resolution``, which
+    RM-synthesis needs of its own inputs.
+
+    The beam of a channel is solved over every beam image of every Stokes at that
+    channel, so channel N of I, Q and U share one resolution and a per-channel
+    polarisation product is meaningful. Solving per Stokes would leave them at
+    differing resolutions in the same channel.
+
+    Args:
+        stokes_channel_groups (dict[str, list[list[Path]]]): For each Stokes, the beam images of each channel
+        cutoff (float | None, optional): Images whose major axis exceeds this, in arcsec, are blanked rather than convolved to. Defaults to no cutoff.
+        fixed_beam_shape (Sequence[float] | None, optional): Convolve every channel to this (arcsec, arcsec, deg) rather than a solved beam. Defaults to solving each channel.
+
+    Returns:
+        dict[str, list[list[Path]]]: The convolved beam images of each channel, for each Stokes
+    """
+    # Channel N has to be the same frequency in every Stokes, or a beam shared
+    # across them describes nothing. Differing channelisations already misalign
+    # the Stokes I images that linmos leakage-corrects Q/U against, so this is
+    # surfaced here rather than left to produce a quietly wrong mosaic.
+    channels_per_stokes = {
+        stokes: len(groups) for stokes, groups in stokes_channel_groups.items()
+    }
+    channel_counts = set(channels_per_stokes.values())
+    assert len(channel_counts) == 1, (
+        f"Stokes contribute differing channel counts: {channels_per_stokes}. "
+        "Every polarisation has to be imaged onto the same channel grid."
+    )
+    channels = channel_counts.pop()
+    logger.info(
+        f"Solving a natural common beam for each of {channels} channels over "
+        f"{list(stokes_channel_groups.keys())}"
+    )
+
+    # Left as futures and indexed per channel, so a channel's Stokes start
+    # convolving as soon as its own beam is solved rather than waiting on the
+    # slowest channel in the band
+    beam_shapes = task_get_common_beam_from_images.map(
+        image_paths=[
+            [
+                image
+                for channel_groups in stokes_channel_groups.values()
+                for image in channel_groups[channel]
+            ]
+            for channel in range(channels)
+        ],  # type: ignore
+        cutoff=unmapped(cutoff),  # type: ignore
+        fixed_beam_shape=unmapped(fixed_beam_shape),  # type: ignore
+    )
+
+    convolved_groups = {
+        stokes: [
+            task_convolve_images_or_blank.submit(
+                image_paths=channel_groups[channel],
+                beam_shape=beam_shapes[channel],
+                cutoff=cutoff,
+            )
+            for channel in range(channels)
+        ]
+        for stokes, channel_groups in stokes_channel_groups.items()
+    }
+
+    return {
+        stokes: [future.result() for future in futures]
+        for stokes, futures in convolved_groups.items()
+    }
+
+
+def convolve_mfs_beam_images_to_common_resolution(
+    mfs_beam_images: dict[str, dict[str, list[Path]]],
+    cutoff: float | None = None,
+    fixed_beam_shape: Sequence[float] | None = None,
+) -> dict[str, dict[str, list[Path]]]:
+    """Convolve the per-beam MFS products to a single common beam.
+
+    An MFS image has no frequency axis, so there is nothing for a natural,
+    per-channel beam to vary over: one beam is solved over the MFS images of
+    every beam and every Stokes. The beam is taken from the ``image`` products
+    alone and applied to the model and residual products too, which is what a
+    beam solved over ``ImageSet.image`` has always done here.
+
+    Args:
+        mfs_beam_images (dict[str, dict[str, list[Path]]]): For each Stokes, the per-beam MFS image of each product type
+        cutoff (float | None, optional): Images whose major axis exceeds this, in arcsec, are blanked rather than convolved to. Defaults to no cutoff.
+        fixed_beam_shape (Sequence[float] | None, optional): Convolve to this (arcsec, arcsec, deg) rather than a solved beam. Defaults to solving it.
+
+    Returns:
+        dict[str, dict[str, list[Path]]]: The convolved MFS products, keyed as the input
+    """
+    mfs_science_images = [
+        image
+        for product_type_images in mfs_beam_images.values()
+        for image in product_type_images.get("image", [])
+    ]
+    if not mfs_science_images:
+        logger.info("No MFS science images to solve a common beam over")
+        return mfs_beam_images
+
+    beam_shape: BeamShape = task_get_common_beam_from_images.submit(
+        image_paths=mfs_science_images,
+        cutoff=cutoff,
+        fixed_beam_shape=fixed_beam_shape,
+    ).result()
+    logger.info(f"Convolving the MFS products to {beam_shape=}")
+
+    convolved = {
+        stokes: {
+            product_type: task_convolve_images_or_blank.submit(
+                image_paths=images, beam_shape=beam_shape, cutoff=cutoff
+            )
+            for product_type, images in product_type_images.items()
+        }
+        for stokes, product_type_images in mfs_beam_images.items()
+    }
+
+    return {
+        stokes: {
+            product_type: future.result()
+            for product_type, future in product_type_futures.items()
+        }
+        for stokes, product_type_futures in convolved.items()
+    }
 
 
 @task

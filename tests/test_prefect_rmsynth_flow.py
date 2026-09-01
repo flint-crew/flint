@@ -287,6 +287,37 @@ def test_resolve_common_resolution_cubes_reuses_matching_cubes(tmp_path: Path) -
     assert convolved_cubes == []
 
 
+def test_resolve_common_resolution_cubes_from_natural_resolution(
+    tmp_path: Path,
+) -> None:
+    """The handoff from the polarisation stage: cubes at a 'natural' resolution,
+    one beam per channel, are brought to a single 'total' beam covering the whole
+    band, and the natural cubes they came from are left alone to be archived"""
+    cubes = {
+        pol: _write_cube_with_beam(
+            tmp_path / f"{STEM}.{pol}.linmos.fits", [10.0, 15.0, 20.0]
+        )
+        for pol in ("q", "u")
+    }
+    assert not cubes_share_common_beam(cube_paths=list(cubes.values())), (
+        "the inputs must vary with channel for this to be the case under test"
+    )
+
+    resolved, convolved_cubes = _resolved_cubes(
+        cubes=cubes, output_path=tmp_path / "rmsynth"
+    )
+
+    assert convolved_cubes == list(resolved.values())
+    assert cubes_share_common_beam(cube_paths=list(resolved.values()))
+    # The natural-resolution cubes survive, still varying with channel
+    assert all(cube.exists() for cube in cubes.values())
+    assert not cubes_share_common_beam(cube_paths=list(cubes.values()))
+    # And the one beam has to cover the coarsest channel of the band
+    total_beam = common_beam_from_cubes(cube_paths=list(resolved.values()))
+    assert total_beam is not None
+    assert total_beam.major.to(u.arcsec).value >= 20.0
+
+
 def test_resolve_common_resolution_cubes_beam_cutoff_blanks_coarse_channels(
     tmp_path: Path,
 ) -> None:

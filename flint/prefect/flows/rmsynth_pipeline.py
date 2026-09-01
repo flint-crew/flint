@@ -49,9 +49,13 @@ def _resolve_common_resolution_cubes(
     beam_cutoff: float | None = None,
 ) -> tuple[dict[str, Path], list[Path]]:
     """RM-synthesis is only meaningful when every channel of every Stokes shares
-    one resolution. Cubes that already do are used as they are; otherwise they
-    are convolved to a common beam and written as new cubes, leaving the inputs
-    alone. The weight cubes are untouched, as convolution preserves the pixel grid.
+    one resolution, the 'total' mode of racs_tools. Cubes that already do are
+    used as they are; otherwise they are convolved to a common beam and written
+    as new cubes, leaving the inputs alone. The polarisation stage hands over
+    cubes at a 'natural' resolution, one beam per channel, so in the racs-all
+    flow this is the pass that makes them synthesisable while the cubes to
+    archive keep their frequency-dependent resolution. The weight cubes are
+    untouched, as convolution preserves the pixel grid.
 
     The convolution runs plane by plane (see
     ``convolve_cubes_to_common_resolution``), so every channel of every Stokes
