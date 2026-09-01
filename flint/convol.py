@@ -23,6 +23,13 @@ from flint.logging import logger
 
 warnings.simplefilter("ignore", FITSFixedWarning)
 
+# A restoring beam smaller than this is not a real PSF. Blank channels are
+# marked either with an exactly-zero beam (wsclean's convention for a plane
+# with no fitted beam) or with ``np.finfo(np.float32).tiny`` (the sentinel
+# ``fitscube`` writes into a BEAMS table, as CASA rejects a NaN there). Both
+# sit many orders of magnitude below any beam an interferometer can produce.
+MIN_USABLE_BEAM_ARCSEC = 1e-6
+
 
 class BeamShape(NamedTuple):
     """A simple container to represent a fitted 2D gaussian,
@@ -91,84 +98,173 @@ def _beams_from_cubes(cube_paths: list[Path]) -> Beams:
     )
 
 
-def cubes_share_common_beam(cube_paths: Collection[Path]) -> bool:
-    """Whether a single restoring beam describes every channel of every cube.
-    Cubes with no beam information at all have no resolution to make common.
+def usable_beam_mask(beams: Beams, cutoff: float | None = None) -> np.ndarray:
+    """Which beams describe a real PSF that may be brought to a common resolution.
+
+    Blank channels carry a placeholder beam rather than a real one, and a
+    channel coarser than ``cutoff`` is to be blanked rather than convolved to.
+    Neither constrains a common beam, and neither may be handed to
+    ``radio_beam``, whose common-beam solver reduces a set with no usable beam
+    in it to an empty sequence and raises an opaque ``argmax`` error.
+
+    Args:
+        beams (Beams): The beams to inspect
+        cutoff (float | None, optional): Beams whose major axis exceeds this, in arcsec, are not usable. Defaults to no cutoff.
+
+    Returns:
+        np.ndarray: Boolean mask, True where the beam is usable
+    """
+    major = np.asarray(beams.major.to(u.arcsecond).value, dtype=float)
+    minor = np.asarray(beams.minor.to(u.arcsecond).value, dtype=float)
+    pa = np.asarray(beams.pa.to(u.degree).value, dtype=float)
+
+    usable = (
+        (major > MIN_USABLE_BEAM_ARCSEC)
+        & (minor > MIN_USABLE_BEAM_ARCSEC)
+        & np.isfinite(major)
+        & np.isfinite(minor)
+        & np.isfinite(pa)
+    )
+    if cutoff is not None:
+        usable &= major <= cutoff
+
+    return usable
+
+
+def beam_from_header(header: fits.Header) -> Beam | None:
+    """The restoring beam recorded in a FITS header, or None when there is none"""
+    try:
+        return Beam.from_fits_header(header)
+    except (NoBeamException, KeyError):
+        return None
+
+
+def header_beam_is_usable(header: fits.Header, cutoff: float | None = None) -> bool:
+    """Whether the beam a FITS header records is a real PSF. See ``usable_beam_mask``"""
+    beam = beam_from_header(header=header)
+    if beam is None:
+        return False
+
+    return bool(usable_beam_mask(beams=Beams(beams=[beam]), cutoff=cutoff)[0])
+
+
+def _cube_beams(cube_paths: Collection[Path]) -> Beams | None:
+    """Every channel beam of every cube, or None when there is no beam to read"""
+    try:
+        return _beams_from_cubes(cube_paths=list(cube_paths))
+    except NoBeamException:
+        logger.info(f"No beam information found among {list(cube_paths)=}")
+        return None
+
+
+def cubes_share_common_beam(
+    cube_paths: Collection[Path], cutoff: float | None = None
+) -> bool:
+    """Whether a single restoring beam already describes every channel of every
+    cube. Placeholder beams are ignored: a blanked channel holds no signal and
+    so has no resolution to make common. Cubes with no beam information at all,
+    or with nothing but placeholders, likewise have nothing to bring together.
+
+    A channel whose beam is coarser than ``cutoff`` is one to blank, which only
+    a convolution pass will do, so such a cube does not share a common beam.
 
     Args:
         cube_paths (Collection[Path]): The FITS cubes to inspect
+        cutoff (float | None, optional): Channels coarser than this, in arcsec, are to be blanked rather than convolved to. Defaults to no cutoff.
 
     Returns:
         bool: Whether the cubes are already at a common resolution
     """
-    cube_paths = list(cube_paths)
-    try:
-        beams = _beams_from_cubes(cube_paths=cube_paths)
-    except NoBeamException:
-        logger.info(f"No beam information found among {cube_paths=}")
+    beams = _cube_beams(cube_paths=cube_paths)
+    if beams is None:
         return True
 
-    return all(beam == beams[0] for beam in beams)
+    usable = usable_beam_mask(beams=beams, cutoff=cutoff)
+    if not usable.any():
+        logger.info(f"No usable restoring beam among {list(cube_paths)=}")
+        return True
+
+    # A real beam that the cutoff excludes is a channel to blank, which is work
+    # only the convolution pass does
+    if cutoff is not None and (usable_beam_mask(beams=beams) & ~usable).any():
+        return False
+
+    usable_beams = beams[usable]
+    return all(beam == usable_beams[0] for beam in usable_beams)
 
 
-def common_beam_from_cubes(cube_paths: Collection[Path]) -> Beam:
-    """The smallest beam that encompasses every channel of every cube.
+def common_beam_from_cubes(
+    cube_paths: Collection[Path], cutoff: float | None = None
+) -> Beam | None:
+    """The smallest beam that encompasses every usable channel of every cube.
 
     Args:
         cube_paths (Collection[Path]): The FITS cubes to inspect
+        cutoff (float | None, optional): Channels coarser than this, in arcsec, are left out of the common beam rather than dragging every channel out to their resolution. Defaults to no cutoff.
 
     Returns:
-        Beam: The beam every channel of every cube fits inside
+        Beam | None: The beam every usable channel fits inside, or None when no channel of any cube carries a real restoring beam
     """
-    return _beams_from_cubes(cube_paths=list(cube_paths)).common_beam()
+    beams = _cube_beams(cube_paths=cube_paths)
+    if beams is None:
+        return None
+
+    usable = usable_beam_mask(beams=beams, cutoff=cutoff)
+    if not usable.any():
+        logger.warning(
+            f"No usable restoring beam among {list(cube_paths)=}, so no common beam"
+        )
+        return None
+
+    logger.info(f"Deriving a common beam from {usable.sum()} of {len(usable)} beams")
+    return beams[usable].common_beam()
 
 
-def convolve_cubes_to_common_beam(
-    cube_paths: Collection[Path],
-    output_path: Path | None = None,
-    convol_suffix: str = "conv",
+def convolve_plane_to_beam(
+    plane: Path,
+    beam_shape: BeamShape,
     cutoff: float | None = None,
-) -> list[Path]:
-    """Convolve every channel of every cube to the one smallest beam that
-    encompasses them all. New cubes are written and the inputs are left as they
-    are.
+    convol_suffix: str = "conv",
+) -> Path:
+    """Convolve a single channel plane to ``beam_shape``, writing a new image
+    alongside it and leaving the input in place.
+
+    A plane coarser than ``cutoff`` is blanked rather than convolved, and its
+    output is marked with a zero beam so that the cube it is combined into
+    records that the channel holds no PSF.
 
     Args:
-        cube_paths (Collection[Path]): The FITS cubes to bring to one resolution
-        output_path (Path | None, optional): Directory the convolved cubes are written into. Defaults to alongside each input cube.
-        convol_suffix (str, optional): The suffix added to .fits to indicate a smoothed cube. Defaults to 'conv'.
-        cutoff (float | None, optional): Channels whose BMAJ exceeds this, in arcsec, are blanked and left out of the common beam, rather than dragging every channel out to their resolution. Defaults to no cutoff.
+        plane (Path): The channel image to convolve
+        beam_shape (BeamShape): The resolution to convolve to
+        cutoff (float | None, optional): Planes whose major axis exceeds this, in arcsec, are blanked. Defaults to no cutoff.
+        convol_suffix (str, optional): The suffix added to .fits to indicate a smoothed image. Defaults to 'conv'.
 
     Returns:
-        list[Path]: The convolved cubes, in the order of ``cube_paths``
+        Path: The convolved (or blanked) image
     """
-    logger.info(f"Convolving {len(cube_paths)} cubes to a common resolution")
-    if output_path is not None:
-        output_path.mkdir(parents=True, exist_ok=True)
-
-    _, _, convolved_cubes = beamcon_3D.smooth_fits_cube(
-        infiles_list=list(cube_paths),
-        # 'total' is the one beam across all channels and all cubes that
-        # RM-synthesis needs, as opposed to 'natural's beam per channel
-        mode="total",
-        conv_mode="robust",
-        suffix=convol_suffix,
-        outdir=output_path,
+    convolved_plane = convolve_images(
+        image_paths=[plane],
+        beam_shape=beam_shape,
         cutoff=cutoff,
+        convol_suffix=convol_suffix,
+    )[0]
+
+    header = fits.getheader(plane)
+    beyond_cutoff = header_beam_is_usable(header=header) and not header_beam_is_usable(
+        header=header, cutoff=cutoff
     )
+    if not beyond_cutoff:
+        return convolved_plane
 
-    # 'total' mode carries the input header's CASAMBM flag into a cube that now
-    # has one beam and no BEAMS table for a reader to find
-    for convolved_cube in convolved_cubes:
-        with fits.open(convolved_cube, mode="update") as open_fits:
-            open_fits[0].header.pop("CASAMBM", None)
+    # racs_tools blanks the data of a plane beyond the cutoff but still stamps
+    # the target beam onto it, which would have the cube claim a PSF for a
+    # channel that holds none
+    logger.info(f"{plane=} is beyond {cutoff=}, marking {convolved_plane=} as blank")
+    with fits.open(convolved_plane, mode="update") as open_fits:
+        for key in ("BMAJ", "BMIN", "BPA"):
+            open_fits[0].header[key] = 0.0
 
-    # smooth_fits_cube sorts its inputs, so pair each output back to its input
-    convolved_by_name = {cube.name: cube for cube in convolved_cubes}
-    return [
-        convolved_by_name[Path(cube.name).with_suffix(f".{convol_suffix}.fits").name]
-        for cube in cube_paths
-    ]
+    return convolved_plane
 
 
 def get_cube_common_beam(
@@ -371,7 +467,7 @@ def convolve_images(
             str(image_path).replace(".fits", f".{convol_suffix}.fits")
         )
         header = fits.getheader(image_path)
-        if header["BMAJ"] == 0.0:
+        if not header_beam_is_usable(header=header):
             logger.info(f"Copying {image_path} to {convol_output_path=} for empty beam")
             copyfile(image_path, convol_output_path)
         else:

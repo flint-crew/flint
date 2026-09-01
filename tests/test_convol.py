@@ -11,14 +11,18 @@ import pytest
 from astropy.io import fits
 from astropy.table import Table
 from astropy.wcs import WCS
+from fitscube.extract import ExtractOptions, extract_plane_from_cube
+from radio_beam import Beams
 
 from flint.convol import (
     BeamShape,
     check_if_cube_fits,
     common_beam_from_cubes,
-    convolve_cubes_to_common_beam,
+    convolve_plane_to_beam,
     cubes_share_common_beam,
     get_cube_common_beam,
+    header_beam_is_usable,
+    usable_beam_mask,
 )
 from flint.utils import get_packaged_resource_path
 
@@ -284,31 +288,121 @@ def test_cubes_share_common_beam_without_beams(tmp_path) -> None:
     assert cubes_share_common_beam(cube_paths=[cube])
 
 
-def test_convolve_cubes_to_common_beam(tmp_path) -> None:
-    """Convolving leaves the input cubes alone, writes new cubes on the same
-    pixel grid, and brings every channel of every cube to the one beam"""
-    cubes = [
-        _write_cube_with_beam(
-            tmp_path / f"stokes_{pol}.fits",
-            [10.0 + offset, 11.0 + offset, 12.0 + offset],
-        )
-        for pol, offset in (("q", 0.0), ("u", 0.5))
-    ]
-    output_path = tmp_path / "rmsynth"
+def test_cubes_share_common_beam_with_placeholder_beams(tmp_path) -> None:
+    """A blanked channel carries a placeholder rather than a resolution, so it
+    neither breaks a common beam nor makes one out of cubes that have none"""
+    tiny = float(np.finfo(np.float32).tiny)
+    blanked = _write_cube_with_beam(tmp_path / "blanked.fits", [10.0, 0.0, tiny])
+    assert cubes_share_common_beam(cube_paths=[blanked])
 
-    convolved = convolve_cubes_to_common_beam(cube_paths=cubes, output_path=output_path)
+    all_blank = _write_cube_with_beam(tmp_path / "all_blank.fits", [0.0, tiny, 0.0])
+    assert cubes_share_common_beam(cube_paths=[all_blank])
 
-    assert all(cube.exists() for cube in cubes), "the input cubes were consumed"
-    assert not set(convolved) & set(cubes)
-    assert all(cube.parent == output_path for cube in convolved)
-    # The outputs must pair back to their inputs, which smooth_fits_cube sorts
-    assert [cube.name for cube in convolved] == [
-        "stokes_q.conv.fits",
-        "stokes_u.conv.fits",
+    varying = _write_cube_with_beam(tmp_path / "vary.fits", [10.0, 11.0, 0.0])
+    assert not cubes_share_common_beam(cube_paths=[varying])
+
+
+def test_cubes_share_common_beam_with_cutoff(tmp_path) -> None:
+    """A channel coarser than the cutoff is one to blank, which only the
+    convolution pass does"""
+    coarse = _write_cube_with_beam(tmp_path / "coarse.fits", [10.0, 10.0, 40.0])
+
+    assert not cubes_share_common_beam(cube_paths=[coarse], cutoff=20.0)
+    # Every channel beyond the cutoff leaves nothing to convolve to
+    assert cubes_share_common_beam(cube_paths=[coarse], cutoff=5.0)
+
+
+def _write_plane_with_beam(path: Path, bmaj_arcsec: float | None) -> Path:
+    """A single channel image, cut out of a cube exactly as
+    ``split_cube_into_planes`` does, so the plane carries its channel's beam"""
+    cube = _write_cube_with_beam(
+        path.with_name(f"cube.{path.name}"), [bmaj_arcsec or 0.0] * 2
+    )
+    plane = extract_plane_from_cube(
+        fits_cube=cube,
+        extract_options=ExtractOptions(
+            channel_index=0, output_path=path, overwrite=True
+        ),
+    )
+    if bmaj_arcsec is None:
+        with fits.open(plane, mode="update") as open_fits:
+            for key in ("BMAJ", "BMIN", "BPA"):
+                open_fits[0].header.pop(key, None)
+    return plane
+
+
+def test_usable_beam_mask() -> None:
+    """The placeholders a blank channel carries are not resolutions to convolve to"""
+    tiny = np.finfo(np.float32).tiny
+    beams = Beams(
+        major=[10.0, 0.0, tiny, 40.0, np.nan] * u.arcsec,
+        minor=[8.0, 0.0, tiny, 32.0, np.nan] * u.arcsec,
+        pa=[0.0, 0.0, tiny, 0.0, np.nan] * u.deg,
+    )
+
+    assert list(usable_beam_mask(beams=beams)) == [True, False, False, True, False]
+    assert list(usable_beam_mask(beams=beams, cutoff=20.0)) == [
+        True,
+        False,
+        False,
+        False,
+        False,
     ]
-    for cube, convolved_cube in zip(cubes, convolved):
-        assert fits.getdata(convolved_cube).shape == fits.getdata(cube).shape
-    assert cubes_share_common_beam(cube_paths=convolved)
+
+
+def test_header_beam_is_usable(tmp_path: Path) -> None:
+    """A plane's own header is read the same way as a cube's beam table"""
+    assert header_beam_is_usable(
+        header=fits.getheader(_write_plane_with_beam(tmp_path / "good.fits", 10.0))
+    )
+    assert not header_beam_is_usable(
+        header=fits.getheader(_write_plane_with_beam(tmp_path / "zero.fits", 0.0))
+    )
+    assert not header_beam_is_usable(
+        header=fits.getheader(_write_plane_with_beam(tmp_path / "none.fits", None))
+    )
+    assert not header_beam_is_usable(
+        header=fits.getheader(_write_plane_with_beam(tmp_path / "coarse.fits", 40.0)),
+        cutoff=20.0,
+    )
+
+
+def test_convolve_plane_to_beam(tmp_path: Path) -> None:
+    """A plane is convolved to the target beam, leaving the input in place"""
+    plane = _write_plane_with_beam(tmp_path / "stokes_q.ch0000-0000.fits", 10.0)
+    beam_shape = BeamShape(bmaj_arcsec=14.0, bmin_arcsec=12.0, bpa_deg=0.0)
+
+    convolved = convolve_plane_to_beam(plane=plane, beam_shape=beam_shape)
+
+    assert plane.exists(), "the input plane was consumed"
+    assert convolved == tmp_path / "stokes_q.ch0000-0000.conv.fits"
+    header = fits.getheader(convolved)
+    assert header["BMAJ"] * 3600.0 == pytest.approx(14.0)
+    assert header["BMIN"] * 3600.0 == pytest.approx(12.0)
+    assert fits.getdata(convolved).shape == fits.getdata(plane).shape
+
+
+def test_convolve_plane_to_beam_beyond_cutoff(tmp_path: Path) -> None:
+    """A plane coarser than the cutoff is blanked, and marked as holding no PSF
+    so the cube it is stacked into does not claim one for that channel"""
+    plane = _write_plane_with_beam(tmp_path / "stokes_q.ch0000-0000.fits", 40.0)
+    beam_shape = BeamShape(bmaj_arcsec=14.0, bmin_arcsec=12.0, bpa_deg=0.0)
+
+    convolved = convolve_plane_to_beam(plane=plane, beam_shape=beam_shape, cutoff=20.0)
+
+    assert np.all(np.isnan(fits.getdata(convolved)))
+    assert fits.getheader(convolved)["BMAJ"] == 0.0
+
+
+def test_convolve_plane_to_beam_without_beam(tmp_path: Path) -> None:
+    """A plane carrying no PSF has no resolution to change, so it is copied through"""
+    plane = _write_plane_with_beam(tmp_path / "stokes_q.ch0000-0000.fits", 0.0)
+    beam_shape = BeamShape(bmaj_arcsec=14.0, bmin_arcsec=12.0, bpa_deg=0.0)
+
+    convolved = convolve_plane_to_beam(plane=plane, beam_shape=beam_shape, cutoff=20.0)
+
+    assert fits.getheader(convolved)["BMAJ"] == 0.0
+    assert np.array_equal(fits.getdata(convolved), fits.getdata(plane))
 
 
 def test_common_beam_from_cubes(tmp_path: Path) -> None:
@@ -322,8 +416,28 @@ def test_common_beam_from_cubes(tmp_path: Path) -> None:
 
     common_beam = common_beam_from_cubes(cube_paths=cubes)
 
+    assert common_beam is not None
     assert common_beam.major.to(u.arcsec).value >= 14.0
     # A single cube's own coarsest channel, not the set's
-    assert common_beam_from_cubes(cube_paths=cubes[:1]).major.to(
-        u.arcsec
-    ).value == pytest.approx(12.0, rel=1e-3)
+    single_cube_beam = common_beam_from_cubes(cube_paths=cubes[:1])
+    assert single_cube_beam is not None
+    assert single_cube_beam.major.to(u.arcsec).value == pytest.approx(12.0, rel=1e-3)
+
+    # A channel beyond the cutoff is left out rather than dragging the common
+    # beam out to its resolution
+    cut_beam = common_beam_from_cubes(cube_paths=cubes, cutoff=13.0)
+    assert cut_beam is not None
+    assert cut_beam.major.to(u.arcsec).value == pytest.approx(12.0, rel=1e-3)
+
+
+def test_common_beam_from_cubes_without_usable_beams(tmp_path: Path) -> None:
+    """Nothing but placeholder beams constrains no common beam. radio_beam
+    reduces such a set to an empty sequence and raises an opaque argmax error,
+    so it is never handed one."""
+    tiny = float(np.finfo(np.float32).tiny)
+    blank = _write_cube_with_beam(tmp_path / "blank.fits", [0.0, tiny, 0.0])
+
+    assert common_beam_from_cubes(cube_paths=[blank]) is None
+    # Nor when every real beam is beyond the cutoff
+    coarse = _write_cube_with_beam(tmp_path / "coarse.fits", [40.0] * 3)
+    assert common_beam_from_cubes(cube_paths=[coarse], cutoff=20.0) is None

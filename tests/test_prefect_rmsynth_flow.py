@@ -17,8 +17,13 @@ from prefect import flow
 from prefect.logging import disable_run_logger
 from prefect.testing.utilities import prefect_test_harness
 from prefect_dask import DaskTaskRunner
+from radio_beam import Beams
 
-from flint.convol import common_beam_from_cubes, cubes_share_common_beam
+from flint.convol import (
+    common_beam_from_cubes,
+    cubes_share_common_beam,
+    usable_beam_mask,
+)
 from flint.options import RMSynthFieldOptions
 from flint.prefect.flows.rmsynth_pipeline import (
     _resolve_common_resolution_cubes,
@@ -235,8 +240,11 @@ def _resolved_cubes(
 
 
 def _cubes_with_beams(tmp_path: Path, offsets: dict[str, float]) -> dict[str, Path]:
+    """Flint-named cubes, which is what splitting a cube into named planes needs"""
     return {
-        pol: _write_cube_with_beam(tmp_path / f"stokes_{pol}.fits", [10.0 + offset] * 3)
+        pol: _write_cube_with_beam(
+            tmp_path / f"{STEM}.{pol}.linmos.fits", [10.0 + offset] * 3
+        )
         for pol, offset in offsets.items()
     }
 
@@ -258,9 +266,11 @@ def test_resolve_common_resolution_cubes_convolves(tmp_path: Path) -> None:
     for stokes, resolved_cube in resolved.items():
         assert resolved_cube.name.startswith(cubes[stokes].stem)
     # The weight cubes are untouched, so the convolved cubes must stay on the
-    # input pixel grid
+    # input pixel and channel grid
     assert fits.getdata(resolved["q"]).shape == fits.getdata(cubes["q"]).shape
     assert convolved_cubes == resolved_cubes
+    # The planes each cube was split into and convolved through are cleaned up
+    assert not list(output_path.glob("*.planes"))
 
 
 def test_resolve_common_resolution_cubes_reuses_matching_cubes(tmp_path: Path) -> None:
@@ -283,7 +293,9 @@ def test_resolve_common_resolution_cubes_beam_cutoff_blanks_coarse_channels(
     """A channel coarser than the cutoff is blanked rather than dragging the
     common beam of every channel out to its resolution"""
     cubes = _cubes_with_beams(tmp_path, {"q": 0.0, "u": 0.5})
-    coarse = _write_cube_with_beam(tmp_path / "stokes_i.fits", [10.0, 10.0, 40.0])
+    coarse = _write_cube_with_beam(
+        tmp_path / f"{STEM}.i.linmos.fits", [10.0, 10.0, 40.0]
+    )
     cubes["i"] = coarse
 
     resolved, _ = _resolved_cubes(
@@ -291,6 +303,7 @@ def test_resolve_common_resolution_cubes_beam_cutoff_blanks_coarse_channels(
     )
 
     common_beam = common_beam_from_cubes(cube_paths=[resolved["q"]])
+    assert common_beam is not None
     assert common_beam.major.to(u.arcsec).value < 20.0, (
         "the 40 arcsec channel was convolved to rather than cut"
     )
@@ -298,3 +311,27 @@ def test_resolve_common_resolution_cubes_beam_cutoff_blanks_coarse_channels(
         "the channel above the cutoff should be blanked"
     )
     assert np.any(np.isfinite(fits.getdata(resolved["i"])[0]))
+    # The blanked channel must not claim a PSF it does not have
+    blanked_beam = Beams.from_fits_bintable(fits.open(resolved["i"])["BEAMS"])
+    assert usable_beam_mask(beams=blanked_beam)[2] == False  # noqa: E712
+    assert usable_beam_mask(beams=blanked_beam)[0]
+
+
+def test_resolve_common_resolution_cubes_without_usable_beams(tmp_path: Path) -> None:
+    """Cubes carrying nothing but the placeholder beams of blanked channels have
+    no resolution to make common, and are used as they are rather than handed to
+    a common-beam solver that cannot solve them"""
+    tiny = float(np.finfo(np.float32).tiny)
+    cubes = {
+        pol: _write_cube_with_beam(
+            tmp_path / f"{STEM}.{pol}.linmos.fits", [0.0, tiny, 0.0]
+        )
+        for pol in ("q", "u")
+    }
+
+    resolved, convolved_cubes = _resolved_cubes(
+        cubes=cubes, output_path=tmp_path / "rmsynth"
+    )
+
+    assert resolved == cubes
+    assert convolved_cubes == []

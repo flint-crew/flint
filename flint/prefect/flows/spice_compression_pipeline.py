@@ -79,9 +79,14 @@ def process_spice_compression(spice_field_options: SpiceFieldOptions) -> list[Pa
 
     # Sized on the coarsest resolution among the cubes being trimmed, not on the
     # finer reference image, so a box holds its island in every one of them
-    beam_shape = BeamShape.from_radio_beam(
-        common_beam_from_cubes(cube_paths=spice_field_options.cubes)
-    )
+    common_beam = common_beam_from_cubes(cube_paths=spice_field_options.cubes)
+    if common_beam is None:
+        msg = (
+            "No usable restoring beam among the cubes to spice, so the island "
+            f"boxes cannot be sized: {spice_field_options.cubes=}"
+        )
+        raise ValueError(msg)
+    beam_shape = BeamShape.from_radio_beam(common_beam)
     logger.info(f"Sizing the island boxes on {beam_shape=}")
 
     island_sky_boxes = task_get_spice_boxes.submit(

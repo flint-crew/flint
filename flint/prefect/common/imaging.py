@@ -108,6 +108,7 @@ task_transpose_and_sort_channel_images = task(transpose_and_sort_channel_images)
 task_create_name_from_common_fields = task(create_name_from_common_fields)
 task_remove_files_folders = task(remove_files_folders)
 task_get_common_bounding_box = task(get_common_bounding_box)
+task_split_cube_into_planes = task(split_cube_into_planes)
 
 # Tasks below are extracting componented from earlier stages, or are
 # otherwise doing something important
@@ -129,14 +130,6 @@ def task_get_mfs_image_from_paths(paths: list[Path]) -> Path:
     mfs_paths = [path for path in paths if "MFS" in path.name]
     assert len(mfs_paths) == 1, f"Expected a single MFS image, got {mfs_paths=}"
     return mfs_paths[0]
-
-
-@task
-def task_split_cube_into_planes(cubes: Collection[Path]) -> list[Path]:
-    """Split the single cube of a beam into its per-channel planes"""
-    cube_list = list(cubes)
-    assert len(cube_list) == 1, f"Expected a single cube per beam, got {cube_list=}"
-    return split_cube_into_planes(cube=cube_list[0])
 
 
 @task
