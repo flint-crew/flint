@@ -40,13 +40,12 @@ from flint.options import (
 )
 from flint.prefect.clusters import get_dask_runner
 from flint.prefect.common.imaging import (
+    convolve_channel_groups_to_natural_resolution,
+    convolve_mfs_beam_images_to_common_resolution,
     linmos_channel_groups_to_cubes,
-    task_convolve_images,
     task_get_channel_images_from_paths,
-    task_get_common_beam_from_image_set,
     task_get_mfs_image_from_paths,
     task_linmos_images,
-    task_merge_image_sets,
     task_preprocess_askap_ms,
     task_remove_files_folders,
     task_split_and_get_image_set,
@@ -231,7 +230,6 @@ def process_science_fields_pol(
         )
 
     image_sets_dict: dict[str, PrefectFuture[ImageSet]] = {}
-    image_sets_list: list[PrefectFuture[ImageSet]] = []
     for polarisation in polarisations.keys():
         _image_sets = []
         with tags(f"polarisation-{polarisation}"):
@@ -264,20 +262,14 @@ def process_science_fields_pol(
                     wsclean_result, "image_set"
                 )
                 _image_sets.append(_image_set)
-                image_sets_list.append(_image_set)
         image_sets_dict[polarisation] = _image_sets
 
-    merged_image_set = task_merge_image_sets.submit(image_sets=image_sets_list)
-
-    common_beam_shape = task_get_common_beam_from_image_set.submit(
-        image_set=merged_image_set,
-        cutoff=pol_field_options.beam_cutoff,
-        fixed_beam_shape=pol_field_options.fixed_beam_shape,
-    )
-
-    # Convolve every beam's sub-band images to the common beam, keeping the
-    # per-channel images (rather than cubing per beam) so we can co-add across
-    # beams one channel at a time.
+    # Split each beam's images out per Stokes, leaving them unconvolved. The
+    # cubes are brought to a 'natural' resolution, one common beam per channel,
+    # and a channel's beam is solved over every beam image of every Stokes at
+    # that channel, so nothing can be convolved until all of them are in hand.
+    # The RM-synthesis stage brings its own inputs to a single 'total' beam; that
+    # is a resolution to synthesise at, not one to archive the cubes at.
     stokes_beam_channel_images: dict[str, list[PrefectFuture[list[Path]]]] = {}
     # Per-beam MFS image/model/residual, collected per Stokes whenever that
     # Stokes' polarisation strategy sets flint_save_mfs_products. Co-added
@@ -312,21 +304,16 @@ def process_science_fields_pol(
                                 by="pol",
                                 mode=product_type,
                             )
-                            convolved_image_list = task_convolve_images.submit(
-                                image_paths=stokes_image_list,
-                                beam_shape=common_beam_shape,
-                                cutoff=pol_field_options.beam_cutoff,
-                            )
                             if save_mfs_products:
                                 beam_mfs_images.append(
                                     task_get_mfs_image_from_paths.submit(
-                                        paths=convolved_image_list
+                                        paths=stokes_image_list
                                     )
                                 )
                             if product_type == "image":
                                 beam_channel_images.append(
                                     task_get_channel_images_from_paths.submit(
-                                        paths=convolved_image_list
+                                        paths=stokes_image_list
                                     )
                                 )
                         if save_mfs_products:
@@ -336,14 +323,20 @@ def process_science_fields_pol(
                     stokes_beam_channel_images[stokes] = beam_channel_images
 
     # Regroup each Stokes' per-beam channel images into per-channel beam groups
-    # so linmos can run one channel at a time in parallel. Resolving here blocks
-    # until the convolutions above have completed.
+    # so a beam can be solved for each channel, and so linmos can then run one
+    # channel at a time in parallel. Resolving here blocks until the imaging
+    # above has completed.
     stokes_channel_groups: dict[str, list[list[Path]]] = {
         stokes: task_transpose_and_sort_channel_images.submit(
             beam_channel_images=beam_channel_images
         ).result()
         for stokes, beam_channel_images in stokes_beam_channel_images.items()
     }
+    stokes_channel_groups = convolve_channel_groups_to_natural_resolution(
+        stokes_channel_groups=stokes_channel_groups,
+        cutoff=pol_field_options.beam_cutoff,
+        fixed_beam_shape=pol_field_options.fixed_beam_shape,
+    )
 
     # Stokes I beam images (per channel) are needed to correct widefield leakage
     # in the Stokes Q/U mosaics. If Stokes I was not imaged we cannot do this.
@@ -394,24 +387,37 @@ def process_science_fields_pol(
         *all_input_images, wait_for=cube_results
     )
 
+    # An MFS product has no frequency axis for a natural beam to vary over, so
+    # the MFS images get a single common beam of their own rather than the one
+    # the coarsest channel of the cube needed. Resolving the futures here blocks
+    # until the imaging has completed, which the beam solve needs regardless.
+    mfs_beam_paths: dict[str, dict[str, list[Path]]] = {
+        stokes: {
+            product_type: [future.result() for future in beam_images]
+            for product_type, beam_images in product_type_images.items()
+        }
+        for stokes, product_type_images in mfs_beam_images.items()
+    }
+    mfs_beam_paths = convolve_mfs_beam_images_to_common_resolution(
+        mfs_beam_images=mfs_beam_paths,
+        cutoff=pol_field_options.beam_cutoff,
+        fixed_beam_shape=pol_field_options.fixed_beam_shape,
+    )
+
     # Co-add the MFS image/model/residual products collected above the same way
     # as the science cube: PB-correct via linmos, leakage-correct against the
     # matching Stokes I MFS product where available, then clean up the
     # per-beam convolved intermediates.
     mfs_products: dict[str, dict[str, PrefectFuture[Path]]] = {}
-    all_mfs_input_images: list[PrefectFuture[Path]] = []
+    all_mfs_input_images: list[Path] = []
     mfs_linmos_results: list[PrefectFuture[Path]] = []
-    for stokes, product_type_images in mfs_beam_images.items():
+    for stokes, product_type_images in mfs_beam_paths.items():
         with tags(f"stokes-{stokes}"):
             for product_type, beam_images in product_type_images.items():
                 with tags(f"product-{product_type}"):
                     stokesi_images: list[Path] | None = None
                     if stokes != "i":
-                        i_beam_images = mfs_beam_images.get("i", {}).get(product_type)
-                        if i_beam_images is not None:
-                            stokesi_images = [
-                                future.result() for future in i_beam_images
-                            ]
+                        stokesi_images = mfs_beam_paths.get("i", {}).get(product_type)
 
                     mfs_linmos_result = task_linmos_images.submit(
                         image_list=beam_images,

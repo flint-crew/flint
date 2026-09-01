@@ -542,6 +542,84 @@ def convolve_images(
     return return_conv_image_paths
 
 
+def blank_images(
+    image_paths: Collection[Path], convol_suffix: str = "conv"
+) -> list[Path]:
+    """Write an all-NaN copy of each image, marked with a zero beam.
+
+    This stands in for a convolution that cannot be done: a channel whose every
+    image is beyond the beam cutoff has no common beam to convolve to, and
+    copying the images at their own resolutions would have whatever they are
+    co-added into claim a beam that describes none of them. The zero beam is the
+    marker ``usable_beam_mask`` and ``fitscube`` both read as 'no PSF here'.
+
+    Args:
+        image_paths (Collection[Path]): The images to blank
+        convol_suffix (str, optional): The suffix added to .fits, matching the convolved images these stand in for. Defaults to 'conv'.
+
+    Returns:
+        list[Path]: The blanked images
+    """
+    blank_image_paths: list[Path] = []
+
+    for image_path in image_paths:
+        blank_image_path = Path(
+            str(image_path).replace(".fits", f".{convol_suffix}.fits")
+        )
+        logger.info(f"Blanking {image_path} into {blank_image_path=}")
+
+        with fits.open(image_path) as open_fits:
+            header = open_fits[0].header.copy()
+            data = np.full_like(open_fits[0].data, np.nan, dtype=np.float32)
+
+        for key in ("BMAJ", "BMIN", "BPA"):
+            header[key] = 0.0
+
+        fits.writeto(blank_image_path, data=data, header=header, overwrite=True)
+        blank_image_paths.append(blank_image_path)
+
+    return blank_image_paths
+
+
+def convolve_images_or_blank(
+    image_paths: Collection[Path],
+    beam_shape: BeamShape,
+    cutoff: float | None = None,
+    convol_suffix: str = "conv",
+) -> list[Path]:
+    """Convolve images to ``beam_shape``, or blank them when it does not describe
+    a beam.
+
+    ``convolve_images`` copies its inputs through untouched when handed a
+    non-finite ``beam_shape``, which is what ``get_common_beam`` returns when
+    every input is beyond the cutoff. For a set that is about to be co-added and
+    cubed that copy is worse than nothing: the images keep their own differing
+    resolutions and the product claims the first of them. Blank instead.
+
+    Args:
+        image_paths (Collection[Path]): The images to convolve
+        beam_shape (BeamShape): The resolution to convolve to
+        cutoff (float | None, optional): Images whose major axis exceeds this, in arcsec, are blanked. Defaults to no cutoff.
+        convol_suffix (str, optional): The suffix added to .fits to indicate a smoothed image. Defaults to 'conv'.
+
+    Returns:
+        list[Path]: The convolved (or blanked) images
+    """
+    if np.isfinite(beam_shape.bmaj_arcsec):
+        return convolve_images(
+            image_paths=image_paths,
+            beam_shape=beam_shape,
+            cutoff=cutoff,
+            convol_suffix=convol_suffix,
+        )
+
+    logger.info(
+        f"No common beam over {len(image_paths)} images, likely all beyond "
+        f"{cutoff=}. Blanking them rather than copying them through."
+    )
+    return blank_images(image_paths=image_paths, convol_suffix=convol_suffix)
+
+
 def get_parser() -> ArgumentParser:
     parser = ArgumentParser(description=__doc__)
 
