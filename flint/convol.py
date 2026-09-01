@@ -81,12 +81,14 @@ def check_if_cube_fits(fits_file: Path) -> bool:
     return len(squeeze_data.shape) == 3
 
 
-def _beams_from_cubes(cube_paths: list[Path]) -> list[Beam]:
-    """Every channel beam of every cube, flattened"""
+def _beams_from_cubes(cube_paths: list[Path]) -> Beams:
+    """Every channel beam of every cube, as one Beams"""
     cube_data_list = beamcon_3D.make_data(
         files=cube_paths, outdir=[cube_path.parent for cube_path in cube_paths]
     )
-    return [beam for cube_data in cube_data_list for beam in cube_data.beams]
+    return Beams(
+        beams=[beam for cube_data in cube_data_list for beam in cube_data.beams]
+    )
 
 
 def cubes_share_common_beam(cube_paths: Collection[Path]) -> bool:
@@ -118,15 +120,14 @@ def common_beam_from_cubes(cube_paths: Collection[Path]) -> Beam:
     Returns:
         Beam: The beam every channel of every cube fits inside
     """
-    beams = _beams_from_cubes(cube_paths=list(cube_paths))
-
-    return Beams(beams=beams).common_beam()
+    return _beams_from_cubes(cube_paths=list(cube_paths)).common_beam()
 
 
 def convolve_cubes_to_common_beam(
     cube_paths: Collection[Path],
     output_path: Path | None = None,
     convol_suffix: str = "conv",
+    cutoff: float | None = None,
 ) -> list[Path]:
     """Convolve every channel of every cube to the one smallest beam that
     encompasses them all. New cubes are written and the inputs are left as they
@@ -136,6 +137,7 @@ def convolve_cubes_to_common_beam(
         cube_paths (Collection[Path]): The FITS cubes to bring to one resolution
         output_path (Path | None, optional): Directory the convolved cubes are written into. Defaults to alongside each input cube.
         convol_suffix (str, optional): The suffix added to .fits to indicate a smoothed cube. Defaults to 'conv'.
+        cutoff (float | None, optional): Channels whose BMAJ exceeds this, in arcsec, are blanked and left out of the common beam, rather than dragging every channel out to their resolution. Defaults to no cutoff.
 
     Returns:
         list[Path]: The convolved cubes, in the order of ``cube_paths``
@@ -152,6 +154,7 @@ def convolve_cubes_to_common_beam(
         conv_mode="robust",
         suffix=convol_suffix,
         outdir=output_path,
+        cutoff=cutoff,
     )
 
     # 'total' mode carries the input header's CASAMBM flag into a cube that now

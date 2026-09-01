@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import astropy.units as u
 import numpy as np
 import pytest
 from astropy.io import fits
@@ -17,13 +18,14 @@ from prefect.logging import disable_run_logger
 from prefect.testing.utilities import prefect_test_harness
 from prefect_dask import DaskTaskRunner
 
-from flint.convol import cubes_share_common_beam
+from flint.convol import common_beam_from_cubes, cubes_share_common_beam
 from flint.options import RMSynthFieldOptions
 from flint.prefect.flows.rmsynth_pipeline import (
     _resolve_common_resolution_cubes,
     process_rmsynth,
 )
 
+from .test_convol import _write_cube_with_beam
 from .test_rmsynth import NX, NY, PHI_TRUE_RADM2, _make_i_cube, _make_qu_cubes
 
 # create_name_from_common_fields rejects names it cannot decompose
@@ -219,18 +221,13 @@ def test_process_rmsynth_with_stokes_i_on_dask_cluster(
     )
 
 
-def _resolved_options(
-    cubes: dict[str, Path], output_path: Path
-) -> tuple[RMSynthFieldOptions, list[Path]]:
+def _resolved_cubes(
+    cubes: dict[str, Path], output_path: Path, beam_cutoff: float | None = None
+) -> tuple[dict[str, Path], list[Path]]:
     @flow
-    def _resolve() -> tuple[RMSynthFieldOptions, list[Path]]:
+    def _resolve() -> tuple[dict[str, Path], list[Path]]:
         return _resolve_common_resolution_cubes(
-            rmsynth_field_options=RMSynthFieldOptions(
-                stokes_q_cube=cubes["q"],
-                stokes_u_cube=cubes["u"],
-                stokes_i_cube=cubes["i"],
-                output_path=output_path,
-            )
+            stokes_cubes=cubes, output_path=output_path, beam_cutoff=beam_cutoff
         )
 
     with prefect_test_harness(), disable_run_logger():
@@ -238,8 +235,6 @@ def _resolved_options(
 
 
 def _cubes_with_beams(tmp_path: Path, offsets: dict[str, float]) -> dict[str, Path]:
-    from .test_convol import _write_cube_with_beam
-
     return {
         pol: _write_cube_with_beam(tmp_path / f"stokes_{pol}.fits", [10.0 + offset] * 3)
         for pol, offset in offsets.items()
@@ -252,23 +247,19 @@ def test_resolve_common_resolution_cubes_convolves(tmp_path: Path) -> None:
     cubes = _cubes_with_beams(tmp_path, {"q": 0.0, "u": 0.5, "i": 1.0})
     output_path = tmp_path / "rmsynth"
 
-    resolved, convolved_cubes = _resolved_options(cubes=cubes, output_path=output_path)
+    resolved, convolved_cubes = _resolved_cubes(cubes=cubes, output_path=output_path)
 
-    resolved_cubes = [
-        resolved.stokes_q_cube,
-        resolved.stokes_u_cube,
-        resolved.stokes_i_cube,
-    ]
+    resolved_cubes = list(resolved.values())
     assert all(cube.exists() for cube in cubes.values()), "an input cube was consumed"
     assert not set(resolved_cubes) & set(cubes.values())
     assert all(cube.parent == output_path for cube in resolved_cubes)
     assert cubes_share_common_beam(cube_paths=resolved_cubes)
     # Each Stokes must keep its own data, not be paired to another cube's output
-    for stokes, resolved_cube in zip(("q", "u", "i"), resolved_cubes):
+    for stokes, resolved_cube in resolved.items():
         assert resolved_cube.name.startswith(cubes[stokes].stem)
     # The weight cubes are untouched, so the convolved cubes must stay on the
     # input pixel grid
-    assert fits.getdata(resolved.stokes_q_cube).shape == fits.getdata(cubes["q"]).shape
+    assert fits.getdata(resolved["q"]).shape == fits.getdata(cubes["q"]).shape
     assert convolved_cubes == resolved_cubes
 
 
@@ -277,12 +268,33 @@ def test_resolve_common_resolution_cubes_reuses_matching_cubes(tmp_path: Path) -
     cubes = _cubes_with_beams(tmp_path, {"q": 0.0, "u": 0.0, "i": 0.0})
     output_path = tmp_path / "rmsynth"
 
-    resolved, convolved_cubes = _resolved_options(cubes=cubes, output_path=output_path)
+    resolved, convolved_cubes = _resolved_cubes(cubes=cubes, output_path=output_path)
 
-    assert resolved.stokes_q_cube == cubes["q"]
-    assert resolved.stokes_u_cube == cubes["u"]
-    assert resolved.stokes_i_cube == cubes["i"]
+    assert resolved == cubes
     assert not output_path.exists()
     # Empty, not the inputs echoed back: the racs-all flow concatenates these
     # with the input cubes to spice, and a repeat would be spiced twice
     assert convolved_cubes == []
+
+
+def test_resolve_common_resolution_cubes_beam_cutoff_blanks_coarse_channels(
+    tmp_path: Path,
+) -> None:
+    """A channel coarser than the cutoff is blanked rather than dragging the
+    common beam of every channel out to its resolution"""
+    cubes = _cubes_with_beams(tmp_path, {"q": 0.0, "u": 0.5})
+    coarse = _write_cube_with_beam(tmp_path / "stokes_i.fits", [10.0, 10.0, 40.0])
+    cubes["i"] = coarse
+
+    resolved, _ = _resolved_cubes(
+        cubes=cubes, output_path=tmp_path / "rmsynth", beam_cutoff=20.0
+    )
+
+    common_beam = common_beam_from_cubes(cube_paths=[resolved["q"]])
+    assert common_beam.major.to(u.arcsec).value < 20.0, (
+        "the 40 arcsec channel was convolved to rather than cut"
+    )
+    assert np.all(np.isnan(fits.getdata(resolved["i"])[2])), (
+        "the channel above the cutoff should be blanked"
+    )
+    assert np.any(np.isfinite(fits.getdata(resolved["i"])[0]))
