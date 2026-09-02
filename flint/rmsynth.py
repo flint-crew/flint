@@ -45,7 +45,13 @@ from rm_lite.utils.synthesis import (  # noqa: E402
 
 from flint.exceptions import NotSupportedError
 from flint.logging import logger
-from flint.options import RMCleanOptions, RMSynthOptions
+from flint.options import (
+    RMCleanOptions,
+    RMSynthOptions,
+    StokesCubes,
+    StokesErrorCubes,
+    StokesWeightCubes,
+)
 
 FDFLabel: TypeAlias = Literal["dirty", "clean", "model"]
 FDFThreshold: TypeAlias = float | np.ndarray | da.Array | None
@@ -104,30 +110,16 @@ def _check_cubes_memmappable(*cubes: Path | None) -> None:
 
 
 def run_rmsynth_3d(
-    stokes_q_cube: Path,
-    stokes_u_cube: Path,
+    stokes_cubes: StokesCubes,
     rmsynth_options: RMSynthOptions,
-    stokes_i_cube: Path | None = None,
-    stokes_q_weight_cube: Path | None = None,
-    stokes_u_weight_cube: Path | None = None,
-    stokes_i_weight_cube: Path | None = None,
-    stokes_q_noise_cube: Path | None = None,
-    stokes_u_noise_cube: Path | None = None,
-    stokes_i_noise_cube: Path | None = None,
+    error_cubes: StokesErrorCubes | None = None,
 ) -> RMSynth3DResults:
     """Run 3D RM-synthesis on Stokes Q/U FITS cubes.
 
     Args:
-        stokes_q_cube (Path): Path to the Stokes Q FITS cube
-        stokes_u_cube (Path): Path to the Stokes U FITS cube
+        stokes_cubes (StokesCubes): The Stokes Q/U cubes, and optionally I to fit a per-pixel fractional-polarisation correction against
         rmsynth_options (RMSynthOptions): Options controlling the synthesis
-        stokes_i_cube (Path | None, optional): Path to a Stokes I FITS cube, used to fit a per-pixel fractional-polarisation correction. FDF stays in Q/U flux if not given. Defaults to None.
-        stokes_q_weight_cube (Path | None, optional): Path to the linmos Stokes Q weight cube, giving each pixel its own channel weights rather than one spectrum estimated from the Q/U cubes. rm-lite requires both Q and U, or neither. Defaults to None.
-        stokes_u_weight_cube (Path | None, optional): Path to the linmos Stokes U weight cube. See ``stokes_q_weight_cube``. Defaults to None.
-        stokes_i_weight_cube (Path | None, optional): Path to the linmos Stokes I weight cube, used to weight the per-pixel Stokes I fit and to score it against ``stokes_i_snr_cut``. Falls back to ``RMSynthOptions.estimate_stokes_i_noise`` if not given. Defaults to None.
-        stokes_q_noise_cube (Path | None, optional): Path to a Stokes Q noise (sigma) cube, e.g. the BANE RMS cube. Takes precedence over ``stokes_q_weight_cube``: it is a noise rather than an inverse variance, so rm-lite inverts and squares it. Defaults to None.
-        stokes_u_noise_cube (Path | None, optional): Path to a Stokes U noise cube. See ``stokes_q_noise_cube``. Defaults to None.
-        stokes_i_noise_cube (Path | None, optional): Path to a Stokes I noise cube. See ``stokes_q_noise_cube``. Defaults to None.
+        error_cubes (StokesErrorCubes | None, optional): Either the linmos weight cubes (an inverse variance) or a set of noise cubes (a sigma), which the type says which of. None leaves rm-lite to estimate a per-channel noise from Q/U itself. Defaults to None.
 
     Returns:
         RMSynth3DResults: Lazy dirty FDF cube, the RMSF, and associated
@@ -136,57 +128,33 @@ def run_rmsynth_3d(
         itself; see ``RMSynthOptions.per_pixel_rmsf`` for what that costs
     """
     _check_cubes_memmappable(
-        stokes_q_cube,
-        stokes_u_cube,
-        stokes_i_cube,
-        stokes_q_weight_cube,
-        stokes_u_weight_cube,
-        stokes_i_weight_cube,
-        stokes_q_noise_cube,
-        stokes_u_noise_cube,
-        stokes_i_noise_cube,
+        *stokes_cubes.paths, *(error_cubes.paths if error_cubes else ())
     )
-    # A noise cube is sigma, a linmos weight cube is 1/sigma**2. rm-lite takes
-    # either through the same argument and is told which by
-    # `noise_files_are_weight`, so the two cannot be mixed.
-    use_noise_cubes = any(
-        cube is not None
-        for cube in (stokes_q_noise_cube, stokes_u_noise_cube, stokes_i_noise_cube)
-    )
-    if use_noise_cubes and any(
-        cube is not None
-        for cube in (stokes_q_weight_cube, stokes_u_weight_cube, stokes_i_weight_cube)
-    ):
-        msg = "Pass either the noise cubes or the linmos weight cubes, not both."
-        raise ValueError(msg)
-    q_error_cube = stokes_q_noise_cube if use_noise_cubes else stokes_q_weight_cube
-    u_error_cube = stokes_u_noise_cube if use_noise_cubes else stokes_u_weight_cube
-    i_error_cube = stokes_i_noise_cube if use_noise_cubes else stokes_i_weight_cube
     stokes_i_kwargs = (
         {
-            "stokes_i_file": stokes_i_cube,
-            "stokes_i_error_file": i_error_cube,
+            "stokes_i_file": stokes_cubes.i,
+            "stokes_i_error_file": error_cubes.i if error_cubes else None,
             "fit_order": rmsynth_options.fit_order,
             "fit_function": rmsynth_options.fit_function,
             "stokes_i_snr_cut": rmsynth_options.stokes_i_snr_cut,
-            # Only consulted when no Stokes I weight cube is given: rm-lite
+            # Only consulted when no Stokes I error cube is given: rm-lite
             # refuses a stokes_i_snr_cut it has no error to measure against.
             "estimate_stokes_i_noise": rmsynth_options.estimate_stokes_i_noise,
             "compute_model_error": rmsynth_options.compute_model_error,
             "n_error_samples": rmsynth_options.n_error_samples,
         }
-        if stokes_i_cube is not None
+        if stokes_cubes.i is not None
         else {}
     )
     return rmsynth_3d_from_fits(
-        stokes_q_file=stokes_q_cube,
-        stokes_u_file=stokes_u_cube,
-        stokes_q_error_file=q_error_cube,
-        stokes_u_error_file=u_error_cube,
+        stokes_q_file=stokes_cubes.q,
+        stokes_u_file=stokes_cubes.u,
+        stokes_q_error_file=error_cubes.q if error_cubes else None,
+        stokes_u_error_file=error_cubes.u if error_cubes else None,
         # linmos writes 1/sigma**2 directly, so rm-lite must not invert and
-        # square those. A BANE RMS cube is a noise and must be inverted. Applies
-        # to the Stokes I error cube as well
-        noise_files_are_weight=not use_noise_cubes,
+        # square those. A noise cube is a sigma and must be inverted. Applies to
+        # the Stokes I error cube as well
+        noise_files_are_weight=isinstance(error_cubes, StokesWeightCubes),
         phi_max_radm2=rmsynth_options.phi_max_radm2,
         d_phi_radm2=rmsynth_options.d_phi_radm2,
         n_samples=rmsynth_options.n_samples,

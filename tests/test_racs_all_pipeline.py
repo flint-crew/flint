@@ -36,21 +36,21 @@ def test_get_parser() -> None:
 
 
 def test_get_parser_excludes_computed_stage_outputs() -> None:
-    """stokes_q_cube/stokes_u_cube (rm-synth) and cubes/weight_cubes (spice) are
+    """stokes_cubes/error_cubes (rm-synth) and cubes/weight_cubes (spice) are
     computed from the polarisation stage's output inside process_racs_all, so the
     combined CLI must not force the user to supply dummy positional values
     for them -- only low_data/mid_data/high_data should be positional."""
     args = get_parser().parse_args(["/low", "/mid", "/high"])
 
-    assert not hasattr(args, "stokes_q_cube")
-    assert not hasattr(args, "stokes_u_cube")
+    assert not hasattr(args, "stokes_cubes")
+    assert not hasattr(args, "error_cubes")
     assert not hasattr(args, "cubes")
     assert not hasattr(args, "weight_cubes")
 
     # create_options_from_parser reads every field off the namespace, so cli()
     # sets the computed ones to their empty defaults first, as done here.
-    args.stokes_q_cube = None
-    args.stokes_u_cube = None
+    args.stokes_cubes = None
+    args.error_cubes = None
     args.cubes = []
     args.weight_cubes = []
 

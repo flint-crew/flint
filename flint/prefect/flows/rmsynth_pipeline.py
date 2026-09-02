@@ -22,6 +22,9 @@ from flint.options import (
     RMCleanOptions,
     RMSynthFieldOptions,
     RMSynthOptions,
+    StokesCubes,
+    StokesErrorCubes,
+    StokesNoiseCubes,
 )
 from flint.prefect.clusters import get_dask_runner
 from flint.prefect.common.rmsynth import (
@@ -103,13 +106,10 @@ def _resolve_common_resolution_cubes(
 def process_rmsynth(
     rmsynth_field_options: RMSynthFieldOptions,
 ) -> RMSynthPipelineResult:
-    if (
-        rmsynth_field_options.stokes_q_cube is None
-        or rmsynth_field_options.stokes_u_cube is None
-    ):
+    if rmsynth_field_options.stokes_cubes is None:
         raise ValueError(
-            "stokes_q_cube and stokes_u_cube are required. The racs-all flow sets "
-            "them from the polarisation stage."
+            "stokes_cubes is required. The racs-all flow sets it from the "
+            "polarisation stage."
         )
     if (
         not rmsynth_field_options.cube_products
@@ -119,15 +119,18 @@ def process_rmsynth(
         logger.info("No RM-synthesis products requested, skipping.")
         return RMSynthPipelineResult(written_paths=[], convolved_cubes=[])
 
-    stokes_cubes = {
-        "q": rmsynth_field_options.stokes_q_cube,
-        "u": rmsynth_field_options.stokes_u_cube,
+    stokes_cube_paths = {
+        stokes: cube
+        for stokes, cube in (
+            ("q", rmsynth_field_options.stokes_cubes.q),
+            ("u", rmsynth_field_options.stokes_cubes.u),
+            ("i", rmsynth_field_options.stokes_cubes.i),
+        )
+        if cube is not None
     }
-    if rmsynth_field_options.stokes_i_cube is not None:
-        stokes_cubes["i"] = rmsynth_field_options.stokes_i_cube
 
     strategy = load_and_copy_strategy(
-        output_split_science_path=rmsynth_field_options.stokes_q_cube.parent,
+        output_split_science_path=rmsynth_field_options.stokes_cubes.q.parent,
         imaging_strategy=rmsynth_field_options.imaging_strategy,
     )
 
@@ -143,47 +146,27 @@ def process_rmsynth(
     )
 
     common_resolution = _resolve_common_resolution_cubes(
-        stokes_cubes=stokes_cubes,
+        stokes_cubes=stokes_cube_paths,
         output_path=rmsynth_field_options.output_path,
         beam_cutoff=rmsynth_field_options.beam_cutoff,
         fft_bane_options=rmsynth_field_options.bane_noise,
     )
-    stokes_cubes = common_resolution.cubes
+    stokes_cubes = StokesCubes.from_mapping(common_resolution.cubes)
 
     # A noise cube only describes the cubes it was measured on. Convolving to a
     # common beam changes them, so the BANE cubes made just above supersede
     # whatever the caller passed in; the caller's are right only when no
     # convolution happened and the cubes are the ones BANE already saw.
-    noise_cubes = common_resolution.rms_cubes or {
-        stokes: cube
-        for stokes, cube in (
-            ("i", rmsynth_field_options.stokes_i_noise_cube),
-            ("q", rmsynth_field_options.stokes_q_noise_cube),
-            ("u", rmsynth_field_options.stokes_u_noise_cube),
-        )
-        if cube is not None
-    }
+    error_cubes: StokesErrorCubes | None = (
+        StokesNoiseCubes.from_mapping(common_resolution.rms_cubes)
+        if common_resolution.rms_cubes
+        else rmsynth_field_options.error_cubes
+    )
 
     synth_result = task_rmsynth.submit(
-        stokes_q_cube=stokes_cubes["q"],
-        stokes_u_cube=stokes_cubes["u"],
+        stokes_cubes=stokes_cubes,
         rmsynth_options=rmsynth_options,
-        stokes_i_cube=stokes_cubes.get("i"),
-        # The weight cubes are the fallback for a run with no BANE at all, so
-        # they are dropped as soon as a noise cube exists; rm-lite takes one or
-        # the other, never both
-        stokes_i_weight_cube=None
-        if noise_cubes
-        else rmsynth_field_options.stokes_i_weight_cube,
-        stokes_q_weight_cube=None
-        if noise_cubes
-        else rmsynth_field_options.stokes_q_weight_cube,
-        stokes_u_weight_cube=None
-        if noise_cubes
-        else rmsynth_field_options.stokes_u_weight_cube,
-        stokes_i_noise_cube=noise_cubes.get("i"),
-        stokes_q_noise_cube=noise_cubes.get("q"),
-        stokes_u_noise_cube=noise_cubes.get("u"),
+        error_cubes=error_cubes,
     )
 
     run_clean = needs_rmclean(
@@ -200,7 +183,7 @@ def process_rmsynth(
     )
 
     output_prefix = create_name_from_common_fields(
-        in_paths=(stokes_cubes["q"], stokes_cubes["u"])
+        in_paths=(stokes_cubes.q, stokes_cubes.u)
     )
     if rmsynth_field_options.output_path is not None:
         rmsynth_field_options.output_path.mkdir(parents=True, exist_ok=True)
@@ -209,7 +192,7 @@ def process_rmsynth(
     output_paths = task_write_rm_products.submit(
         synth_results=synth_result,
         clean_results=clean_result,
-        stokes_q_cube=stokes_cubes["q"],
+        stokes_q_cube=stokes_cubes.q,
         rmsynth_options=rmsynth_options,
         rmclean_options=rmclean_options,
         cube_products=rmsynth_field_options.cube_products,
@@ -243,9 +226,9 @@ def setup_run_rmsynth(
 ) -> None:
     if (
         rmsynth_field_options.sbid_copy_path
-        and rmsynth_field_options.stokes_q_cube is not None
+        and rmsynth_field_options.stokes_cubes is not None
     ):
-        science_sbid = get_sbid_from_path(path=rmsynth_field_options.stokes_q_cube)
+        science_sbid = get_sbid_from_path(path=rmsynth_field_options.stokes_cubes.q)
         rmsynth_field_options = rmsynth_field_options.with_options(
             sbid_copy_path=rmsynth_field_options.sbid_copy_path / f"{science_sbid}"
         )

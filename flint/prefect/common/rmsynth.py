@@ -21,6 +21,8 @@ from flint.options import (
     FitsCubeOptions,
     RMCleanOptions,
     RMSynthOptions,
+    StokesCubes,
+    StokesErrorCubes,
 )
 from flint.prefect.caching import task
 from flint.prefect.common.imaging import (
@@ -201,16 +203,9 @@ def convolve_cubes_to_common_resolution(
 
 @task
 def task_rmsynth(
-    stokes_q_cube: Path,
-    stokes_u_cube: Path,
+    stokes_cubes: StokesCubes,
     rmsynth_options: RMSynthOptions,
-    stokes_i_cube: Path | None = None,
-    stokes_q_weight_cube: Path | None = None,
-    stokes_u_weight_cube: Path | None = None,
-    stokes_i_weight_cube: Path | None = None,
-    stokes_q_noise_cube: Path | None = None,
-    stokes_u_noise_cube: Path | None = None,
-    stokes_i_noise_cube: Path | None = None,
+    error_cubes: StokesErrorCubes | None = None,
 ) -> RMSynth3DResults:
     from prefect_dask import get_dask_client
 
@@ -219,16 +214,9 @@ def task_rmsynth(
     # client they would read whole cubes on this one worker.
     with get_dask_client():
         return run_rmsynth_3d(
-            stokes_q_cube=stokes_q_cube,
-            stokes_u_cube=stokes_u_cube,
-            stokes_q_weight_cube=stokes_q_weight_cube,
-            stokes_u_weight_cube=stokes_u_weight_cube,
+            stokes_cubes=stokes_cubes,
             rmsynth_options=rmsynth_options,
-            stokes_i_cube=stokes_i_cube,
-            stokes_i_weight_cube=stokes_i_weight_cube,
-            stokes_q_noise_cube=stokes_q_noise_cube,
-            stokes_u_noise_cube=stokes_u_noise_cube,
-            stokes_i_noise_cube=stokes_i_noise_cube,
+            error_cubes=error_cubes,
         )
 
 

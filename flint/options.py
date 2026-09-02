@@ -9,15 +9,16 @@ hold stateful properties throughout the flint codebase.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Annotated, Literal, Protocol, Self, TypeAlias
 
 import numpy as np
 import yaml
 from astropy.coordinates import EarthLocation, SkyCoord
 from astropy.time import Time
 from capn_crunch import BaseOptions
-from pydantic import create_model
+from pydantic import Field, create_model
 
 from flint.exceptions import MSError
 from flint.logging import logger
@@ -258,6 +259,68 @@ class FFTBANEOptions(BaseOptions):
     """Seed for the noise the clipped pixels are filled with, so a rerun reproduces the maps"""
 
 
+class _StokesTrio(BaseOptions):
+    """One path per Stokes, shared by the containers below.
+
+    Never annotate with this directly: the whole point of the three concrete
+    types is that a cube cannot be mistaken for a noise or a weight, and a base
+    they all satisfy would let exactly that through.
+    """
+
+    q: Path
+    """Stokes Q"""
+    u: Path
+    """Stokes U"""
+    i: Path | None = None
+    """Stokes I. Optional throughout: rm-synthesis runs without the fractional-polarisation correction"""
+
+    @classmethod
+    def from_mapping(cls, cubes: Mapping[str, Path]) -> Self:
+        """From a per-Stokes dict, as the polarisation stage keys them.
+
+        Anything but q/u/i is dropped, and a missing q or u is refused here
+        rather than surfacing as a KeyError from the call site.
+        """
+        missing = {"q", "u"} - cubes.keys()
+        if missing:
+            msg = f"Need a cube for every one of q and u, missing {sorted(missing)}."
+            raise ValueError(msg)
+        return cls(q=cubes["q"], u=cubes["u"], i=cubes.get("i"))
+
+    @property
+    def paths(self) -> list[Path]:
+        """Every path set, for callers that only validate or clean them up"""
+        return [path for path in (self.q, self.u, self.i) if path is not None]
+
+
+class StokesCubes(_StokesTrio):
+    """The Stokes image cubes rm-synthesis reads"""
+
+
+class StokesWeightCubes(_StokesTrio):
+    """Per-pixel inverse variance, 1/sigma**2, as linmos writes it"""
+
+    kind: Literal["weight"] = "weight"
+    """Discriminates the union below. Never set it by hand"""
+
+
+class StokesNoiseCubes(_StokesTrio):
+    """Per-pixel noise, sigma, as BANE measures it"""
+
+    kind: Literal["noise"] = "noise"
+    """Discriminates the union below. Never set it by hand"""
+
+
+StokesErrorCubes: TypeAlias = Annotated[
+    StokesWeightCubes | StokesNoiseCubes, Field(discriminator="kind")
+]
+"""The error cubes rm-synthesis weights by: an inverse variance or a noise, never
+both and never something ambiguous. rm-lite takes either through one argument and
+is told which by a flag, so mixing them inverts the noise by 1/sigma**2. The
+discriminator is what keeps that straight across a serialisation round trip, which
+prefect does to every task input."""
+
+
 class RMSynthOptions(BaseOptions):
     """Options controlling ``rm_lite.tools_3d.rmsynth.rmsynth_3d_from_fits``.
 
@@ -370,26 +433,12 @@ class RMSynthFieldOptions(BaseOptions):
     algorithm parameters, which are drawn from ``imaging_strategy`` rather
     than exposed here."""
 
-    stokes_q_cube: Path | None = None
-    """Path to the Stokes Q FITS cube. Computed by the racs-all flow, so required only when running this pipeline standalone"""
-    stokes_u_cube: Path | None = None
-    """Path to the Stokes U FITS cube. Computed by the racs-all flow, so required only when running this pipeline standalone"""
-    stokes_i_cube: Path | None = None
-    """Path to a Stokes I FITS cube, used to fit a per-pixel fractional-polarisation correction. Defaults to None."""
-    stokes_q_weight_cube: Path | None = None
-    """Path to Stokes Q weights cube produced by LINMOS"""
-    stokes_u_weight_cube: Path | None = None
-    """Path to Stokes U weights cube produced by LINMOS"""
-    stokes_i_weight_cube: Path | None = None
-    """Path to Stokes I weights cube produced by LINMOS"""
-    stokes_q_noise_cube: Path | None = None
-    """Path to a Stokes Q noise (sigma) cube, e.g. the BANE RMS cube from the polarisation stage. Takes precedence over ``stokes_q_weight_cube``, which is an inverse variance rather than a noise"""
-    stokes_u_noise_cube: Path | None = None
-    """Path to a Stokes U noise (sigma) cube. See ``stokes_q_noise_cube``"""
-    stokes_i_noise_cube: Path | None = None
-    """Path to a Stokes I noise (sigma) cube. See ``stokes_q_noise_cube``"""
+    stokes_cubes: StokesCubes | None = None
+    """The Stokes Q/U (and optionally I) FITS cubes. Computed by the racs-all flow, so required only when running this pipeline standalone"""
+    error_cubes: StokesErrorCubes | None = None
+    """The linmos weight cubes or a set of noise cubes, never both: see ``StokesErrorCubes``. None leaves rm-lite to estimate a per-channel noise from Q/U itself. Superseded by ``bane_noise``, which measures the noise at the resolution the FDF is built at"""
     bane_noise: FFTBANEOptions | None = None
-    """Opt in to measuring BANE background and RMS cubes off the common-resolution cubes this stage writes, and using the RMS for the FDF noise (see ``flint.bane``). Measured after the convolution, so they describe the resolution the FDF is built at and supersede ``stokes_*_noise_cube``, which describe the unconvolved inputs. None, the default, falls back to whatever cubes the caller passed"""
+    """Opt in to measuring BANE background and RMS cubes off the common-resolution cubes this stage writes, and using the RMS for the FDF noise (see ``flint.bane``). Measured after the convolution, so they describe the resolution the FDF is built at and supersede ``error_cubes``, which describe the unconvolved inputs. None, the default, falls back to whatever cubes the caller passed"""
     imaging_strategy: Path | None = None
     """Path to a FLINT imaging yaml file that contains the RMSynthOptions/RMCleanOptions settings to use"""
     beam_cutoff: float | None = None

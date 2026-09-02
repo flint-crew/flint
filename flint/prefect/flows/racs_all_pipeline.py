@@ -25,6 +25,10 @@ from flint.options import (
     RACSAllPipelineOptions,
     RMSynthFieldOptions,
     SpiceFieldOptions,
+    StokesCubes,
+    StokesErrorCubes,
+    StokesNoiseCubes,
+    StokesWeightCubes,
     pol_field_options_cli_class,
 )
 from flint.prefect.clusters import get_dask_runner
@@ -42,7 +46,7 @@ STAGE_CLUSTER_CONFIG_ATTRS = (
 
 # Fields on the rm-synth/spice options classes that process_racs_all always recomputes
 # from the polarisation stage's output. Excluded from the combined CLI.
-COMPUTED_FIELDS = {"stokes_q_cube", "stokes_u_cube", "cubes", "weight_cubes"}
+COMPUTED_FIELDS = {"stokes_cubes", "error_cubes", "cubes", "weight_cubes"}
 
 
 def _check_stage_prerequisites(
@@ -251,27 +255,19 @@ def process_racs_all(
     rmsynth_convolved_cubes: list[Path] = []
     rmsynth_noise_cubes: list[Path] = []
     if not pipeline_options.skip_rmsynth:
+        # The BANE RMS cubes are measured off the co-added planes, so they
+        # describe the cubes rm-synth reads. The linmos weights are an inverse
+        # variance carried over from the input images and are the fallback when
+        # the polarisation stage did not run BANE. Either way rm-synth measures
+        # its own once it convolves to a common beam, which supersedes both.
+        error_cubes: StokesErrorCubes = (
+            StokesNoiseCubes.from_mapping(pol_result.rms_cubes)
+            if pol_result.rms_cubes
+            else StokesWeightCubes.from_mapping(pol_result.weight_cubes)
+        )
         resolved_rmsynth_field_options = rmsynth_field_options.with_options(
-            stokes_q_cube=pol_result.stokes_cubes["q"],
-            stokes_u_cube=pol_result.stokes_cubes["u"],
-            stokes_i_cube=pol_result.stokes_cubes.get("i"),
-            # The BANE RMS cubes are measured off the co-added planes, so they
-            # describe the cubes rm-synth actually reads. The linmos weights are
-            # an inverse variance carried over from the input images and are the
-            # fallback when the polarisation stage did not run BANE.
-            **(
-                {
-                    "stokes_i_noise_cube": pol_result.rms_cubes.get("i"),
-                    "stokes_q_noise_cube": pol_result.rms_cubes["q"],
-                    "stokes_u_noise_cube": pol_result.rms_cubes["u"],
-                }
-                if pol_result.rms_cubes
-                else {
-                    "stokes_i_weight_cube": pol_result.weight_cubes.get("i"),
-                    "stokes_q_weight_cube": pol_result.weight_cubes["q"],
-                    "stokes_u_weight_cube": pol_result.weight_cubes["u"],
-                }
-            ),
+            stokes_cubes=StokesCubes.from_mapping(pol_result.stokes_cubes),
+            error_cubes=error_cubes,
             output_path=rmsynth_field_options.output_path or output_root / "rmsynth",
         )
         assert pipeline_options.rmsynth_cluster_config is not None
