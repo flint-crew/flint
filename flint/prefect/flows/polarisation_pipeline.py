@@ -11,6 +11,7 @@ from prefect.futures import PrefectFuture
 from flint.coadd.linmos import LinmosOptions
 from flint.configuration import (
     POLARISATION_MAPPING,
+    Strategy,
     get_options_from_strategy,
     load_and_copy_strategy,
 )
@@ -106,6 +107,29 @@ def _no_products(
         mfs_products={},
         terminal_futures=terminal_futures or [],
     )
+
+
+def _polarisations_to_image(strategy: Strategy) -> dict[str, Any]:
+    """Pull the polarisations to image out of the strategy's polarisation operation.
+
+    The operation also carries modes that apply across all polarisations (e.g.
+    ``fitscube``, ``fftbane``), which sit alongside the polarisation keys. Only
+    the polarisation keys describe something to image.
+
+    Args:
+        strategy (Strategy): The loaded strategy
+
+    Returns:
+        dict[str, Any]: Polarisation name and its scoped modes. Falls back to Stokes I when the strategy names none.
+    """
+    polarisation_scope = strategy.get("polarisation", {})
+    polarisations = {
+        key: value
+        for key, value in polarisation_scope.items()
+        if key in POLARISATION_MAPPING
+    }
+
+    return polarisations or {"total": {}}
 
 
 @flow(name="Flint Polarisation Pipeline")
@@ -220,7 +244,7 @@ def process_science_fields_pol(
         logger.info("No wsclean container provided. Returning. ")
         return _no_products(terminal_futures=[field_summary])
 
-    polarisations: dict[str, str] = strategy.get("polarisation", {"total": {}})
+    polarisations = _polarisations_to_image(strategy=strategy)
 
     # Solved once for all beams, and before any imaging
     cube_division: ChannelDivision | None = None
