@@ -230,7 +230,7 @@ class PolFieldOptions(BaseOptions):
     pb_cutoff: float = 0.1
     """Primary beam attenuation cutoff to use during linmos"""
     bane_noise: FFTBANEOptions | None = None
-    """Measure a background and RMS cube off the co-added planes with BANE (see ``flint.bane``). None skips it, leaving the linmos weight cubes as the only noise estimate"""
+    """Opt in to measuring a background and RMS cube off the co-added planes with BANE (see ``flint.bane``). These describe the natural-resolution cubes this stage archives. None, the default, skips it. Independent of ``RMSynthFieldOptions.bane_noise``, which is the one the FDF noise comes from"""
     imaging_strategy: Path | None = None
     """Path to a FLINT imaging yaml file that contains settings to use throughout imaging"""
     pol_cube_channel_width: float | None = None
@@ -388,6 +388,8 @@ class RMSynthFieldOptions(BaseOptions):
     """Path to a Stokes U noise (sigma) cube. See ``stokes_q_noise_cube``"""
     stokes_i_noise_cube: Path | None = None
     """Path to a Stokes I noise (sigma) cube. See ``stokes_q_noise_cube``"""
+    bane_noise: FFTBANEOptions | None = None
+    """Opt in to measuring BANE background and RMS cubes off the common-resolution cubes this stage writes, and using the RMS for the FDF noise (see ``flint.bane``). Measured after the convolution, so they describe the resolution the FDF is built at and supersede ``stokes_*_noise_cube``, which describe the unconvolved inputs. None, the default, falls back to whatever cubes the caller passed"""
     imaging_strategy: Path | None = None
     """Path to a FLINT imaging yaml file that contains the RMSynthOptions/RMCleanOptions settings to use"""
     beam_cutoff: float | None = None

@@ -8,14 +8,23 @@ that actually import this module.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import NamedTuple
 
 from prefect import unmapped
+from prefect.futures import PrefectFuture
 
+from flint.bane import BANEMaps
 from flint.convol import BeamShape, convolve_plane_to_beam
 from flint.logging import logger
-from flint.options import FitsCubeOptions, RMCleanOptions, RMSynthOptions
+from flint.options import (
+    FFTBANEOptions,
+    FitsCubeOptions,
+    RMCleanOptions,
+    RMSynthOptions,
+)
 from flint.prefect.caching import task
 from flint.prefect.common.imaging import (
+    task_bane_fits_image,
     task_combine_images_to_cube,
     task_remove_files_folders,
     task_split_cube_into_planes,
@@ -32,13 +41,38 @@ from flint.rmsynth import (
 task_convolve_plane_to_beam = task(convolve_plane_to_beam)
 
 
+class CommonResolutionCubes(NamedTuple):
+    """The cubes ``convolve_cubes_to_common_resolution`` writes, keyed by Stokes"""
+
+    cubes: dict[str, Path]
+    """The cube to use per Stokes: the convolved one, or the input unchanged when ``convolved`` is False"""
+    convolved: bool = False
+    """Whether these are new cubes. False means the inputs already shared a resolution and were used as they are, so nothing new was written"""
+    bkg_cubes: dict[str, Path] = {}
+    """BANE background cube per Stokes, measured on the convolved planes. Empty unless BANE was asked for"""
+    rms_cubes: dict[str, Path] = {}
+    """BANE RMS cube per Stokes, measured on the convolved planes so it describes the resolution the FDF is built at. Empty unless BANE was asked for"""
+
+    @property
+    def all_cubes(self) -> list[Path]:
+        """Every cube written, for the callers that only trim and compress them"""
+        if not self.convolved:
+            return []
+        return [
+            *self.cubes.values(),
+            *self.bkg_cubes.values(),
+            *self.rms_cubes.values(),
+        ]
+
+
 def convolve_cubes_to_common_resolution(
     cubes: dict[str, Path],
     beam_shape: BeamShape,
     output_path: Path | None = None,
     beam_cutoff: float | None = None,
     convol_suffix: str = "conv",
-) -> dict[str, Path]:
+    fft_bane_options: FFTBANEOptions | None = None,
+) -> CommonResolutionCubes:
     """Bring a set of FITS cubes to the one resolution described by
     ``beam_shape``, writing new cubes and leaving the inputs as they are. This is
     the 'total' resolution mode of racs_tools: one beam for every channel of
@@ -56,9 +90,10 @@ def convolve_cubes_to_common_resolution(
         output_path (Path | None, optional): Directory the new cubes are written into. Defaults to alongside each input cube.
         beam_cutoff (float | None, optional): Channels coarser than this, in arcsec, are blanked rather than convolved to. Defaults to no cutoff.
         convol_suffix (str, optional): The marker added to the name of a smoothed plane, and of the cube they are stacked into. Defaults to 'conv'.
+        fft_bane_options (FFTBANEOptions | None, optional): When given, each convolved plane also gets a BANE background and RMS map, stacked into their own cubes. Measured after the convolution, so they describe the resolution rm-synthesis actually builds the FDF at. Defaults to None.
 
     Returns:
-        dict[str, Path]: The convolved cube for each key of ``cubes``
+        CommonResolutionCubes: The convolved cube for each key of ``cubes``, and the BANE cubes when asked for
     """
     fitscube_options = FitsCubeOptions(
         # The weight cubes are not convolved, so the convolved image cubes have
@@ -106,21 +141,56 @@ def convolve_cubes_to_common_resolution(
         convol_suffix=unmapped(convol_suffix),
     ).result()
 
-    cube_futures = {}
+    # Measured on the convolved planes, not the ones they came from: these
+    # describe the resolution rm-synthesis builds the FDF at, which is the whole
+    # point of making them here rather than reusing the polarisation stage's.
+    # Resolved before the cubes are assembled because `fitscube_options` removes
+    # each plane once it has been cubed.
+    bane_maps: list[BANEMaps] = []
+    if fft_bane_options is not None:
+        bane_maps = task_bane_fits_image.map(
+            image=convolved_planes,
+            fft_bane_options=unmapped(fft_bane_options),
+        ).result()
+
+    cube_futures: dict[str, dict[str, PrefectFuture[Path]]] = {
+        mode: {} for mode in (convol_suffix, "bkg", "rms")
+    }
     plane_idx = 0
     for key, planes in planes_per_cube.items():
-        cube_futures[key] = task_combine_images_to_cube.submit(
-            images=convolved_planes[plane_idx : plane_idx + len(planes)],
-            prefix=str(cube_parent[key] / cubes[key].stem),
+        plane_slice = slice(plane_idx, plane_idx + len(planes))
+        prefix = str(cube_parent[key] / cubes[key].stem)
+        cube_futures[convol_suffix][key] = task_combine_images_to_cube.submit(
+            images=convolved_planes[plane_slice],
+            prefix=prefix,
             mode=convol_suffix,
             fitscube_options=fitscube_options,
         )
+        for mode, attribute in (("bkg", "bkg_image"), ("rms", "rms_image")):
+            if bane_maps:
+                cube_futures[mode][key] = task_combine_images_to_cube.submit(
+                    images=[
+                        getattr(maps, attribute) for maps in bane_maps[plane_slice]
+                    ],
+                    prefix=prefix,
+                    mode=f"{convol_suffix}.{mode}",
+                    fitscube_options=fitscube_options,
+                )
         plane_idx += len(planes)
     assert plane_idx == len(convolved_planes), (
         f"Have {len(convolved_planes)} convolved planes across {plane_idx} channels"
     )
 
-    convolved_cubes = {key: future.result() for key, future in cube_futures.items()}
+    resolved = {
+        mode: {key: future.result() for key, future in futures.items()}
+        for mode, futures in cube_futures.items()
+    }
+    convolved_cubes = CommonResolutionCubes(
+        cubes=resolved[convol_suffix],
+        convolved=True,
+        bkg_cubes=resolved["bkg"],
+        rms_cubes=resolved["rms"],
+    )
 
     # The convolved planes are removed as each cube is assembled, leaving the
     # planes they were made from behind

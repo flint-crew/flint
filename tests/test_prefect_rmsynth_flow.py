@@ -24,7 +24,8 @@ from flint.convol import (
     cubes_share_common_beam,
     usable_beam_mask,
 )
-from flint.options import RMSynthFieldOptions
+from flint.options import FFTBANEOptions, RMSynthFieldOptions
+from flint.prefect.common.rmsynth import CommonResolutionCubes
 from flint.prefect.flows.rmsynth_pipeline import (
     _resolve_common_resolution_cubes,
     process_rmsynth,
@@ -226,17 +227,34 @@ def test_process_rmsynth_with_stokes_i_on_dask_cluster(
     )
 
 
-def _resolved_cubes(
-    cubes: dict[str, Path], output_path: Path, beam_cutoff: float | None = None
-) -> tuple[dict[str, Path], list[Path]]:
+def _resolve_cubes(
+    cubes: dict[str, Path],
+    output_path: Path,
+    beam_cutoff: float | None = None,
+    fft_bane_options: FFTBANEOptions | None = None,
+) -> CommonResolutionCubes:
     @flow
-    def _resolve() -> tuple[dict[str, Path], list[Path]]:
+    def _resolve() -> CommonResolutionCubes:
         return _resolve_common_resolution_cubes(
-            stokes_cubes=cubes, output_path=output_path, beam_cutoff=beam_cutoff
+            stokes_cubes=cubes,
+            output_path=output_path,
+            beam_cutoff=beam_cutoff,
+            fft_bane_options=fft_bane_options,
         )
 
     with prefect_test_harness(), disable_run_logger():
         return _resolve()
+
+
+def _resolved_cubes(
+    cubes: dict[str, Path], output_path: Path, beam_cutoff: float | None = None
+) -> tuple[dict[str, Path], list[Path]]:
+    """The cubes to use, and the new ones written, as the callers of
+    ``_resolve_common_resolution_cubes`` see them"""
+    resolved = _resolve_cubes(
+        cubes=cubes, output_path=output_path, beam_cutoff=beam_cutoff
+    )
+    return resolved.cubes, (list(resolved.cubes.values()) if resolved.convolved else [])
 
 
 def _cubes_with_beams(tmp_path: Path, offsets: dict[str, float]) -> dict[str, Path]:
@@ -366,3 +384,54 @@ def test_resolve_common_resolution_cubes_without_usable_beams(tmp_path: Path) ->
 
     assert resolved == cubes
     assert convolved_cubes == []
+
+
+def test_bane_cubes_are_measured_on_the_convolved_planes(tmp_path: Path) -> None:
+    """The noise has to describe the cubes the FDF is built from. Convolving to a
+    common beam changes them, so measuring on the polarisation stage's natural
+    resolution cubes would describe a resolution rm-synthesis never reads. These
+    are measured after the convolution instead, and land on the convolved grid.
+    """
+    cubes = _cubes_with_beams(tmp_path, {"q": 0.0, "u": 0.5})
+    output_path = tmp_path / "rmsynth"
+
+    resolved = _resolve_cubes(
+        cubes=cubes,
+        output_path=output_path,
+        fft_bane_options=FFTBANEOptions(step_size=2, box_size=2),
+    )
+
+    assert resolved.convolved
+    assert set(resolved.bkg_cubes) == set(resolved.rms_cubes) == {"q", "u"}
+    for stokes, rms_cube in resolved.rms_cubes.items():
+        assert rms_cube.exists()
+        # Same grid as the convolved cube it was measured on, so rm-lite can read
+        # the two together
+        assert (
+            fits.getdata(rms_cube).shape == fits.getdata(resolved.cubes[stokes]).shape
+        )
+    assert all(cube.exists() for cube in resolved.bkg_cubes.values())
+    # Everything written is a frequency cube the racs-all flow has to spice
+    assert set(resolved.all_cubes) == {
+        *resolved.cubes.values(),
+        *resolved.bkg_cubes.values(),
+        *resolved.rms_cubes.values(),
+    }
+
+
+def test_no_bane_cubes_without_a_convolution(tmp_path: Path) -> None:
+    """Cubes already at one resolution are used as they are, so this stage writes
+    nothing and has nothing to measure. The caller's own noise cubes, measured on
+    those same cubes by the polarisation stage, are already right."""
+    cubes = _cubes_with_beams(tmp_path, {"q": 0.0, "u": 0.0})
+
+    resolved = _resolve_cubes(
+        cubes=cubes,
+        output_path=tmp_path / "rmsynth",
+        fft_bane_options=FFTBANEOptions(step_size=2, box_size=2),
+    )
+
+    assert not resolved.convolved
+    assert resolved.cubes == cubes
+    assert resolved.rms_cubes == {}
+    assert resolved.all_cubes == []

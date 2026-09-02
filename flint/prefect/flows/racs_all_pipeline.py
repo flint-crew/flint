@@ -249,6 +249,7 @@ def process_racs_all(
     output_root = pipeline_options.output_path or continuum_result.output_science_path
 
     rmsynth_convolved_cubes: list[Path] = []
+    rmsynth_noise_cubes: list[Path] = []
     if not pipeline_options.skip_rmsynth:
         resolved_rmsynth_field_options = rmsynth_field_options.with_options(
             stokes_q_cube=pol_result.stokes_cubes["q"],
@@ -282,6 +283,7 @@ def process_racs_all(
         )(rmsynth_field_options=resolved_rmsynth_field_options)
         terminal_results.extend(rmsynth_result.written_paths)
         rmsynth_convolved_cubes = rmsynth_result.convolved_cubes
+        rmsynth_noise_cubes = rmsynth_result.convolved_noise_cubes
 
     if not pipeline_options.skip_spice:
         resolved_reference_image = (
@@ -298,6 +300,7 @@ def process_racs_all(
                 *pol_result.weight_cubes.values(),
                 *pol_result.bkg_cubes.values(),
                 *pol_result.rms_cubes.values(),
+                *rmsynth_noise_cubes,
             ],
             reference_image=resolved_reference_image,
             output_path=spice_field_options.output_path or output_root / "spice",
@@ -324,6 +327,7 @@ def process_racs_all(
                 *pol_result.bkg_cubes.values(),
                 *pol_result.rms_cubes.values(),
                 *rmsynth_convolved_cubes,
+                *rmsynth_noise_cubes,
             )
         )
 
