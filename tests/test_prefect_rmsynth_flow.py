@@ -24,10 +24,17 @@ from flint.convol import (
     cubes_share_common_beam,
     usable_beam_mask,
 )
-from flint.options import CubesForRMSynth, FFTBANEOptions, RMSynthFieldOptions
+from flint.options import (
+    CubesForRMSynth,
+    FFTBANEOptions,
+    RMSynthFieldOptions,
+    WeightCubesForRMSynth,
+)
 from flint.prefect.common.rmsynth import CommonResolutionCubes
+from flint.prefect.flows import rmsynth_pipeline
 from flint.prefect.flows.rmsynth_pipeline import (
     _resolve_common_resolution_cubes,
+    get_parser,
     process_rmsynth,
 )
 
@@ -435,3 +442,145 @@ def test_no_bane_cubes_without_a_convolution(tmp_path: Path) -> None:
     assert resolved.cubes == cubes
     assert resolved.rms_cubes == {}
     assert resolved.all_cubes == []
+
+
+def _cube_names(
+    tmp_path: Path, pols: tuple[str, ...], suffix: str = "image"
+) -> list[Path]:
+    """Cube paths named in the flint scheme, which is what from_paths reads"""
+    # STEM carries a channel range, which the flint scheme puts in place of the
+    # polarisation, so these names need a round instead
+    stem = "SB12345.BENCH_0000+00.round1"
+    return [tmp_path / f"{stem}.{pol}.pol.{suffix}.cube.fits" for pol in pols]
+
+
+def test_get_parser_takes_a_list_of_stokes_cubes(tmp_path: Path) -> None:
+    """The nested cube Options cannot be filled by a single CLI or config value,
+    so the standalone pipeline takes a flat list of cubes instead."""
+    cubes = _cube_names(tmp_path, ("q", "u", "i"))
+
+    args = get_parser().parse_args(["--stokes-cubes", *[str(cube) for cube in cubes]])
+
+    assert args.stokes_cubes == cubes
+    stokes_cubes = CubesForRMSynth.from_paths(paths=args.stokes_cubes)
+    assert (stokes_cubes.q_path, stokes_cubes.u_path, stokes_cubes.i_path) == tuple(
+        cubes
+    )
+
+
+def test_get_parser_takes_stokes_cubes_from_a_config_file(tmp_path: Path) -> None:
+    """The failing case: a list in a --cli-config file, which configargparse
+    rejects outright unless the argument accepts more than one value."""
+    cubes = _cube_names(tmp_path, ("q", "u", "i"))
+    config = tmp_path / "rmsynth.cfg"
+    config.write_text(f"stokes-cubes = [{', '.join(str(cube) for cube in cubes)}]\n")
+
+    args = get_parser().parse_args(["--cli-config", str(config)])
+
+    assert args.stokes_cubes == cubes
+
+
+def test_get_parser_stokes_i_cube_is_optional(tmp_path: Path) -> None:
+    """rm-synthesis runs on Q and U alone"""
+    cubes = _cube_names(tmp_path, ("q", "u"))
+
+    args = get_parser().parse_args(["--stokes-cubes", *[str(cube) for cube in cubes]])
+    stokes_cubes = CubesForRMSynth.from_paths(paths=args.stokes_cubes)
+
+    assert stokes_cubes.i_path is None
+
+
+def test_get_parser_error_cube_kind_picks_the_container(tmp_path: Path) -> None:
+    """Weights and noises are told apart by the kind flag, never guessed: reading
+    one as the other inverts the error by 1/sigma**2."""
+    cubes = _cube_names(tmp_path, ("q", "u"), suffix="weight")
+
+    args = get_parser().parse_args(
+        [
+            "--error-cubes",
+            *[str(cube) for cube in cubes],
+            "--error-cube-kind",
+            "weight",
+        ]
+    )
+
+    assert args.error_cube_kind == "weight"
+    assert args.error_cubes == cubes
+
+
+def test_from_paths_needs_q_and_u(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="missing"):
+        CubesForRMSynth.from_paths(paths=_cube_names(tmp_path, ("q",)))
+
+
+def test_from_paths_rejects_two_cubes_for_one_stokes(tmp_path: Path) -> None:
+    cubes = _cube_names(tmp_path, ("q", "u"))
+    with pytest.raises(ValueError, match="ambiguous"):
+        CubesForRMSynth.from_paths(paths=[*cubes, cubes[0]])
+
+
+def test_from_paths_rejects_unreadable_names(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="flint or CASDA scheme"):
+        CubesForRMSynth.from_paths(paths=[tmp_path / "not-a-flint-name.fits"])
+
+
+def test_cli_assembles_the_cube_options(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """cli() substitutes the cube fields into the namespace, as they are off the
+    parser, so the options class it builds carries the nested containers."""
+    captured: dict[str, RMSynthFieldOptions] = {}
+
+    def _capture(cluster_config: str | Path, **kwargs: RMSynthFieldOptions) -> None:
+        captured.update(kwargs)
+
+    monkeypatch.setattr(rmsynth_pipeline, "setup_run_rmsynth", _capture)
+    stokes = _cube_names(tmp_path, ("q", "u"))
+    errors = _cube_names(tmp_path, ("q", "u"), suffix="weight")
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "flint_flow_rmsynth_pipeline",
+            "--stokes-cubes",
+            *[str(cube) for cube in stokes],
+            "--error-cubes",
+            *[str(cube) for cube in errors],
+            "--error-cube-kind",
+            "weight",
+        ],
+    )
+
+    rmsynth_pipeline.cli()
+
+    options = captured["rmsynth_field_options"]
+    assert isinstance(options.stokes_cubes, CubesForRMSynth)
+    assert options.stokes_cubes.paths == stokes
+    assert isinstance(options.error_cubes, WeightCubesForRMSynth)
+    assert options.error_cubes.paths == errors
+
+
+def test_cli_error_cubes_require_a_kind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Guessing between a weight and a noise inverts the error by 1/sigma**2"""
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "flint_flow_rmsynth_pipeline",
+            "--error-cubes",
+            *[str(cube) for cube in _cube_names(tmp_path, ("q", "u"))],
+        ],
+    )
+
+    with pytest.raises(SystemExit):
+        rmsynth_pipeline.cli()
+
+
+def test_cli_without_cubes_leaves_them_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fields stay optional: process_rmsynth raises on a missing stokes_cubes,
+    and the racs-all flow sets them in memory rather than through this CLI."""
+    args = get_parser().parse_args([])
+
+    assert args.stokes_cubes is None
+    assert args.error_cubes is None
+    assert args.error_cube_kind is None

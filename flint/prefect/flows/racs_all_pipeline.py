@@ -9,11 +9,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from capn_crunch import BaseOptions, add_options_to_parser, create_options_from_parser
+from capn_crunch import add_options_to_parser, create_options_from_parser
 from configargparse import ArgumentParser
 from fitscube.combine_fits import compress_cube
 from prefect import flow
-from pydantic import create_model
 
 from flint.configuration import (
     POLARISATION_MAPPING,
@@ -33,6 +32,7 @@ from flint.options import (
     RMSynthFieldOptions,
     SpiceFieldOptions,
     WeightCubesForRMSynth,
+    exclude_fields_cli_class,
     pol_field_options_cli_class,
 )
 from flint.prefect.clusters import get_dask_runner
@@ -40,13 +40,6 @@ from flint.prefect.flows.polarisation_pipeline import process_science_fields_pol
 from flint.prefect.flows.racs_all_continuum_selfcal import process_racs_all_continuum
 from flint.prefect.flows.rmsynth_pipeline import process_rmsynth
 from flint.prefect.flows.spice_compression_pipeline import process_spice_compression
-
-STAGE_CLUSTER_CONFIG_ATTRS = (
-    "imaging_cluster_config",
-    "polarisation_cluster_config",
-    "rmsynth_cluster_config",
-    "spice_cluster_config",
-)
 
 # Fields on the rm-synth/spice options classes that process_racs_all always recomputes
 # from the polarisation stage's output. Excluded from the combined CLI.
@@ -192,29 +185,6 @@ def _check_spice_mfs_dependency(
             "(needed as the aegean source-finding reference image). Pass "
             "--skip-spice to disable the stage."
         )
-
-
-def _exclude_fields_cli_class(
-    options_class: type[BaseOptions], exclude_fields: set[str]
-) -> type[BaseOptions]:
-    """Build a sibling of ``options_class`` exposing only the fields not in
-    ``exclude_fields``, so it can be added to a parser that already exposes
-    those fields via another options class without a duplicate-flag error.
-
-    The result derives from ``options_class.__base__``, so it is a sibling rather
-    than a subclass. Generalises ``pol_field_options_cli_class`` to an arbitrary,
-    accumulated set of already-registered field names.
-    """
-    unique_fields = {
-        name: (field.annotation, field)
-        for name, field in options_class.model_fields.items()
-        if name not in exclude_fields
-    }
-    return create_model(
-        f"{options_class.__name__}CLI",
-        __base__=options_class.__base__,
-        **unique_fields,
-    )
 
 
 @flow(name="Flint RACS-All Pipeline")
@@ -417,14 +387,14 @@ def get_parser() -> ArgumentParser:
 
     parser = add_options_to_parser(
         parser=parser,
-        options_class=_exclude_fields_cli_class(RMSynthFieldOptions, seen_fields),
+        options_class=exclude_fields_cli_class(RMSynthFieldOptions, seen_fields),
         description="RM-synthesis processing options",
     )
     seen_fields |= set(RMSynthFieldOptions.model_fields)
 
     parser = add_options_to_parser(
         parser=parser,
-        options_class=_exclude_fields_cli_class(SpiceFieldOptions, seen_fields),
+        options_class=exclude_fields_cli_class(SpiceFieldOptions, seen_fields),
         description="SPICE compression processing options",
     )
 
@@ -457,7 +427,12 @@ def cli() -> None:
         parser_namespace=args, options_class=SpiceFieldOptions
     )
 
-    for cluster_config_attr in STAGE_CLUSTER_CONFIG_ATTRS:
+    for cluster_config_attr in (
+        "imaging_cluster_config",
+        "polarisation_cluster_config",
+        "rmsynth_cluster_config",
+        "spice_cluster_config",
+    ):
         if getattr(pipeline_options, cluster_config_attr) is None:
             pipeline_options = pipeline_options.with_options(
                 **{cluster_config_attr: args.cluster_config}

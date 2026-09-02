@@ -25,6 +25,8 @@ from flint.options import (
     RMCleanOptions,
     RMSynthFieldOptions,
     RMSynthOptions,
+    WeightCubesForRMSynth,
+    exclude_fields_cli_class,
 )
 from flint.prefect.clusters import get_dask_runner
 from flint.prefect.common.rmsynth import (
@@ -262,10 +264,46 @@ def get_parser() -> ArgumentParser:
         help="Path to a cluster configuration file, or a known cluster name. ",
     )
 
+    # stokes_cubes/error_cubes are nested Options classes, which
+    # add_options_to_parser can only render as a single-value flag that no CLI or
+    # config string can fill. Set up by hand below and assembled in cli().
     parser = add_options_to_parser(
         parser=parser,
-        options_class=RMSynthFieldOptions,
+        options_class=exclude_fields_cli_class(
+            RMSynthFieldOptions, {"stokes_cubes", "error_cubes"}
+        ),
         description="RM-synthesis processing options",
+    )
+
+    group = parser.add_argument_group(title="Input cubes")
+    group.add_argument(
+        "--stokes-cubes",
+        type=Path,
+        nargs="+",
+        default=None,
+        metavar="CUBE",
+        help="The Stokes cubes to synthesise, one per Stokes. Q and U are required, "
+        "I is optional and fits the fractional-polarisation correction. Which Stokes "
+        "each cube is comes from its filename.",
+    )
+    group.add_argument(
+        "--error-cubes",
+        type=Path,
+        nargs="+",
+        default=None,
+        metavar="CUBE",
+        help="Cubes describing the error on --stokes-cubes, matched to a Stokes the "
+        "same way. Requires --error-cube-kind. Omit to let rm-lite estimate the noise "
+        "from Q/U itself.",
+    )
+    group.add_argument(
+        "--error-cube-kind",
+        type=str,
+        choices=("weight", "noise"),
+        default=None,
+        help="Whether --error-cubes are linmos weights (an inverse variance) or a "
+        "noise (a sigma). Required with --error-cubes: reading one as the other "
+        "inverts the error by 1/sigma**2.",
     )
 
     return parser
@@ -276,8 +314,27 @@ def cli() -> None:
 
     args = parser.parse_args()
 
+    if args.error_cubes and args.error_cube_kind is None:
+        parser.error("--error-cubes requires --error-cube-kind")
+
+    error_cubes_class = {
+        "weight": WeightCubesForRMSynth,
+        "noise": NoiseCubesForRMSynth,
+    }.get(args.error_cube_kind)
+
+    # The cube fields are off the parser, so their values are substituted rather
+    # than read straight off the namespace.
+    namespace = vars(args) | {
+        "stokes_cubes": CubesForRMSynth.from_paths(paths=args.stokes_cubes)
+        if args.stokes_cubes
+        else None,
+        "error_cubes": error_cubes_class.from_paths(paths=args.error_cubes)
+        if args.error_cubes and error_cubes_class is not None
+        else None,
+    }
+
     rmsynth_field_options = create_options_from_parser(
-        parser_namespace=args, options_class=RMSynthFieldOptions
+        parser_namespace=namespace, options_class=RMSynthFieldOptions
     )
 
     setup_run_rmsynth(
