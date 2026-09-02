@@ -129,21 +129,25 @@ def _check_racs_all_pipeline_options(pipeline_options: RACSAllPipelineOptions) -
 
 def _check_rmsynth_has_linear_stokes(
     pipeline_options: RACSAllPipelineOptions,
-    racs_all_options: RACSAllOptions,
+    pol_field_options: PolFieldOptions,
 ) -> None:
-    """RM-synthesis builds its FDF from Q+iU, so the polarisation strategy has to
-    image the linear Stokes. A circular-only strategy would otherwise fail once
-    imaging had already run.
+    """RM-synthesis builds its FDF from Q+iU, so a polarisation strategy that
+    names its Stokes has to include the linear ones. A circular-only strategy
+    would otherwise fail once imaging had already run.
+
+    Only checked when the strategy says: without one the polarisation stage has
+    its own say, and guessing here would refuse runs it would have served.
     """
     if pipeline_options.skip_rmsynth or pipeline_options.skip_polarisation:
         return
+    if pol_field_options.imaging_strategy is None:
+        return
 
-    strategy = (
-        load_strategy_yaml(input_yaml=racs_all_options.imaging_strategy)
-        if racs_all_options.imaging_strategy is not None
-        else None
-    )
-    polarisations = (strategy or {}).get("polarisation", {"total": {}})
+    strategy = load_strategy_yaml(input_yaml=pol_field_options.imaging_strategy)
+    polarisations = strategy.get("polarisation")
+    if not polarisations:
+        return
+
     imaged = {
         stokes
         for mode in polarisations
@@ -234,7 +238,7 @@ def process_racs_all(
         spice_field_options=spice_field_options,
     )
     _check_rmsynth_has_linear_stokes(
-        pipeline_options=pipeline_options, racs_all_options=racs_all_options
+        pipeline_options=pipeline_options, pol_field_options=pol_field_options
     )
 
     terminal_results: list[Any] = []

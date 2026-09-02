@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from argparse import ArgumentParser
 from pathlib import Path
+from typing import Any
 
 import pytest
 from capn_crunch import create_options_from_parser
@@ -163,7 +164,9 @@ def test_process_racs_all_everything_disabled_returns_immediately(
     )
     pol_field_options = PolFieldOptions()
     rmsynth_field_options = RMSynthFieldOptions(
-        stokes_cubes=CubesForRMSynth(q_path=Path("/tmp/q.fits"), u=Path("/tmp/u.fits"))
+        stokes_cubes=CubesForRMSynth(
+            q_path=Path("/tmp/q.fits"), u_path=Path("/tmp/u.fits")
+        )
     )
     spice_field_options = SpiceFieldOptions(cubes=[Path("/tmp/i.fits")])
 
@@ -538,39 +541,29 @@ def test_rmsynth_refuses_a_polarisation_strategy_without_the_linear_stokes(
     give rm-synthesis. Caught up front rather than after imaging has run."""
     from flint.prefect.flows.racs_all_pipeline import _check_rmsynth_has_linear_stokes
 
-    strategy = tmp_path / "circular_only.yaml"
+    strategy = tmp_path / "polarisation.yaml"
+
+    def _check(**pol_options: Any) -> None:
+        _check_rmsynth_has_linear_stokes(
+            pipeline_options=RACSAllPipelineOptions(),
+            pol_field_options=PolFieldOptions(**pol_options),
+        )
+
     strategy.write_text(
         "version: 0.2\ndefaults: {}\npolarisation:\n  circular:\n    wsclean: {}\n"
     )
-
     with pytest.raises(ValueError, match="rm-synthesis needs Stokes"):
-        _check_rmsynth_has_linear_stokes(
-            pipeline_options=RACSAllPipelineOptions(),
-            racs_all_options=RACSAllOptions(
-                low_data=tmp_path,
-                mid_data=tmp_path,
-                high_data=tmp_path,
-                imaging_strategy=strategy,
-            ),
-        )
+        _check(imaging_strategy=strategy)
 
-    # A strategy that does image the linear Stokes passes, and so does a run
-    # with rm-synthesis switched off
     strategy.write_text(
         "version: 0.2\ndefaults: {}\npolarisation:\n  linear:\n    wsclean: {}\n"
     )
-    _check_rmsynth_has_linear_stokes(
-        pipeline_options=RACSAllPipelineOptions(),
-        racs_all_options=RACSAllOptions(
-            low_data=tmp_path,
-            mid_data=tmp_path,
-            high_data=tmp_path,
-            imaging_strategy=strategy,
-        ),
-    )
+    _check(imaging_strategy=strategy)
+
+    # No strategy is the polarisation stage's business, not this check's
+    _check()
+
     _check_rmsynth_has_linear_stokes(
         pipeline_options=RACSAllPipelineOptions(skip_rmsynth=True),
-        racs_all_options=RACSAllOptions(
-            low_data=tmp_path, mid_data=tmp_path, high_data=tmp_path
-        ),
+        pol_field_options=PolFieldOptions(imaging_strategy=strategy),
     )
