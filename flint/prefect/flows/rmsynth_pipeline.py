@@ -204,6 +204,8 @@ def process_rmsynth(
         moment_products=rmsynth_field_options.moment_products,
         peak_products=rmsynth_field_options.peak_products,
         output_prefix=output_prefix,
+        moment_threshold_snr=rmsynth_field_options.moment_threshold_snr,
+        peak_threshold_snr=rmsynth_field_options.peak_threshold_snr,
     )
 
     written_paths = output_paths.result()

@@ -181,6 +181,8 @@ def _synth_and_write(
     stokes_q_weight_cube: Path | None = None,
     stokes_u_weight_cube: Path | None = None,
     peak_products: list[FDFLabel] = [],
+    moment_threshold_snr: float = 5.0,
+    peak_threshold_snr: float = 0.0,
 ) -> list[Path]:
     if not cube_products and not moment_products and not peak_products:
         return []
@@ -213,6 +215,8 @@ def _synth_and_write(
         moment_products=moment_products,
         peak_products=peak_products,
         output_prefix=output_prefix,
+        moment_threshold_snr=moment_threshold_snr,
+        peak_threshold_snr=peak_threshold_snr,
     )
 
 
@@ -1049,12 +1053,13 @@ def test_the_peak_and_moment_snr_cuts_are_independent(
         _synth_and_write(
             stokes_q_cube=stokes_q_cube,
             stokes_u_cube=stokes_u_cube,
-            rmsynth_options=RMSynthOptions(**snrs),
+            rmsynth_options=RMSynthOptions(),
             rmclean_options=RMCleanOptions(),
             cube_products=[],
             moment_products=["dirty"],
             peak_products=["dirty"],
             output_prefix=output_prefix,
+            **snrs,
         )
         return (
             fits.getdata(Path(f"{output_prefix}.fdf.dirty.peak_pi.fits")),
@@ -1079,7 +1084,7 @@ def test_no_peak_cut_by_default_even_where_a_pixel_has_no_weight(
     applied as ``0 * noise``: the theoretical noise is inf for a pixel linmos
     blanked, ``0 * inf`` is NaN, and every comparison against NaN is False -- so
     the cut meant to pass everything would instead blank the whole map."""
-    assert RMSynthOptions().peak_threshold_snr == 0.0
+    assert RMSynthFieldOptions().peak_threshold_snr == 0.0
     assert _snr_threshold(0.0, np.float64(np.inf)) is None
     assert _snr_threshold(0.0, np.array([1e-5, np.inf])) is None
     assert _snr_threshold(5.0, np.float64(2.0)) == 10.0

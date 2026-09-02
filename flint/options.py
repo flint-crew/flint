@@ -353,10 +353,6 @@ class RMSynthOptions(BaseOptions):
     per_pixel_rmsf: bool = False
     """Compute the RMSF for each pixel rather than one shared by the cube. Roughly doubles the FDF's size. rm-lite turns this on itself when the weights make pixels disagree, as the linmos weight cubes do"""
     estimate_stokes_i_noise: bool = True
-    moment_threshold_snr: float = 5.0
-    """SNR cut (times the theoretical FDF noise) applied before computing Faraday moment maps, the dirty ones included"""
-    peak_threshold_snr: float = 0.0
-    """SNR cut (times the theoretical FDF noise) below which FDF peak statistics are blanked. Zero applies no cut: a peak is a single sample with no noise floor to integrate, and peak_pi_error is written beside it"""
     """Derive the per-channel Stokes I error from the Stokes I cube when no Stokes I weight cube is given. A weight cube takes precedence"""
 
 
@@ -436,6 +432,10 @@ class RMSynthFieldOptions(BaseOptions):
     """Which Faraday dispersion function (FDF) cubes to write as FITS. Nothing by default, as these cubes can be large."""
     moment_products: list[Literal["dirty", "clean", "model"]] = ["clean"]
     """Which FDF(s) to compute Faraday moment maps from."""
+    moment_threshold_snr: float = 5.0
+    """SNR cut (times the theoretical FDF noise) applied before the moment maps are computed, the dirty ones included"""
+    peak_threshold_snr: float = 0.0
+    """SNR cut (times the theoretical FDF noise) below which peak statistics are blanked. Zero applies no cut: a peak is a single sample with no noise floor to integrate, and peak_pi_error is written beside it"""
     peak_products: list[Literal["dirty", "clean", "model"]] = []
     """Which FDF(s) to measure peak statistics from: peak polarised intensity (raw and debiased), Faraday depth, polarisation angle and intrinsic angle, each with its error. Nine (ny, nx) maps per FDF, so empty by default -- at 16032^2 that is ~9 GB per entry"""
     output_path: Path | None = None

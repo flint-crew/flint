@@ -242,6 +242,8 @@ def task_write_rm_products(
     moment_products: list[FDFLabel],
     peak_products: list[FDFLabel],
     output_prefix: Path,
+    moment_threshold_snr: float = 5.0,
+    peak_threshold_snr: float = 0.0,
 ) -> list[Path]:
     """Batch-compute and write the requested RM-synthesis/RM-CLEAN products"""
     from prefect_dask import get_dask_client
@@ -258,5 +260,7 @@ def task_write_rm_products(
             moment_products=moment_products,
             peak_products=peak_products,
             output_prefix=output_prefix,
+            moment_threshold_snr=moment_threshold_snr,
+            peak_threshold_snr=peak_threshold_snr,
             dask_client=client,
         )

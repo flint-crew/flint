@@ -651,6 +651,8 @@ def write_rm_products(
     moment_products: list[FDFLabel],
     peak_products: list[FDFLabel],
     output_prefix: Path,
+    moment_threshold_snr: float = 5.0,
+    peak_threshold_snr: float = 0.0,
     dask_client: Client | None = None,
 ) -> list[Path]:
     """Batch-compute and write the requested RM-synthesis/RM-CLEAN output products.
@@ -664,6 +666,8 @@ def write_rm_products(
         cube_products (list[FDFLabel]): Which FDF cube(s) to write ('dirty', 'clean', 'model')
         moment_products (list[FDFLabel]): Which FDF(s) to compute Faraday moment maps from
         peak_products (list[FDFLabel]): Which FDF(s) to write peak-statistic maps from, nine per entry
+        moment_threshold_snr (float, optional): SNR cut applied before the moment maps. Defaults to 5.0.
+        peak_threshold_snr (float, optional): SNR cut below which peaks are blanked. Zero applies no cut. Defaults to 0.0.
         output_prefix (Path): Common prefix for the output files
         dask_client (Client | None, optional): A distributed Client (e.g. the one backing a Prefect ``DaskTaskRunner``) to compute across, rather than just the local worker. Defaults to None.
 
@@ -745,7 +749,7 @@ def write_rm_products(
     # applies this same cut inside RM-CLEAN to its own moment maps, which flint
     # does not use, so it is rederived here from the shared theoretical noise.
     moment_threshold = _snr_threshold(
-        rmsynth_options.moment_threshold_snr,
+        moment_threshold_snr,
         synth_results.theoretical_noise.fdf_error_noise,
     )
     for label in moment_products:
@@ -778,7 +782,7 @@ def write_rm_products(
     # integrates the whole Faraday depth axis, a peak is one sample with no such
     # floor, and peak_pi_error is written beside it to judge significance.
     peak_threshold = _snr_threshold(
-        rmsynth_options.peak_threshold_snr,
+        peak_threshold_snr,
         synth_results.theoretical_noise.fdf_error_noise,
     )
     for label in peak_products:
