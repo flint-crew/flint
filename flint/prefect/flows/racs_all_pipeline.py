@@ -41,13 +41,6 @@ from flint.prefect.flows.racs_all_continuum_selfcal import process_racs_all_cont
 from flint.prefect.flows.rmsynth_pipeline import process_rmsynth
 from flint.prefect.flows.spice_compression_pipeline import process_spice_compression
 
-STAGE_CLUSTER_CONFIG_ATTRS = (
-    "imaging_cluster_config",
-    "polarisation_cluster_config",
-    "rmsynth_cluster_config",
-    "spice_cluster_config",
-)
-
 # Fields on the rm-synth/spice options classes that process_racs_all always recomputes
 # from the polarisation stage's output. Excluded from the combined CLI.
 COMPUTED_FIELDS = {"stokes_cubes", "error_cubes", "cubes", "weight_cubes"}
@@ -434,7 +427,12 @@ def cli() -> None:
         parser_namespace=args, options_class=SpiceFieldOptions
     )
 
-    for cluster_config_attr in STAGE_CLUSTER_CONFIG_ATTRS:
+    for cluster_config_attr in (
+        "imaging_cluster_config",
+        "polarisation_cluster_config",
+        "rmsynth_cluster_config",
+        "spice_cluster_config",
+    ):
         if getattr(pipeline_options, cluster_config_attr) is None:
             pipeline_options = pipeline_options.with_options(
                 **{cluster_config_attr: args.cluster_config}

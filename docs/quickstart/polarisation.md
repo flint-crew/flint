@@ -61,44 +61,6 @@ cubes alone, so both are available: the natural cubes to archive, the total cube
 to synthesise from. See `RMSynthFieldOptions.beam_cutoff` to drop the coarsest
 channels from that solve rather than smoothing the whole band to reach them.
 
-## Running RM-synthesis on its own
-
-`flint_flow_rmsynth_pipeline` runs the rm-synth stage against cubes that have
-already been imaged, without the rest of the `racs-all` flow. The Stokes cubes
-are given as a flat list, and which Stokes each one is comes from its filename,
-so they have to follow the `flint` or CASDA naming scheme:
-
-```bash
-flint_flow_rmsynth_pipeline \
-  --stokes-cubes SB56289.RACS_1041+18.round1.q.pol.image.cube.fits \
-                 SB56289.RACS_1041+18.round1.u.pol.image.cube.fits \
-                 SB56289.RACS_1041+18.round1.i.pol.image.cube.fits \
-  --imaging-strategy strategy.yaml
-```
-
-Stokes Q and U are required; Stokes I is optional and is used to fit the
-fractional-polarisation correction. `--error-cubes` takes a matching list, and
-needs `--error-cube-kind` to say whether those are `linmos` weights (an inverse
-variance) or a noise (a sigma) -- reading one as the other inverts the error by
-1/sigma**2. Every option can equally be set in a `--cli-config` file:
-
-```
-stokes-cubes = [SB56289.RACS_1041+18.round1.q.pol.image.cube.fits, SB56289.RACS_1041+18.round1.u.pol.image.cube.fits]
-error-cubes = [SB56289.RACS_1041+18.round1.q.pol.weight.cube.fits, SB56289.RACS_1041+18.round1.u.pol.weight.cube.fits]
-error-cube-kind = weight
-```
-
-```{argparse}
-:ref: flint.prefect.flows.rmsynth_pipeline.get_parser
-:prog: flint_flow_rmsynth_pipeline
-```
-
-## The `RMSynthFieldOptions` class
-
-```{literalinclude}  ../../flint/options.py
-:pyobject: RMSynthFieldOptions
-```
-
 ## Spectro-polarimetric imaging in WSClean
 
 We encourage users to carefully read the [WSclean documentation](https://wsclean.readthedocs.io/en/latest/). In practice, we have encountered a few common 'gotchas' when producing polarisation cube. As always, a user should pay attention to the output logs to see e.g. how many iterations have been performed and what the stopping criterion was. We also encourage the inspection of image, model, and residual products to see how well (or not) deconvolution has performed.
