@@ -34,6 +34,7 @@ from flint.naming import (
     get_sbid_from_path,
 )
 from flint.options import (
+    FFTBANEOptions,
     FitsCubeOptions,
     PolFieldOptions,
     dump_field_options_to_yaml,
@@ -361,6 +362,18 @@ def process_science_fields_pol(
     if compress_cubes is not None:
         fitscube_options = fitscube_options.with_options(compress=compress_cubes)
 
+    # Parameters from the strategy, the switch from the flow options, as with
+    # every other stage
+    fft_bane_options = (
+        FFTBANEOptions(
+            **get_options_from_strategy(
+                strategy=strategy, operation="polarisation", mode="fftbane"
+            )
+        )
+        if pol_field_options.bane_noise
+        else None
+    )
+
     cube_results: list[PrefectFuture[Path]] = []
     stokes_image_cubes: dict[str, PrefectFuture[Path]] = {}
     stokes_weight_cubes: dict[str, PrefectFuture[Path]] = {}
@@ -385,7 +398,7 @@ def process_science_fields_pol(
                 field_summary=field_summary,
                 fitscube_options=fitscube_options,
                 suffix_str=POL_NAME_SUFFIX,
-                fft_bane_options=pol_field_options.bane_noise,
+                fft_bane_options=fft_bane_options,
             )
             stokes_image_cubes[stokes] = stokes_cubes.image
             stokes_weight_cubes[stokes] = stokes_cubes.weight

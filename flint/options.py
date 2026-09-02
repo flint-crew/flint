@@ -230,8 +230,8 @@ class PolFieldOptions(BaseOptions):
     """Specify the final beamsize of linmos field images in (arcsec, arcsec, deg)"""
     pb_cutoff: float = 0.1
     """Primary beam attenuation cutoff to use during linmos"""
-    bane_noise: FFTBANEOptions | None = None
-    """Measure a background and RMS cube off the co-added planes with BANE. Off by default, and independent of ``RMSynthFieldOptions.bane_noise``"""
+    bane_noise: bool = False
+    """Measure a background and RMS cube off the co-added planes with BANE. Parameters come from the strategy's ``fftbane`` mode. Independent of ``RMSynthFieldOptions.bane_noise``"""
     imaging_strategy: Path | None = None
     """Path to a FLINT imaging yaml file that contains settings to use throughout imaging"""
     pol_cube_channel_width: float | None = None
@@ -426,8 +426,8 @@ class RMSynthFieldOptions(BaseOptions):
     """The Stokes cubes. Set by the racs-all flow"""
     error_cubes: ErrorCubesForRMSynth | None = None
     """Weight or noise cubes, never both. None lets rm-lite estimate from Q/U itself"""
-    bane_noise: FFTBANEOptions | None = None
-    """Measure BANE cubes off the common-resolution cubes and take the FDF noise from the RMS. Supersedes ``error_cubes``, which describe the unconvolved inputs"""
+    bane_noise: bool = False
+    """Measure BANE cubes off the common-resolution cubes and take the FDF noise from the RMS. Parameters come from the strategy's ``fftbane`` mode. Supersedes ``error_cubes``, which describe the unconvolved inputs"""
     imaging_strategy: Path | None = None
     """Path to a FLINT imaging yaml file that contains the RMSynthOptions/RMCleanOptions settings to use"""
     beam_cutoff: float | None = None

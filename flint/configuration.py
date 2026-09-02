@@ -21,6 +21,7 @@ from flint.misc.holo import ConcatHoloOptions
 from flint.naming import add_timestamp_to_path
 from flint.options import (
     ArchiveOptions,
+    FFTBANEOptions,
     FitsCubeOptions,
     RMCleanOptions,
     RMSynthOptions,
@@ -54,6 +55,8 @@ MODE_OPTIONS_MAPPING = {
     "tukeytractor": TukeyTractorOptions,
     "rmsynth": RMSynthOptions,
     "rmclean": RMCleanOptions,
+    # "bane" is the containerised aegean BANE; this is the FFT one in flint.bane
+    "fftbane": FFTBANEOptions,
     "concatholo": ConcatHoloOptions,
     "spice": SpiceOptions,
 }
