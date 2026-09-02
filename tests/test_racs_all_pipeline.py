@@ -16,6 +16,9 @@ from flint.options import (
     RACSAllPipelineOptions,
     RMSynthFieldOptions,
     SpiceFieldOptions,
+    StokesCubes,
+    StokesNoiseCubes,
+    StokesWeightCubes,
 )
 from flint.prefect.flows.racs_all_pipeline import (
     _check_racs_all_pipeline_options,
@@ -60,7 +63,7 @@ def test_get_parser_excludes_computed_stage_outputs() -> None:
     spice_field_options = create_options_from_parser(
         parser_namespace=args, options_class=SpiceFieldOptions
     )
-    assert rmsynth_field_options.stokes_q_cube is None
+    assert rmsynth_field_options.stokes_cubes is None
     assert spice_field_options.cubes == []
     assert spice_field_options.weight_cubes == []
 
@@ -160,7 +163,7 @@ def test_process_racs_all_everything_disabled_returns_immediately(
     )
     pol_field_options = PolFieldOptions()
     rmsynth_field_options = RMSynthFieldOptions(
-        stokes_q_cube=Path("/tmp/q.fits"), stokes_u_cube=Path("/tmp/u.fits")
+        stokes_cubes=StokesCubes(q=Path("/tmp/q.fits"), u=Path("/tmp/u.fits"))
     )
     spice_field_options = SpiceFieldOptions(cubes=[Path("/tmp/i.fits")])
 
@@ -485,10 +488,9 @@ def test_bane_rms_cubes_are_preferred_over_the_linmos_weights(
     _run_racs_all(tmp_path=tmp_path)
 
     options = _rmsynth_options(rmsynth_stage)
-    assert options.stokes_q_noise_cube == tmp_path / "q_rms.fits"
-    assert options.stokes_u_noise_cube == tmp_path / "u_rms.fits"
-    assert options.stokes_q_weight_cube is None
-    assert options.stokes_u_weight_cube is None
+    assert isinstance(options.error_cubes, StokesNoiseCubes)
+    assert options.error_cubes.q == tmp_path / "q_rms.fits"
+    assert options.error_cubes.u == tmp_path / "u_rms.fits"
 
 
 def test_the_linmos_weights_are_used_when_bane_did_not_run(
@@ -503,8 +505,8 @@ def test_the_linmos_weights_are_used_when_bane_did_not_run(
     _run_racs_all(tmp_path=tmp_path)
 
     options = _rmsynth_options(rmsynth_stage)
-    assert options.stokes_q_weight_cube == tmp_path / "q.weight.fits"
-    assert options.stokes_q_noise_cube is None
+    assert isinstance(options.error_cubes, StokesWeightCubes)
+    assert options.error_cubes.q == tmp_path / "q.weight.fits"
 
 
 def test_the_bane_cubes_are_spiced(

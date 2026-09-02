@@ -632,10 +632,29 @@ def test_rmsynth_rejects_a_compressed_weight_cube(tmp_path: Path) -> None:
     """The weight cubes are read block-by-block just like the Stokes cubes, so a
     gzipped one inflates the whole cube per read in exactly the same way."""
     stokes_q_cube, stokes_u_cube = _make_qu_cubes(tmp_path)
+    uncompressed = _make_weight_cube(
+        tmp_path,
+        (N_CHAN, NY, NX),
+        np.linspace(700e6, 1300e6, N_CHAN),
+        1e-3,
+        "plain",
+    )
+    # One compressed cube at a time, the rest readable, so the check is on the
+    # gzipped one rather than on a half-filled set
     for weights in (
-        {"stokes_q_weight_cube": tmp_path / "q.weight.fits.gz"},
-        {"stokes_u_weight_cube": tmp_path / "u.weight.fits.gz"},
-        {"stokes_i_weight_cube": tmp_path / "i.weight.fits.gz"},
+        {
+            "stokes_q_weight_cube": tmp_path / "q.weight.fits.gz",
+            "stokes_u_weight_cube": uncompressed,
+        },
+        {
+            "stokes_q_weight_cube": uncompressed,
+            "stokes_u_weight_cube": tmp_path / "u.weight.fits.gz",
+        },
+        {
+            "stokes_q_weight_cube": uncompressed,
+            "stokes_u_weight_cube": uncompressed,
+            "stokes_i_weight_cube": tmp_path / "i.weight.fits.gz",
+        },
     ):
         with pytest.raises(NotSupportedError):
             _run_rmsynth_3d(
@@ -761,24 +780,20 @@ def _make_linmos_weight_cube(
     return path
 
 
-def test_one_linmos_weight_cube_is_refused(
-    tmp_path: Path, qu_cubes: tuple[Path, Path]
-) -> None:
+def test_one_linmos_weight_cube_is_refused(tmp_path: Path) -> None:
     """rm-lite builds the weights from Q and U together, so a lone cube is a
-    wiring mistake it refuses rather than half-applies. Pinned here because the
-    racs-all flow passes the pair positionally and a silent drop would look like
-    a linmos-weighted run that never was."""
-    stokes_q_cube, stokes_u_cube = qu_cubes
+    wiring mistake rather than something to half-apply. The container now
+    refuses it at construction, before any cube is opened, so a half-filled set
+    cannot reach rm-lite at all."""
+    weights = _make_linmos_weight_cube(tmp_path, "q", blank_outside=1.5)
 
-    with pytest.raises(ValueError, match="[Mm]ust pass both"):
-        _run_rmsynth_3d(
-            stokes_q_cube=stokes_q_cube,
-            stokes_u_cube=stokes_u_cube,
-            rmsynth_options=RMSynthOptions(),
-            stokes_q_weight_cube=_make_linmos_weight_cube(
-                tmp_path, "q", blank_outside=1.5
-            ),
-        )
+    # ValidationError from the constructor, a plain ValueError from
+    # from_mapping; the former subclasses the latter, so one assertion covers both
+    for kind in (StokesWeightCubes, StokesNoiseCubes):
+        with pytest.raises(ValueError):
+            kind(q=weights)
+        with pytest.raises(ValueError, match="missing"):
+            kind.from_mapping({"q": weights})
 
 
 def test_rmsynth_with_linmos_weights_stays_cleanable(
