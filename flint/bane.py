@@ -1,16 +1,11 @@
 """BANE, the background and noise estimator, computed with FFTs.
 
-Ported from ``AegeanTools.BANE_fft`` (AlecThomson/Aegean, ``dask`` branch), which
-is a faster reimplementation of the ``BANE`` shipped with aegean. Unlike that
-one, ``step`` here is a downsampling factor and ``box`` a kernel size, and the
-box average is a convolution rather than a grid of sigma clips.
+Ported from ``AegeanTools.BANE_fft`` (AlecThomson/Aegean, ``dask`` branch). Here
+``step`` is a downsampling factor and ``box`` a kernel size, and the box average
+is a convolution. Only the 2D single-plane routines: callers run this per channel.
 
-Only the 2D single-plane routines are ported: the polarisation flow runs this
-per linmos-ed channel, so the cube handling upstream is not needed.
-
-``rocket_fft`` is imported for its side effect of teaching numba ``numpy.fft``.
-Without it every ``njit`` here fails to compile, eagerly at import for those
-carrying an explicit signature.
+``rocket_fft`` is imported for its side effect of teaching numba ``numpy.fft``,
+without which every ``njit`` here fails to compile.
 """
 
 from __future__ import annotations
@@ -120,11 +115,9 @@ def bane_fft(
 ) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
     """Background and RMS of `image`, as `kernel`-weighted local averages.
 
-    `image` must be zero wherever `valid` is zero. Smoothing the validity mask
-    with the same kernel gives the fraction of each average that came from real
-    data, and dividing by it stops a blanked pixel counting as a measured zero:
-    without that the background collapses toward zero within a kernel width of
-    a blank, which for a linmos mosaic is the whole primary-beam border.
+    `image` must be zero wherever `valid` is zero. Dividing by the smoothed
+    validity mask stops a blank counting as a measured zero, which would
+    otherwise drag the background down within a kernel width of every blank.
     """
     weight = fft_average(valid, kernel)
     weight = np.where(weight > 0, weight, np.nan).astype(np.float32)
@@ -217,15 +210,10 @@ def _downsample_slices(
 ) -> tuple[slice, slice]:
     """Slices taking every `step_size_pix` pixel, trimmed to an even count.
 
-    The FFT is cheapest on an even grid, and the kernel is defined against the
-    downsampled image, so a trailing odd row or column is dropped rather than
-    kept.
-
-    Note the sampled region runs from `step_size_pix` to `length -
-    step_size_pix`, not the full image, while the zoom back up stretches it
-    across the full image. That misregistration is the likely cause of the
-    offset upstream records as a TODO; sampling half a cell in instead was
-    measured and made the background worse, so this keeps upstream's grid.
+    The sampled region runs from `step_size_pix` to `length - step_size_pix`
+    while the zoom back up stretches it over the whole image. That is the likely
+    cause of the offset upstream records as a TODO; sampling half a cell in
+    instead measured worse, so this keeps upstream's grid.
     """
     slices = []
     for length in (shape[0], shape[1]):
@@ -248,12 +236,10 @@ def _bane_round(
     rng: np.random.Generator,
     round_number: int,
 ) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
-    """One clip-refill-smooth pass, given the background and RMS to clip against.
+    """One clip-refill-smooth pass, clipping against the given background and RMS.
 
-    Sources bias a local average, so they are replaced by noise drawn from the
-    incoming maps before the convolution that measures the background. The
-    replacement carries the local background too: filling with zero-mean noise
-    would drag the background down wherever a source was removed.
+    The refill carries the local background: zero-mean noise would drag the
+    background down wherever a source was removed.
     """
     with np.errstate(invalid="ignore", divide="ignore"):
         source_mask = (np.abs(filled - background) / rms > clip_sigma) & ~nan_mask
@@ -281,9 +267,8 @@ def _bane_round(
         )
         clipped, round_valid = clipped[y_slice, x_slice], valid[y_slice, x_slice]
 
-    # pad_reflect reflects by the kernel size and is njit-ed without bounds
-    # checking, so a kernel wider than the image it pads reads off the end and
-    # returns quietly wrong maps rather than raising
+    # pad_reflect is njit-ed without bounds checking, so a kernel wider than the
+    # image reads off the end and returns quietly wrong maps rather than raising
     if any(pad >= length for pad, length in zip(kernel.shape, clipped.shape)):
         msg = (
             f"A {kernel.shape} kernel does not fit the {clipped.shape} image it "
@@ -316,10 +301,8 @@ def robust_bane(
 ) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
     """Background and RMS maps of a single image plane.
 
-    Sources bias a local average, so they are clipped against a first-pass RMS
-    and refilled with noise before the convolution that measures the background.
-    The work happens on the downsampled image and is zoomed back up, which is
-    where the speed over a per-pixel box comes from.
+    Two passes: the first clips sources against one background and noise for the
+    plane, the second against the maps the first produced.
 
     Args:
         image (NDArray[np.float32]): The image plane to measure
@@ -344,16 +327,13 @@ def robust_bane(
     filled = np.where(nan_mask, 0.0, image).astype(np.float32)
     finite = image[~nan_mask].ravel()
 
-    # First pass finds the sources against one background and noise for the
-    # whole plane, which is all there is to go on before a map exists. The
-    # median matters: testing |image| rather than |image - background| makes
-    # every pixel a source as soon as the plane carries any DC offset.
+    # The median matters: testing |image| rather than |image - background| makes
+    # every pixel a source as soon as the plane carries a DC offset
     background = np.full_like(filled, float(np.median(finite)))
     rms = np.full_like(filled, float(rms_estimator(finite)))
 
-    # Second pass repeats the cut against those maps. A linmos mosaic's noise
-    # rises with the primary beam, so a single threshold clips real noise at the
-    # edge while missing faint sources in the middle.
+    # A mosaic's noise rises with the primary beam, so one threshold clips real
+    # noise at the edge while missing faint sources in the middle
     rng = np.random.default_rng(fft_bane_options.seed)
     for round_number in (1, 2):
         background, rms = _bane_round(
@@ -381,9 +361,8 @@ def bane_fits_image(
 ) -> BANEMaps:
     """Write the background and RMS maps of a single-plane FITS image.
 
-    Named ``_bkg.fits`` and ``_rms.fits`` beside the input, matching what the
-    aegean BANE produces (see ``flint.naming.create_aegean_names``) so the two
-    are interchangeable downstream.
+    Named ``_bkg.fits`` and ``_rms.fits`` beside the input, as the aegean BANE
+    names them, so the two are interchangeable downstream.
 
     Args:
         image (Path): Single-plane FITS image to measure
@@ -395,9 +374,8 @@ def bane_fits_image(
     logger.info(f"Running FFT BANE on {image}")
     with fits.open(image, memmap=True, mode="denywrite") as hdul:
         header = hdul[0].header
-        # Squeezed rather than indexed: a linmos plane carries degenerate
-        # Stokes/frequency axes that robust_bane has no use for, but the maps
-        # are written back with them so they stack like the image they came from
+        # A linmos plane carries degenerate Stokes/frequency axes; the maps are
+        # written back with them so they stack like the image they came from
         original_shape = hdul[0].data.shape
         data = np.squeeze(hdul[0].data).astype(np.float32)
 
@@ -411,8 +389,7 @@ def bane_fits_image(
 
     names = create_aegean_names(base_output=str(image.parent / image.stem))
     for data_out, path in ((background, names.bkg_image), (rms, names.rms_image)):
-        # The input header, so the maps land on the input's pixel grid and can
-        # be stacked into a cube alongside it
+        # The input header, so the maps stay on its pixel grid
         fits.writeto(path, data_out.reshape(original_shape), header, overwrite=True)
         logger.info(f"Wrote {path}")
 

@@ -410,14 +410,9 @@ def write_stokes_i_coeff_maps_to_fits(
 def _snr_threshold(snr: float, fdf_error_noise: FDFThreshold) -> FDFThreshold:
     """An FDF amplitude cut ``snr`` times the theoretical noise, or None for no cut.
 
-    Zero means no cut, and has to short-circuit rather than multiply through:
-    the theoretical noise is ``inf`` wherever a pixel carries no weight at all
-    (linmos blanks the mosaic edge), and ``0 * inf`` is NaN, which blanks every
-    comparison against it instead of passing everything.
-
-    The noise is a scalar for per-channel weights and a lazy (ny, nx) map for
-    the per-pixel ones the linmos cubes give, so the cut comes back in whichever
-    form it arrived in.
+    Zero short-circuits rather than multiplying through: the noise is ``inf``
+    where a pixel carries no weight, and ``0 * inf`` is NaN, which would blank
+    every comparison instead of passing everything.
     """
     if snr == 0 or fdf_error_noise is None:
         return None
@@ -776,15 +771,11 @@ def write_rm_products(
         assert clean_results is not None  # run_clean is `clean_results is not None`
         compute_targets["rmclean_niter"] = clean_results.iter_count_map
 
-    # rm-lite returns peaks of its own on RMClean3DResults, but only for the
-    # clean FDF and only under its own threshold. Deriving them here is what
-    # lets any requested FDF have them -- the dirty one included, which needs no
-    # RM-CLEAN at all -- under a cut flint chooses.
-    #
-    # A separate cut from the moments, and off by default. The moment cut exists
-    # because mom0 integrates the whole Faraday depth axis; a peak is one sample
-    # and has no such floor, so blanking it discards a real measurement whose
-    # error (peak_pi_error) is written beside it.
+    # rm-lite's own peaks cover only the clean FDF under its own threshold;
+    # deriving them here lets any requested FDF have them, the dirty one
+    # included. Cut separately from the moments and off by default: mom0
+    # integrates the whole Faraday depth axis, a peak is one sample with no such
+    # floor, and peak_pi_error is written beside it to judge significance.
     peak_threshold = _snr_threshold(
         rmclean_options.peak_threshold_snr,
         synth_results.theoretical_noise.fdf_error_noise,

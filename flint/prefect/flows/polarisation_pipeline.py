@@ -72,9 +72,9 @@ class PolPipelineResult(BaseOptions):
     weight_cubes: dict[str, Path]
     """The full Stokes weights written for each imaged polarisation (e.g. 'i', 'q', 'u', 'v')"""
     bkg_cubes: dict[str, Path] = {}
-    """BANE background cube per imaged polarisation. Empty unless ``PolFieldOptions.bane_noise`` is set"""
+    """BANE background cube per imaged polarisation. Empty unless asked for"""
     rms_cubes: dict[str, Path] = {}
-    """BANE RMS noise cube per imaged polarisation, measured off the co-added planes rather than inferred from the linmos weights. Empty unless ``PolFieldOptions.bane_noise`` is set"""
+    """BANE RMS cube per imaged polarisation, measured off the co-added planes. Empty unless asked for"""
     mfs_products: dict[str, dict[str, Path]]
     """MFS image/model/residual products co-added per Stokes parameter, keyed by Stokes ('i', 'q', 'u', 'v') then product type ('image', 'model', 'residual'). Only populated for Stokes imaged under a polarisation with ``WSCleanOptions.flint_save_mfs_products`` set"""
     terminal_futures: list[PrefectFuture[Any]]

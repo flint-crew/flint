@@ -231,7 +231,7 @@ class PolFieldOptions(BaseOptions):
     pb_cutoff: float = 0.1
     """Primary beam attenuation cutoff to use during linmos"""
     bane_noise: FFTBANEOptions | None = None
-    """Opt in to measuring a background and RMS cube off the co-added planes with BANE (see ``flint.bane``). These describe the natural-resolution cubes this stage archives. None, the default, skips it. Independent of ``RMSynthFieldOptions.bane_noise``, which is the one the FDF noise comes from"""
+    """Measure a background and RMS cube off the co-added planes with BANE. Off by default, and independent of ``RMSynthFieldOptions.bane_noise``"""
     imaging_strategy: Path | None = None
     """Path to a FLINT imaging yaml file that contains settings to use throughout imaging"""
     pol_cube_channel_width: float | None = None
@@ -241,13 +241,8 @@ class PolFieldOptions(BaseOptions):
 
 
 class FFTBANEOptions(BaseOptions):
-    """Options for ``flint.bane.robust_bane``. Named apart from
-    ``flint.source_finding.aegean.BANEOptions``, which drives the containerised
-    aegean BANE instead.
-
-    Defined here rather than in ``flint.bane`` so that strategy validation
-    (``flint.configuration``) does not pull in numba, as ``RMSynthOptions`` does
-    for rm_lite."""
+    """Options for ``flint.bane.robust_bane``. Lives here, not in ``flint.bane``,
+    so strategy validation does not pull in numba"""
 
     step_size: int | None = None
     """Downsampling factor in pixels. None uses 3 beams; a negative value sets the beams per step"""
@@ -256,31 +251,22 @@ class FFTBANEOptions(BaseOptions):
     clip_sigma: float = 5.0
     """Pixels above this SNR are replaced by noise before the background is fitted"""
     seed: int = 1234
-    """Seed for the noise the clipped pixels are filled with, so a rerun reproduces the maps"""
+    """Seeds the noise clipped pixels are filled with, so a rerun reproduces the maps"""
 
 
 class _StokesTrio(BaseOptions):
-    """One path per Stokes, shared by the containers below.
-
-    Never annotate with this directly: the whole point of the three concrete
-    types is that a cube cannot be mistaken for a noise or a weight, and a base
-    they all satisfy would let exactly that through.
-    """
+    """One path per Stokes. Never annotate with this: the types below exist to be told apart"""
 
     q: Path
     """Stokes Q"""
     u: Path
     """Stokes U"""
     i: Path | None = None
-    """Stokes I. Optional throughout: rm-synthesis runs without the fractional-polarisation correction"""
+    """Stokes I, optional: rm-synthesis runs without it"""
 
     @classmethod
     def from_mapping(cls, cubes: Mapping[str, Path]) -> Self:
-        """From a per-Stokes dict, as the polarisation stage keys them.
-
-        Anything but q/u/i is dropped, and a missing q or u is refused here
-        rather than surfacing as a KeyError from the call site.
-        """
+        """From a per-Stokes dict, dropping anything but q/u/i"""
         missing = {"q", "u"} - cubes.keys()
         if missing:
             msg = f"Need a cube for every one of q and u, missing {sorted(missing)}."
@@ -289,36 +275,33 @@ class _StokesTrio(BaseOptions):
 
     @property
     def paths(self) -> list[Path]:
-        """Every path set, for callers that only validate or clean them up"""
+        """Every path set"""
         return [path for path in (self.q, self.u, self.i) if path is not None]
 
 
 class StokesCubes(_StokesTrio):
-    """The Stokes image cubes rm-synthesis reads"""
+    """The Stokes image cubes"""
 
 
 class StokesWeightCubes(_StokesTrio):
-    """Per-pixel inverse variance, 1/sigma**2, as linmos writes it"""
+    """Inverse variance, 1/sigma**2, as linmos writes it"""
 
     kind: Literal["weight"] = "weight"
-    """Discriminates the union below. Never set it by hand"""
+    """Union discriminator"""
 
 
 class StokesNoiseCubes(_StokesTrio):
-    """Per-pixel noise, sigma, as BANE measures it"""
+    """Noise, sigma, as BANE measures it"""
 
     kind: Literal["noise"] = "noise"
-    """Discriminates the union below. Never set it by hand"""
+    """Union discriminator"""
 
 
 StokesErrorCubes: TypeAlias = Annotated[
     StokesWeightCubes | StokesNoiseCubes, Field(discriminator="kind")
 ]
-"""The error cubes rm-synthesis weights by: an inverse variance or a noise, never
-both and never something ambiguous. rm-lite takes either through one argument and
-is told which by a flag, so mixing them inverts the noise by 1/sigma**2. The
-discriminator is what keeps that straight across a serialisation round trip, which
-prefect does to every task input."""
+"""A weight or a noise, never both. Confusing them inverts the noise by 1/sigma**2,
+so the tag keeps them apart across the serialisation prefect does to task inputs."""
 
 
 class RMSynthOptions(BaseOptions):
@@ -434,11 +417,11 @@ class RMSynthFieldOptions(BaseOptions):
     than exposed here."""
 
     stokes_cubes: StokesCubes | None = None
-    """The Stokes Q/U (and optionally I) FITS cubes. Computed by the racs-all flow, so required only when running this pipeline standalone"""
+    """The Stokes cubes. Set by the racs-all flow"""
     error_cubes: StokesErrorCubes | None = None
-    """The linmos weight cubes or a set of noise cubes, never both: see ``StokesErrorCubes``. None leaves rm-lite to estimate a per-channel noise from Q/U itself. Superseded by ``bane_noise``, which measures the noise at the resolution the FDF is built at"""
+    """Weight or noise cubes, never both. None lets rm-lite estimate from Q/U itself"""
     bane_noise: FFTBANEOptions | None = None
-    """Opt in to measuring BANE background and RMS cubes off the common-resolution cubes this stage writes, and using the RMS for the FDF noise (see ``flint.bane``). Measured after the convolution, so they describe the resolution the FDF is built at and supersede ``error_cubes``, which describe the unconvolved inputs. None, the default, falls back to whatever cubes the caller passed"""
+    """Measure BANE cubes off the common-resolution cubes and take the FDF noise from the RMS. Supersedes ``error_cubes``, which describe the unconvolved inputs"""
     imaging_strategy: Path | None = None
     """Path to a FLINT imaging yaml file that contains the RMSynthOptions/RMCleanOptions settings to use"""
     beam_cutoff: float | None = None

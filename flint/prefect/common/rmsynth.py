@@ -47,17 +47,17 @@ class CommonResolutionCubes(NamedTuple):
     """The cubes ``convolve_cubes_to_common_resolution`` writes, keyed by Stokes"""
 
     cubes: dict[str, Path]
-    """The cube to use per Stokes: the convolved one, or the input unchanged when ``convolved`` is False"""
+    """The cube to use per Stokes: convolved, or the input unchanged"""
     convolved: bool = False
-    """Whether these are new cubes. False means the inputs already shared a resolution and were used as they are, so nothing new was written"""
+    """False when the inputs already shared a resolution and nothing new was written"""
     bkg_cubes: dict[str, Path] = {}
-    """BANE background cube per Stokes, measured on the convolved planes. Empty unless BANE was asked for"""
+    """BANE background cube per Stokes. Empty unless BANE was asked for"""
     rms_cubes: dict[str, Path] = {}
-    """BANE RMS cube per Stokes, measured on the convolved planes so it describes the resolution the FDF is built at. Empty unless BANE was asked for"""
+    """BANE RMS cube per Stokes. Empty unless BANE was asked for"""
 
     @property
     def all_cubes(self) -> list[Path]:
-        """Every cube written, for the callers that only trim and compress them"""
+        """Every cube written"""
         if not self.convolved:
             return []
         return [
@@ -143,11 +143,9 @@ def convolve_cubes_to_common_resolution(
         convol_suffix=unmapped(convol_suffix),
     ).result()
 
-    # Measured on the convolved planes, not the ones they came from: these
-    # describe the resolution rm-synthesis builds the FDF at, which is the whole
-    # point of making them here rather than reusing the polarisation stage's.
-    # Resolved before the cubes are assembled because `fitscube_options` removes
-    # each plane once it has been cubed.
+    # Measured on the convolved planes, which is the resolution the FDF is
+    # built at. Resolved before the cubes are assembled, since `fitscube_options`
+    # removes each plane once cubed.
     bane_maps: list[BANEMaps] = []
     if fft_bane_options is not None:
         bane_maps = task_bane_fits_image.map(

@@ -153,10 +153,9 @@ def process_rmsynth(
     )
     stokes_cubes = StokesCubes.from_mapping(common_resolution.cubes)
 
-    # A noise cube only describes the cubes it was measured on. Convolving to a
-    # common beam changes them, so the BANE cubes made just above supersede
-    # whatever the caller passed in; the caller's are right only when no
-    # convolution happened and the cubes are the ones BANE already saw.
+    # A noise cube only describes the cubes it was measured on, so the BANE
+    # cubes made just above supersede the caller's. The caller's are right only
+    # when nothing was convolved and they describe these same cubes.
     error_cubes: StokesErrorCubes | None = (
         StokesNoiseCubes.from_mapping(common_resolution.rms_cubes)
         if common_resolution.rms_cubes

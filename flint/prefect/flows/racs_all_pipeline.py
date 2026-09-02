@@ -255,11 +255,8 @@ def process_racs_all(
     rmsynth_convolved_cubes: list[Path] = []
     rmsynth_noise_cubes: list[Path] = []
     if not pipeline_options.skip_rmsynth:
-        # The BANE RMS cubes are measured off the co-added planes, so they
-        # describe the cubes rm-synth reads. The linmos weights are an inverse
-        # variance carried over from the input images and are the fallback when
-        # the polarisation stage did not run BANE. Either way rm-synth measures
-        # its own once it convolves to a common beam, which supersedes both.
+        # BANE RMS if the polarisation stage measured it, else the linmos
+        # weights. rm-synth supersedes both once it convolves to a common beam.
         error_cubes: StokesErrorCubes = (
             StokesNoiseCubes.from_mapping(pol_result.rms_cubes)
             if pol_result.rms_cubes
