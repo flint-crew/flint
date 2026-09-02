@@ -1049,8 +1049,8 @@ def test_the_peak_and_moment_snr_cuts_are_independent(
         _synth_and_write(
             stokes_q_cube=stokes_q_cube,
             stokes_u_cube=stokes_u_cube,
-            rmsynth_options=RMSynthOptions(),
-            rmclean_options=RMCleanOptions(**snrs),
+            rmsynth_options=RMSynthOptions(**snrs),
+            rmclean_options=RMCleanOptions(),
             cube_products=[],
             moment_products=["dirty"],
             peak_products=["dirty"],
@@ -1079,7 +1079,7 @@ def test_no_peak_cut_by_default_even_where_a_pixel_has_no_weight(
     applied as ``0 * noise``: the theoretical noise is inf for a pixel linmos
     blanked, ``0 * inf`` is NaN, and every comparison against NaN is False -- so
     the cut meant to pass everything would instead blank the whole map."""
-    assert RMCleanOptions().peak_threshold_snr == 0.0
+    assert RMSynthOptions().peak_threshold_snr == 0.0
     assert _snr_threshold(0.0, np.float64(np.inf)) is None
     assert _snr_threshold(0.0, np.array([1e-5, np.inf])) is None
     assert _snr_threshold(5.0, np.float64(2.0)) == 10.0

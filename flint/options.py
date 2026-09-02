@@ -353,6 +353,10 @@ class RMSynthOptions(BaseOptions):
     per_pixel_rmsf: bool = False
     """Compute the RMSF for each pixel rather than one shared by the cube. Roughly doubles the FDF's size. rm-lite turns this on itself when the weights make pixels disagree, as the linmos weight cubes do"""
     estimate_stokes_i_noise: bool = True
+    moment_threshold_snr: float = 5.0
+    """SNR cut (times the theoretical FDF noise) applied before computing Faraday moment maps, the dirty ones included"""
+    peak_threshold_snr: float = 0.0
+    """SNR cut (times the theoretical FDF noise) below which FDF peak statistics are blanked. Zero applies no cut: a peak is a single sample with no noise floor to integrate, and peak_pi_error is written beside it"""
     """Derive the per-channel Stokes I error from the Stokes I cube when no Stokes I weight cube is given. A weight cube takes precedence"""
 
 
@@ -369,10 +373,6 @@ class RMCleanOptions(BaseOptions):
     """Maximum CLEAN iterations"""
     gain: float = 0.1
     """CLEAN loop gain"""
-    moment_threshold_snr: float = 5.0
-    """SNR cut (times the theoretical FDF noise) applied before computing Faraday moment maps, the dirty ones included"""
-    peak_threshold_snr: float = 0.0
-    """SNR cut (times the theoretical FDF noise) below which FDF peak statistics are blanked. Zero applies no cut: unlike mom0, a peak is a single sample with no noise floor to integrate, and peak_pi_error is written beside it to judge significance downstream"""
 
 
 class SpiceOptions(BaseOptions):

@@ -187,7 +187,8 @@ def run_rmclean_3d(
         auto_threshold=rmclean_options.auto_threshold,
         max_iter=rmclean_options.max_iter,
         gain=rmclean_options.gain,
-        moment_threshold_snr=rmclean_options.moment_threshold_snr,
+        # rm-lite's own moment and peak maps go unused, so its cut is left at
+        # whatever it defaults to; flint derives its own in write_rm_products
         log_level=logging.INFO,
     )
 
@@ -744,7 +745,7 @@ def write_rm_products(
     # applies this same cut inside RM-CLEAN to its own moment maps, which flint
     # does not use, so it is rederived here from the shared theoretical noise.
     moment_threshold = _snr_threshold(
-        rmclean_options.moment_threshold_snr,
+        rmsynth_options.moment_threshold_snr,
         synth_results.theoretical_noise.fdf_error_noise,
     )
     for label in moment_products:
@@ -777,7 +778,7 @@ def write_rm_products(
     # integrates the whole Faraday depth axis, a peak is one sample with no such
     # floor, and peak_pi_error is written beside it to judge significance.
     peak_threshold = _snr_threshold(
-        rmclean_options.peak_threshold_snr,
+        rmsynth_options.peak_threshold_snr,
         synth_results.theoretical_noise.fdf_error_noise,
     )
     for label in peak_products:
