@@ -122,15 +122,15 @@ def process_rmsynth(
     stokes_cube_paths = {
         stokes: cube
         for stokes, cube in (
-            ("q", rmsynth_field_options.stokes_cubes.q),
-            ("u", rmsynth_field_options.stokes_cubes.u),
-            ("i", rmsynth_field_options.stokes_cubes.i),
+            ("q", rmsynth_field_options.stokes_cubes.q_path),
+            ("u", rmsynth_field_options.stokes_cubes.u_path),
+            ("i", rmsynth_field_options.stokes_cubes.i_path),
         )
         if cube is not None
     }
 
     strategy = load_and_copy_strategy(
-        output_split_science_path=rmsynth_field_options.stokes_cubes.q.parent,
+        output_split_science_path=rmsynth_field_options.stokes_cubes.q_path.parent,
         imaging_strategy=rmsynth_field_options.imaging_strategy,
     )
 
@@ -182,7 +182,7 @@ def process_rmsynth(
     )
 
     output_prefix = create_name_from_common_fields(
-        in_paths=(stokes_cubes.q, stokes_cubes.u)
+        in_paths=(stokes_cubes.q_path, stokes_cubes.u_path)
     )
     if rmsynth_field_options.output_path is not None:
         rmsynth_field_options.output_path.mkdir(parents=True, exist_ok=True)
@@ -191,7 +191,7 @@ def process_rmsynth(
     output_paths = task_write_rm_products.submit(
         synth_results=synth_result,
         clean_results=clean_result,
-        stokes_q_cube=stokes_cubes.q,
+        stokes_q_cube=stokes_cubes.q_path,
         rmsynth_options=rmsynth_options,
         rmclean_options=rmclean_options,
         cube_products=rmsynth_field_options.cube_products,
@@ -227,7 +227,9 @@ def setup_run_rmsynth(
         rmsynth_field_options.sbid_copy_path
         and rmsynth_field_options.stokes_cubes is not None
     ):
-        science_sbid = get_sbid_from_path(path=rmsynth_field_options.stokes_cubes.q)
+        science_sbid = get_sbid_from_path(
+            path=rmsynth_field_options.stokes_cubes.q_path
+        )
         rmsynth_field_options = rmsynth_field_options.with_options(
             sbid_copy_path=rmsynth_field_options.sbid_copy_path / f"{science_sbid}"
         )

@@ -132,8 +132,8 @@ def run_rmsynth_3d(
     )
     stokes_i_kwargs = (
         {
-            "stokes_i_file": stokes_cubes.i,
-            "stokes_i_error_file": error_cubes.i if error_cubes else None,
+            "stokes_i_file": stokes_cubes.i_path,
+            "stokes_i_error_file": error_cubes.i_path if error_cubes else None,
             "fit_order": rmsynth_options.fit_order,
             "fit_function": rmsynth_options.fit_function,
             "stokes_i_snr_cut": rmsynth_options.stokes_i_snr_cut,
@@ -143,14 +143,14 @@ def run_rmsynth_3d(
             "compute_model_error": rmsynth_options.compute_model_error,
             "n_error_samples": rmsynth_options.n_error_samples,
         }
-        if stokes_cubes.i is not None
+        if stokes_cubes.i_path is not None
         else {}
     )
     return rmsynth_3d_from_fits(
-        stokes_q_file=stokes_cubes.q,
-        stokes_u_file=stokes_cubes.u,
-        stokes_q_error_file=error_cubes.q if error_cubes else None,
-        stokes_u_error_file=error_cubes.u if error_cubes else None,
+        stokes_q_file=stokes_cubes.q_path,
+        stokes_u_file=stokes_cubes.u_path,
+        stokes_q_error_file=error_cubes.q_path if error_cubes else None,
+        stokes_u_error_file=error_cubes.u_path if error_cubes else None,
         # linmos writes 1/sigma**2 directly, so rm-lite must not invert and
         # square those. A noise cube is a sigma and must be inverted. Applies to
         # the Stokes I error cube as well

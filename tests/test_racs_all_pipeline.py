@@ -163,7 +163,7 @@ def test_process_racs_all_everything_disabled_returns_immediately(
     )
     pol_field_options = PolFieldOptions()
     rmsynth_field_options = RMSynthFieldOptions(
-        stokes_cubes=CubesForRMSynth(q=Path("/tmp/q.fits"), u=Path("/tmp/u.fits"))
+        stokes_cubes=CubesForRMSynth(q_path=Path("/tmp/q.fits"), u=Path("/tmp/u.fits"))
     )
     spice_field_options = SpiceFieldOptions(cubes=[Path("/tmp/i.fits")])
 
@@ -489,8 +489,8 @@ def test_bane_rms_cubes_are_preferred_over_the_linmos_weights(
 
     options = _rmsynth_options(rmsynth_stage)
     assert isinstance(options.error_cubes, NoiseCubesForRMSynth)
-    assert options.error_cubes.q == tmp_path / "q_rms.fits"
-    assert options.error_cubes.u == tmp_path / "u_rms.fits"
+    assert options.error_cubes.q_path == tmp_path / "q_rms.fits"
+    assert options.error_cubes.u_path == tmp_path / "u_rms.fits"
 
 
 def test_the_linmos_weights_are_used_when_bane_did_not_run(
@@ -506,7 +506,7 @@ def test_the_linmos_weights_are_used_when_bane_did_not_run(
 
     options = _rmsynth_options(rmsynth_stage)
     assert isinstance(options.error_cubes, WeightCubesForRMSynth)
-    assert options.error_cubes.q == tmp_path / "q.weight.fits"
+    assert options.error_cubes.q_path == tmp_path / "q.weight.fits"
 
 
 def test_the_bane_cubes_are_spiced(

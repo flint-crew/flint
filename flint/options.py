@@ -261,11 +261,11 @@ class _CubesForRMSynth(BaseOptions):
     Never annotate with this: the types below exist to be told apart.
     """
 
-    q: Path
+    q_path: Path
     """Stokes Q"""
-    u: Path
+    u_path: Path
     """Stokes U"""
-    i: Path | None = None
+    i_path: Path | None = None
     """Stokes I, optional: rm-synthesis runs without it"""
 
     @classmethod
@@ -275,12 +275,14 @@ class _CubesForRMSynth(BaseOptions):
         if missing:
             msg = f"Need a cube for every one of q and u, missing {sorted(missing)}."
             raise ValueError(msg)
-        return cls(q=cubes["q"], u=cubes["u"], i=cubes.get("i"))
+        return cls(q_path=cubes["q"], u_path=cubes["u"], i_path=cubes.get("i"))
 
     @property
     def paths(self) -> list[Path]:
         """Every path set"""
-        return [path for path in (self.q, self.u, self.i) if path is not None]
+        return [
+            path for path in (self.q_path, self.u_path, self.i_path) if path is not None
+        ]
 
 
 class CubesForRMSynth(_CubesForRMSynth):

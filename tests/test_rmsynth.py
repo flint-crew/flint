@@ -149,14 +149,20 @@ def _run_rmsynth_3d(
     error_cubes: ErrorCubesForRMSynth | None = None
     if stokes_q_noise_cube is not None:
         error_cubes = NoiseCubesForRMSynth(
-            q=stokes_q_noise_cube, u=stokes_u_noise_cube, i=stokes_i_noise_cube
+            q_path=stokes_q_noise_cube,
+            u_path=stokes_u_noise_cube,
+            i_path=stokes_i_noise_cube,
         )
     elif stokes_q_weight_cube is not None:
         error_cubes = WeightCubesForRMSynth(
-            q=stokes_q_weight_cube, u=stokes_u_weight_cube, i=stokes_i_weight_cube
+            q_path=stokes_q_weight_cube,
+            u_path=stokes_u_weight_cube,
+            i_path=stokes_i_weight_cube,
         )
     return run_rmsynth_3d(
-        stokes_cubes=CubesForRMSynth(q=stokes_q_cube, u=stokes_u_cube, i=stokes_i_cube),
+        stokes_cubes=CubesForRMSynth(
+            q_path=stokes_q_cube, u_path=stokes_u_cube, i_path=stokes_i_cube
+        ),
         rmsynth_options=rmsynth_options,
         error_cubes=error_cubes,
     )
@@ -791,7 +797,7 @@ def test_one_linmos_weight_cube_is_refused(tmp_path: Path) -> None:
     # from_mapping; the former subclasses the latter, so one assertion covers both
     for kind in (WeightCubesForRMSynth, NoiseCubesForRMSynth):
         with pytest.raises(ValueError):
-            kind(q=weights)
+            kind(q_path=weights)
         with pytest.raises(ValueError, match="missing"):
             kind.from_mapping({"q": weights})
 
@@ -1558,7 +1564,7 @@ def test_error_cubes_cannot_be_a_weight_and_a_noise_at_once() -> None:
     "neither, but something cube-shaped" a validation error rather than a silent
     guess at which was meant.
     """
-    paths = {"q": Path("q.fits"), "u": Path("u.fits")}
+    paths = {"q_path": Path("q.fits"), "u_path": Path("u.fits")}
 
     assert WeightCubesForRMSynth(**paths).kind == "weight"
     assert NoiseCubesForRMSynth(**paths).kind == "noise"
@@ -1599,13 +1605,15 @@ def test_a_weight_cube_is_not_inverted_but_a_noise_cube_is(
 
     weights = _make_weight_cube(tmp_path, (N_CHAN, NY, NX), freq_hz, sigma, "as_weight")
     for error_cubes, expected in (
-        (WeightCubesForRMSynth(q=weights, u=weights), True),
-        (NoiseCubesForRMSynth(q=weights, u=weights), False),
+        (WeightCubesForRMSynth(q_path=weights, u_path=weights), True),
+        (NoiseCubesForRMSynth(q_path=weights, u_path=weights), False),
     ):
         with patch("flint.rmsynth.rmsynth_3d_from_fits", side_effect=_capture):
             with pytest.raises(RuntimeError, match="stop here"):
                 run_rmsynth_3d(
-                    stokes_cubes=CubesForRMSynth(q=stokes_q_cube, u=stokes_u_cube),
+                    stokes_cubes=CubesForRMSynth(
+                        q_path=stokes_q_cube, u_path=stokes_u_cube
+                    ),
                     rmsynth_options=RMSynthOptions(),
                     error_cubes=error_cubes,
                 )
