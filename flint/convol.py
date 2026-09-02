@@ -9,7 +9,7 @@ from argparse import ArgumentParser
 from collections.abc import Collection
 from pathlib import Path
 from shutil import copyfile
-from typing import Literal, NamedTuple
+from typing import Any, Literal, NamedTuple
 
 import astropy.units as u
 import numpy as np
@@ -133,7 +133,7 @@ def usable_beam_mask(beams: Beams, cutoff: float | None = None) -> np.ndarray:
     return usable
 
 
-def beam_from_header(header: fits.Header) -> Beam | None:
+def beam_from_header(header: fits.Header | dict[str, Any]) -> Beam | None:
     """The restoring beam recorded in a FITS header, or None when there is none"""
     try:
         return Beam.from_fits_header(header)
@@ -141,7 +141,9 @@ def beam_from_header(header: fits.Header) -> Beam | None:
         return None
 
 
-def header_beam_is_usable(header: fits.Header, cutoff: float | None = None) -> bool:
+def header_beam_is_usable(
+    header: fits.Header | dict[str, Any], cutoff: float | None = None
+) -> bool:
     """Whether the beam a FITS header records is a real PSF. See ``usable_beam_mask``"""
     beam = beam_from_header(header=header)
     if beam is None:

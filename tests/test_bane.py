@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -205,3 +206,48 @@ def test_bane_fits_image_refuses_a_cube(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="expected a single plane"):
         bane_fits_image(image=fits_path)
+
+
+@pytest.mark.parametrize("beamless", ["missing", "zero"])
+def test_bane_fits_image_blanks_a_plane_with_no_beam(
+    tmp_path: Path, beamless: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A blank channel loses its beam keywords through linmos, or carries the
+    zero beam that marks it as holding no PSF. Neither can size a kernel, and
+    neither holds signal, so the maps come out blank rather than raising and
+    taking the whole cube with them."""
+    header = _header()
+    for key in ("BMAJ", "BMIN", "BPA"):
+        if beamless == "missing":
+            del header[key]
+        else:
+            header[key] = 0.0
+
+    fits_path = tmp_path / "field.image.fits"
+    fits.writeto(fits_path, _sky()[np.newaxis, np.newaxis], header, overwrite=True)
+
+    with caplog.at_level(logging.WARNING, logger="flint"):
+        bkg_path, rms_path = bane_fits_image(image=fits_path)
+
+    # A zero beam sizes a 1x1 all-NaN kernel rather than raising, so the maps
+    # coming out blank does not on its own say the beam was checked
+    assert "No usable beam" in caplog.text
+
+    for path in (bkg_path, rms_path):
+        assert fits.getdata(path).shape == (1, 1, NY, NX)
+        assert np.all(np.isnan(fits.getdata(path)))
+
+
+def test_robust_bane_without_a_beam_runs_on_given_sizes() -> None:
+    """The beam only sizes the kernel, so sizes given outright need no beam"""
+    header = _header()
+    for key in ("BMAJ", "BMIN", "BPA"):
+        del header[key]
+
+    background, rms = robust_bane(
+        image=_sky(background=0.0, rms=1e-3),
+        header=header,
+        fft_bane_options=FFTBANEOptions(step_size=10, box_size=10),
+    )
+    assert np.isfinite(background).all()
+    assert np.nanmedian(rms) == pytest.approx(1e-3, rel=0.3)
