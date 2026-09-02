@@ -138,6 +138,9 @@ def task_rmsynth(
     stokes_q_weight_cube: Path | None = None,
     stokes_u_weight_cube: Path | None = None,
     stokes_i_weight_cube: Path | None = None,
+    stokes_q_noise_cube: Path | None = None,
+    stokes_u_noise_cube: Path | None = None,
+    stokes_i_noise_cube: Path | None = None,
 ) -> RMSynth3DResults:
     from prefect_dask import get_dask_client
 
@@ -153,6 +156,9 @@ def task_rmsynth(
             rmsynth_options=rmsynth_options,
             stokes_i_cube=stokes_i_cube,
             stokes_i_weight_cube=stokes_i_weight_cube,
+            stokes_q_noise_cube=stokes_q_noise_cube,
+            stokes_u_noise_cube=stokes_u_noise_cube,
+            stokes_i_noise_cube=stokes_i_noise_cube,
         )
 
 

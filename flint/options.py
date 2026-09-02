@@ -229,12 +229,33 @@ class PolFieldOptions(BaseOptions):
     """Specify the final beamsize of linmos field images in (arcsec, arcsec, deg)"""
     pb_cutoff: float = 0.1
     """Primary beam attenuation cutoff to use during linmos"""
+    bane_noise: FFTBANEOptions | None = None
+    """Measure a background and RMS cube off the co-added planes with BANE (see ``flint.bane``). None skips it, leaving the linmos weight cubes as the only noise estimate"""
     imaging_strategy: Path | None = None
     """Path to a FLINT imaging yaml file that contains settings to use throughout imaging"""
     pol_cube_channel_width: float | None = None
     """Desired width, in Hz, of each plane of the polarisation cubes. The wsclean channel division is solved for this target so the cubes have a single linear frequency axis, overriding the strategy ``channels_out``. Deliberately separate from ``RACSAllOptions.cube_channel_width``, as the continuum and polarisation cubes need not share a channelisation. See ``flint.imager.channel_division``"""
     sbid_copy_path: Path | None = None
     """Path that final processed products will be copied into. If None no copying of file products is performed. See ArchiveOptions. """
+
+
+class FFTBANEOptions(BaseOptions):
+    """Options for ``flint.bane.robust_bane``. Named apart from
+    ``flint.source_finding.aegean.BANEOptions``, which drives the containerised
+    aegean BANE instead.
+
+    Defined here rather than in ``flint.bane`` so that strategy validation
+    (``flint.configuration``) does not pull in numba, as ``RMSynthOptions`` does
+    for rm_lite."""
+
+    step_size: int | None = None
+    """Downsampling factor in pixels. None uses 3 beams; a negative value sets the beams per step"""
+    box_size: int | None = None
+    """Convolution kernel size in pixels. None uses 10 beams; a negative value sets the beams per box"""
+    clip_sigma: float = 5.0
+    """Pixels above this SNR are replaced by noise before the background is fitted"""
+    seed: int = 1234
+    """Seed for the noise the clipped pixels are filled with, so a rerun reproduces the maps"""
 
 
 class RMSynthOptions(BaseOptions):
@@ -361,6 +382,12 @@ class RMSynthFieldOptions(BaseOptions):
     """Path to Stokes U weights cube produced by LINMOS"""
     stokes_i_weight_cube: Path | None = None
     """Path to Stokes I weights cube produced by LINMOS"""
+    stokes_q_noise_cube: Path | None = None
+    """Path to a Stokes Q noise (sigma) cube, e.g. the BANE RMS cube from the polarisation stage. Takes precedence over ``stokes_q_weight_cube``, which is an inverse variance rather than a noise"""
+    stokes_u_noise_cube: Path | None = None
+    """Path to a Stokes U noise (sigma) cube. See ``stokes_q_noise_cube``"""
+    stokes_i_noise_cube: Path | None = None
+    """Path to a Stokes I noise (sigma) cube. See ``stokes_q_noise_cube``"""
     imaging_strategy: Path | None = None
     """Path to a FLINT imaging yaml file that contains the RMSynthOptions/RMCleanOptions settings to use"""
     beam_cutoff: float | None = None
@@ -386,7 +413,7 @@ class SpiceFieldOptions(BaseOptions):
     cubes: list[Path] = []
     """Stokes image cubes to trim and compress. Computed by the racs-all flow, so required only when running this pipeline standalone"""
     weight_cubes: list[Path] = []
-    """LINMOS weight cubes to trim and compress alongside ``cubes``, spiced with the same boxes so they stay on a matching grid. Computed by the racs-all flow"""
+    """Ancillary cubes to trim and compress alongside ``cubes``, spiced with the same boxes so they stay on a matching grid: the LINMOS weight cubes, and the BANE background/RMS cubes when the polarisation stage made them. Computed by the racs-all flow"""
     reference_image: Path | None = None
     """A 2D MFS image whose WCS/shape sources the source-finding boxes. Required only when catalogue is not set (built-in aegean source finding)"""
     catalogue: Path | None = None

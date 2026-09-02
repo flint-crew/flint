@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import astropy.units as u
 import numba as nb
@@ -27,7 +27,6 @@ from astropy.io import fits
 from astropy.stats import mad_std
 from astropy.wcs import WCS
 from astropy.wcs.utils import proj_plane_pixel_scales
-from capn_crunch import BaseOptions
 from numpy import fft
 from numpy.typing import NDArray
 from radio_beam import Beam
@@ -36,21 +35,16 @@ from scipy import ndimage
 
 from flint.logging import logger
 from flint.naming import create_aegean_names
+from flint.options import FFTBANEOptions
 
 
-class FFTBANEOptions(BaseOptions):
-    """Options for ``robust_bane``. Named apart from
-    ``flint.source_finding.aegean.BANEOptions``, which drives the containerised
-    aegean BANE instead."""
+class BANEMaps(NamedTuple):
+    """The pair of maps ``bane_fits_image`` writes"""
 
-    step_size: int | None = None
-    """Downsampling factor in pixels. None uses 3 beams; a negative value sets the beams per step"""
-    box_size: int | None = None
-    """Convolution kernel size in pixels. None uses 10 beams; a negative value sets the beams per box"""
-    clip_sigma: float = 5.0
-    """Pixels above this SNR are replaced by noise before the background is fitted"""
-    seed: int = 1234
-    """Seed for the noise the clipped pixels are filled with, so a rerun reproduces the maps"""
+    bkg_image: Path
+    """Background map"""
+    rms_image: Path
+    """RMS noise map"""
 
 
 @nb.njit(fastmath=True, cache=True)
@@ -384,7 +378,7 @@ def robust_bane(
 def bane_fits_image(
     image: Path,
     fft_bane_options: FFTBANEOptions | None = None,
-) -> tuple[Path, Path]:
+) -> BANEMaps:
     """Write the background and RMS maps of a single-plane FITS image.
 
     Named ``_bkg.fits`` and ``_rms.fits`` beside the input, matching what the
@@ -396,7 +390,7 @@ def bane_fits_image(
         fft_bane_options (FFTBANEOptions | None, optional): Step, box, clip and seed. Defaults to ``FFTBANEOptions()``.
 
     Returns:
-        tuple[Path, Path]: The background and RMS maps written
+        BANEMaps: The background and RMS maps written
     """
     logger.info(f"Running FFT BANE on {image}")
     with fits.open(image, memmap=True, mode="denywrite") as hdul:
@@ -422,4 +416,4 @@ def bane_fits_image(
         fits.writeto(path, data_out.reshape(original_shape), header, overwrite=True)
         logger.info(f"Wrote {path}")
 
-    return names.bkg_image, names.rms_image
+    return BANEMaps(bkg_image=names.bkg_image, rms_image=names.rms_image)

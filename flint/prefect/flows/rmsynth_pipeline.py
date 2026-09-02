@@ -151,6 +151,9 @@ def process_rmsynth(
         stokes_i_weight_cube=rmsynth_field_options.stokes_i_weight_cube,
         stokes_q_weight_cube=rmsynth_field_options.stokes_q_weight_cube,
         stokes_u_weight_cube=rmsynth_field_options.stokes_u_weight_cube,
+        stokes_i_noise_cube=rmsynth_field_options.stokes_i_noise_cube,
+        stokes_q_noise_cube=rmsynth_field_options.stokes_q_noise_cube,
+        stokes_u_noise_cube=rmsynth_field_options.stokes_u_noise_cube,
     )
 
     run_clean = needs_rmclean(
