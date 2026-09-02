@@ -20,8 +20,9 @@ from astropy.time import Time
 from capn_crunch import BaseOptions
 from pydantic import Field, create_model
 
-from flint.exceptions import MSError
+from flint.exceptions import MSError, NamingException
 from flint.logging import logger
+from flint.naming import split_images
 
 
 class BandpassOptions(BaseOptions):
@@ -276,6 +277,32 @@ class _CubesForRMSynth(BaseOptions):
             msg = f"Need a cube for every one of q and u, missing {sorted(missing)}."
             raise ValueError(msg)
         return cls(q_path=cubes["q"], u_path=cubes["u"], i_path=cubes.get("i"))
+
+    @classmethod
+    def from_paths(cls, paths: list[Path]) -> Self:
+        """From a flat list of cubes, taking the Stokes of each from its filename.
+
+        For the CLI, which has only a list of paths to hand. Prefer
+        ``from_mapping`` wherever the Stokes of each cube is already known.
+
+        Raises:
+            ValueError: A path carries no recognisable Stokes, or two cubes claim the same one
+        """
+        try:
+            split = split_images(images=paths, by="pol")
+        except (NamingException, ValueError) as err:
+            msg = (
+                f"Could not read the Stokes of every cube in {paths}. Names must "
+                "follow the flint or CASDA scheme, as the polarisation stage writes them."
+            )
+            raise ValueError(msg) from err
+
+        duplicated = {pol: found for pol, found in split.items() if len(found) > 1}
+        if duplicated:
+            msg = f"More than one cube for a Stokes, so which to use is ambiguous: {duplicated}"
+            raise ValueError(msg)
+
+        return cls.from_mapping({pol: found[0] for pol, found in split.items()})
 
     @property
     def paths(self) -> list[Path]:
@@ -554,6 +581,30 @@ def pol_field_options_cli_class(
     }
     return create_model(
         "PolFieldOptionsCLI", __base__=PolFieldOptions.__base__, **unique_fields
+    )
+
+
+def exclude_fields_cli_class(
+    options_class: type[BaseOptions], exclude_fields: set[str]
+) -> type[BaseOptions]:
+    """Build a sibling of ``options_class`` exposing only the fields not in
+    ``exclude_fields``, so it can be added to a parser that already exposes
+    those fields via another options class, or sets them up by hand, without a
+    duplicate-flag error.
+
+    The result derives from ``options_class.__base__``, so it is a sibling rather
+    than a subclass. Generalises ``pol_field_options_cli_class`` to an arbitrary,
+    accumulated set of already-registered field names.
+    """
+    unique_fields = {
+        name: (field.annotation, field)
+        for name, field in options_class.model_fields.items()
+        if name not in exclude_fields
+    }
+    return create_model(
+        f"{options_class.__name__}CLI",
+        __base__=options_class.__base__,
+        **unique_fields,
     )
 
 
