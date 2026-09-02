@@ -34,6 +34,7 @@ from flint.naming import (
     get_sbid_from_path,
 )
 from flint.options import (
+    FFTBANEOptions,
     FitsCubeOptions,
     PolFieldOptions,
     dump_field_options_to_yaml,
@@ -71,6 +72,10 @@ class PolPipelineResult(BaseOptions):
     """The full, unspiced Stokes cube written for each imaged polarisation (e.g. 'i', 'q', 'u', 'v')"""
     weight_cubes: dict[str, Path]
     """The full Stokes weights written for each imaged polarisation (e.g. 'i', 'q', 'u', 'v')"""
+    bkg_cubes: dict[str, Path] = {}
+    """BANE background cube per imaged polarisation. Empty unless asked for"""
+    rms_cubes: dict[str, Path] = {}
+    """BANE RMS cube per imaged polarisation, measured off the co-added planes. Empty unless asked for"""
     mfs_products: dict[str, dict[str, Path]]
     """MFS image/model/residual products co-added per Stokes parameter, keyed by Stokes ('i', 'q', 'u', 'v') then product type ('image', 'model', 'residual'). Only populated for Stokes imaged under a polarisation with ``WSCleanOptions.flint_save_mfs_products`` set"""
     terminal_futures: list[PrefectFuture[Any]]
@@ -96,6 +101,8 @@ def _no_products(
     return PolPipelineResult(
         stokes_cubes={},
         weight_cubes={},
+        bkg_cubes={},
+        rms_cubes={},
         mfs_products={},
         terminal_futures=terminal_futures or [],
     )
@@ -355,9 +362,23 @@ def process_science_fields_pol(
     if compress_cubes is not None:
         fitscube_options = fitscube_options.with_options(compress=compress_cubes)
 
+    # Parameters from the strategy, the switch from the flow options, as with
+    # every other stage
+    fft_bane_options = (
+        FFTBANEOptions(
+            **get_options_from_strategy(
+                strategy=strategy, operation="polarisation", mode="fftbane"
+            )
+        )
+        if pol_field_options.bane_noise
+        else None
+    )
+
     cube_results: list[PrefectFuture[Path]] = []
     stokes_image_cubes: dict[str, PrefectFuture[Path]] = {}
     stokes_weight_cubes: dict[str, PrefectFuture[Path]] = {}
+    stokes_bkg_cubes: dict[str, PrefectFuture[Path]] = {}
+    stokes_rms_cubes: dict[str, PrefectFuture[Path]] = {}
     all_input_images: list[Path] = []
     for stokes, channel_groups in stokes_channel_groups.items():
         with tags(f"stokes-{stokes}"):
@@ -377,9 +398,14 @@ def process_science_fields_pol(
                 field_summary=field_summary,
                 fitscube_options=fitscube_options,
                 suffix_str=POL_NAME_SUFFIX,
+                fft_bane_options=fft_bane_options,
             )
-            stokes_image_cubes[stokes], stokes_weight_cubes[stokes] = stokes_cubes
-            cube_results.extend(stokes_cubes)
+            stokes_image_cubes[stokes] = stokes_cubes.image
+            stokes_weight_cubes[stokes] = stokes_cubes.weight
+            if stokes_cubes.bkg is not None and stokes_cubes.rms is not None:
+                stokes_bkg_cubes[stokes] = stokes_cubes.bkg
+                stokes_rms_cubes[stokes] = stokes_cubes.rms
+            cube_results.extend(stokes_cubes.futures)
 
     # Remove the convolved per-beam channel images now that every cube is built.
     # Stokes I images are kept until here as they feed the Q/U leakage correction.
@@ -455,6 +481,12 @@ def process_science_fields_pol(
     return PolPipelineResult(
         stokes_cubes={
             stokes: future.result() for stokes, future in stokes_image_cubes.items()
+        },
+        bkg_cubes={
+            stokes: future.result() for stokes, future in stokes_bkg_cubes.items()
+        },
+        rms_cubes={
+            stokes: future.result() for stokes, future in stokes_rms_cubes.items()
         },
         weight_cubes={
             stokes: future.result() for stokes, future in stokes_weight_cubes.items()

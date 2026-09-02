@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from argparse import ArgumentParser
 from pathlib import Path
+from typing import Any
 
 import pytest
 from capn_crunch import create_options_from_parser
@@ -11,11 +12,14 @@ from prefect.logging import disable_run_logger
 from prefect.testing.utilities import prefect_test_harness
 
 from flint.options import (
+    CubesForRMSynth,
+    NoiseCubesForRMSynth,
     PolFieldOptions,
     RACSAllOptions,
     RACSAllPipelineOptions,
     RMSynthFieldOptions,
     SpiceFieldOptions,
+    WeightCubesForRMSynth,
 )
 from flint.prefect.flows.racs_all_pipeline import (
     _check_racs_all_pipeline_options,
@@ -36,21 +40,21 @@ def test_get_parser() -> None:
 
 
 def test_get_parser_excludes_computed_stage_outputs() -> None:
-    """stokes_q_cube/stokes_u_cube (rm-synth) and cubes/weight_cubes (spice) are
+    """stokes_cubes/error_cubes (rm-synth) and cubes/weight_cubes (spice) are
     computed from the polarisation stage's output inside process_racs_all, so the
     combined CLI must not force the user to supply dummy positional values
     for them -- only low_data/mid_data/high_data should be positional."""
     args = get_parser().parse_args(["/low", "/mid", "/high"])
 
-    assert not hasattr(args, "stokes_q_cube")
-    assert not hasattr(args, "stokes_u_cube")
+    assert not hasattr(args, "stokes_cubes")
+    assert not hasattr(args, "error_cubes")
     assert not hasattr(args, "cubes")
     assert not hasattr(args, "weight_cubes")
 
     # create_options_from_parser reads every field off the namespace, so cli()
     # sets the computed ones to their empty defaults first, as done here.
-    args.stokes_q_cube = None
-    args.stokes_u_cube = None
+    args.stokes_cubes = None
+    args.error_cubes = None
     args.cubes = []
     args.weight_cubes = []
 
@@ -60,7 +64,7 @@ def test_get_parser_excludes_computed_stage_outputs() -> None:
     spice_field_options = create_options_from_parser(
         parser_namespace=args, options_class=SpiceFieldOptions
     )
-    assert rmsynth_field_options.stokes_q_cube is None
+    assert rmsynth_field_options.stokes_cubes is None
     assert spice_field_options.cubes == []
     assert spice_field_options.weight_cubes == []
 
@@ -160,7 +164,9 @@ def test_process_racs_all_everything_disabled_returns_immediately(
     )
     pol_field_options = PolFieldOptions()
     rmsynth_field_options = RMSynthFieldOptions(
-        stokes_q_cube=Path("/tmp/q.fits"), stokes_u_cube=Path("/tmp/u.fits")
+        stokes_cubes=CubesForRMSynth(
+            q_path=Path("/tmp/q.fits"), u_path=Path("/tmp/u.fits")
+        )
     )
     spice_field_options = SpiceFieldOptions(cubes=[Path("/tmp/i.fits")])
 
@@ -334,7 +340,10 @@ def test_stage_prerequisites_requires_polarisation_containers(
 
 
 def _stage_mocks(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, convolved_cubes: list[Path]
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    convolved_cubes: list[Path],
+    bane_cubes: bool = False,
 ):
     """Replace every stage subflow of ``process_racs_all`` with a mock, so the
     wiring between them can be checked without imaging anything."""
@@ -356,10 +365,21 @@ def _stage_mocks(
     pol_result = PolPipelineResult(
         stokes_cubes={"q": tmp_path / "q.fits", "u": tmp_path / "u.fits"},
         weight_cubes={"q": tmp_path / "q.weight.fits", "u": tmp_path / "u.weight.fits"},
+        bkg_cubes={"q": tmp_path / "q_bkg.fits", "u": tmp_path / "u_bkg.fits"}
+        if bane_cubes
+        else {},
+        rms_cubes={"q": tmp_path / "q_rms.fits", "u": tmp_path / "u_rms.fits"}
+        if bane_cubes
+        else {},
         mfs_products={},
         terminal_futures=[],
     )
     spice_stage = _stage([])
+    rmsynth_stage = _stage(
+        RMSynthPipelineResult(
+            written_paths=[tmp_path / "fdf.fits"], convolved_cubes=convolved_cubes
+        )
+    )
 
     monkeypatch.setattr(
         "flint.prefect.flows.racs_all_pipeline.get_dask_runner", lambda cluster: None
@@ -373,18 +393,13 @@ def _stage_mocks(
         _stage(pol_result),
     )
     monkeypatch.setattr(
-        "flint.prefect.flows.racs_all_pipeline.process_rmsynth",
-        _stage(
-            RMSynthPipelineResult(
-                written_paths=[tmp_path / "fdf.fits"], convolved_cubes=convolved_cubes
-            )
-        ),
+        "flint.prefect.flows.racs_all_pipeline.process_rmsynth", rmsynth_stage
     )
     monkeypatch.setattr(
         "flint.prefect.flows.racs_all_pipeline.process_spice_compression", spice_stage
     )
 
-    return pol_result, spice_stage
+    return pol_result, spice_stage, rmsynth_stage
 
 
 def _run_racs_all(tmp_path: Path) -> None:
@@ -419,7 +434,7 @@ def test_rmsynth_convolved_cubes_are_spiced(
     polarisation cubes, so leaving them out of the spice stage would strand an
     untrimmed, uncompressed set on disk once the originals have been trimmed."""
     convolved_cubes = [tmp_path / "q.conv.fits", tmp_path / "u.conv.fits"]
-    pol_result, spice_stage = _stage_mocks(
+    pol_result, spice_stage, _ = _stage_mocks(
         monkeypatch=monkeypatch, tmp_path=tmp_path, convolved_cubes=convolved_cubes
     )
 
@@ -441,7 +456,7 @@ def test_spiced_cubes_are_not_repeated_without_convolution(
 ) -> None:
     """rm-synth reports no convolved cubes when the inputs already shared a
     resolution, so the spice stage never sees the same cube twice."""
-    pol_result, spice_stage = _stage_mocks(
+    pol_result, spice_stage, _ = _stage_mocks(
         monkeypatch=monkeypatch, tmp_path=tmp_path, convolved_cubes=[]
     )
 
@@ -452,3 +467,103 @@ def test_spiced_cubes_are_not_repeated_without_convolution(
     ]
     assert spiced_options.cubes == list(pol_result.stokes_cubes.values())
     assert len(set(spiced_options.cubes)) == len(spiced_options.cubes)
+
+
+def _rmsynth_options(rmsynth_stage):
+    """The options the racs-all flow handed the rm-synth stage"""
+    return rmsynth_stage.with_options.return_value.call_args.kwargs[
+        "rmsynth_field_options"
+    ]
+
+
+def test_bane_rms_cubes_are_preferred_over_the_linmos_weights(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A BANE RMS cube is measured off the co-added planes, so it describes the
+    cubes rm-synth reads; the linmos weights are an inverse variance carried
+    over from the input images. When both exist the RMS cubes win, and the two
+    must not be sent together -- rm-lite is told which it has by a single flag.
+    """
+    _, _, rmsynth_stage = _stage_mocks(
+        monkeypatch=monkeypatch, tmp_path=tmp_path, convolved_cubes=[], bane_cubes=True
+    )
+
+    _run_racs_all(tmp_path=tmp_path)
+
+    options = _rmsynth_options(rmsynth_stage)
+    assert isinstance(options.error_cubes, NoiseCubesForRMSynth)
+    assert options.error_cubes.q_path == tmp_path / "q_rms.fits"
+    assert options.error_cubes.u_path == tmp_path / "u_rms.fits"
+
+
+def test_the_linmos_weights_are_used_when_bane_did_not_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """BANE is opt-in, so a polarisation stage that skipped it still has to feed
+    rm-synth something."""
+    _, _, rmsynth_stage = _stage_mocks(
+        monkeypatch=monkeypatch, tmp_path=tmp_path, convolved_cubes=[]
+    )
+
+    _run_racs_all(tmp_path=tmp_path)
+
+    options = _rmsynth_options(rmsynth_stage)
+    assert isinstance(options.error_cubes, WeightCubesForRMSynth)
+    assert options.error_cubes.q_path == tmp_path / "q.weight.fits"
+
+
+def test_the_bane_cubes_are_spiced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The background and RMS cubes are full-size copies on the polarisation
+    cubes' pixel grid. Left out of the spice stage they would stay untrimmed and
+    uncompressed on disk after everything beside them had been trimmed."""
+    pol_result, spice_stage, _ = _stage_mocks(
+        monkeypatch=monkeypatch, tmp_path=tmp_path, convolved_cubes=[], bane_cubes=True
+    )
+
+    _run_racs_all(tmp_path=tmp_path)
+
+    spiced = spice_stage.with_options.return_value.call_args.kwargs[
+        "spice_field_options"
+    ]
+    assert spiced.weight_cubes == [
+        *pol_result.weight_cubes.values(),
+        *pol_result.bkg_cubes.values(),
+        *pol_result.rms_cubes.values(),
+    ]
+
+
+def test_rmsynth_refuses_a_polarisation_strategy_without_the_linear_stokes(
+    tmp_path: Path,
+) -> None:
+    """The FDF is built from Q+iU, so a circular-only strategy has nothing to
+    give rm-synthesis. Caught up front rather than after imaging has run."""
+    from flint.prefect.flows.racs_all_pipeline import _check_rmsynth_has_linear_stokes
+
+    strategy = tmp_path / "polarisation.yaml"
+
+    def _check(**pol_options: Any) -> None:
+        _check_rmsynth_has_linear_stokes(
+            pipeline_options=RACSAllPipelineOptions(),
+            pol_field_options=PolFieldOptions(**pol_options),
+        )
+
+    strategy.write_text(
+        "version: 0.2\ndefaults: {}\npolarisation:\n  circular:\n    wsclean: {}\n"
+    )
+    with pytest.raises(ValueError, match="rm-synthesis needs Stokes"):
+        _check(imaging_strategy=strategy)
+
+    strategy.write_text(
+        "version: 0.2\ndefaults: {}\npolarisation:\n  linear:\n    wsclean: {}\n"
+    )
+    _check(imaging_strategy=strategy)
+
+    # No strategy is the polarisation stage's business, not this check's
+    _check()
+
+    _check_rmsynth_has_linear_stokes(
+        pipeline_options=RACSAllPipelineOptions(skip_rmsynth=True),
+        pol_field_options=PolFieldOptions(imaging_strategy=strategy),
+    )

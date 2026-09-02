@@ -37,6 +37,8 @@ dynamic = ["version"]
 dependencies = [
     "astropy>=6.1.3", # fixing until units change in 6.1.4 addressed in radio-beam
     "numpy>=2.0.0",
+    "numba",
+    "rocket-fft",
     "pydantic>=2",
     "scipy",
     "spython>=0.3.1",

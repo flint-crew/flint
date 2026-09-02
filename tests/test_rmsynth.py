@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -12,9 +13,18 @@ from astropy.wcs import WCS
 from pydantic import ValidationError
 
 from flint.exceptions import NotSupportedError
-from flint.options import RMCleanOptions, RMSynthOptions
+from flint.options import (
+    CubesForRMSynth,
+    ErrorCubesForRMSynth,
+    NoiseCubesForRMSynth,
+    RMCleanOptions,
+    RMSynthFieldOptions,
+    RMSynthOptions,
+    WeightCubesForRMSynth,
+)
 from flint.rmsynth import (
     FDFLabel,
+    RMSynth3DResults,
     _snr_threshold,
     needs_rmclean,
     run_rmclean_3d,
@@ -118,6 +128,46 @@ def qu_cubes(tmp_path: Path) -> tuple[Path, Path]:
     return _make_qu_cubes(tmp_path)
 
 
+def _run_rmsynth_3d(
+    stokes_q_cube: Path,
+    stokes_u_cube: Path,
+    rmsynth_options: RMSynthOptions,
+    stokes_i_cube: Path | None = None,
+    stokes_q_weight_cube: Path | None = None,
+    stokes_u_weight_cube: Path | None = None,
+    stokes_i_weight_cube: Path | None = None,
+    stokes_q_noise_cube: Path | None = None,
+    stokes_u_noise_cube: Path | None = None,
+    stokes_i_noise_cube: Path | None = None,
+) -> RMSynth3DResults:
+    """``run_rmsynth_3d`` from a flat set of paths.
+
+    These tests are about what rm-synthesis does, not how its arguments are
+    grouped, so the containers are built here rather than at ninety call sites.
+    ``ErrorCubesForRMSynth`` itself is covered by its own tests below.
+    """
+    error_cubes: ErrorCubesForRMSynth | None = None
+    if stokes_q_noise_cube is not None:
+        error_cubes = NoiseCubesForRMSynth(
+            q_path=stokes_q_noise_cube,
+            u_path=stokes_u_noise_cube,
+            i_path=stokes_i_noise_cube,
+        )
+    elif stokes_q_weight_cube is not None:
+        error_cubes = WeightCubesForRMSynth(
+            q_path=stokes_q_weight_cube,
+            u_path=stokes_u_weight_cube,
+            i_path=stokes_i_weight_cube,
+        )
+    return run_rmsynth_3d(
+        stokes_cubes=CubesForRMSynth(
+            q_path=stokes_q_cube, u_path=stokes_u_cube, i_path=stokes_i_cube
+        ),
+        rmsynth_options=rmsynth_options,
+        error_cubes=error_cubes,
+    )
+
+
 def _synth_and_write(
     stokes_q_cube: Path,
     stokes_u_cube: Path,
@@ -131,11 +181,13 @@ def _synth_and_write(
     stokes_q_weight_cube: Path | None = None,
     stokes_u_weight_cube: Path | None = None,
     peak_products: list[FDFLabel] = [],
+    moment_threshold_snr: float = 5.0,
+    peak_threshold_snr: float = 0.0,
 ) -> list[Path]:
     if not cube_products and not moment_products and not peak_products:
         return []
 
-    synth_results = run_rmsynth_3d(
+    synth_results = _run_rmsynth_3d(
         stokes_q_cube=stokes_q_cube,
         stokes_u_cube=stokes_u_cube,
         rmsynth_options=rmsynth_options,
@@ -163,6 +215,8 @@ def _synth_and_write(
         moment_products=moment_products,
         peak_products=peak_products,
         output_prefix=output_prefix,
+        moment_threshold_snr=moment_threshold_snr,
+        peak_threshold_snr=peak_threshold_snr,
     )
 
 
@@ -365,7 +419,7 @@ def test_unnamed_stokes_i_model_terms_are_skipped_with_a_warning(
     """
     stokes_q_cube, stokes_u_cube = qu_cubes
     rmsynth_options = RMSynthOptions()
-    synth_results = run_rmsynth_3d(
+    synth_results = _run_rmsynth_3d(
         stokes_q_cube=stokes_q_cube,
         stokes_u_cube=stokes_u_cube,
         rmsynth_options=rmsynth_options,
@@ -410,7 +464,7 @@ def test_stokes_i_model_rebuilds_from_the_written_term_maps(
     output_prefix = tmp_path / "test_field"
     rmsynth_options = RMSynthOptions(fit_order=-3)
 
-    synth_results = run_rmsynth_3d(
+    synth_results = _run_rmsynth_3d(
         stokes_q_cube=stokes_q_cube,
         stokes_u_cube=stokes_u_cube,
         rmsynth_options=rmsynth_options,
@@ -577,7 +631,7 @@ def test_rmsynth_rejects_compressed_cubes(tmp_path: Path) -> None:
     """A gzipped cube cannot be memmapped, so rm-lite's per-block reopens would
     each inflate the whole cube into memory."""
     with pytest.raises(NotSupportedError):
-        run_rmsynth_3d(
+        _run_rmsynth_3d(
             stokes_q_cube=tmp_path / "q.fits.gz",
             stokes_u_cube=tmp_path / "u.fits.gz",
             rmsynth_options=RMSynthOptions(),
@@ -588,13 +642,32 @@ def test_rmsynth_rejects_a_compressed_weight_cube(tmp_path: Path) -> None:
     """The weight cubes are read block-by-block just like the Stokes cubes, so a
     gzipped one inflates the whole cube per read in exactly the same way."""
     stokes_q_cube, stokes_u_cube = _make_qu_cubes(tmp_path)
+    uncompressed = _make_weight_cube(
+        tmp_path,
+        (N_CHAN, NY, NX),
+        np.linspace(700e6, 1300e6, N_CHAN),
+        1e-3,
+        "plain",
+    )
+    # One compressed cube at a time, the rest readable, so the check is on the
+    # gzipped one rather than on a half-filled set
     for weights in (
-        {"stokes_q_weight_cube": tmp_path / "q.weight.fits.gz"},
-        {"stokes_u_weight_cube": tmp_path / "u.weight.fits.gz"},
-        {"stokes_i_weight_cube": tmp_path / "i.weight.fits.gz"},
+        {
+            "stokes_q_weight_cube": tmp_path / "q.weight.fits.gz",
+            "stokes_u_weight_cube": uncompressed,
+        },
+        {
+            "stokes_q_weight_cube": uncompressed,
+            "stokes_u_weight_cube": tmp_path / "u.weight.fits.gz",
+        },
+        {
+            "stokes_q_weight_cube": uncompressed,
+            "stokes_u_weight_cube": uncompressed,
+            "stokes_i_weight_cube": tmp_path / "i.weight.fits.gz",
+        },
     ):
         with pytest.raises(NotSupportedError):
-            run_rmsynth_3d(
+            _run_rmsynth_3d(
                 stokes_q_cube=stokes_q_cube,
                 stokes_u_cube=stokes_u_cube,
                 stokes_i_cube=_make_i_cube(tmp_path),
@@ -652,7 +725,7 @@ def test_rmsynth_options_reach_rm_lite(
     stokes_q_cube, stokes_u_cube = qu_cubes
     rmsynth_options = RMSynthOptions(per_pixel_rmsf=True, estimate_stokes_i_noise=False)
     with pytest.raises(NotSupportedError, match="stop before synthesising"):
-        run_rmsynth_3d(
+        _run_rmsynth_3d(
             stokes_q_cube=stokes_q_cube,
             stokes_u_cube=stokes_u_cube,
             stokes_i_cube=_make_i_cube(tmp_path),
@@ -717,24 +790,20 @@ def _make_linmos_weight_cube(
     return path
 
 
-def test_one_linmos_weight_cube_is_refused(
-    tmp_path: Path, qu_cubes: tuple[Path, Path]
-) -> None:
+def test_one_linmos_weight_cube_is_refused(tmp_path: Path) -> None:
     """rm-lite builds the weights from Q and U together, so a lone cube is a
-    wiring mistake it refuses rather than half-applies. Pinned here because the
-    racs-all flow passes the pair positionally and a silent drop would look like
-    a linmos-weighted run that never was."""
-    stokes_q_cube, stokes_u_cube = qu_cubes
+    wiring mistake rather than something to half-apply. The container now
+    refuses it at construction, before any cube is opened, so a half-filled set
+    cannot reach rm-lite at all."""
+    weights = _make_linmos_weight_cube(tmp_path, "q", blank_outside=1.5)
 
-    with pytest.raises(ValueError, match="[Mm]ust pass both"):
-        run_rmsynth_3d(
-            stokes_q_cube=stokes_q_cube,
-            stokes_u_cube=stokes_u_cube,
-            rmsynth_options=RMSynthOptions(),
-            stokes_q_weight_cube=_make_linmos_weight_cube(
-                tmp_path, "q", blank_outside=1.5
-            ),
-        )
+    # ValidationError from the constructor, a plain ValueError from
+    # from_mapping; the former subclasses the latter, so one assertion covers both
+    for kind in (WeightCubesForRMSynth, NoiseCubesForRMSynth):
+        with pytest.raises(ValueError):
+            kind(q_path=weights)
+        with pytest.raises(ValueError, match="missing"):
+            kind.from_mapping({"q": weights})
 
 
 def test_rmsynth_with_linmos_weights_stays_cleanable(
@@ -750,7 +819,7 @@ def test_rmsynth_with_linmos_weights_stays_cleanable(
     """
     stokes_q_cube, stokes_u_cube = qu_cubes
 
-    synth_results = run_rmsynth_3d(
+    synth_results = _run_rmsynth_3d(
         stokes_q_cube=stokes_q_cube,
         stokes_u_cube=stokes_u_cube,
         rmsynth_options=RMSynthOptions(),
@@ -793,7 +862,7 @@ def test_linmos_weights_give_each_pixel_its_own_rmsf(
     primary beam does -- and the linmos cubes are exactly that case."""
     stokes_q_cube, stokes_u_cube = qu_cubes
 
-    synth_results = run_rmsynth_3d(
+    synth_results = _run_rmsynth_3d(
         stokes_q_cube=stokes_q_cube,
         stokes_u_cube=stokes_u_cube,
         rmsynth_options=RMSynthOptions(),
@@ -828,7 +897,7 @@ def test_channels_linmos_blanked_everywhere_drop_out(
     stokes_q_cube, stokes_u_cube = qu_cubes
     blanked_channels = (0, 5, N_CHAN - 1)
 
-    synth_results = run_rmsynth_3d(
+    synth_results = _run_rmsynth_3d(
         stokes_q_cube=stokes_q_cube,
         stokes_u_cube=stokes_u_cube,
         rmsynth_options=RMSynthOptions(),
@@ -979,17 +1048,23 @@ def test_the_peak_and_moment_snr_cuts_are_independent(
     """
     stokes_q_cube, stokes_u_cube = qu_cubes
 
-    def peak_pi_and_mom0(prefix: str, **snrs: float) -> tuple[np.ndarray, np.ndarray]:
+    def peak_pi_and_mom0(
+        prefix: str,
+        moment_threshold_snr: float = 5.0,
+        peak_threshold_snr: float = 0.0,
+    ) -> tuple[np.ndarray, np.ndarray]:
         output_prefix = tmp_path / prefix
         _synth_and_write(
             stokes_q_cube=stokes_q_cube,
             stokes_u_cube=stokes_u_cube,
             rmsynth_options=RMSynthOptions(),
-            rmclean_options=RMCleanOptions(**snrs),
+            rmclean_options=RMCleanOptions(),
             cube_products=[],
             moment_products=["dirty"],
             peak_products=["dirty"],
             output_prefix=output_prefix,
+            moment_threshold_snr=moment_threshold_snr,
+            peak_threshold_snr=peak_threshold_snr,
         )
         return (
             fits.getdata(Path(f"{output_prefix}.fdf.dirty.peak_pi.fits")),
@@ -1014,7 +1089,7 @@ def test_no_peak_cut_by_default_even_where_a_pixel_has_no_weight(
     applied as ``0 * noise``: the theoretical noise is inf for a pixel linmos
     blanked, ``0 * inf`` is NaN, and every comparison against NaN is False -- so
     the cut meant to pass everything would instead blank the whole map."""
-    assert RMCleanOptions().peak_threshold_snr == 0.0
+    assert RMSynthFieldOptions().peak_threshold_snr == 0.0
     assert _snr_threshold(0.0, np.float64(np.inf)) is None
     assert _snr_threshold(0.0, np.array([1e-5, np.inf])) is None
     assert _snr_threshold(5.0, np.float64(2.0)) == 10.0
@@ -1218,7 +1293,7 @@ def test_rmclean_runs_once_per_chunk_whatever_is_requested(
         lambda *a, **k: real_compute(*a, **{**k, "scheduler": "threads"}),
     )
 
-    synth_results = run_rmsynth_3d(
+    synth_results = _run_rmsynth_3d(
         stokes_q_cube=stokes_q_cube,
         stokes_u_cube=stokes_u_cube,
         rmsynth_options=RMSynthOptions(),
@@ -1299,7 +1374,7 @@ def test_rmclean_runs_once_per_chunk_on_a_distributed_client(
     )
     try:
         with Client(cluster) as client:
-            synth_results = run_rmsynth_3d(
+            synth_results = _run_rmsynth_3d(
                 stokes_q_cube=stokes_q_cube,
                 stokes_u_cube=stokes_u_cube,
                 rmsynth_options=RMSynthOptions(),
@@ -1454,7 +1529,7 @@ def test_stokes_i_fit_does_not_multiply_with_requested_products(
     stokes_i_weight_cube = _make_i_weight_cube(tmp_path)
 
     # Built once, and never computed, only to read the chunking off it
-    n_chunks = run_rmsynth_3d(
+    n_chunks = _run_rmsynth_3d(
         stokes_q_cube=stokes_q_cube,
         stokes_u_cube=stokes_u_cube,
         rmsynth_options=RMSynthOptions(),
@@ -1490,3 +1565,66 @@ def test_stokes_i_fit_does_not_multiply_with_requested_products(
     assert len(set(counts.values())) == 1, (
         f"the Stokes I fit count moves with the requested products: {counts}"
     )
+
+
+def test_error_cubes_cannot_be_a_weight_and_a_noise_at_once() -> None:
+    """A weight cube is 1/sigma**2 and a noise cube is sigma. rm-lite takes
+    either through one argument and is told which by a flag, so confusing them
+    inverts the noise. One argument of a tagged type makes "both" unsayable and
+    "neither, but something cube-shaped" a validation error rather than a silent
+    guess at which was meant.
+    """
+    paths = {"q_path": Path("q.fits"), "u_path": Path("u.fits")}
+
+    assert WeightCubesForRMSynth(**paths).kind == "weight"
+    assert NoiseCubesForRMSynth(**paths).kind == "noise"
+
+    # The tag is what survives the serialisation prefect does to task inputs.
+    # Without it pydantic rebuilds a union by first match, and a noise cube
+    # coming back as a weight would invert the noise by 1/sigma**2.
+    options = RMSynthFieldOptions(
+        stokes_cubes=CubesForRMSynth(**paths), error_cubes=NoiseCubesForRMSynth(**paths)
+    )
+    rebuilt = RMSynthFieldOptions.model_validate(options.model_dump())
+    assert isinstance(rebuilt.error_cubes, NoiseCubesForRMSynth)
+    assert isinstance(
+        RMSynthFieldOptions.model_validate(
+            RMSynthFieldOptions(error_cubes=WeightCubesForRMSynth(**paths)).model_dump()
+        ).error_cubes,
+        WeightCubesForRMSynth,
+    )
+
+    # An untagged trio says nothing about which it is, so it is refused
+    with pytest.raises(ValidationError):
+        RMSynthFieldOptions(error_cubes=CubesForRMSynth(**paths))
+
+
+def test_a_weight_cube_is_not_inverted_but_a_noise_cube_is(
+    tmp_path: Path, qu_cubes: tuple[Path, Path]
+) -> None:
+    """The one thing the tag decides once it reaches rm-lite."""
+    stokes_q_cube, stokes_u_cube = qu_cubes
+    sigma = 1e-3
+    freq_hz = np.linspace(700e6, 1300e6, N_CHAN)
+
+    captured: dict[str, object] = {}
+
+    def _capture(**kwargs: object) -> None:
+        captured.update(kwargs)
+        raise RuntimeError("stop here")
+
+    weights = _make_weight_cube(tmp_path, (N_CHAN, NY, NX), freq_hz, sigma, "as_weight")
+    for error_cubes, expected in (
+        (WeightCubesForRMSynth(q_path=weights, u_path=weights), True),
+        (NoiseCubesForRMSynth(q_path=weights, u_path=weights), False),
+    ):
+        with patch("flint.rmsynth.rmsynth_3d_from_fits", side_effect=_capture):
+            with pytest.raises(RuntimeError, match="stop here"):
+                run_rmsynth_3d(
+                    stokes_cubes=CubesForRMSynth(
+                        q_path=stokes_q_cube, u_path=stokes_u_cube
+                    ),
+                    rmsynth_options=RMSynthOptions(),
+                    error_cubes=error_cubes,
+                )
+        assert captured["noise_files_are_weight"] is expected, error_cubes

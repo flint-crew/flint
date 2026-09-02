@@ -45,7 +45,13 @@ from rm_lite.utils.synthesis import (  # noqa: E402
 
 from flint.exceptions import NotSupportedError
 from flint.logging import logger
-from flint.options import RMCleanOptions, RMSynthOptions
+from flint.options import (
+    CubesForRMSynth,
+    ErrorCubesForRMSynth,
+    RMCleanOptions,
+    RMSynthOptions,
+    WeightCubesForRMSynth,
+)
 
 FDFLabel: TypeAlias = Literal["dirty", "clean", "model"]
 FDFThreshold: TypeAlias = float | np.ndarray | da.Array | None
@@ -104,24 +110,16 @@ def _check_cubes_memmappable(*cubes: Path | None) -> None:
 
 
 def run_rmsynth_3d(
-    stokes_q_cube: Path,
-    stokes_u_cube: Path,
+    stokes_cubes: CubesForRMSynth,
     rmsynth_options: RMSynthOptions,
-    stokes_i_cube: Path | None = None,
-    stokes_q_weight_cube: Path | None = None,
-    stokes_u_weight_cube: Path | None = None,
-    stokes_i_weight_cube: Path | None = None,
+    error_cubes: ErrorCubesForRMSynth | None = None,
 ) -> RMSynth3DResults:
     """Run 3D RM-synthesis on Stokes Q/U FITS cubes.
 
     Args:
-        stokes_q_cube (Path): Path to the Stokes Q FITS cube
-        stokes_u_cube (Path): Path to the Stokes U FITS cube
+        stokes_cubes (CubesForRMSynth): The Stokes Q/U cubes, and optionally I to fit a per-pixel fractional-polarisation correction against
         rmsynth_options (RMSynthOptions): Options controlling the synthesis
-        stokes_i_cube (Path | None, optional): Path to a Stokes I FITS cube, used to fit a per-pixel fractional-polarisation correction. FDF stays in Q/U flux if not given. Defaults to None.
-        stokes_q_weight_cube (Path | None, optional): Path to the linmos Stokes Q weight cube, giving each pixel its own channel weights rather than one spectrum estimated from the Q/U cubes. rm-lite requires both Q and U, or neither. Defaults to None.
-        stokes_u_weight_cube (Path | None, optional): Path to the linmos Stokes U weight cube. See ``stokes_q_weight_cube``. Defaults to None.
-        stokes_i_weight_cube (Path | None, optional): Path to the linmos Stokes I weight cube, used to weight the per-pixel Stokes I fit and to score it against ``stokes_i_snr_cut``. Falls back to ``RMSynthOptions.estimate_stokes_i_noise`` if not given. Defaults to None.
+        error_cubes (ErrorCubesForRMSynth | None, optional): Either the linmos weight cubes (an inverse variance) or a set of noise cubes (a sigma), which the type says which of. None leaves rm-lite to estimate a per-channel noise from Q/U itself. Defaults to None.
 
     Returns:
         RMSynth3DResults: Lazy dirty FDF cube, the RMSF, and associated
@@ -130,37 +128,33 @@ def run_rmsynth_3d(
         itself; see ``RMSynthOptions.per_pixel_rmsf`` for what that costs
     """
     _check_cubes_memmappable(
-        stokes_q_cube,
-        stokes_u_cube,
-        stokes_i_cube,
-        stokes_q_weight_cube,
-        stokes_u_weight_cube,
-        stokes_i_weight_cube,
+        *stokes_cubes.paths, *(error_cubes.paths if error_cubes else ())
     )
     stokes_i_kwargs = (
         {
-            "stokes_i_file": stokes_i_cube,
-            "stokes_i_error_file": stokes_i_weight_cube,
+            "stokes_i_file": stokes_cubes.i_path,
+            "stokes_i_error_file": error_cubes.i_path if error_cubes else None,
             "fit_order": rmsynth_options.fit_order,
             "fit_function": rmsynth_options.fit_function,
             "stokes_i_snr_cut": rmsynth_options.stokes_i_snr_cut,
-            # Only consulted when no Stokes I weight cube is given: rm-lite
+            # Only consulted when no Stokes I error cube is given: rm-lite
             # refuses a stokes_i_snr_cut it has no error to measure against.
             "estimate_stokes_i_noise": rmsynth_options.estimate_stokes_i_noise,
             "compute_model_error": rmsynth_options.compute_model_error,
             "n_error_samples": rmsynth_options.n_error_samples,
         }
-        if stokes_i_cube is not None
+        if stokes_cubes.i_path is not None
         else {}
     )
     return rmsynth_3d_from_fits(
-        stokes_q_file=stokes_q_cube,
-        stokes_u_file=stokes_u_cube,
-        stokes_q_error_file=stokes_q_weight_cube,
-        stokes_u_error_file=stokes_u_weight_cube,
+        stokes_q_file=stokes_cubes.q_path,
+        stokes_u_file=stokes_cubes.u_path,
+        stokes_q_error_file=error_cubes.q_path if error_cubes else None,
+        stokes_u_error_file=error_cubes.u_path if error_cubes else None,
         # linmos writes 1/sigma**2 directly, so rm-lite must not invert and
-        # square these again. Applies to the Stokes I error cube as well
-        noise_files_are_weight=True,
+        # square those. A noise cube is a sigma and must be inverted. Applies to
+        # the Stokes I error cube as well
+        noise_files_are_weight=isinstance(error_cubes, WeightCubesForRMSynth),
         phi_max_radm2=rmsynth_options.phi_max_radm2,
         d_phi_radm2=rmsynth_options.d_phi_radm2,
         n_samples=rmsynth_options.n_samples,
@@ -193,7 +187,8 @@ def run_rmclean_3d(
         auto_threshold=rmclean_options.auto_threshold,
         max_iter=rmclean_options.max_iter,
         gain=rmclean_options.gain,
-        moment_threshold_snr=rmclean_options.moment_threshold_snr,
+        # rm-lite's own moment and peak maps go unused, so its cut is left at
+        # whatever it defaults to; flint derives its own in write_rm_products
         log_level=logging.INFO,
     )
 
@@ -416,14 +411,9 @@ def write_stokes_i_coeff_maps_to_fits(
 def _snr_threshold(snr: float, fdf_error_noise: FDFThreshold) -> FDFThreshold:
     """An FDF amplitude cut ``snr`` times the theoretical noise, or None for no cut.
 
-    Zero means no cut, and has to short-circuit rather than multiply through:
-    the theoretical noise is ``inf`` wherever a pixel carries no weight at all
-    (linmos blanks the mosaic edge), and ``0 * inf`` is NaN, which blanks every
-    comparison against it instead of passing everything.
-
-    The noise is a scalar for per-channel weights and a lazy (ny, nx) map for
-    the per-pixel ones the linmos cubes give, so the cut comes back in whichever
-    form it arrived in.
+    Zero short-circuits rather than multiplying through: the noise is ``inf``
+    where a pixel carries no weight, and ``0 * inf`` is NaN, which would blank
+    every comparison instead of passing everything.
     """
     if snr == 0 or fdf_error_noise is None:
         return None
@@ -661,6 +651,8 @@ def write_rm_products(
     moment_products: list[FDFLabel],
     peak_products: list[FDFLabel],
     output_prefix: Path,
+    moment_threshold_snr: float = 5.0,
+    peak_threshold_snr: float = 0.0,
     dask_client: Client | None = None,
 ) -> list[Path]:
     """Batch-compute and write the requested RM-synthesis/RM-CLEAN output products.
@@ -674,6 +666,8 @@ def write_rm_products(
         cube_products (list[FDFLabel]): Which FDF cube(s) to write ('dirty', 'clean', 'model')
         moment_products (list[FDFLabel]): Which FDF(s) to compute Faraday moment maps from
         peak_products (list[FDFLabel]): Which FDF(s) to write peak-statistic maps from, nine per entry
+        moment_threshold_snr (float, optional): SNR cut applied before the moment maps. Defaults to 5.0.
+        peak_threshold_snr (float, optional): SNR cut below which peaks are blanked. Zero applies no cut. Defaults to 0.0.
         output_prefix (Path): Common prefix for the output files
         dask_client (Client | None, optional): A distributed Client (e.g. the one backing a Prefect ``DaskTaskRunner``) to compute across, rather than just the local worker. Defaults to None.
 
@@ -755,7 +749,7 @@ def write_rm_products(
     # applies this same cut inside RM-CLEAN to its own moment maps, which flint
     # does not use, so it is rederived here from the shared theoretical noise.
     moment_threshold = _snr_threshold(
-        rmclean_options.moment_threshold_snr,
+        moment_threshold_snr,
         synth_results.theoretical_noise.fdf_error_noise,
     )
     for label in moment_products:
@@ -782,17 +776,13 @@ def write_rm_products(
         assert clean_results is not None  # run_clean is `clean_results is not None`
         compute_targets["rmclean_niter"] = clean_results.iter_count_map
 
-    # rm-lite returns peaks of its own on RMClean3DResults, but only for the
-    # clean FDF and only under its own threshold. Deriving them here is what
-    # lets any requested FDF have them -- the dirty one included, which needs no
-    # RM-CLEAN at all -- under a cut flint chooses.
-    #
-    # A separate cut from the moments, and off by default. The moment cut exists
-    # because mom0 integrates the whole Faraday depth axis; a peak is one sample
-    # and has no such floor, so blanking it discards a real measurement whose
-    # error (peak_pi_error) is written beside it.
+    # rm-lite's own peaks cover only the clean FDF under its own threshold;
+    # deriving them here lets any requested FDF have them, the dirty one
+    # included. Cut separately from the moments and off by default: mom0
+    # integrates the whole Faraday depth axis, a peak is one sample with no such
+    # floor, and peak_pi_error is written beside it to judge significance.
     peak_threshold = _snr_threshold(
-        rmclean_options.peak_threshold_snr,
+        peak_threshold_snr,
         synth_results.theoretical_noise.fdf_error_noise,
     )
     for label in peak_products:

@@ -9,15 +9,16 @@ hold stateful properties throughout the flint codebase.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Annotated, Literal, Protocol, Self, TypeAlias
 
 import numpy as np
 import yaml
 from astropy.coordinates import EarthLocation, SkyCoord
 from astropy.time import Time
 from capn_crunch import BaseOptions
-from pydantic import create_model
+from pydantic import Field, create_model
 
 from flint.exceptions import MSError
 from flint.logging import logger
@@ -229,12 +230,84 @@ class PolFieldOptions(BaseOptions):
     """Specify the final beamsize of linmos field images in (arcsec, arcsec, deg)"""
     pb_cutoff: float = 0.1
     """Primary beam attenuation cutoff to use during linmos"""
+    bane_noise: bool = False
+    """Measure a background and RMS cube off the co-added planes with BANE. Parameters come from the strategy's ``fftbane`` mode. Independent of ``RMSynthFieldOptions.bane_noise``"""
     imaging_strategy: Path | None = None
     """Path to a FLINT imaging yaml file that contains settings to use throughout imaging"""
     pol_cube_channel_width: float | None = None
     """Desired width, in Hz, of each plane of the polarisation cubes. The wsclean channel division is solved for this target so the cubes have a single linear frequency axis, overriding the strategy ``channels_out``. Deliberately separate from ``RACSAllOptions.cube_channel_width``, as the continuum and polarisation cubes need not share a channelisation. See ``flint.imager.channel_division``"""
     sbid_copy_path: Path | None = None
     """Path that final processed products will be copied into. If None no copying of file products is performed. See ArchiveOptions. """
+
+
+class FFTBANEOptions(BaseOptions):
+    """Options for ``flint.bane.robust_bane``. Lives here, not in ``flint.bane``,
+    so strategy validation does not pull in numba"""
+
+    step_size: int | None = None
+    """Downsampling factor in pixels. None uses 3 beams; a negative value sets the beams per step"""
+    box_size: int | None = None
+    """Convolution kernel size in pixels. None uses 10 beams; a negative value sets the beams per box"""
+    clip_sigma: float = 5.0
+    """Pixels above this SNR are replaced by noise before the background is fitted"""
+    seed: int = 1234
+    """Seeds the noise clipped pixels are filled with, so a rerun reproduces the maps"""
+
+
+class _CubesForRMSynth(BaseOptions):
+    """The Stokes RM-synthesis reads: Q and U, and I for the fractional
+    correction. No V, which has no part in a Faraday spectrum.
+
+    Never annotate with this: the types below exist to be told apart.
+    """
+
+    q_path: Path
+    """Stokes Q"""
+    u_path: Path
+    """Stokes U"""
+    i_path: Path | None = None
+    """Stokes I, optional: rm-synthesis runs without it"""
+
+    @classmethod
+    def from_mapping(cls, cubes: Mapping[str, Path]) -> Self:
+        """From a per-Stokes dict, dropping anything but q/u/i"""
+        missing = {"q", "u"} - cubes.keys()
+        if missing:
+            msg = f"Need a cube for every one of q and u, missing {sorted(missing)}."
+            raise ValueError(msg)
+        return cls(q_path=cubes["q"], u_path=cubes["u"], i_path=cubes.get("i"))
+
+    @property
+    def paths(self) -> list[Path]:
+        """Every path set"""
+        return [
+            path for path in (self.q_path, self.u_path, self.i_path) if path is not None
+        ]
+
+
+class CubesForRMSynth(_CubesForRMSynth):
+    """The Stokes image cubes"""
+
+
+class WeightCubesForRMSynth(_CubesForRMSynth):
+    """Inverse variance, 1/sigma**2, as linmos writes it"""
+
+    kind: Literal["weight"] = "weight"
+    """Union discriminator"""
+
+
+class NoiseCubesForRMSynth(_CubesForRMSynth):
+    """Noise, sigma, as BANE measures it"""
+
+    kind: Literal["noise"] = "noise"
+    """Union discriminator"""
+
+
+ErrorCubesForRMSynth: TypeAlias = Annotated[
+    WeightCubesForRMSynth | NoiseCubesForRMSynth, Field(discriminator="kind")
+]
+"""A weight or a noise, never both. Confusing them inverts the noise by 1/sigma**2,
+so the tag keeps them apart across the serialisation prefect does to task inputs."""
 
 
 class RMSynthOptions(BaseOptions):
@@ -296,10 +369,6 @@ class RMCleanOptions(BaseOptions):
     """Maximum CLEAN iterations"""
     gain: float = 0.1
     """CLEAN loop gain"""
-    moment_threshold_snr: float = 5.0
-    """SNR cut (times the theoretical FDF noise) applied before computing Faraday moment maps, the dirty ones included"""
-    peak_threshold_snr: float = 0.0
-    """SNR cut (times the theoretical FDF noise) below which FDF peak statistics are blanked. Zero applies no cut: unlike mom0, a peak is a single sample with no noise floor to integrate, and peak_pi_error is written beside it to judge significance downstream"""
 
 
 class SpiceOptions(BaseOptions):
@@ -349,18 +418,12 @@ class RMSynthFieldOptions(BaseOptions):
     algorithm parameters, which are drawn from ``imaging_strategy`` rather
     than exposed here."""
 
-    stokes_q_cube: Path | None = None
-    """Path to the Stokes Q FITS cube. Computed by the racs-all flow, so required only when running this pipeline standalone"""
-    stokes_u_cube: Path | None = None
-    """Path to the Stokes U FITS cube. Computed by the racs-all flow, so required only when running this pipeline standalone"""
-    stokes_i_cube: Path | None = None
-    """Path to a Stokes I FITS cube, used to fit a per-pixel fractional-polarisation correction. Defaults to None."""
-    stokes_q_weight_cube: Path | None = None
-    """Path to Stokes Q weights cube produced by LINMOS"""
-    stokes_u_weight_cube: Path | None = None
-    """Path to Stokes U weights cube produced by LINMOS"""
-    stokes_i_weight_cube: Path | None = None
-    """Path to Stokes I weights cube produced by LINMOS"""
+    stokes_cubes: CubesForRMSynth | None = None
+    """The Stokes cubes. Set by the racs-all flow"""
+    error_cubes: ErrorCubesForRMSynth | None = None
+    """Weight or noise cubes, never both. None lets rm-lite estimate from Q/U itself"""
+    bane_noise: bool = False
+    """Measure BANE cubes off the common-resolution cubes and take the FDF noise from the RMS. Parameters come from the strategy's ``fftbane`` mode. Supersedes ``error_cubes``, which describe the unconvolved inputs"""
     imaging_strategy: Path | None = None
     """Path to a FLINT imaging yaml file that contains the RMSynthOptions/RMCleanOptions settings to use"""
     beam_cutoff: float | None = None
@@ -369,6 +432,10 @@ class RMSynthFieldOptions(BaseOptions):
     """Which Faraday dispersion function (FDF) cubes to write as FITS. Nothing by default, as these cubes can be large."""
     moment_products: list[Literal["dirty", "clean", "model"]] = ["clean"]
     """Which FDF(s) to compute Faraday moment maps from."""
+    moment_threshold_snr: float = 5.0
+    """SNR cut (times the theoretical FDF noise) applied before the moment maps are computed, the dirty ones included"""
+    peak_threshold_snr: float = 0.0
+    """SNR cut (times the theoretical FDF noise) below which peak statistics are blanked. Zero applies no cut: a peak is a single sample with no noise floor to integrate, and peak_pi_error is written beside it"""
     peak_products: list[Literal["dirty", "clean", "model"]] = []
     """Which FDF(s) to measure peak statistics from: peak polarised intensity (raw and debiased), Faraday depth, polarisation angle and intrinsic angle, each with its error. Nine (ny, nx) maps per FDF, so empty by default -- at 16032^2 that is ~9 GB per entry"""
     output_path: Path | None = None
@@ -386,7 +453,7 @@ class SpiceFieldOptions(BaseOptions):
     cubes: list[Path] = []
     """Stokes image cubes to trim and compress. Computed by the racs-all flow, so required only when running this pipeline standalone"""
     weight_cubes: list[Path] = []
-    """LINMOS weight cubes to trim and compress alongside ``cubes``, spiced with the same boxes so they stay on a matching grid. Computed by the racs-all flow"""
+    """Ancillary cubes to trim and compress alongside ``cubes``, spiced with the same boxes so they stay on a matching grid: the LINMOS weight cubes, and the BANE background/RMS cubes when the polarisation stage made them. Computed by the racs-all flow"""
     reference_image: Path | None = None
     """A 2D MFS image whose WCS/shape sources the source-finding boxes. Required only when catalogue is not set (built-in aegean source finding)"""
     catalogue: Path | None = None

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Collection, Sequence
 from pathlib import Path
-from typing import Any, ParamSpec, TypeVar
+from typing import Any, NamedTuple, ParamSpec, TypeVar
 
 import numpy as np
 import pandas as pd
@@ -17,6 +17,7 @@ from prefect import Task, unmapped
 from prefect.artifacts import create_table_artifact
 from prefect.futures import PrefectFuture
 
+from flint.bane import FFTBANEOptions, bane_fits_image
 from flint.calibrate.aocalibrate import (
     ApplySolutions,
     CalibrateCommand,
@@ -111,6 +112,7 @@ task_create_name_from_common_fields = task(create_name_from_common_fields)
 task_remove_files_folders = task(remove_files_folders)
 task_get_common_bounding_box = task(get_common_bounding_box)
 task_split_cube_into_planes = task(split_cube_into_planes)
+task_bane_fits_image = task(bane_fits_image)
 
 # Tasks below are extracting componented from earlier stages, or are
 # otherwise doing something important
@@ -986,6 +988,24 @@ def task_convolve_linmos_to_fixed_shape(
     return linmos_result.with_options(image_fits=output_image_path)
 
 
+class LinmosCubes(NamedTuple):
+    """The cubes ``linmos_channel_groups_to_cubes`` builds from one Stokes"""
+
+    image: PrefectFuture[Path]
+    """The co-added image cube"""
+    weight: PrefectFuture[Path]
+    """The linmos weight cube"""
+    bkg: PrefectFuture[Path] | None = None
+    """Background cube, None unless BANE was asked for"""
+    rms: PrefectFuture[Path] | None = None
+    """RMS noise cube, None unless BANE was asked for"""
+
+    @property
+    def futures(self) -> list[PrefectFuture[Path]]:
+        """Every cube actually being made, for callers that only need to wait"""
+        return [future for future in self if future is not None]
+
+
 def linmos_channel_groups_to_cubes(
     channel_groups: Collection[Collection[Path]],
     container: Path,
@@ -995,7 +1015,8 @@ def linmos_channel_groups_to_cubes(
     field_summary: FieldSummary | None = None,
     suffix_str: str | None = None,
     holofile: Path | None = None,
-) -> list[PrefectFuture[Path]]:
+    fft_bane_options: FFTBANEOptions | None = None,
+) -> LinmosCubes:
     """Co-add beam images one channel at a time, in parallel, then stack the
     resulting mosaics back into image and weight cubes.
 
@@ -1013,9 +1034,10 @@ def linmos_channel_groups_to_cubes(
         field_summary (FieldSummary | None, optional): Description of the field, used to get the ``pol_axis``. Defaults to None.
         suffix_str (str | None, optional): Additional suffix added to the linmos and cube names. Defaults to None.
         holofile (Path | None, optional): Holography file overriding the one in ``linmos_options``. Defaults to None.
+        fft_bane_options (FFTBANEOptions | None, optional): When given, each co-added channel also gets a BANE background and RMS map, stacked into their own cubes. Defaults to None, i.e. no BANE.
 
     Returns:
-        list[PrefectFuture[Path]]: The image and weight cubes being created
+        LinmosCubes: The cubes being created
     """
     stokesi_groups = (
         list(stokesi_channel_groups) if stokesi_channel_groups is not None else None
@@ -1027,6 +1049,8 @@ def linmos_channel_groups_to_cubes(
 
     image_planes: list[PrefectFuture[Path]] = []
     weight_planes: list[PrefectFuture[Path]] = []
+    bkg_planes: list[PrefectFuture[Path]] = []
+    rms_planes: list[PrefectFuture[Path]] = []
     for channel_idx, beam_images in enumerate(channel_groups):
         linmos_result = task_linmos_images.submit(
             image_list=list(beam_images),
@@ -1048,6 +1072,15 @@ def linmos_channel_groups_to_cubes(
         image_planes.append(image_plane)
         weight_planes.append(weight_plane)
 
+        if fft_bane_options is not None:
+            # One task per channel, so every plane's background and noise is
+            # measured across the cluster while the other channels co-add
+            bane_maps = task_bane_fits_image.submit(
+                image=image_plane, fft_bane_options=fft_bane_options
+            )
+            bkg_planes.append(task_getattr.submit(bane_maps, "bkg_image"))
+            rms_planes.append(task_getattr.submit(bane_maps, "rms_image"))
+
     bounding_box: bool | PrefectFuture[BoundingBox] = False
     if fitscube_options.bounding_box:
         # Passing the future in is what forms the barrier - every channel has to
@@ -1062,16 +1095,28 @@ def linmos_channel_groups_to_cubes(
     cube_prefix = task_create_name_from_common_fields.submit(
         in_paths=image_planes, additional_suffixes=suffix_str
     )
-    return [
-        task_combine_images_to_cube.submit(
+    cubes = {
+        mode: task_combine_images_to_cube.submit(
             images=planes,
             prefix=cube_prefix,
             mode=mode,
             fitscube_options=fitscube_options,
             bounding_box=bounding_box,
         )
-        for planes, mode in ((image_planes, "image"), (weight_planes, "weight"))
-    ]
+        for planes, mode in (
+            (image_planes, "image"),
+            (weight_planes, "weight"),
+            (bkg_planes, "bkg"),
+            (rms_planes, "rms"),
+        )
+        if planes
+    }
+    return LinmosCubes(
+        image=cubes["image"],
+        weight=cubes["weight"],
+        bkg=cubes.get("bkg"),
+        rms=cubes.get("rms"),
+    )
 
 
 def create_convolve_linmos_cubes(
@@ -1123,7 +1168,7 @@ def create_convolve_linmos_cubes(
         fitscube_options=fitscube_options,
         suffix_str=linmos_suffix_str,
         holofile=holofile,
-    )
+    ).futures
 
     # Remove the convolved planes once every cube has been formed
     task_remove_files_folders.submit(

@@ -15,16 +15,24 @@ from fitscube.combine_fits import compress_cube
 from prefect import flow
 from pydantic import create_model
 
-from flint.configuration import get_options_from_strategy, load_strategy_yaml
+from flint.configuration import (
+    POLARISATION_MAPPING,
+    get_options_from_strategy,
+    load_strategy_yaml,
+)
 from flint.logging import logger
 from flint.naming import get_sbid_from_path
 from flint.options import (
+    CubesForRMSynth,
+    ErrorCubesForRMSynth,
     FitsCubeOptions,
+    NoiseCubesForRMSynth,
     PolFieldOptions,
     RACSAllOptions,
     RACSAllPipelineOptions,
     RMSynthFieldOptions,
     SpiceFieldOptions,
+    WeightCubesForRMSynth,
     pol_field_options_cli_class,
 )
 from flint.prefect.clusters import get_dask_runner
@@ -42,7 +50,7 @@ STAGE_CLUSTER_CONFIG_ATTRS = (
 
 # Fields on the rm-synth/spice options classes that process_racs_all always recomputes
 # from the polarisation stage's output. Excluded from the combined CLI.
-COMPUTED_FIELDS = {"stokes_q_cube", "stokes_u_cube", "cubes", "weight_cubes"}
+COMPUTED_FIELDS = {"stokes_cubes", "error_cubes", "cubes", "weight_cubes"}
 
 
 def _check_stage_prerequisites(
@@ -116,6 +124,41 @@ def _check_racs_all_pipeline_options(pipeline_options: RACSAllPipelineOptions) -
             "spice stage requires the polarisation stage (cannot set "
             "skip_polarisation without skip_spice). To run spice on its own, use "
             "flint_flow_spice_compression_pipeline."
+        )
+
+
+def _check_rmsynth_has_linear_stokes(
+    pipeline_options: RACSAllPipelineOptions,
+    pol_field_options: PolFieldOptions,
+) -> None:
+    """RM-synthesis builds its FDF from Q+iU, so a polarisation strategy that
+    names its Stokes has to include the linear ones. A circular-only strategy
+    would otherwise fail once imaging had already run.
+
+    Only checked when the strategy says: without one the polarisation stage has
+    its own say, and guessing here would refuse runs it would have served.
+    """
+    if pipeline_options.skip_rmsynth or pipeline_options.skip_polarisation:
+        return
+    if pol_field_options.imaging_strategy is None:
+        return
+
+    strategy = load_strategy_yaml(input_yaml=pol_field_options.imaging_strategy)
+    polarisations = strategy.get("polarisation")
+    if not polarisations:
+        return
+
+    imaged = {
+        stokes
+        for mode in polarisations
+        for stokes in POLARISATION_MAPPING.get(mode, "")
+    }
+    missing = {"q", "u"} - imaged
+    if missing:
+        raise ValueError(
+            f"rm-synthesis needs Stokes {sorted(missing)}, which the polarisation "
+            f"strategy does not image (modes: {sorted(polarisations)}). Add the "
+            "'linear' polarisation, or pass --skip-rmsynth."
         )
 
 
@@ -194,6 +237,9 @@ def process_racs_all(
         pol_field_options=pol_field_options,
         spice_field_options=spice_field_options,
     )
+    _check_rmsynth_has_linear_stokes(
+        pipeline_options=pipeline_options, pol_field_options=pol_field_options
+    )
 
     terminal_results: list[Any] = []
 
@@ -249,14 +295,18 @@ def process_racs_all(
     output_root = pipeline_options.output_path or continuum_result.output_science_path
 
     rmsynth_convolved_cubes: list[Path] = []
+    rmsynth_noise_cubes: list[Path] = []
     if not pipeline_options.skip_rmsynth:
+        # BANE RMS if the polarisation stage measured it, else the linmos
+        # weights. rm-synth supersedes both once it convolves to a common beam.
+        error_cubes: ErrorCubesForRMSynth = (
+            NoiseCubesForRMSynth.from_mapping(pol_result.rms_cubes)
+            if pol_result.rms_cubes
+            else WeightCubesForRMSynth.from_mapping(pol_result.weight_cubes)
+        )
         resolved_rmsynth_field_options = rmsynth_field_options.with_options(
-            stokes_q_cube=pol_result.stokes_cubes["q"],
-            stokes_u_cube=pol_result.stokes_cubes["u"],
-            stokes_i_cube=pol_result.stokes_cubes.get("i"),
-            stokes_i_weight_cube=pol_result.weight_cubes.get("i"),
-            stokes_q_weight_cube=pol_result.weight_cubes["q"],
-            stokes_u_weight_cube=pol_result.weight_cubes["u"],
+            stokes_cubes=CubesForRMSynth.from_mapping(pol_result.stokes_cubes),
+            error_cubes=error_cubes,
             output_path=rmsynth_field_options.output_path or output_root / "rmsynth",
         )
         assert pipeline_options.rmsynth_cluster_config is not None
@@ -268,6 +318,7 @@ def process_racs_all(
         )(rmsynth_field_options=resolved_rmsynth_field_options)
         terminal_results.extend(rmsynth_result.written_paths)
         rmsynth_convolved_cubes = rmsynth_result.convolved_cubes
+        rmsynth_noise_cubes = rmsynth_result.convolved_noise_cubes
 
     if not pipeline_options.skip_spice:
         resolved_reference_image = (
@@ -280,7 +331,12 @@ def process_racs_all(
         # covers both. Empty unless rm-synth actually had to convolve.
         resolved_spice_field_options = spice_field_options.with_options(
             cubes=[*pol_result.stokes_cubes.values(), *rmsynth_convolved_cubes],
-            weight_cubes=list(pol_result.weight_cubes.values()),
+            weight_cubes=[
+                *pol_result.weight_cubes.values(),
+                *pol_result.bkg_cubes.values(),
+                *pol_result.rms_cubes.values(),
+                *rmsynth_noise_cubes,
+            ],
             reference_image=resolved_reference_image,
             output_path=spice_field_options.output_path or output_root / "spice",
         )
@@ -303,7 +359,10 @@ def process_racs_all(
             for cube in (
                 *pol_result.stokes_cubes.values(),
                 *pol_result.weight_cubes.values(),
+                *pol_result.bkg_cubes.values(),
+                *pol_result.rms_cubes.values(),
                 *rmsynth_convolved_cubes,
+                *rmsynth_noise_cubes,
             )
         )
 

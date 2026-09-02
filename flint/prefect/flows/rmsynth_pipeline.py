@@ -18,12 +18,17 @@ from flint.logging import logger
 from flint.naming import create_name_from_common_fields, get_sbid_from_path
 from flint.options import (
     BaseOptions,
+    CubesForRMSynth,
+    ErrorCubesForRMSynth,
+    FFTBANEOptions,
+    NoiseCubesForRMSynth,
     RMCleanOptions,
     RMSynthFieldOptions,
     RMSynthOptions,
 )
 from flint.prefect.clusters import get_dask_runner
 from flint.prefect.common.rmsynth import (
+    CommonResolutionCubes,
     convolve_cubes_to_common_resolution,
     task_rmclean,
     task_rmsynth,
@@ -41,13 +46,16 @@ class RMSynthPipelineResult(BaseOptions):
     """The RM-synthesis and RM-CLEAN products written"""
     convolved_cubes: list[Path]
     """Any new Stokes cubes written to bring the inputs to a common resolution. Empty when the inputs already shared one and were used as they are, so a caller may concatenate these with the input cubes without ever repeating a path"""
+    convolved_noise_cubes: list[Path] = []
+    """The BANE background and RMS cubes measured on those convolved cubes. Frequency cubes like the rest, so they are trimmed and compressed alongside them. Empty whenever ``convolved_cubes`` is, or when BANE was not asked for"""
 
 
 def _resolve_common_resolution_cubes(
     stokes_cubes: dict[str, Path],
     output_path: Path | None = None,
     beam_cutoff: float | None = None,
-) -> tuple[dict[str, Path], list[Path]]:
+    fft_bane_options: FFTBANEOptions | None = None,
+) -> CommonResolutionCubes:
     """RM-synthesis is only meaningful when every channel of every Stokes shares
     one resolution, the 'total' mode of racs_tools. Cubes that already do are
     used as they are; otherwise they are convolved to a common beam and written
@@ -65,9 +73,10 @@ def _resolve_common_resolution_cubes(
         stokes_cubes (dict[str, Path]): The input cube of each Stokes to run against
         output_path (Path | None, optional): Directory any new cubes are written into. Defaults to alongside the inputs.
         beam_cutoff (float | None, optional): Channels coarser than this, in arcsec, are blanked rather than dragging the common beam out to their resolution. Defaults to no cutoff.
+        fft_bane_options (FFTBANEOptions | None, optional): When given, the convolved planes also get BANE background and RMS cubes, measured at the resolution the FDF is built at. Defaults to None.
 
     Returns:
-        tuple[dict[str, Path], list[Path]]: The cube to use for each Stokes, and the new cubes written (empty when the inputs were used as they are)
+        CommonResolutionCubes: The cube to use for each Stokes, and any BANE cubes. ``cubes`` is the input dict unchanged when no convolution was needed.
     """
     cube_paths = list(stokes_cubes.values())
     common_beam = common_beam_from_cubes(cube_paths=cube_paths, cutoff=beam_cutoff)
@@ -76,35 +85,31 @@ def _resolve_common_resolution_cubes(
             "No usable restoring beam among the Stokes cubes, so there is no "
             "resolution to make common. Using them as they are."
         )
-        return stokes_cubes, []
+        return CommonResolutionCubes(cubes=stokes_cubes)
 
     if cubes_share_common_beam(cube_paths=cube_paths, cutoff=beam_cutoff):
         logger.info("Stokes cubes already share a common resolution")
-        return stokes_cubes, []
+        return CommonResolutionCubes(cubes=stokes_cubes)
 
     beam_shape = BeamShape.from_radio_beam(radio_beam=common_beam)
     logger.info(f"Bringing the Stokes cubes to {beam_shape=}")
-    convolved_cubes = convolve_cubes_to_common_resolution(
+    return convolve_cubes_to_common_resolution(
         cubes=stokes_cubes,
         beam_shape=beam_shape,
         output_path=output_path,
         beam_cutoff=beam_cutoff,
+        fft_bane_options=fft_bane_options,
     )
-
-    return convolved_cubes, list(convolved_cubes.values())
 
 
 @flow(name="Flint RM-Synthesis Pipeline")
 def process_rmsynth(
     rmsynth_field_options: RMSynthFieldOptions,
 ) -> RMSynthPipelineResult:
-    if (
-        rmsynth_field_options.stokes_q_cube is None
-        or rmsynth_field_options.stokes_u_cube is None
-    ):
+    if rmsynth_field_options.stokes_cubes is None:
         raise ValueError(
-            "stokes_q_cube and stokes_u_cube are required. The racs-all flow sets "
-            "them from the polarisation stage."
+            "stokes_cubes is required. The racs-all flow sets it from the "
+            "polarisation stage."
         )
     if (
         not rmsynth_field_options.cube_products
@@ -114,15 +119,18 @@ def process_rmsynth(
         logger.info("No RM-synthesis products requested, skipping.")
         return RMSynthPipelineResult(written_paths=[], convolved_cubes=[])
 
-    stokes_cubes = {
-        "q": rmsynth_field_options.stokes_q_cube,
-        "u": rmsynth_field_options.stokes_u_cube,
+    stokes_cube_paths = {
+        stokes: cube
+        for stokes, cube in (
+            ("q", rmsynth_field_options.stokes_cubes.q_path),
+            ("u", rmsynth_field_options.stokes_cubes.u_path),
+            ("i", rmsynth_field_options.stokes_cubes.i_path),
+        )
+        if cube is not None
     }
-    if rmsynth_field_options.stokes_i_cube is not None:
-        stokes_cubes["i"] = rmsynth_field_options.stokes_i_cube
 
     strategy = load_and_copy_strategy(
-        output_split_science_path=rmsynth_field_options.stokes_q_cube.parent,
+        output_split_science_path=rmsynth_field_options.stokes_cubes.q_path.parent,
         imaging_strategy=rmsynth_field_options.imaging_strategy,
     )
 
@@ -137,20 +145,33 @@ def process_rmsynth(
         )
     )
 
-    stokes_cubes, convolved_cubes = _resolve_common_resolution_cubes(
-        stokes_cubes=stokes_cubes,
+    common_resolution = _resolve_common_resolution_cubes(
+        stokes_cubes=stokes_cube_paths,
         output_path=rmsynth_field_options.output_path,
         beam_cutoff=rmsynth_field_options.beam_cutoff,
+        fft_bane_options=FFTBANEOptions(
+            **get_options_from_strategy(
+                strategy=strategy, operation="rmsynth", mode="fftbane"
+            )
+        )
+        if rmsynth_field_options.bane_noise
+        else None,
+    )
+    stokes_cubes = CubesForRMSynth.from_mapping(common_resolution.cubes)
+
+    # A noise cube only describes the cubes it was measured on, so the BANE
+    # cubes made just above supersede the caller's. The caller's are right only
+    # when nothing was convolved and they describe these same cubes.
+    error_cubes: ErrorCubesForRMSynth | None = (
+        NoiseCubesForRMSynth.from_mapping(common_resolution.rms_cubes)
+        if common_resolution.rms_cubes
+        else rmsynth_field_options.error_cubes
     )
 
     synth_result = task_rmsynth.submit(
-        stokes_q_cube=stokes_cubes["q"],
-        stokes_u_cube=stokes_cubes["u"],
+        stokes_cubes=stokes_cubes,
         rmsynth_options=rmsynth_options,
-        stokes_i_cube=stokes_cubes.get("i"),
-        stokes_i_weight_cube=rmsynth_field_options.stokes_i_weight_cube,
-        stokes_q_weight_cube=rmsynth_field_options.stokes_q_weight_cube,
-        stokes_u_weight_cube=rmsynth_field_options.stokes_u_weight_cube,
+        error_cubes=error_cubes,
     )
 
     run_clean = needs_rmclean(
@@ -167,7 +188,7 @@ def process_rmsynth(
     )
 
     output_prefix = create_name_from_common_fields(
-        in_paths=(stokes_cubes["q"], stokes_cubes["u"])
+        in_paths=(stokes_cubes.q_path, stokes_cubes.u_path)
     )
     if rmsynth_field_options.output_path is not None:
         rmsynth_field_options.output_path.mkdir(parents=True, exist_ok=True)
@@ -176,13 +197,15 @@ def process_rmsynth(
     output_paths = task_write_rm_products.submit(
         synth_results=synth_result,
         clean_results=clean_result,
-        stokes_q_cube=stokes_cubes["q"],
+        stokes_q_cube=stokes_cubes.q_path,
         rmsynth_options=rmsynth_options,
         rmclean_options=rmclean_options,
         cube_products=rmsynth_field_options.cube_products,
         moment_products=rmsynth_field_options.moment_products,
         peak_products=rmsynth_field_options.peak_products,
         output_prefix=output_prefix,
+        moment_threshold_snr=rmsynth_field_options.moment_threshold_snr,
+        peak_threshold_snr=rmsynth_field_options.peak_threshold_snr,
     )
 
     written_paths = output_paths.result()
@@ -194,7 +217,14 @@ def process_rmsynth(
         ).result()
 
     return RMSynthPipelineResult(
-        written_paths=written_paths, convolved_cubes=convolved_cubes
+        written_paths=written_paths,
+        convolved_cubes=list(common_resolution.cubes.values())
+        if common_resolution.convolved
+        else [],
+        convolved_noise_cubes=[
+            *common_resolution.bkg_cubes.values(),
+            *common_resolution.rms_cubes.values(),
+        ],
     )
 
 
@@ -203,9 +233,11 @@ def setup_run_rmsynth(
 ) -> None:
     if (
         rmsynth_field_options.sbid_copy_path
-        and rmsynth_field_options.stokes_q_cube is not None
+        and rmsynth_field_options.stokes_cubes is not None
     ):
-        science_sbid = get_sbid_from_path(path=rmsynth_field_options.stokes_q_cube)
+        science_sbid = get_sbid_from_path(
+            path=rmsynth_field_options.stokes_cubes.q_path
+        )
         rmsynth_field_options = rmsynth_field_options.with_options(
             sbid_copy_path=rmsynth_field_options.sbid_copy_path / f"{science_sbid}"
         )
