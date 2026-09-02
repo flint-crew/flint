@@ -820,10 +820,7 @@ def write_rm_products(
         "stokes_i_alpha_error": synth_results.stokes_i_alpha_error_map,
         "stokes_i_model_order": synth_results.stokes_i_model_order_map,
     }
-    # Cast before the gather, not after. rm-lite builds these in float64 and the
-    # FITS writers put them out as float32, so gathering them at full width buys
-    # nothing and doubles what this one process has to hold: at 16032^2 each plane
-    # is 2.1 GB as float64 against 1.0 GB as float32.
+    # rm-lite builds these in float64
     stokes_i_maps = {
         k: v.astype(np.float32) for k, v in stokes_i_maps.items() if v is not None
     }
