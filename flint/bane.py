@@ -28,6 +28,7 @@ from radio_beam import Beam
 from radio_beam.beam import NoBeamException
 from scipy import ndimage
 
+from flint.convol import header_beam_is_usable
 from flint.logging import logger
 from flint.naming import create_aegean_names
 from flint.options import FFTBANEOptions
@@ -292,6 +293,12 @@ def _bane_round(
     return background, rms
 
 
+def _needs_a_beam(fft_bane_options: FFTBANEOptions) -> bool:
+    """Whether ``get_kernel`` will read the beam, rather than take both sizes as given"""
+    step_size, box_size = fft_bane_options.step_size, fft_bane_options.box_size
+    return step_size is None or step_size < 0 or box_size is None or box_size < 0
+
+
 def robust_bane(
     image: NDArray[np.float32],
     header: fits.Header | dict[str, Any],
@@ -304,6 +311,9 @@ def robust_bane(
     Two passes: the first clips sources against one background and noise for the
     plane, the second against the maps the first produced.
 
+    A plane with no usable beam gets blank maps, unless both sizes are given
+    outright and so no beam is needed to size the kernel.
+
     Args:
         image (NDArray[np.float32]): The image plane to measure
         header (fits.Header | dict[str, Any]): Its header, for the beam and pixel scale
@@ -315,6 +325,16 @@ def robust_bane(
         tuple[NDArray[np.float32], NDArray[np.float32]]: Background and RMS, shaped like `image`
     """
     fft_bane_options = fft_bane_options or FFTBANEOptions()
+
+    if _needs_a_beam(fft_bane_options) and not header_beam_is_usable(header=header):
+        # A blank channel is marked with a zero beam, or loses its beam keywords
+        # altogether once linmos has co-added it. There is no resolution to size
+        # a kernel against and no signal to measure, so the maps are blank too.
+        # Blank rather than absent so the plane still stacks into a cube
+        logger.warning("No usable beam to size the BANE kernel, returning blank maps")
+        blank = np.full_like(image, np.nan, dtype=np.float32)
+        return blank, blank.copy()
+
     kernel, step_size_pix = get_kernel(
         header=header,
         step_size=fft_bane_options.step_size,
