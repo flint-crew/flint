@@ -11,14 +11,14 @@ from prefect.logging import disable_run_logger
 from prefect.testing.utilities import prefect_test_harness
 
 from flint.options import (
+    CubesForRMSynth,
+    NoiseCubesForRMSynth,
     PolFieldOptions,
     RACSAllOptions,
     RACSAllPipelineOptions,
     RMSynthFieldOptions,
     SpiceFieldOptions,
-    StokesCubes,
-    StokesNoiseCubes,
-    StokesWeightCubes,
+    WeightCubesForRMSynth,
 )
 from flint.prefect.flows.racs_all_pipeline import (
     _check_racs_all_pipeline_options,
@@ -163,7 +163,7 @@ def test_process_racs_all_everything_disabled_returns_immediately(
     )
     pol_field_options = PolFieldOptions()
     rmsynth_field_options = RMSynthFieldOptions(
-        stokes_cubes=StokesCubes(q=Path("/tmp/q.fits"), u=Path("/tmp/u.fits"))
+        stokes_cubes=CubesForRMSynth(q=Path("/tmp/q.fits"), u=Path("/tmp/u.fits"))
     )
     spice_field_options = SpiceFieldOptions(cubes=[Path("/tmp/i.fits")])
 
@@ -488,7 +488,7 @@ def test_bane_rms_cubes_are_preferred_over_the_linmos_weights(
     _run_racs_all(tmp_path=tmp_path)
 
     options = _rmsynth_options(rmsynth_stage)
-    assert isinstance(options.error_cubes, StokesNoiseCubes)
+    assert isinstance(options.error_cubes, NoiseCubesForRMSynth)
     assert options.error_cubes.q == tmp_path / "q_rms.fits"
     assert options.error_cubes.u == tmp_path / "u_rms.fits"
 
@@ -505,7 +505,7 @@ def test_the_linmos_weights_are_used_when_bane_did_not_run(
     _run_racs_all(tmp_path=tmp_path)
 
     options = _rmsynth_options(rmsynth_stage)
-    assert isinstance(options.error_cubes, StokesWeightCubes)
+    assert isinstance(options.error_cubes, WeightCubesForRMSynth)
     assert options.error_cubes.q == tmp_path / "q.weight.fits"
 
 
@@ -529,3 +529,48 @@ def test_the_bane_cubes_are_spiced(
         *pol_result.bkg_cubes.values(),
         *pol_result.rms_cubes.values(),
     ]
+
+
+def test_rmsynth_refuses_a_polarisation_strategy_without_the_linear_stokes(
+    tmp_path: Path,
+) -> None:
+    """The FDF is built from Q+iU, so a circular-only strategy has nothing to
+    give rm-synthesis. Caught up front rather than after imaging has run."""
+    from flint.prefect.flows.racs_all_pipeline import _check_rmsynth_has_linear_stokes
+
+    strategy = tmp_path / "circular_only.yaml"
+    strategy.write_text(
+        "version: 0.2\ndefaults: {}\npolarisation:\n  circular:\n    wsclean: {}\n"
+    )
+
+    with pytest.raises(ValueError, match="rm-synthesis needs Stokes"):
+        _check_rmsynth_has_linear_stokes(
+            pipeline_options=RACSAllPipelineOptions(),
+            racs_all_options=RACSAllOptions(
+                low_data=tmp_path,
+                mid_data=tmp_path,
+                high_data=tmp_path,
+                imaging_strategy=strategy,
+            ),
+        )
+
+    # A strategy that does image the linear Stokes passes, and so does a run
+    # with rm-synthesis switched off
+    strategy.write_text(
+        "version: 0.2\ndefaults: {}\npolarisation:\n  linear:\n    wsclean: {}\n"
+    )
+    _check_rmsynth_has_linear_stokes(
+        pipeline_options=RACSAllPipelineOptions(),
+        racs_all_options=RACSAllOptions(
+            low_data=tmp_path,
+            mid_data=tmp_path,
+            high_data=tmp_path,
+            imaging_strategy=strategy,
+        ),
+    )
+    _check_rmsynth_has_linear_stokes(
+        pipeline_options=RACSAllPipelineOptions(skip_rmsynth=True),
+        racs_all_options=RACSAllOptions(
+            low_data=tmp_path, mid_data=tmp_path, high_data=tmp_path
+        ),
+    )

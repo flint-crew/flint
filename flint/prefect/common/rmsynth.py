@@ -17,12 +17,12 @@ from flint.bane import BANEMaps
 from flint.convol import BeamShape, convolve_plane_to_beam
 from flint.logging import logger
 from flint.options import (
+    CubesForRMSynth,
+    ErrorCubesForRMSynth,
     FFTBANEOptions,
     FitsCubeOptions,
     RMCleanOptions,
     RMSynthOptions,
-    StokesCubes,
-    StokesErrorCubes,
 )
 from flint.prefect.caching import task
 from flint.prefect.common.imaging import (
@@ -201,9 +201,9 @@ def convolve_cubes_to_common_resolution(
 
 @task
 def task_rmsynth(
-    stokes_cubes: StokesCubes,
+    stokes_cubes: CubesForRMSynth,
     rmsynth_options: RMSynthOptions,
-    error_cubes: StokesErrorCubes | None = None,
+    error_cubes: ErrorCubesForRMSynth | None = None,
 ) -> RMSynth3DResults:
     from prefect_dask import get_dask_client
 

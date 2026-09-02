@@ -254,8 +254,12 @@ class FFTBANEOptions(BaseOptions):
     """Seeds the noise clipped pixels are filled with, so a rerun reproduces the maps"""
 
 
-class _StokesTrio(BaseOptions):
-    """One path per Stokes. Never annotate with this: the types below exist to be told apart"""
+class _CubesForRMSynth(BaseOptions):
+    """The Stokes RM-synthesis reads: Q and U, and I for the fractional
+    correction. No V, which has no part in a Faraday spectrum.
+
+    Never annotate with this: the types below exist to be told apart.
+    """
 
     q: Path
     """Stokes Q"""
@@ -279,26 +283,26 @@ class _StokesTrio(BaseOptions):
         return [path for path in (self.q, self.u, self.i) if path is not None]
 
 
-class StokesCubes(_StokesTrio):
+class CubesForRMSynth(_CubesForRMSynth):
     """The Stokes image cubes"""
 
 
-class StokesWeightCubes(_StokesTrio):
+class WeightCubesForRMSynth(_CubesForRMSynth):
     """Inverse variance, 1/sigma**2, as linmos writes it"""
 
     kind: Literal["weight"] = "weight"
     """Union discriminator"""
 
 
-class StokesNoiseCubes(_StokesTrio):
+class NoiseCubesForRMSynth(_CubesForRMSynth):
     """Noise, sigma, as BANE measures it"""
 
     kind: Literal["noise"] = "noise"
     """Union discriminator"""
 
 
-StokesErrorCubes: TypeAlias = Annotated[
-    StokesWeightCubes | StokesNoiseCubes, Field(discriminator="kind")
+ErrorCubesForRMSynth: TypeAlias = Annotated[
+    WeightCubesForRMSynth | NoiseCubesForRMSynth, Field(discriminator="kind")
 ]
 """A weight or a noise, never both. Confusing them inverts the noise by 1/sigma**2,
 so the tag keeps them apart across the serialisation prefect does to task inputs."""
@@ -416,9 +420,9 @@ class RMSynthFieldOptions(BaseOptions):
     algorithm parameters, which are drawn from ``imaging_strategy`` rather
     than exposed here."""
 
-    stokes_cubes: StokesCubes | None = None
+    stokes_cubes: CubesForRMSynth | None = None
     """The Stokes cubes. Set by the racs-all flow"""
-    error_cubes: StokesErrorCubes | None = None
+    error_cubes: ErrorCubesForRMSynth | None = None
     """Weight or noise cubes, never both. None lets rm-lite estimate from Q/U itself"""
     bane_noise: FFTBANEOptions | None = None
     """Measure BANE cubes off the common-resolution cubes and take the FDF noise from the RMS. Supersedes ``error_cubes``, which describe the unconvolved inputs"""

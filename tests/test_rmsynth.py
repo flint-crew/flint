@@ -14,13 +14,13 @@ from pydantic import ValidationError
 
 from flint.exceptions import NotSupportedError
 from flint.options import (
+    CubesForRMSynth,
+    ErrorCubesForRMSynth,
+    NoiseCubesForRMSynth,
     RMCleanOptions,
     RMSynthFieldOptions,
     RMSynthOptions,
-    StokesCubes,
-    StokesErrorCubes,
-    StokesNoiseCubes,
-    StokesWeightCubes,
+    WeightCubesForRMSynth,
 )
 from flint.rmsynth import (
     FDFLabel,
@@ -144,19 +144,19 @@ def _run_rmsynth_3d(
 
     These tests are about what rm-synthesis does, not how its arguments are
     grouped, so the containers are built here rather than at ninety call sites.
-    ``StokesErrorCubes`` itself is covered by its own tests below.
+    ``ErrorCubesForRMSynth`` itself is covered by its own tests below.
     """
-    error_cubes: StokesErrorCubes | None = None
+    error_cubes: ErrorCubesForRMSynth | None = None
     if stokes_q_noise_cube is not None:
-        error_cubes = StokesNoiseCubes(
+        error_cubes = NoiseCubesForRMSynth(
             q=stokes_q_noise_cube, u=stokes_u_noise_cube, i=stokes_i_noise_cube
         )
     elif stokes_q_weight_cube is not None:
-        error_cubes = StokesWeightCubes(
+        error_cubes = WeightCubesForRMSynth(
             q=stokes_q_weight_cube, u=stokes_u_weight_cube, i=stokes_i_weight_cube
         )
     return run_rmsynth_3d(
-        stokes_cubes=StokesCubes(q=stokes_q_cube, u=stokes_u_cube, i=stokes_i_cube),
+        stokes_cubes=CubesForRMSynth(q=stokes_q_cube, u=stokes_u_cube, i=stokes_i_cube),
         rmsynth_options=rmsynth_options,
         error_cubes=error_cubes,
     )
@@ -789,7 +789,7 @@ def test_one_linmos_weight_cube_is_refused(tmp_path: Path) -> None:
 
     # ValidationError from the constructor, a plain ValueError from
     # from_mapping; the former subclasses the latter, so one assertion covers both
-    for kind in (StokesWeightCubes, StokesNoiseCubes):
+    for kind in (WeightCubesForRMSynth, NoiseCubesForRMSynth):
         with pytest.raises(ValueError):
             kind(q=weights)
         with pytest.raises(ValueError, match="missing"):
@@ -1560,27 +1560,27 @@ def test_error_cubes_cannot_be_a_weight_and_a_noise_at_once() -> None:
     """
     paths = {"q": Path("q.fits"), "u": Path("u.fits")}
 
-    assert StokesWeightCubes(**paths).kind == "weight"
-    assert StokesNoiseCubes(**paths).kind == "noise"
+    assert WeightCubesForRMSynth(**paths).kind == "weight"
+    assert NoiseCubesForRMSynth(**paths).kind == "noise"
 
     # The tag is what survives the serialisation prefect does to task inputs.
     # Without it pydantic rebuilds a union by first match, and a noise cube
     # coming back as a weight would invert the noise by 1/sigma**2.
     options = RMSynthFieldOptions(
-        stokes_cubes=StokesCubes(**paths), error_cubes=StokesNoiseCubes(**paths)
+        stokes_cubes=CubesForRMSynth(**paths), error_cubes=NoiseCubesForRMSynth(**paths)
     )
     rebuilt = RMSynthFieldOptions.model_validate(options.model_dump())
-    assert isinstance(rebuilt.error_cubes, StokesNoiseCubes)
+    assert isinstance(rebuilt.error_cubes, NoiseCubesForRMSynth)
     assert isinstance(
         RMSynthFieldOptions.model_validate(
-            RMSynthFieldOptions(error_cubes=StokesWeightCubes(**paths)).model_dump()
+            RMSynthFieldOptions(error_cubes=WeightCubesForRMSynth(**paths)).model_dump()
         ).error_cubes,
-        StokesWeightCubes,
+        WeightCubesForRMSynth,
     )
 
     # An untagged trio says nothing about which it is, so it is refused
     with pytest.raises(ValidationError):
-        RMSynthFieldOptions(error_cubes=StokesCubes(**paths))
+        RMSynthFieldOptions(error_cubes=CubesForRMSynth(**paths))
 
 
 def test_a_weight_cube_is_not_inverted_but_a_noise_cube_is(
@@ -1599,13 +1599,13 @@ def test_a_weight_cube_is_not_inverted_but_a_noise_cube_is(
 
     weights = _make_weight_cube(tmp_path, (N_CHAN, NY, NX), freq_hz, sigma, "as_weight")
     for error_cubes, expected in (
-        (StokesWeightCubes(q=weights, u=weights), True),
-        (StokesNoiseCubes(q=weights, u=weights), False),
+        (WeightCubesForRMSynth(q=weights, u=weights), True),
+        (NoiseCubesForRMSynth(q=weights, u=weights), False),
     ):
         with patch("flint.rmsynth.rmsynth_3d_from_fits", side_effect=_capture):
             with pytest.raises(RuntimeError, match="stop here"):
                 run_rmsynth_3d(
-                    stokes_cubes=StokesCubes(q=stokes_q_cube, u=stokes_u_cube),
+                    stokes_cubes=CubesForRMSynth(q=stokes_q_cube, u=stokes_u_cube),
                     rmsynth_options=RMSynthOptions(),
                     error_cubes=error_cubes,
                 )

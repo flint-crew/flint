@@ -18,13 +18,13 @@ from flint.logging import logger
 from flint.naming import create_name_from_common_fields, get_sbid_from_path
 from flint.options import (
     BaseOptions,
+    CubesForRMSynth,
+    ErrorCubesForRMSynth,
     FFTBANEOptions,
+    NoiseCubesForRMSynth,
     RMCleanOptions,
     RMSynthFieldOptions,
     RMSynthOptions,
-    StokesCubes,
-    StokesErrorCubes,
-    StokesNoiseCubes,
 )
 from flint.prefect.clusters import get_dask_runner
 from flint.prefect.common.rmsynth import (
@@ -151,13 +151,13 @@ def process_rmsynth(
         beam_cutoff=rmsynth_field_options.beam_cutoff,
         fft_bane_options=rmsynth_field_options.bane_noise,
     )
-    stokes_cubes = StokesCubes.from_mapping(common_resolution.cubes)
+    stokes_cubes = CubesForRMSynth.from_mapping(common_resolution.cubes)
 
     # A noise cube only describes the cubes it was measured on, so the BANE
     # cubes made just above supersede the caller's. The caller's are right only
     # when nothing was convolved and they describe these same cubes.
-    error_cubes: StokesErrorCubes | None = (
-        StokesNoiseCubes.from_mapping(common_resolution.rms_cubes)
+    error_cubes: ErrorCubesForRMSynth | None = (
+        NoiseCubesForRMSynth.from_mapping(common_resolution.rms_cubes)
         if common_resolution.rms_cubes
         else rmsynth_field_options.error_cubes
     )

@@ -24,7 +24,7 @@ from flint.convol import (
     cubes_share_common_beam,
     usable_beam_mask,
 )
-from flint.options import FFTBANEOptions, RMSynthFieldOptions, StokesCubes
+from flint.options import CubesForRMSynth, FFTBANEOptions, RMSynthFieldOptions
 from flint.prefect.common.rmsynth import CommonResolutionCubes
 from flint.prefect.flows.rmsynth_pipeline import (
     _resolve_common_resolution_cubes,
@@ -81,7 +81,7 @@ def test_process_rmsynth_on_dask_cluster(
     monkeypatch.setenv("OMP_NUM_THREADS", "1")
 
     rmsynth_field_options = RMSynthFieldOptions(
-        stokes_cubes=StokesCubes(q=stokes_q_cube, u=stokes_u_cube),
+        stokes_cubes=CubesForRMSynth(q=stokes_q_cube, u=stokes_u_cube),
         cube_products=["dirty"],
         moment_products=["clean"],
     )
@@ -153,7 +153,7 @@ def test_process_rmsynth_no_products_submits_nothing(
     with prefect_test_harness(), disable_run_logger():
         rmsynth_result = process_rmsynth(
             rmsynth_field_options=RMSynthFieldOptions(
-                stokes_cubes=StokesCubes(q=stokes_q_cube, u=stokes_u_cube),
+                stokes_cubes=CubesForRMSynth(q=stokes_q_cube, u=stokes_u_cube),
                 cube_products=[],
                 moment_products=[],
             )
@@ -179,7 +179,7 @@ def test_process_rmsynth_with_stokes_i_on_dask_cluster(
     monkeypatch.setenv("OMP_NUM_THREADS", "1")
 
     rmsynth_field_options = RMSynthFieldOptions(
-        stokes_cubes=StokesCubes(q=stokes_q_cube, u=stokes_u_cube, i=stokes_i_cube),
+        stokes_cubes=CubesForRMSynth(q=stokes_q_cube, u=stokes_u_cube, i=stokes_i_cube),
         cube_products=[],
         moment_products=["clean"],
     )

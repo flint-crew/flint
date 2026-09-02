@@ -46,11 +46,11 @@ from rm_lite.utils.synthesis import (  # noqa: E402
 from flint.exceptions import NotSupportedError
 from flint.logging import logger
 from flint.options import (
+    CubesForRMSynth,
+    ErrorCubesForRMSynth,
     RMCleanOptions,
     RMSynthOptions,
-    StokesCubes,
-    StokesErrorCubes,
-    StokesWeightCubes,
+    WeightCubesForRMSynth,
 )
 
 FDFLabel: TypeAlias = Literal["dirty", "clean", "model"]
@@ -110,16 +110,16 @@ def _check_cubes_memmappable(*cubes: Path | None) -> None:
 
 
 def run_rmsynth_3d(
-    stokes_cubes: StokesCubes,
+    stokes_cubes: CubesForRMSynth,
     rmsynth_options: RMSynthOptions,
-    error_cubes: StokesErrorCubes | None = None,
+    error_cubes: ErrorCubesForRMSynth | None = None,
 ) -> RMSynth3DResults:
     """Run 3D RM-synthesis on Stokes Q/U FITS cubes.
 
     Args:
-        stokes_cubes (StokesCubes): The Stokes Q/U cubes, and optionally I to fit a per-pixel fractional-polarisation correction against
+        stokes_cubes (CubesForRMSynth): The Stokes Q/U cubes, and optionally I to fit a per-pixel fractional-polarisation correction against
         rmsynth_options (RMSynthOptions): Options controlling the synthesis
-        error_cubes (StokesErrorCubes | None, optional): Either the linmos weight cubes (an inverse variance) or a set of noise cubes (a sigma), which the type says which of. None leaves rm-lite to estimate a per-channel noise from Q/U itself. Defaults to None.
+        error_cubes (ErrorCubesForRMSynth | None, optional): Either the linmos weight cubes (an inverse variance) or a set of noise cubes (a sigma), which the type says which of. None leaves rm-lite to estimate a per-channel noise from Q/U itself. Defaults to None.
 
     Returns:
         RMSynth3DResults: Lazy dirty FDF cube, the RMSF, and associated
@@ -154,7 +154,7 @@ def run_rmsynth_3d(
         # linmos writes 1/sigma**2 directly, so rm-lite must not invert and
         # square those. A noise cube is a sigma and must be inverted. Applies to
         # the Stokes I error cube as well
-        noise_files_are_weight=isinstance(error_cubes, StokesWeightCubes),
+        noise_files_are_weight=isinstance(error_cubes, WeightCubesForRMSynth),
         phi_max_radm2=rmsynth_options.phi_max_radm2,
         d_phi_radm2=rmsynth_options.d_phi_radm2,
         n_samples=rmsynth_options.n_samples,

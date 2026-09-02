@@ -15,20 +15,24 @@ from fitscube.combine_fits import compress_cube
 from prefect import flow
 from pydantic import create_model
 
-from flint.configuration import get_options_from_strategy, load_strategy_yaml
+from flint.configuration import (
+    POLARISATION_MAPPING,
+    get_options_from_strategy,
+    load_strategy_yaml,
+)
 from flint.logging import logger
 from flint.naming import get_sbid_from_path
 from flint.options import (
+    CubesForRMSynth,
+    ErrorCubesForRMSynth,
     FitsCubeOptions,
+    NoiseCubesForRMSynth,
     PolFieldOptions,
     RACSAllOptions,
     RACSAllPipelineOptions,
     RMSynthFieldOptions,
     SpiceFieldOptions,
-    StokesCubes,
-    StokesErrorCubes,
-    StokesNoiseCubes,
-    StokesWeightCubes,
+    WeightCubesForRMSynth,
     pol_field_options_cli_class,
 )
 from flint.prefect.clusters import get_dask_runner
@@ -123,6 +127,37 @@ def _check_racs_all_pipeline_options(pipeline_options: RACSAllPipelineOptions) -
         )
 
 
+def _check_rmsynth_has_linear_stokes(
+    pipeline_options: RACSAllPipelineOptions,
+    racs_all_options: RACSAllOptions,
+) -> None:
+    """RM-synthesis builds its FDF from Q+iU, so the polarisation strategy has to
+    image the linear Stokes. A circular-only strategy would otherwise fail once
+    imaging had already run.
+    """
+    if pipeline_options.skip_rmsynth or pipeline_options.skip_polarisation:
+        return
+
+    strategy = (
+        load_strategy_yaml(input_yaml=racs_all_options.imaging_strategy)
+        if racs_all_options.imaging_strategy is not None
+        else None
+    )
+    polarisations = (strategy or {}).get("polarisation", {"total": {}})
+    imaged = {
+        stokes
+        for mode in polarisations
+        for stokes in POLARISATION_MAPPING.get(mode, "")
+    }
+    missing = {"q", "u"} - imaged
+    if missing:
+        raise ValueError(
+            f"rm-synthesis needs Stokes {sorted(missing)}, which the polarisation "
+            f"strategy does not image (modes: {sorted(polarisations)}). Add the "
+            "'linear' polarisation, or pass --skip-rmsynth."
+        )
+
+
 def _check_spice_mfs_dependency(
     pipeline_options: RACSAllPipelineOptions,
     racs_all_options: RACSAllOptions,
@@ -198,6 +233,9 @@ def process_racs_all(
         pol_field_options=pol_field_options,
         spice_field_options=spice_field_options,
     )
+    _check_rmsynth_has_linear_stokes(
+        pipeline_options=pipeline_options, racs_all_options=racs_all_options
+    )
 
     terminal_results: list[Any] = []
 
@@ -257,13 +295,13 @@ def process_racs_all(
     if not pipeline_options.skip_rmsynth:
         # BANE RMS if the polarisation stage measured it, else the linmos
         # weights. rm-synth supersedes both once it convolves to a common beam.
-        error_cubes: StokesErrorCubes = (
-            StokesNoiseCubes.from_mapping(pol_result.rms_cubes)
+        error_cubes: ErrorCubesForRMSynth = (
+            NoiseCubesForRMSynth.from_mapping(pol_result.rms_cubes)
             if pol_result.rms_cubes
-            else StokesWeightCubes.from_mapping(pol_result.weight_cubes)
+            else WeightCubesForRMSynth.from_mapping(pol_result.weight_cubes)
         )
         resolved_rmsynth_field_options = rmsynth_field_options.with_options(
-            stokes_cubes=StokesCubes.from_mapping(pol_result.stokes_cubes),
+            stokes_cubes=CubesForRMSynth.from_mapping(pol_result.stokes_cubes),
             error_cubes=error_cubes,
             output_path=rmsynth_field_options.output_path or output_root / "rmsynth",
         )
