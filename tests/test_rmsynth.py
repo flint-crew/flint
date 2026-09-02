@@ -1048,7 +1048,11 @@ def test_the_peak_and_moment_snr_cuts_are_independent(
     """
     stokes_q_cube, stokes_u_cube = qu_cubes
 
-    def peak_pi_and_mom0(prefix: str, **snrs: float) -> tuple[np.ndarray, np.ndarray]:
+    def peak_pi_and_mom0(
+        prefix: str,
+        moment_threshold_snr: float = 5.0,
+        peak_threshold_snr: float = 0.0,
+    ) -> tuple[np.ndarray, np.ndarray]:
         output_prefix = tmp_path / prefix
         _synth_and_write(
             stokes_q_cube=stokes_q_cube,
@@ -1059,7 +1063,8 @@ def test_the_peak_and_moment_snr_cuts_are_independent(
             moment_products=["dirty"],
             peak_products=["dirty"],
             output_prefix=output_prefix,
-            **snrs,
+            moment_threshold_snr=moment_threshold_snr,
+            peak_threshold_snr=peak_threshold_snr,
         )
         return (
             fits.getdata(Path(f"{output_prefix}.fdf.dirty.peak_pi.fits")),
