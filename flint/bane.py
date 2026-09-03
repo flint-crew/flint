@@ -314,10 +314,13 @@ def robust_bane(
     A plane with no usable beam gets blank maps, unless both sizes are given
     outright and so no beam is needed to size the kernel.
 
+    Blank pixels are those that are not finite and, unless
+    ``fft_bane_options.invalidate_zeros`` is unset, those of exactly zero.
+
     Args:
         image (NDArray[np.float32]): The image plane to measure
         header (fits.Header | dict[str, Any]): Its header, for the beam and pixel scale
-        fft_bane_options (FFTBANEOptions | None, optional): Step, box, clip and seed. Defaults to ``FFTBANEOptions()``.
+        fft_bane_options (FFTBANEOptions | None, optional): Step, box, clip, seed and zero blanking. Defaults to ``FFTBANEOptions()``.
         kernel_func (Callable, optional): Kernel shape. Defaults to ``gaussian_kernel``.
         rms_estimator (Callable, optional): First-pass RMS estimator. Defaults to ``mad_std``.
 
@@ -343,6 +346,14 @@ def robust_bane(
     )
 
     nan_mask = ~np.isfinite(image)
+    if fft_bane_options.invalidate_zeros:
+        # linmos fills outside its primary beam cutoff with exact zeros rather
+        # than nans, and a measured zero is not a blank: it drags the seed
+        # median and mad_std below down towards zero, and past half the plane
+        # being blank it takes both to exactly zero, whereupon round one clips
+        # every pixel as a source and refills it with zero-scaled noise. The
+        # maps come back identically zero, which reads downstream as noiseless
+        nan_mask = nan_mask | (image == 0.0)
     valid = (~nan_mask).astype(np.float32)
     filled = np.where(nan_mask, 0.0, image).astype(np.float32)
     finite = image[~nan_mask].ravel()
