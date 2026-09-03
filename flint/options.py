@@ -9,17 +9,20 @@ hold stateful properties throughout the flint codebase.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Annotated, Literal, Protocol, Self, TypeAlias
 
 import numpy as np
 import yaml
 from astropy.coordinates import EarthLocation, SkyCoord
 from astropy.time import Time
 from capn_crunch import BaseOptions
+from pydantic import Field, create_model
 
-from flint.exceptions import MSError
+from flint.exceptions import MSError, NamingException
 from flint.logging import logger
+from flint.naming import split_images
 
 
 class BandpassOptions(BaseOptions):
@@ -228,8 +231,268 @@ class PolFieldOptions(BaseOptions):
     """Specify the final beamsize of linmos field images in (arcsec, arcsec, deg)"""
     pb_cutoff: float = 0.1
     """Primary beam attenuation cutoff to use during linmos"""
+    bane_noise: bool = False
+    """Measure a background and RMS cube off the co-added planes with BANE. Parameters come from the strategy's ``fftbane`` mode. Independent of ``RMSynthFieldOptions.bane_noise``"""
     imaging_strategy: Path | None = None
     """Path to a FLINT imaging yaml file that contains settings to use throughout imaging"""
+    pol_cube_channel_width: float | None = None
+    """Desired width, in Hz, of each plane of the polarisation cubes. The wsclean channel division is solved for this target so the cubes have a single linear frequency axis, overriding the strategy ``channels_out``. Deliberately separate from ``RACSAllOptions.cube_channel_width``, as the continuum and polarisation cubes need not share a channelisation. See ``flint.imager.channel_division``"""
+    sbid_copy_path: Path | None = None
+    """Path that final processed products will be copied into. If None no copying of file products is performed. See ArchiveOptions. """
+
+
+class FFTBANEOptions(BaseOptions):
+    """Options for ``flint.bane.robust_bane``. Lives here, not in ``flint.bane``,
+    so strategy validation does not pull in numba"""
+
+    step_size: int | None = None
+    """Downsampling factor in pixels. None uses 3 beams; a negative value sets the beams per step"""
+    box_size: int | None = None
+    """Convolution kernel size in pixels. None uses 10 beams; a negative value sets the beams per box"""
+    clip_sigma: float = 5.0
+    """Pixels above this SNR are replaced by noise before the background is fitted"""
+    seed: int = 1234
+    """Seeds the noise clipped pixels are filled with, so a rerun reproduces the maps"""
+    invalidate_zeros: bool = True
+    """Treat pixels of exactly 0.0 as blank, as ``FitsCubeOptions.invalidate_zeros`` does. linmos fills outside its primary beam cutoff with zeros, not nans"""
+
+
+class _CubesForRMSynth(BaseOptions):
+    """The Stokes RM-synthesis reads: Q and U, and I for the fractional
+    correction. No V, which has no part in a Faraday spectrum.
+
+    Never annotate with this: the types below exist to be told apart.
+    """
+
+    q_path: Path
+    """Stokes Q"""
+    u_path: Path
+    """Stokes U"""
+    i_path: Path | None = None
+    """Stokes I, optional: rm-synthesis runs without it"""
+
+    @classmethod
+    def from_mapping(cls, cubes: Mapping[str, Path]) -> Self:
+        """From a per-Stokes dict, dropping anything but q/u/i"""
+        missing = {"q", "u"} - cubes.keys()
+        if missing:
+            msg = f"Need a cube for every one of q and u, missing {sorted(missing)}."
+            raise ValueError(msg)
+        return cls(q_path=cubes["q"], u_path=cubes["u"], i_path=cubes.get("i"))
+
+    @classmethod
+    def from_paths(cls, paths: list[Path]) -> Self:
+        """From a flat list of cubes, taking the Stokes of each from its filename.
+
+        For the CLI, which has only a list of paths to hand. Prefer
+        ``from_mapping`` wherever the Stokes of each cube is already known.
+
+        Raises:
+            ValueError: A path carries no recognisable Stokes, or two cubes claim the same one
+        """
+        try:
+            split = split_images(images=paths, by="pol")
+        except (NamingException, ValueError) as err:
+            msg = (
+                f"Could not read the Stokes of every cube in {paths}. Names must "
+                "follow the flint or CASDA scheme, as the polarisation stage writes them."
+            )
+            raise ValueError(msg) from err
+
+        duplicated = {pol: found for pol, found in split.items() if len(found) > 1}
+        if duplicated:
+            msg = f"More than one cube for a Stokes, so which to use is ambiguous: {duplicated}"
+            raise ValueError(msg)
+
+        return cls.from_mapping({pol: found[0] for pol, found in split.items()})
+
+    @property
+    def paths(self) -> list[Path]:
+        """Every path set"""
+        return [
+            path for path in (self.q_path, self.u_path, self.i_path) if path is not None
+        ]
+
+
+class CubesForRMSynth(_CubesForRMSynth):
+    """The Stokes image cubes"""
+
+
+class WeightCubesForRMSynth(_CubesForRMSynth):
+    """Inverse variance, 1/sigma**2, as linmos writes it"""
+
+    kind: Literal["weight"] = "weight"
+    """Union discriminator"""
+
+
+class NoiseCubesForRMSynth(_CubesForRMSynth):
+    """Noise, sigma, as BANE measures it"""
+
+    kind: Literal["noise"] = "noise"
+    """Union discriminator"""
+
+
+ErrorCubesForRMSynth: TypeAlias = Annotated[
+    WeightCubesForRMSynth | NoiseCubesForRMSynth, Field(discriminator="kind")
+]
+"""A weight or a noise, never both. Confusing them inverts the noise by 1/sigma**2,
+so the tag keeps them apart across the serialisation prefect does to task inputs."""
+
+
+class RMSynthOptions(BaseOptions):
+    """Options controlling ``rm_lite.tools_3d.rmsynth.rmsynth_3d_from_fits``.
+
+    Defined here rather than in ``flint.rmsynth`` so that strategy validation
+    (``flint.configuration``) does not need to import ``rm_lite``, an optional
+    dependency.
+    """
+
+    phi_max_radm2: float | None = None
+    """Maximum Faraday depth to synthesise, in rad/m^2"""
+    d_phi_radm2: float | None = None
+    """Faraday depth resolution, in rad/m^2"""
+    n_samples: float | None = 10.0
+    """Number of samples across the RMSF"""
+    weight_type: Literal["variance", "natural", "uniform", "uniform_lsq", "briggs"] = (
+        "variance"
+    )
+    """Per-channel weighting scheme used during RM-synthesis"""
+    robust: float | None = None
+    """Briggs robust parameter, required if weight_type is 'briggs'"""
+    nufft_nthreads: int = 1
+    """finufft OpenMP threads per dask chunk"""
+    target_chunk_mb: float = 256
+    """Target per-chunk memory footprint, in MB, when reading the Q/U cubes"""
+    fit_order: int = 2
+    """Stokes I fractional-polarisation fit order; negative iterates orders and picks the best by AIC"""
+    fit_function: Literal["log", "linear"] = "log"
+    """Stokes I fit function: 'log' is a power law, 'linear' is a polynomial"""
+    stokes_i_snr_cut: float | None = 5.0
+    """Below this frequency-averaged Stokes I SNR a pixel falls back to a flat model. None fits every pixel"""
+    compute_model_error: bool = False
+    """Monte-Carlo the Stokes I fit's per-pixel model error via n_error_samples resamples. Only used if a Stokes I cube is given"""
+    n_error_samples: int = 1000
+    """Monte-Carlo resamples used by compute_model_error"""
+    debias_moments: bool = False
+    """Also compute a debiased (via rm_lite's debias_fdf) mom0/mom1/mom2 set per requested FDF"""
+    debias_filter_size: int = 5
+    """Median filter size (pixels) used by mom0 debiasing"""
+    lam_sq_0_m2: float | Literal["auto", "per_pixel"] = "auto"
+    """Reference lambda^2 the FDF is derotated to. 'auto' picks one value for the whole cube; 'per_pixel' gives each pixel its own, which also forces per_pixel_rmsf since the RMSF then differs pixel to pixel. A float pins it explicitly"""
+    per_pixel_rmsf: bool = False
+    """Compute the RMSF for each pixel rather than one shared by the cube. Roughly doubles the FDF's size. rm-lite turns this on itself when the weights make pixels disagree, as the linmos weight cubes do"""
+    estimate_stokes_i_noise: bool = True
+    """Derive the per-channel Stokes I error from the Stokes I cube when no Stokes I weight cube is given. A weight cube takes precedence"""
+
+
+class RMCleanOptions(BaseOptions):
+    """Options controlling ``rm_lite.tools_3d.rmclean.run_rmclean_from_synth``.
+    See ``RMSynthOptions`` for why this lives here rather than ``flint.rmsynth``.
+    """
+
+    auto_mask: float = 7
+    """Masking threshold in SNR, scaled by the theoretical FDF noise"""
+    auto_threshold: float = 1
+    """Cleaning threshold in SNR, scaled by the theoretical FDF noise"""
+    max_iter: int = 100_000
+    """Maximum CLEAN iterations"""
+    gain: float = 0.1
+    """CLEAN loop gain"""
+
+
+class SpiceOptions(BaseOptions):
+    """Options controlling the SPICE-style cube trimming (see ``flint.spice``)
+
+    Mask everything outside small boxes around catalogued sources, crop to
+    their union, and compress. Column names/units for a user-supplied
+    ``SpiceFieldOptions.catalogue`` are specified via the ``catalogue_*`` fields
+    """
+
+    n_beamwidths: float = 3.0
+    """Padding added to each side of an island's bounding box, in units of the restoring beam major axis"""
+    catalogue_island_col: str | None = None
+    """Column grouping components into islands in a user-supplied catalogue. None treats each row as its own island"""
+    catalogue_ra_col: str | None = None
+    """RA column in a user-supplied catalogue. Required whenever a catalogue is supplied"""
+    catalogue_dec_col: str | None = None
+    """Dec column in a user-supplied catalogue. Required whenever a catalogue is supplied"""
+    catalogue_radec_unit: str = "deg"
+    """Astropy unit string for catalogue_ra_col/catalogue_dec_col"""
+    catalogue_maj_col: str | None = None
+    """Major-axis column in a user-supplied catalogue. None disables ellipse sizing (point-source + beamwidth padding only)"""
+    catalogue_min_col: str | None = None
+    """Minor-axis column in a user-supplied catalogue"""
+    catalogue_pa_col: str | None = None
+    """Position-angle column in a user-supplied catalogue"""
+    catalogue_shape_unit: str = "arcsec"
+    """Astropy unit string for catalogue_maj_col/catalogue_min_col. catalogue_pa_col is always degrees"""
+    catalogue_sizes_deconvolved: bool | None = None
+    """Whether catalogue_maj_col/catalogue_min_col are PSF-deconvolved rather than as-observed. Required whenever catalogue_maj_col is set"""
+    catalogue_psf_maj_col: str | None = None
+    """Per-source PSF major-axis column, used to re-convolve when catalogue_sizes_deconvolved is True. Unset falls back to the pipeline's common restoring beam"""
+    catalogue_psf_min_col: str | None = None
+    """Column name for the per-source PSF minor axis, paired with catalogue_psf_maj_col"""
+    catalogue_psf_pa_col: str | None = None
+    """Column name for the per-source PSF position angle, paired with catalogue_psf_maj_col"""
+    compress_method: Literal["gzip", "pgzip"] = "pgzip"
+    """Compression backend for the mandatory gzip of every spiced cube."""
+    compress_max_workers: int | None = None
+    """Thread count handed to the compression backend"""
+
+
+class RMSynthFieldOptions(BaseOptions):
+    """Options for running RM-synthesis (and optionally RM-CLEAN) as its own
+    standalone pipeline, given already-imaged Stokes Q/U cubes. See
+    ``RMSynthOptions``/``RMCleanOptions`` for the RM-synthesis/RM-CLEAN
+    algorithm parameters, which are drawn from ``imaging_strategy`` rather
+    than exposed here."""
+
+    stokes_cubes: CubesForRMSynth | None = None
+    """The Stokes cubes. Set by the racs-all flow"""
+    error_cubes: ErrorCubesForRMSynth | None = None
+    """Weight or noise cubes, never both. None lets rm-lite estimate from Q/U itself"""
+    bane_noise: bool = False
+    """Measure BANE cubes off the common-resolution cubes and take the FDF noise from the RMS. Parameters come from the strategy's ``fftbane`` mode. Supersedes ``error_cubes``, which describe the unconvolved inputs"""
+    imaging_strategy: Path | None = None
+    """Path to a FLINT imaging yaml file that contains the RMSynthOptions/RMCleanOptions settings to use"""
+    beam_cutoff: float | None = None
+    """Cutoff in arcseconds to use when bringing the input cubes to a common beam. Channels coarser than this are blanked instead of dragging every channel out to their resolution. Defaults to no cutoff"""
+    cube_products: list[Literal["dirty", "clean", "model"]] = []
+    """Which Faraday dispersion function (FDF) cubes to write as FITS. Nothing by default, as these cubes can be large."""
+    moment_products: list[Literal["dirty", "clean", "model"]] = ["clean"]
+    """Which FDF(s) to compute Faraday moment maps from."""
+    moment_threshold_snr: float = 5.0
+    """SNR cut (times the theoretical FDF noise) applied before the moment maps are computed, the dirty ones included"""
+    peak_threshold_snr: float = 0.0
+    """SNR cut (times the theoretical FDF noise) below which peak statistics are blanked. Zero applies no cut: a peak is a single sample with no noise floor to integrate, and peak_pi_error is written beside it"""
+    peak_products: list[Literal["dirty", "clean", "model"]] = []
+    """Which FDF(s) to measure peak statistics from: peak polarised intensity (raw and debiased), Faraday depth, polarisation angle and intrinsic angle, each with its error. Nine (ny, nx) maps per FDF, so empty by default -- at 16032^2 that is ~9 GB per entry"""
+    output_path: Path | None = None
+    """Directory the FDF cube and moment products are written into. Defaults to alongside the input Stokes cubes"""
+    sbid_copy_path: Path | None = None
+    """Path that final processed products will be copied into. If None no copying of file products is performed. See ArchiveOptions. """
+
+
+class SpiceFieldOptions(BaseOptions):
+    """Options for running SPICE-style cube compression as its own standalone
+    pipeline, given already-imaged Stokes cubes. See ``SpiceOptions`` for the
+    trimming/compression algorithm parameters, which are drawn from
+    ``imaging_strategy`` rather than exposed here."""
+
+    cubes: list[Path] = []
+    """Stokes image cubes to trim and compress. Computed by the racs-all flow, so required only when running this pipeline standalone"""
+    weight_cubes: list[Path] = []
+    """Ancillary cubes to trim and compress alongside ``cubes``, spiced with the same boxes so they stay on a matching grid: the LINMOS weight cubes, and the BANE background/RMS cubes when the polarisation stage made them. Computed by the racs-all flow"""
+    reference_image: Path | None = None
+    """A 2D MFS image whose WCS/shape sources the source-finding boxes. Required only when catalogue is not set (built-in aegean source finding)"""
+    catalogue: Path | None = None
+    """A source catalogue (RA/Dec at minimum). If None the pipeline source finds its own sources from reference_image instead. See SpiceOptions for how to describe this catalogue's columns"""
+    aegean_container: Path | None = None
+    """Path to the singularity aegean container. Required when catalogue is not set (built-in source finding)"""
+    imaging_strategy: Path | None = None
+    """Path to a FLINT imaging yaml file that contains the SpiceOptions settings to use"""
+    output_path: Path | None = None
+    """Directory the spiced cubes are written into, replacing the originals. Defaults to leaving each cube in place"""
     sbid_copy_path: Path | None = None
     """Path that final processed products will be copied into. If None no copying of file products is performed. See ArchiveOptions. """
 
@@ -300,6 +563,79 @@ class RACSAllOptions(BaseOptions):
     """Desired width, in Hz, of each plane of the final cube. The wsclean channel division is solved for this target so the cube has a single linear frequency axis, overriding the strategy ``channels_out`` in the final round. See ``flint.imager.channel_division``"""
     holofile: Path | None = None
     """The oath to a concatenated holography FITS file that contains low-, mid- and high-band cubes"""
+
+
+def pol_field_options_cli_class(
+    racs_all_options_class: type[RACSAllOptions] = RACSAllOptions,
+) -> type[PolFieldOptions]:
+    """Build a ``PolFieldOptions`` subclass containing only the fields not already
+    present on ``RACSAllOptions``, so it can be added to the same CLI parser without
+    duplicate flags for the fields the two share. Every current and future
+    ``PolFieldOptions`` field is exposed on the CLI this way, either through this
+    class or through ``RACSAllOptions`` itself for the shared ones."""
+    overlap = set(racs_all_options_class.model_fields) & set(
+        PolFieldOptions.model_fields
+    )
+    unique_fields = {
+        name: (field.annotation, field)
+        for name, field in PolFieldOptions.model_fields.items()
+        if name not in overlap
+    }
+    return create_model(
+        "PolFieldOptionsCLI", __base__=PolFieldOptions.__base__, **unique_fields
+    )
+
+
+def exclude_fields_cli_class(
+    options_class: type[BaseOptions], exclude_fields: set[str]
+) -> type[BaseOptions]:
+    """Build a sibling of ``options_class`` exposing only the fields not in
+    ``exclude_fields``, so it can be added to a parser that already exposes
+    those fields via another options class, or sets them up by hand, without a
+    duplicate-flag error.
+
+    The result derives from ``options_class.__base__``, so it is a sibling rather
+    than a subclass. Generalises ``pol_field_options_cli_class`` to an arbitrary,
+    accumulated set of already-registered field names.
+    """
+    unique_fields = {
+        name: (field.annotation, field)
+        for name, field in options_class.model_fields.items()
+        if name not in exclude_fields
+    }
+    return create_model(
+        f"{options_class.__name__}CLI",
+        __base__=options_class.__base__,
+        **unique_fields,
+    )
+
+
+class RACSAllPipelineOptions(BaseOptions):
+    """Options controlling the ``racs-all`` flow-of-flows.
+
+    Execution order: imaging -> polarisation -> rm-synth/clean -> spice-compression
+
+    with each stage individually skippable.
+    """
+
+    output_path: Path | None = None
+    """Root directory the rm-synth and spice stages write their products under, in per-stage subdirectories. Defaults to the continuum stage's science path"""
+    skip_imaging: bool = False
+    """Skip the continuum imaging/self-calibration stage"""
+    skip_polarisation: bool = False
+    """Skip the polarisation imaging stage"""
+    skip_rmsynth: bool = False
+    """Skip the RM-synthesis/RM-CLEAN stage"""
+    skip_spice: bool = False
+    """Skip the SPICE compression stage"""
+    imaging_cluster_config: Path | None = None
+    """Specify a new cluster configuration file for the imaging stage, different to the preferred one. If None, drawn from the preferred cluster config"""
+    polarisation_cluster_config: Path | None = None
+    """Specify a new cluster configuration file for the polarisation stage, different to the preferred one. If None, drawn from the preferred cluster config"""
+    rmsynth_cluster_config: Path | None = None
+    """Specify a new cluster configuration file for the rm-synth/clean stage, different to the preferred one. If None, drawn from the preferred cluster config"""
+    spice_cluster_config: Path | None = None
+    """Specify a new cluster configuration file for the spice-compression stage, different to the preferred one. If None, drawn from the preferred cluster config"""
 
 
 def dump_field_options_to_yaml(
@@ -387,6 +723,8 @@ class FitsCubeOptions(BaseOptions):
     """Remove the images that go into forming the fitscube"""
     inplace: bool = True
     """If True, modify the file in-place. If False, write to a temporary file and then replace the original. Default True"""
+    create_blanks: bool = True
+    """Have fitscube re-grid the input frequencies onto a tolerant regular grid before writing."""
 
 
 class MSSummary(BaseOptions):

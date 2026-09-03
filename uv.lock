@@ -169,6 +169,7 @@ dependencies = [
     { name = "fitscube", extra = ["pgzip"] },
     { name = "jolly-roger" },
     { name = "matplotlib" },
+    { name = "numba" },
     { name = "numpy" },
     { name = "pandas" },
     { name = "prefect" },
@@ -177,12 +178,35 @@ dependencies = [
     { name = "racs-tools" },
     { name = "radio-beam" },
     { name = "reproject" },
+    { name = "rocket-fft" },
     { name = "scikit-image" },
     { name = "scipy" },
     { name = "spython" },
 ]
 
 [package.optional-dependencies]
+all = [
+    { name = "fixms" },
+    { name = "furo" },
+    { name = "isort" },
+    { name = "mypy" },
+    { name = "myst-parser" },
+    { name = "pre-commit" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "pytest-rerunfailures" },
+    { name = "pytest-xdist" },
+    { name = "python-casacore" },
+    { name = "rm-lite" },
+    { name = "ruff" },
+    { name = "sphinx", version = "9.0.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "sphinx", version = "9.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "sphinx-argparse" },
+    { name = "sphinx-autoapi" },
+    { name = "sphinx-autodoc-typehints", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "sphinx-autodoc-typehints", version = "3.9.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "sphinx-copybutton" },
+]
 casa = [
     { name = "fixms" },
     { name = "python-casacore" },
@@ -206,6 +230,9 @@ dev = [
     { name = "sphinx-autodoc-typehints", version = "3.9.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "sphinx-copybutton" },
 ]
+rmsynth = [
+    { name = "rm-lite" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -217,39 +244,60 @@ requires-dist = [
     { name = "configargparse", specifier = ">=1.7" },
     { name = "crystalball", specifier = ">=0.4.3" },
     { name = "dask-jobqueue" },
-    { name = "fitscube", extras = ["pgzip"], specifier = ">=2.5.0" },
+    { name = "fitscube", extras = ["pgzip"], specifier = ">=2.6" },
+    { name = "fixms", marker = "extra == 'all'", specifier = ">=0.4.0" },
     { name = "fixms", marker = "extra == 'casa'", specifier = ">=0.4.0" },
+    { name = "furo", marker = "extra == 'all'" },
     { name = "furo", marker = "extra == 'dev'" },
+    { name = "isort", marker = "extra == 'all'" },
     { name = "isort", marker = "extra == 'dev'" },
     { name = "jolly-roger", specifier = ">=0.10.1" },
     { name = "matplotlib" },
+    { name = "mypy", marker = "extra == 'all'" },
     { name = "mypy", marker = "extra == 'dev'" },
+    { name = "myst-parser", marker = "extra == 'all'" },
     { name = "myst-parser", marker = "extra == 'dev'" },
+    { name = "numba" },
     { name = "numpy", specifier = ">=2.0.0" },
     { name = "pandas" },
+    { name = "pre-commit", marker = "extra == 'all'" },
     { name = "pre-commit", marker = "extra == 'dev'" },
     { name = "prefect", specifier = ">=3.4.7" },
     { name = "prefect-dask", specifier = ">=0.3.7" },
     { name = "pydantic", specifier = ">=2" },
+    { name = "pytest", marker = "extra == 'all'" },
     { name = "pytest", marker = "extra == 'dev'" },
+    { name = "pytest-cov", marker = "extra == 'all'" },
     { name = "pytest-cov", marker = "extra == 'dev'" },
+    { name = "pytest-rerunfailures", marker = "extra == 'all'" },
     { name = "pytest-rerunfailures", marker = "extra == 'dev'" },
+    { name = "pytest-xdist", marker = "extra == 'all'" },
     { name = "pytest-xdist", marker = "extra == 'dev'" },
+    { name = "python-casacore", marker = "extra == 'all'", specifier = ">=3.6.0" },
     { name = "python-casacore", marker = "extra == 'casa'", specifier = ">=3.6.0" },
-    { name = "racs-tools", specifier = ">=4.2.1" },
+    { name = "racs-tools", specifier = ">=4.3.2" },
     { name = "radio-beam", specifier = ">=0.3.4" },
     { name = "reproject" },
+    { name = "rm-lite", marker = "extra == 'all'", specifier = "==2026.8.7" },
+    { name = "rm-lite", marker = "extra == 'rmsynth'", specifier = "==2026.8.7" },
+    { name = "rocket-fft" },
+    { name = "ruff", marker = "extra == 'all'" },
     { name = "ruff", marker = "extra == 'dev'" },
     { name = "scikit-image" },
     { name = "scipy" },
+    { name = "sphinx", marker = "extra == 'all'" },
     { name = "sphinx", marker = "extra == 'dev'" },
+    { name = "sphinx-argparse", marker = "extra == 'all'", specifier = ">=0.6.0" },
     { name = "sphinx-argparse", marker = "extra == 'dev'", specifier = ">=0.6.0" },
+    { name = "sphinx-autoapi", marker = "extra == 'all'" },
     { name = "sphinx-autoapi", marker = "extra == 'dev'" },
+    { name = "sphinx-autodoc-typehints", marker = "extra == 'all'" },
     { name = "sphinx-autodoc-typehints", marker = "extra == 'dev'" },
+    { name = "sphinx-copybutton", marker = "extra == 'all'" },
     { name = "sphinx-copybutton", marker = "extra == 'dev'" },
     { name = "spython", specifier = ">=0.3.1" },
 ]
-provides-extras = ["casa", "dev"]
+provides-extras = ["all", "casa", "dev", "rmsynth"]
 
 [[package]]
 name = "asteval"
@@ -1190,8 +1238,26 @@ wheels = [
 ]
 
 [[package]]
+name = "finufft"
+version = "2.5.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "packaging" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e0/a6/7cbd2b05862878673f9c8d61a31095a7e96897f7debcdb78231e4ad1c447/finufft-2.5.1.tar.gz", hash = "sha256:b0c630717442cb3519948e5f73b5dee68871c0f0e3b8c2eafbec0fcccf89f6b9", size = 120733, upload-time = "2026-04-09T19:25:35.965Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b1/8c/2cb49aa7d6adfeb455bb544d18bf7777da1c0b7b239830d795b866ac3a46/finufft-2.5.1-py3-none-macosx_14_0_arm64.whl", hash = "sha256:3f57c3ab02a050980ba578d9f322305e77f538009ebf8cb70df77c95443f031e", size = 2731206, upload-time = "2026-04-08T23:41:58.281Z" },
+    { url = "https://files.pythonhosted.org/packages/10/3c/405e041c13e625833002bf99934c760f74c01d44b7d84796a52847208741/finufft-2.5.1-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:3b20990fa7cfad54f63118b2e95a908c91dbcbb01e4c544755985ccbe6216aa6", size = 7804274, upload-time = "2026-04-08T23:41:59.956Z" },
+    { url = "https://files.pythonhosted.org/packages/74/4b/b88cd3266c653f871c3c93504d0b9edca22d1e725a64b67a3c53ad7b2896/finufft-2.5.1-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:2cec94f1dfe45f77d92b9a4cd523445f4d51c10d0a74d3eaf3c90f17293693f0", size = 7632155, upload-time = "2026-04-08T23:42:01.542Z" },
+    { url = "https://files.pythonhosted.org/packages/ff/7f/55ca2e564fdf83d8473befdaa4e52425d0f880f3302d7952f755c3412972/finufft-2.5.1-py3-none-musllinux_1_1_x86_64.whl", hash = "sha256:e3881a331360eba3f76b7f1c69d9b641e02ba05584da76cc221191c95c7be8da", size = 8366930, upload-time = "2026-04-08T23:42:03.185Z" },
+    { url = "https://files.pythonhosted.org/packages/ad/0f/e9bf300b8d6a76cb3e6d306c62688c8f4fac73250be9d073c5f17bdd77ba/finufft-2.5.1-py3-none-musllinux_1_2_x86_64.whl", hash = "sha256:8bb04c741b79e5de66010e6be17fd01eb2cf06c0557d58d89de4514d5a68cb37", size = 8638314, upload-time = "2026-04-08T23:42:04.817Z" },
+    { url = "https://files.pythonhosted.org/packages/05/98/a6632d986102cc94a0d9a6ff665c8d736c16ce462b0955c511e17d20b053/finufft-2.5.1-py3-none-win_amd64.whl", hash = "sha256:496ad48706e77f54078e31777bd4a30f33e788ae313ef30d8b1e7d41c7539788", size = 5881286, upload-time = "2026-04-08T23:42:07.132Z" },
+]
+
+[[package]]
 name = "fitscube"
-version = "2.5.0"
+version = "2.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "astropy" },
@@ -1199,9 +1265,9 @@ dependencies = [
     { name = "radio-beam" },
     { name = "tqdm" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/cc/a9/6dcae85ded6bfce8fad7955db9c5586053564086102cc718f88190090853/fitscube-2.5.0.tar.gz", hash = "sha256:f7627f131ecea0869939dbeb1d93321f295771b8426ae357e9e0a856f12040d1", size = 790605, upload-time = "2026-08-06T13:20:56.961Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e6/82/097d1f2c9441b07f91a75d57ddbe62a32dde8dba11f93968395c349523af/fitscube-2.6.0.tar.gz", hash = "sha256:d073194681e93a0b3069d7e430cf75f0c21882fefc5d54ef631c7c4654109c77", size = 794576, upload-time = "2026-08-31T08:06:08.977Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/15/9e/5a2b8dd374a78e9214dea4a5391838c78c9e61eee5843f082931ee834208/fitscube-2.5.0-py3-none-any.whl", hash = "sha256:c9a2b0db147e4ad7b3301a3046c4831a991c750d92de1469d3126b9669a50a8b", size = 29255, upload-time = "2026-08-06T13:20:55.396Z" },
+    { url = "https://files.pythonhosted.org/packages/50/a3/010b81e2cca21ea4f362903eb181082aca6cb788597ef0441eea1f9cea5a/fitscube-2.6.0-py3-none-any.whl", hash = "sha256:6094a8af7dc52a0250549e67030398d5ce52e8d38a2a0cc0db0306b05fc33aac", size = 31194, upload-time = "2026-08-31T08:06:07.446Z" },
 ]
 
 [package.optional-dependencies]
@@ -2594,6 +2660,34 @@ wheels = [
 ]
 
 [[package]]
+name = "polars"
+version = "1.43.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "polars-runtime-32" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/89/13/3873f213304bcbaaf39e63c8b905ceb460a0524448d57f86a829f6d4d0fd/polars-1.43.2.tar.gz", hash = "sha256:c699671b99eb71ff53334d237917aaa3db5ad4dda480abcb6c80e0eaee7b677b", size = 750312, upload-time = "2026-08-01T06:28:30.872Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2b/fe/0888040a24e4504098b85d8ad486b14cb01cf6b030bbe479dfc2dcffc2ac/polars-1.43.2-py3-none-any.whl", hash = "sha256:22aa0cb92a1ee2d60d6a15a638b2e8e0dd99aea21ac0cd8fb29da8e382e075a9", size = 847150, upload-time = "2026-08-01T06:27:15.543Z" },
+]
+
+[[package]]
+name = "polars-runtime-32"
+version = "1.43.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d4/06/11b578eeef05f867e3ee31b2a2fdd8e7684c2aa47822c49935d1be789c38/polars_runtime_32-1.43.2.tar.gz", hash = "sha256:d7b7c486bccee75a6af0158b87077da3d054657e3c60036b28644f4e1c7fdbf7", size = 3095669, upload-time = "2026-08-01T06:28:32.315Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/59/fc/12e6d4ca34d820297651134cfa35f86c33e898539fc6629cbb35d0089697/polars_runtime_32-1.43.2-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:91abf205d4ec93f92ba95386b7f8776559ae3dfce425ed2e527efa75d117d04a", size = 53088908, upload-time = "2026-08-01T06:27:18.268Z" },
+    { url = "https://files.pythonhosted.org/packages/32/81/833b0853551deb810854f96b43dea342b6e6c9b0ea1afcccf774157d519d/polars_runtime_32-1.43.2-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:2cc3ff96fd44789b02eb5c15b98dfcb000101636b177d3034fae2feec19b118f", size = 47540529, upload-time = "2026-08-01T06:27:21.391Z" },
+    { url = "https://files.pythonhosted.org/packages/83/55/7b2a75af14c9294d97f3bec132dd3018ddcd988bef32b5d28322150b8c11/polars_runtime_32-1.43.2-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:10ed36e615ab362feb7406e6d084e124b445ad284caa73bd93ae7e65745ed894", size = 51366340, upload-time = "2026-08-01T06:27:24.776Z" },
+    { url = "https://files.pythonhosted.org/packages/62/60/64deacb3abc70c52e2d88a808a052d1621c86a48fe9194f2c065579ab1cd/polars_runtime_32-1.43.2-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:6d5a7ae004a2723ebf4427f6d6a639f30f86af4cf077075f6b35d04711154fc3", size = 57304599, upload-time = "2026-08-01T06:27:27.875Z" },
+    { url = "https://files.pythonhosted.org/packages/52/95/d6e3a236d7630e17c40d0ddee839bf2be9acf548fdc0e5ad65ed9ff0cac6/polars_runtime_32-1.43.2-cp310-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:09339eacc6d392206e78aabbaaa37d7276eb969b798f46cb1f367fd718798c60", size = 51520580, upload-time = "2026-08-01T06:27:30.913Z" },
+    { url = "https://files.pythonhosted.org/packages/b6/5a/2deb8eac70e9a2ac26d88a66ae7cf52612865026f4f4a5e7ab11ad9d52bf/polars_runtime_32-1.43.2-cp310-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:452b400e59e7f56e4c6437f435e796903272a9388feee12de2bea049ae87025e", size = 55204471, upload-time = "2026-08-01T06:27:33.886Z" },
+    { url = "https://files.pythonhosted.org/packages/29/9e/647401ae8a607bc0cc40ed7b8592d5b1be90ded0dc9b9d6d3aeb03f9524b/polars_runtime_32-1.43.2-cp310-abi3-win_amd64.whl", hash = "sha256:00e33c28e321410c8d66e814a90043101e3bdd9ed2c6dabda07565aa8adbbdf1", size = 52572176, upload-time = "2026-08-01T06:27:37.048Z" },
+    { url = "https://files.pythonhosted.org/packages/96/8d/60a50c3f36c85218a7ffcb48c6fe2ce1f7bec799152d68b8658ebed2179c/polars_runtime_32-1.43.2-cp310-abi3-win_arm64.whl", hash = "sha256:350a4868cae85bf8b3f81b33ba47927c15256bd9264dfc8c0753f1b927eac9d3", size = 46582513, upload-time = "2026-08-01T06:27:40.025Z" },
+]
+
+[[package]]
 name = "pre-commit"
 version = "4.5.1"
 source = { registry = "https://pypi.org/simple" }
@@ -3154,7 +3248,7 @@ wheels = [
 
 [[package]]
 name = "racs-tools"
-version = "4.3.0"
+version = "4.3.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "astropy" },
@@ -3165,9 +3259,9 @@ dependencies = [
     { name = "spectral-cube" },
     { name = "tqdm" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/29/c2/8dcfd4078e8d95f237663601d0ad6cc8e2a8f85ee49f26f58bac87b8e1c8/racs_tools-4.3.0.tar.gz", hash = "sha256:a1ceefb4fb90c2431f8cdaf36a206d285b7525ffa90fbb4231500904989ca623", size = 32984, upload-time = "2025-08-08T04:51:43.651Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f4/b6/abf40ab734acb4dd8cf797a8d6ad6cb2af5f16296e5bf85f53a033efc340/racs_tools-4.3.2.tar.gz", hash = "sha256:d2b88d1b809b1da6a760badf903ed149aac915b10b40d1a143d1f9a81c7c6b7c", size = 33850, upload-time = "2026-09-01T06:40:09.44Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7b/2b/4f808a80756236f0405ba1789d43e63218278ec6c1ed945827009c83609c/racs_tools-4.3.0-py3-none-any.whl", hash = "sha256:50cab8f2ffd10f477e83c93537c90595e3bb4d2fef6319895492d0e9ce585607", size = 35086, upload-time = "2025-08-08T04:51:42.557Z" },
+    { url = "https://files.pythonhosted.org/packages/6a/37/64efbc697222fc916c8448a62ebc876aa0ee5e7d0182dd8e23f25679ba3d/racs_tools-4.3.2-py3-none-any.whl", hash = "sha256:01e62357f75e2b4d871f1985aa943e846c108bb86711b90db5103e8bb18070ed", size = 36030, upload-time = "2026-09-01T06:40:10.268Z" },
 ]
 
 [[package]]
@@ -3396,6 +3490,51 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/e2/d6/d0b9fafc73b65767200da027acab1db1bdb1048f4fea5ebf659df01c700e/rich_rst-2.1.0.tar.gz", hash = "sha256:f4d117b49697f338769759fa5cacf5197da4888b347b9fda2e50aef5cd8d93bd", size = 302732, upload-time = "2026-07-05T02:59:44.308Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2a/68/1fc93dd759605b5d00fc98b50200739e41ed32bd22d6ba35ca6c3932371b/rich_rst-2.1.0-py3-none-any.whl", hash = "sha256:7ecd1343ee12c879d0e7ae74c3eb6d263b023d2929c6d114212eb1fd91057255", size = 272987, upload-time = "2026-07-05T02:59:42.792Z" },
+]
+
+[[package]]
+name = "rm-lite"
+version = "2026.8.7"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "astropy" },
+    { name = "dask", extra = ["array"] },
+    { name = "finufft" },
+    { name = "numpy" },
+    { name = "polars" },
+    { name = "scipy" },
+    { name = "tqdm" },
+    { name = "zarr" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/6d/9f/c3d7d0260ae064d4e810b476aa4b7ce56298d0457617dc3b544a2a9611ab/rm_lite-2026.8.7.tar.gz", hash = "sha256:155519c3e4063bfa733c7da7f383001c9e47f6cdc5a51d9f33a6b8a06e60f68f", size = 447821, upload-time = "2026-08-31T02:52:55.402Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/44/1d/92c36880b4b3deb64710951fd2232a586010f872c9b80363e4d994fe88fe/rm_lite-2026.8.7-py3-none-any.whl", hash = "sha256:bf1760d5ebaeead154fb5b24cd600e18fe5c742a7044411469b15d8316002e75", size = 117925, upload-time = "2026-08-31T02:52:54.139Z" },
+]
+
+[[package]]
+name = "rocket-fft"
+version = "0.3.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numba" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/44/b0/09cbec3177ecf56e5ceb789a69fbcdcbabe758cbb682e5d36b14aa8c05fb/rocket_fft-0.3.1.tar.gz", hash = "sha256:ddc902a361099aff9fc02fe9ea3b0d036c2f67f93df356c2b754f7627d7fa4f4", size = 74276, upload-time = "2025-12-26T00:30:54.083Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3e/81/4b1c9a3c336dfee613d23bb0a8f0819abdcb87634dde79e4e6d74f839f5e/rocket_fft-0.3.1-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:43145d0ff69c88fec886af069b6f9886fe834fc17566c731de8ade3d8dfcfaf4", size = 362992, upload-time = "2025-12-26T00:30:20.116Z" },
+    { url = "https://files.pythonhosted.org/packages/fc/00/30b3713e43c5966cdc9a2003019f224099cb53109d79068e46c56cd7b073/rocket_fft-0.3.1-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:7f50f967a4ebdc88184d259c242474837d6c38c41b1e2fd09bffa08639d9b7a3", size = 322683, upload-time = "2025-12-26T00:30:21.585Z" },
+    { url = "https://files.pythonhosted.org/packages/be/82/993f210253fbf4275844b66e159281f37d6f84270ee9f6e4010d81347216/rocket_fft-0.3.1-cp311-cp311-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:6b94ff9502f63515bebfa2bce319db6dd00d02031e1cef8441a4dded728d7c4d", size = 2164173, upload-time = "2025-12-26T00:30:23.332Z" },
+    { url = "https://files.pythonhosted.org/packages/09/52/f454823728d5775ec314985d2611afc0d7f8001adefaf719261df776a6c4/rocket_fft-0.3.1-cp311-cp311-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:d0e9f0f03416d276f023f50744f5cef9f750b3b830d6e1edd340db623ff5ca6d", size = 2163734, upload-time = "2025-12-26T00:30:25.173Z" },
+    { url = "https://files.pythonhosted.org/packages/4c/d4/3944b2513382e7e7fd08300ab1b0d0864e675e7a5fd6451d78ca338ae6e1/rocket_fft-0.3.1-cp311-cp311-win_amd64.whl", hash = "sha256:8173cd4ed9d464b2e789d2303a5f7953980bde8237c60af2fc6204b82addeec5", size = 215164, upload-time = "2025-12-26T00:30:26.627Z" },
+    { url = "https://files.pythonhosted.org/packages/ee/78/8edd1349af038a8ab0fa3aee97ff2b91b4227e2561f0f721e78f3cd24635/rocket_fft-0.3.1-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:89be2e23812678ef7afdc793682e9aef4afbd7a0a30041cb292f02c73d62a0a9", size = 359246, upload-time = "2025-12-26T00:30:27.668Z" },
+    { url = "https://files.pythonhosted.org/packages/bd/3a/41b7a3355e6d44139f2a891d4763ff0a1eeb634fc0faa43cefdb1cdda702/rocket_fft-0.3.1-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:0de1a8841638e3091ef774d9304a6427801fd06dd29e6d2baacd17bac65eb9f3", size = 322703, upload-time = "2025-12-26T00:30:29.169Z" },
+    { url = "https://files.pythonhosted.org/packages/08/18/12d001c33cd7c4e012da59d25086879aec303e0e157d9ec737ecab8e8f58/rocket_fft-0.3.1-cp312-cp312-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:46970c0dcc70bd9c365d6a9f4a235edec2e8eaad628097c0e21d920669e25abe", size = 2151682, upload-time = "2025-12-26T00:30:30.315Z" },
+    { url = "https://files.pythonhosted.org/packages/c8/92/98bd01cad9e5ceeb383722d744597d066e37cdd0e54742906341aa369c28/rocket_fft-0.3.1-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:7d64c9fc81206f2c77f74f68761f54ac6f1ebe4c8840f0ef9795c28ab229463f", size = 2160197, upload-time = "2025-12-26T00:30:31.945Z" },
+    { url = "https://files.pythonhosted.org/packages/cd/c7/d273a880278c1a0946e4bec5ca54e79595b50003b5eb4400c1d60e5e41e0/rocket_fft-0.3.1-cp312-cp312-win_amd64.whl", hash = "sha256:05afc9805cfb97b330417b4bfcd435aace98dff2fc479bfbcb4ac4568f56ec51", size = 215185, upload-time = "2025-12-26T00:30:33.412Z" },
+    { url = "https://files.pythonhosted.org/packages/2f/33/1b1025d47226031616bf1ac02e63f240d02b89fe2b8462b35d1766519968/rocket_fft-0.3.1-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:3fa706995cebcc7bff41894e23323d2a221906454d21cb12fed97833b0f7433e", size = 359250, upload-time = "2025-12-26T00:30:34.456Z" },
+    { url = "https://files.pythonhosted.org/packages/af/3c/371012b4ffa4697574ecfa148e8068a74e6ad57a182ec78f9b221bd4270c/rocket_fft-0.3.1-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:4a50609003f944aea1b8000a19f9b9cf9cbaaa5e4726e5aefaccccd1cfd81a99", size = 322700, upload-time = "2025-12-26T00:30:35.982Z" },
+    { url = "https://files.pythonhosted.org/packages/48/2c/5bbe8d6b0c4e009f7bc6f9f4eee802a9b556ec2c3b02b9d5e5ccfa8edff1/rocket_fft-0.3.1-cp313-cp313-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:5906c6517fc87295a1d142c7e6ebd1c55e057f6ee4c605549bbcecacab83774f", size = 2151627, upload-time = "2025-12-26T00:30:37.177Z" },
+    { url = "https://files.pythonhosted.org/packages/55/0d/ac67fb0b2fac382ab5585719bbd1f4927c19ba0ee3bbc28dc8a1ef83e81d/rocket_fft-0.3.1-cp313-cp313-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:9d830aacc34d65b28daab715aa4a90d98489e89a48c2836039982f18ba1e2db3", size = 2160355, upload-time = "2025-12-26T00:30:38.81Z" },
+    { url = "https://files.pythonhosted.org/packages/f8/af/0ab2b29548925c6f84607010d3bf5a928331232d1ef54f273ab9989c64c0/rocket_fft-0.3.1-cp313-cp313-win_amd64.whl", hash = "sha256:97452673ea99b907c75c99c4046d5297ea01778a6e74cb51ba515c01e3e5e5d7", size = 215172, upload-time = "2025-12-26T00:30:39.885Z" },
 ]
 
 [[package]]

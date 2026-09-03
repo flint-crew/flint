@@ -10,7 +10,8 @@ build-backend = "hatchling.build"
 [project]
 name = "askap-flint"
 authors = [
-    {name="Tim Galvin", email="tim.galvin@csiro.au"}
+    {name="Tim Galvin", email="tim.galvin@csiro.au"},
+    {name="Alec Thomson", email="alec.thomson@skao.int"}
 ]
 description = "Pipeline for ASKAP processing, and profit along the way"
 readme = "README.md"
@@ -36,6 +37,8 @@ dynamic = ["version"]
 dependencies = [
     "astropy>=6.1.3", # fixing until units change in 6.1.4 addressed in radio-beam
     "numpy>=2.0.0",
+    "numba",
+    "rocket-fft",
     "pydantic>=2",
     "scipy",
     "spython>=0.3.1",
@@ -43,14 +46,14 @@ dependencies = [
     "prefect>=3.4.7",
     "prefect-dask>=0.3.7",
     "dask-jobqueue",
-    "RACS-tools>=4.2.1",
+    "RACS-tools>=4.3.2",
     "aegeantools==2.3.0",
     "radio-beam>=0.3.4",
     "reproject",
     "scikit-image",
     "pandas",
     "ConfigArgParse>=1.7",
-    "fitscube[pgzip]>=2.5.0",
+    "fitscube[pgzip]>=2.6",
     "astroquery>=0.4.8.dev0",
     "crystalball>=0.4.3",
     "jolly-roger>=0.10.1",
@@ -91,6 +94,12 @@ casa =[
     "python-casacore>=3.6.0",
     "fixms>=0.4.0"
 ]
+rmsynth = [
+    "rm-lite==2026.8.7",
+]
+all = [
+    "askap-flint[dev,casa,rmsynth]",
+]
 
 [project.scripts]
 flint_skymodel = "flint.sky_model:cli"
@@ -119,7 +128,10 @@ flint_flow_bandpass_calibrate = "flint.prefect.flows.bandpass_pipeline:cli"
 flint_flow_continuum_pipeline = "flint.prefect.flows.continuum_pipeline:cli"
 flint_flow_subtract_cube_pipeline = "flint.prefect.flows.subtract_cube_pipeline:cli"
 flint_flow_polarisation_pipeline = "flint.prefect.flows.polarisation_pipeline:cli"
-flint_flow_racs_all_pipeline = "flint.prefect.flows.racs_all_continuum_selfcal:cli"
+flint_flow_racs_all_continuum_pipeline = "flint.prefect.flows.racs_all_continuum_selfcal:cli"
+flint_flow_rmsynth_pipeline = "flint.prefect.flows.rmsynth_pipeline:cli"
+flint_flow_spice_compression_pipeline = "flint.prefect.flows.spice_compression_pipeline:cli"
+flint_flow_racs_all_pipeline = "flint.prefect.flows.racs_all_pipeline:cli"
 
 # [tool.mypy]
 # files = ["flint", "tests"]

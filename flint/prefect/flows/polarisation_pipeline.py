@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from capn_crunch import add_options_to_parser, create_options_from_parser
+from capn_crunch import BaseOptions, add_options_to_parser, create_options_from_parser
 from configargparse import ArgumentParser
 from prefect import flow, tags
 from prefect.futures import PrefectFuture
@@ -11,16 +11,22 @@ from prefect.futures import PrefectFuture
 from flint.coadd.linmos import LinmosOptions
 from flint.configuration import (
     POLARISATION_MAPPING,
+    Strategy,
     get_options_from_strategy,
     load_and_copy_strategy,
 )
 from flint.exceptions import MSError
+from flint.imager.channel_division import (
+    ChannelDivision,
+    apply_cube_division,
+    channel_division_for_beams,
+)
 from flint.imager.wsclean import (
     ImageSet,
     WSCleanResult,
 )
 from flint.logging import logger
-from flint.ms import find_mss
+from flint.ms import MSsByBeam, find_mss
 from flint.naming import (
     CASDANameComponents,
     ProcessedNameComponents,
@@ -29,17 +35,19 @@ from flint.naming import (
     get_sbid_from_path,
 )
 from flint.options import (
+    FFTBANEOptions,
     FitsCubeOptions,
     PolFieldOptions,
     dump_field_options_to_yaml,
 )
 from flint.prefect.clusters import get_dask_runner
 from flint.prefect.common.imaging import (
+    convolve_channel_groups_to_natural_resolution,
+    convolve_mfs_beam_images_to_common_resolution,
     linmos_channel_groups_to_cubes,
-    task_convolve_images,
     task_get_channel_images_from_paths,
-    task_get_common_beam_from_image_set,
-    task_merge_image_sets,
+    task_get_mfs_image_from_paths,
+    task_linmos_images,
     task_preprocess_askap_ms,
     task_remove_files_folders,
     task_split_and_get_image_set,
@@ -51,13 +59,97 @@ from flint.prefect.common.utils import (
     task_getattr,
 )
 
+# Marks images/cubes produced by this pipeline so they don't clash with the
+# continuum self-cal flow's own Stokes I/V products for the same MS/beam.
+POL_NAME_SUFFIX = "pol"
+
+
+class PolPipelineResult(BaseOptions):
+    """Return value of ``process_science_fields_pol``, handed in-memory to
+    the rm-synth/clean and spice-compression stages of the ``racs-all``
+    flow-of-flows."""
+
+    stokes_cubes: dict[str, Path]
+    """The full, unspiced Stokes cube written for each imaged polarisation (e.g. 'i', 'q', 'u', 'v')"""
+    weight_cubes: dict[str, Path]
+    """The full Stokes weights written for each imaged polarisation (e.g. 'i', 'q', 'u', 'v')"""
+    bkg_cubes: dict[str, Path] = {}
+    """BANE background cube per imaged polarisation. Empty unless asked for"""
+    rms_cubes: dict[str, Path] = {}
+    """BANE RMS cube per imaged polarisation, measured off the co-added planes. Empty unless asked for"""
+    mfs_products: dict[str, dict[str, Path]]
+    """MFS image/model/residual products co-added per Stokes parameter, keyed by Stokes ('i', 'q', 'u', 'v') then product type ('image', 'model', 'residual'). Only populated for Stokes imaged under a polarisation with ``WSCleanOptions.flint_save_mfs_products`` set"""
+    terminal_futures: list[PrefectFuture[Any]]
+    """Every future the polarisation stage produced, propagated so Prefect still detects any of their failures"""
+
+
+def _no_products(
+    terminal_futures: list[PrefectFuture[Any]] | None = None,
+) -> PolPipelineResult:
+    """The result of a polarisation stage that imaged nothing.
+
+    Built here rather than at each early return so that a field added to
+    ``PolPipelineResult`` cannot turn one of them into a ValidationError: the
+    downstream rm-synth stage reads ``weight_cubes`` off this, and an early
+    return that forgot it failed only once the flow was already running.
+
+    Args:
+        terminal_futures (list[PrefectFuture[Any]] | None, optional): Futures produced before the stage gave up, propagated so Prefect still detects their failures. Defaults to None.
+
+    Returns:
+        PolPipelineResult: An empty result carrying only ``terminal_futures``
+    """
+    return PolPipelineResult(
+        stokes_cubes={},
+        weight_cubes={},
+        bkg_cubes={},
+        rms_cubes={},
+        mfs_products={},
+        terminal_futures=terminal_futures or [],
+    )
+
+
+def _polarisations_to_image(strategy: Strategy) -> dict[str, Any]:
+    """Pull the polarisations to image out of the strategy's polarisation operation.
+
+    The operation also carries modes that apply across all polarisations (e.g.
+    ``fitscube``, ``fftbane``), which sit alongside the polarisation keys. Only
+    the polarisation keys describe something to image.
+
+    Args:
+        strategy (Strategy): The loaded strategy
+
+    Returns:
+        dict[str, Any]: Polarisation name and its scoped modes. Falls back to Stokes I when the strategy names none.
+    """
+    polarisation_scope = strategy.get("polarisation", {})
+    polarisations = {
+        key: value
+        for key, value in polarisation_scope.items()
+        if key in POLARISATION_MAPPING
+    }
+
+    return polarisations or {"total": {}}
+
 
 @flow(name="Flint Polarisation Pipeline")
 def process_science_fields_pol(
     flint_ms_directory: Path,
     pol_field_options: PolFieldOptions,
-) -> list[PrefectFuture[Any]]:
-    # returned futures are resolved by prefect to fail the flow on task failure
+    mss_by_beam: MSsByBeam | None = None,
+    compress_cubes: bool | None = None,
+) -> PolPipelineResult:
+    """Image a field in polarisation and co-add the per-beam products.
+
+    Args:
+        flint_ms_directory (Path): Directory holding the measurement sets to image
+        pol_field_options (PolFieldOptions): Options controlling the polarisation imaging
+        mss_by_beam (MSsByBeam | None, optional): Already Flint-processed measurement sets handed down by a calling flow, rather than rediscovered on disk. Defaults to None.
+        compress_cubes (bool | None, optional): Overrides the strategy ``fitscube`` compress setting. A calling flow that reads these cubes afterwards (rm-synth, spice) has to set it False, since astropy cannot memmap a gzip file and a chunked read would inflate the whole cube into memory. None honours the strategy. Defaults to None.
+
+    Returns:
+        PolPipelineResult: Stokes cubes, co-added MFS products, and the futures to wait on
+    """
     strategy = load_and_copy_strategy(
         output_split_science_path=flint_ms_directory,
         imaging_strategy=pol_field_options.imaging_strategy,
@@ -67,58 +159,72 @@ def process_science_fields_pol(
 
     if strategy is None:
         logger.info("No strategy provided. Returning.")
-        return []
+        return _no_products()
 
-    # Get some placeholder names
-    science_mss = list(
-        find_mss(
-            mss_parent_path=flint_ms_directory,
-            expected_ms_count=pol_field_options.expected_ms,
-            data_column=strategy["defaults"].get("data_column", "DATA"),
+    if mss_by_beam is not None:
+        # Already Flint-processed, self-calibrated MSs handed down by the calling
+        # flow (e.g. the RACS-All continuum flow). No need to rediscover them on
+        # disk or check whether they are CASDA-provided.
+        logger.info("Using the measurement sets supplied by the calling flow")
+        resolved_mss_by_beam: MSsByBeam = mss_by_beam
+    else:
+        # Get some placeholder names
+        science_mss = list(
+            find_mss(
+                mss_parent_path=flint_ms_directory,
+                expected_ms_count=pol_field_options.expected_ms,
+                data_column=strategy["defaults"].get("data_column", "DATA"),
+            )
         )
-    )
-    # Check if MSs have been processed by Flint or have been provided by CASDA
-    from_flint_list = [
-        isinstance(extract_components_from_name(ms.path), ProcessedNameComponents)
-        for ms in science_mss
-    ]
-    from_casda_list = [
-        isinstance(extract_components_from_name(ms.path), CASDANameComponents)
-        for ms in science_mss
-    ]
+        # Check if MSs have been processed by Flint or have been provided by CASDA
+        from_flint_list = [
+            isinstance(extract_components_from_name(ms.path), ProcessedNameComponents)
+            for ms in science_mss
+        ]
+        from_casda_list = [
+            isinstance(extract_components_from_name(ms.path), CASDANameComponents)
+            for ms in science_mss
+        ]
 
-    if not any(from_flint_list) and not any(from_casda_list):
-        raise MSError("No valid MeasurementSets found! Data must be calibrated first.")
-
-    if any(from_flint_list) and any(from_casda_list):
-        raise MSError("Cannot mix Flint-processed and CASDA-provided MeasurementSets!")
-
-    if any(from_casda_list):
-        assert all(from_casda_list), (
-            "Some MeasurementSets are from Flint, some are from CASDA"
-        )
-        logger.info("Data are from CASDA, need to apply FixMS")
-        if pol_field_options.casa_container is None:
-            msg = "We need to apply FixMS to CASDA-provided data, but no CASA container provided"
+        if not any(from_flint_list) and not any(from_casda_list):
+            msg = "No valid MeasurementSets found! Data must be calibrated first."
             raise MSError(msg)
 
-        corrected_mss = []
-        for ms in science_mss:
-            corrected_ms = task_preprocess_askap_ms.submit(
-                ms=ms,
-                data_column=strategy["defaults"].get("data_column", "DATA"),
-                skip_rotation=False,
-                fix_stokes_factor=True,
-                apply_ms_transform=True,
-                casa_container=pol_field_options.casa_container,
-                rename=True,
-            )
-            corrected_mss.append(corrected_ms)
+        if any(from_flint_list) and any(from_casda_list):
+            msg = "Cannot mix Flint-processed and CASDA-provided MeasurementSets!"
+            raise MSError(msg)
 
-        assert len(corrected_mss) == len(science_mss), (
-            "Number of corrected MSs does not match number of input MSs"
-        )
-        science_mss = corrected_mss
+        if any(from_casda_list):
+            assert all(from_casda_list), (
+                "Some MeasurementSets are from Flint, some are from CASDA"
+            )
+            logger.info("Data are from CASDA, need to apply FixMS")
+            if pol_field_options.casa_container is None:
+                msg = "We need to apply FixMS to CASDA-provided data, but no CASA container provided"
+                raise MSError(msg)
+
+            corrected_mss = []
+            for ms in science_mss:
+                corrected_ms = task_preprocess_askap_ms.submit(
+                    ms=ms,
+                    data_column=strategy["defaults"].get("data_column", "DATA"),
+                    skip_rotation=False,
+                    fix_stokes_factor=True,
+                    apply_ms_transform=True,
+                    casa_container=pol_field_options.casa_container,
+                    rename=True,
+                )
+                corrected_mss.append(corrected_ms)
+
+            assert len(corrected_mss) == len(science_mss), (
+                "Number of corrected MSs does not match number of input MSs"
+            )
+            science_mss = corrected_mss
+
+        # Each beam is a single MS when discovered this way (one SBID/band per directory)
+        resolved_mss_by_beam = tuple((ms,) for ms in science_mss)
+
+    science_mss = [ms for beam_mss in resolved_mss_by_beam for ms in beam_mss]
 
     field_summary = task_create_field_summary.submit(
         mss=science_mss,
@@ -136,84 +242,132 @@ def process_science_fields_pol(
 
     if pol_field_options.wsclean_container is None:
         logger.info("No wsclean container provided. Returning. ")
-        return [field_summary]
+        return _no_products(terminal_futures=[field_summary])
 
-    polarisations: dict[str, str] = strategy.get("polarisation", {"total": {}})
+    polarisations = _polarisations_to_image(strategy=strategy)
+
+    # Solved once for all beams, and before any imaging
+    cube_division: ChannelDivision | None = None
+    if pol_field_options.pol_cube_channel_width:
+        cube_division = channel_division_for_beams(
+            mss_by_beam=[
+                [
+                    ms.result() if isinstance(ms, PrefectFuture) else ms
+                    for ms in beam_mss
+                ]
+                for beam_mss in resolved_mss_by_beam
+            ],
+            target_width=pol_field_options.pol_cube_channel_width,
+        )
 
     image_sets_dict: dict[str, PrefectFuture[ImageSet]] = {}
-    image_sets_list: list[PrefectFuture[ImageSet]] = []
     for polarisation in polarisations.keys():
         _image_sets = []
         with tags(f"polarisation-{polarisation}"):
-            for science_ms in science_mss:
+            for beam_mss in resolved_mss_by_beam:
+                update_wsclean_options = get_options_from_strategy(
+                    strategy=strategy,
+                    operation="polarisation",
+                    mode="wsclean",
+                    polarisation=polarisation,
+                )
+                update_wsclean_options["flint_name_suffix"] = POL_NAME_SUFFIX
+                if cube_division is not None:
+                    update_wsclean_options = apply_cube_division(
+                        update_wsclean_options=update_wsclean_options,
+                        cube_division=cube_division,
+                    )
+                save_mfs_products = update_wsclean_options.get(
+                    "flint_save_mfs_products", False
+                )
                 wsclean_result: PrefectFuture[WSCleanResult] = (
                     task_wsclean_imager.submit(
-                        in_ms=science_ms,
+                        in_ms=beam_mss,
                         wsclean_container=pol_field_options.wsclean_container,
                         make_cube_from_subbands=False,  # We will do this later
-                        update_wsclean_options=get_options_from_strategy(
-                            strategy=strategy,
-                            operation="polarisation",
-                            mode="wsclean",
-                            polarisation=polarisation,
-                        ),
+                        update_wsclean_options=update_wsclean_options,
+                        extra_output_types=("model",) if save_mfs_products else None,
                     )
                 )
                 _image_set: PrefectFuture[ImageSet] = task_getattr.submit(
                     wsclean_result, "image_set"
                 )
                 _image_sets.append(_image_set)
-                image_sets_list.append(_image_set)
         image_sets_dict[polarisation] = _image_sets
 
-    merged_image_set = task_merge_image_sets.submit(image_sets=image_sets_list)
-
-    common_beam_shape = task_get_common_beam_from_image_set.submit(
-        image_set=merged_image_set,
-        cutoff=pol_field_options.beam_cutoff,
-        fixed_beam_shape=pol_field_options.fixed_beam_shape,
-    )
-
-    # Convolve every beam's sub-band images to the common beam, keeping the
-    # per-channel images (rather than cubing per beam) so we can co-add across
-    # beams one channel at a time.
+    # Split each beam's images out per Stokes, leaving them unconvolved. The
+    # cubes are brought to a 'natural' resolution, one common beam per channel,
+    # and a channel's beam is solved over every beam image of every Stokes at
+    # that channel, so nothing can be convolved until all of them are in hand.
+    # The RM-synthesis stage brings its own inputs to a single 'total' beam; that
+    # is a resolution to synthesise at, not one to archive the cubes at.
     stokes_beam_channel_images: dict[str, list[PrefectFuture[list[Path]]]] = {}
+    # Per-beam MFS image/model/residual, collected per Stokes whenever that
+    # Stokes' polarisation strategy sets flint_save_mfs_products. Co-added
+    # further down the same way as the science image/cube.
+    mfs_beam_images: dict[str, dict[str, list[PrefectFuture[Path]]]] = {}
     for polarisation, image_set_list in image_sets_dict.items():
         with tags(f"polarisation-{polarisation}"):
             # Get the individual Stokes parameters in case of joint imaging
             if polarisation not in POLARISATION_MAPPING.keys():
                 raise ValueError(f"Unknown polarisation {polarisation}")
             stokes_list = list(POLARISATION_MAPPING[polarisation])
+
+            save_mfs_products = get_options_from_strategy(
+                strategy=strategy,
+                operation="polarisation",
+                mode="wsclean",
+                polarisation=polarisation,
+            ).get("flint_save_mfs_products", False)
+            product_types = (
+                ("image", "model", "residual") if save_mfs_products else ("image",)
+            )
+
             for stokes in stokes_list:
                 with tags(f"stokes-{stokes}"):
                     beam_channel_images: list[PrefectFuture[list[Path]]] = []
-                    for image_set in image_set_list:
-                        stokes_image_list = task_split_and_get_image_set.submit(
-                            image_set=image_set,
-                            get=stokes,
-                            by="pol",
-                            mode="image",
-                        )
-                        convolved_image_list = task_convolve_images.submit(
-                            image_paths=stokes_image_list,
-                            beam_shape=common_beam_shape,
-                            cutoff=pol_field_options.beam_cutoff,
-                        )
-                        channel_image_list = task_get_channel_images_from_paths.submit(
-                            paths=convolved_image_list
-                        )
-                        beam_channel_images.append(channel_image_list)
+                    for product_type in product_types:
+                        beam_mfs_images: list[PrefectFuture[Path]] = []
+                        for image_set in image_set_list:
+                            stokes_image_list = task_split_and_get_image_set.submit(
+                                image_set=image_set,
+                                get=stokes,
+                                by="pol",
+                                mode=product_type,
+                            )
+                            if save_mfs_products:
+                                beam_mfs_images.append(
+                                    task_get_mfs_image_from_paths.submit(
+                                        paths=stokes_image_list
+                                    )
+                                )
+                            if product_type == "image":
+                                beam_channel_images.append(
+                                    task_get_channel_images_from_paths.submit(
+                                        paths=stokes_image_list
+                                    )
+                                )
+                        if save_mfs_products:
+                            mfs_beam_images.setdefault(stokes, {})[product_type] = (
+                                beam_mfs_images
+                            )
                     stokes_beam_channel_images[stokes] = beam_channel_images
 
     # Regroup each Stokes' per-beam channel images into per-channel beam groups
-    # so linmos can run one channel at a time in parallel. Resolving here blocks
-    # until the convolutions above have completed.
+    # so a beam can be solved for each channel, and so linmos can then run one
+    # channel at a time in parallel. Resolving here blocks until the imaging
+    # above has completed.
     stokes_channel_groups: dict[str, list[list[Path]]] = {
         stokes: task_transpose_and_sort_channel_images.submit(
             beam_channel_images=beam_channel_images
         ).result()
         for stokes, beam_channel_images in stokes_beam_channel_images.items()
     }
+    stokes_channel_groups = convolve_channel_groups_to_natural_resolution(
+        stokes_channel_groups=stokes_channel_groups,
+        cutoff=pol_field_options.beam_cutoff,
+        fixed_beam_shape=pol_field_options.fixed_beam_shape,
+    )
 
     # Stokes I beam images (per channel) are needed to correct widefield leakage
     # in the Stokes Q/U mosaics. If Stokes I was not imaged we cannot do this.
@@ -229,29 +383,53 @@ def process_science_fields_pol(
             mode="fitscube",
         )
     )
+    if compress_cubes is not None:
+        fitscube_options = fitscube_options.with_options(compress=compress_cubes)
+
+    # Parameters from the strategy, the switch from the flow options, as with
+    # every other stage
+    fft_bane_options = (
+        FFTBANEOptions(
+            **get_options_from_strategy(
+                strategy=strategy, operation="polarisation", mode="fftbane"
+            )
+        )
+        if pol_field_options.bane_noise
+        else None
+    )
 
     cube_results: list[PrefectFuture[Path]] = []
+    stokes_image_cubes: dict[str, PrefectFuture[Path]] = {}
+    stokes_weight_cubes: dict[str, PrefectFuture[Path]] = {}
+    stokes_bkg_cubes: dict[str, PrefectFuture[Path]] = {}
+    stokes_rms_cubes: dict[str, PrefectFuture[Path]] = {}
     all_input_images: list[Path] = []
     for stokes, channel_groups in stokes_channel_groups.items():
         with tags(f"stokes-{stokes}"):
             all_input_images.extend(
                 [image for beam_images in channel_groups for image in beam_images]
             )
-            cube_results.extend(
-                linmos_channel_groups_to_cubes(
-                    channel_groups=channel_groups,
-                    container=pol_field_options.yandasoft_container,
-                    linmos_options=LinmosOptions(
-                        holofile=pol_field_options.holofile,
-                        cutoff=pol_field_options.pb_cutoff,
-                        force_remove_leakage=force_remove_leakage,
-                        cleanup=True,
-                    ),
-                    stokesi_channel_groups=i_channel_groups,
-                    field_summary=field_summary,
-                    fitscube_options=fitscube_options,
-                )
+            stokes_cubes = linmos_channel_groups_to_cubes(
+                channel_groups=channel_groups,
+                container=pol_field_options.yandasoft_container,
+                linmos_options=LinmosOptions(
+                    holofile=pol_field_options.holofile,
+                    cutoff=pol_field_options.pb_cutoff,
+                    force_remove_leakage=force_remove_leakage,
+                    cleanup=True,
+                ),
+                stokesi_channel_groups=i_channel_groups,
+                field_summary=field_summary,
+                fitscube_options=fitscube_options,
+                suffix_str=POL_NAME_SUFFIX,
+                fft_bane_options=fft_bane_options,
             )
+            stokes_image_cubes[stokes] = stokes_cubes.image
+            stokes_weight_cubes[stokes] = stokes_cubes.weight
+            if stokes_cubes.bkg is not None and stokes_cubes.rms is not None:
+                stokes_bkg_cubes[stokes] = stokes_cubes.bkg
+                stokes_rms_cubes[stokes] = stokes_cubes.rms
+            cube_results.extend(stokes_cubes.futures)
 
     # Remove the convolved per-beam channel images now that every cube is built.
     # Stokes I images are kept until here as they feed the Q/U leakage correction.
@@ -259,7 +437,93 @@ def process_science_fields_pol(
         *all_input_images, wait_for=cube_results
     )
 
-    return [*cube_results, remove_result]
+    # An MFS product has no frequency axis for a natural beam to vary over, so
+    # the MFS images get a single common beam of their own rather than the one
+    # the coarsest channel of the cube needed. Resolving the futures here blocks
+    # until the imaging has completed, which the beam solve needs regardless.
+    mfs_beam_paths: dict[str, dict[str, list[Path]]] = {
+        stokes: {
+            product_type: [future.result() for future in beam_images]
+            for product_type, beam_images in product_type_images.items()
+        }
+        for stokes, product_type_images in mfs_beam_images.items()
+    }
+    mfs_beam_paths = convolve_mfs_beam_images_to_common_resolution(
+        mfs_beam_images=mfs_beam_paths,
+        cutoff=pol_field_options.beam_cutoff,
+        fixed_beam_shape=pol_field_options.fixed_beam_shape,
+    )
+
+    # Co-add the MFS image/model/residual products collected above the same way
+    # as the science cube: PB-correct via linmos, leakage-correct against the
+    # matching Stokes I MFS product where available, then clean up the
+    # per-beam convolved intermediates.
+    mfs_products: dict[str, dict[str, PrefectFuture[Path]]] = {}
+    all_mfs_input_images: list[Path] = []
+    mfs_linmos_results: list[PrefectFuture[Path]] = []
+    for stokes, product_type_images in mfs_beam_paths.items():
+        with tags(f"stokes-{stokes}"):
+            for product_type, beam_images in product_type_images.items():
+                with tags(f"product-{product_type}"):
+                    stokesi_images: list[Path] | None = None
+                    if stokes != "i":
+                        stokesi_images = mfs_beam_paths.get("i", {}).get(product_type)
+
+                    mfs_linmos_result = task_linmos_images.submit(
+                        image_list=beam_images,
+                        container=pol_field_options.yandasoft_container,
+                        linmos_options=LinmosOptions(
+                            holofile=pol_field_options.holofile,
+                            cutoff=pol_field_options.pb_cutoff,
+                            stokesi_images=stokesi_images,
+                            force_remove_leakage=force_remove_leakage,
+                            cleanup=True,
+                        ),
+                        field_summary=field_summary,
+                        suffix_str=f"{POL_NAME_SUFFIX}.{product_type}",
+                        holofile=pol_field_options.holofile,
+                    )
+                    mfs_image_path = task_getattr.submit(
+                        mfs_linmos_result, "image_fits"
+                    )
+                    mfs_products.setdefault(stokes, {})[product_type] = mfs_image_path
+                    all_mfs_input_images.extend(beam_images)
+                    mfs_linmos_results.append(mfs_image_path)
+
+    remove_mfs_result = (
+        task_remove_files_folders.submit(
+            *all_mfs_input_images, wait_for=mfs_linmos_results
+        )
+        if all_mfs_input_images
+        else None
+    )
+
+    terminal_futures: list[PrefectFuture[Any]] = [*cube_results, remove_result]
+    if remove_mfs_result is not None:
+        terminal_futures.append(remove_mfs_result)
+
+    return PolPipelineResult(
+        stokes_cubes={
+            stokes: future.result() for stokes, future in stokes_image_cubes.items()
+        },
+        bkg_cubes={
+            stokes: future.result() for stokes, future in stokes_bkg_cubes.items()
+        },
+        rms_cubes={
+            stokes: future.result() for stokes, future in stokes_rms_cubes.items()
+        },
+        weight_cubes={
+            stokes: future.result() for stokes, future in stokes_weight_cubes.items()
+        },
+        mfs_products={
+            stokes: {
+                product_type: future.result()
+                for product_type, future in product_type_futures.items()
+            }
+            for stokes, product_type_futures in mfs_products.items()
+        },
+        terminal_futures=terminal_futures,
+    )
 
 
 def setup_run_process_science_field(
