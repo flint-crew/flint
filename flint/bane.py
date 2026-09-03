@@ -321,7 +321,9 @@ def robust_bane(
     outright and so no beam is needed to size the kernel.
 
     Blank pixels are those that are not finite and, unless
-    ``fft_bane_options.invalidate_zeros`` is unset, those of exactly zero.
+    ``fft_bane_options.invalidate_zeros`` is unset, those of exactly zero. A
+    plane that is blank throughout gets blank maps, there being nothing to
+    measure.
 
     Args:
         image (NDArray[np.float32]): The image plane to measure
@@ -363,6 +365,16 @@ def robust_bane(
     valid = (~nan_mask).astype(np.float32)
     filled = np.where(nan_mask, 0.0, image).astype(np.float32)
     finite = image[~nan_mask].ravel()
+
+    if finite.size == 0:
+        # Nothing was measured, so there are no seeds to take a median and a
+        # mad_std of. Both would come back NaN off an empty slice and propagate
+        # to the same blank maps, but noisily, by way of a pair of numpy
+        # RuntimeWarnings. A plane blanked by linmos rather than by the beam
+        # cutoff reaches this once its zeros count as blank
+        logger.warning("Every pixel of the plane is blank, returning blank maps")
+        blank = np.full_like(image, np.nan, dtype=np.float32)
+        return blank, blank.copy()
 
     # The median matters: testing |image| rather than |image - background| makes
     # every pixel a source as soon as the plane carries a DC offset

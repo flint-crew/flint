@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -186,6 +187,23 @@ def test_the_rms_map_is_never_negative() -> None:
         assert not np.any(rms[np.isfinite(rms)] < 0.0)
 
 
+def test_a_wholly_blank_plane_returns_blank_maps_quietly() -> None:
+    """Nothing measured means no seeds to take a median and a mad_std of. Both
+    come back NaN off an empty slice and reach the same blank maps anyway, but
+    by way of a pair of numpy RuntimeWarnings. linmos hands over such a plane as
+    all zeros rather than all NaNs, so blanking the zeros is what reaches it."""
+    for plane in (
+        np.full((NY, NX), np.nan, dtype=np.float32),
+        np.zeros((NY, NX), dtype=np.float32),
+    ):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", RuntimeWarning)
+            background, rms = robust_bane(image=plane, header=_header())
+
+        assert np.isnan(background).all()
+        assert np.isnan(rms).all()
+
+
 def test_the_seed_makes_a_rerun_reproducible() -> None:
     """Clipped source pixels are refilled with random noise, so without a fixed
     seed the same image gives different maps run to run."""
@@ -239,7 +257,9 @@ def test_a_kernel_too_big_for_the_image_is_refused() -> None:
     image with a big step downsamples into exactly that."""
     with pytest.raises(ValueError, match="does not fit"):
         robust_bane(
-            image=np.zeros((64, 64), dtype=np.float32),
+            # Not zeros: those are blank now, and a wholly blank plane returns
+            # blank maps before the kernel is ever pressed against the image
+            image=np.ones((64, 64), dtype=np.float32),
             header=_header(),
             fft_bane_options=FFTBANEOptions(step_size=16, box_size=32),
         )
