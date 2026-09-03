@@ -289,6 +289,12 @@ def _bane_round(
             background, zoom, order=3, grid_mode=True, mode="reflect"
         )
         rms = ndimage.zoom(rms, zoom, order=3, grid_mode=True, mode="reflect")
+        # The cubic spline rings across the step the nan_to_num above puts at
+        # the footprint edge, and undershoots to a negative noise. A negative
+        # error squares to a small positive variance, so an inverse-variance
+        # weight downstream comes out orders of magnitude too large rather than
+        # obviously wrong
+        rms = np.clip(rms, 0.0, None)
 
     return background, rms
 

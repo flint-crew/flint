@@ -170,6 +170,22 @@ def test_invalidate_zeros_can_be_turned_off() -> None:
     assert np.all(rms == 0.0)
 
 
+def test_the_rms_map_is_never_negative() -> None:
+    """The maps are zoomed back up with a cubic spline, which rings across the
+    step at a footprint edge and undershoots below zero. A negative noise
+    squares to a small variance, so an inverse-variance weight built from it
+    comes out orders of magnitude too large rather than obviously wrong."""
+    inside = _footprint(radius=480)
+    sky = _sky(rms=1e-3)
+
+    for filled in (
+        np.where(inside, sky, np.nan).astype(np.float32),
+        np.where(inside, sky, 0.0).astype(np.float32),
+    ):
+        _, rms = robust_bane(image=filled, header=_header())
+        assert not np.any(rms[np.isfinite(rms)] < 0.0)
+
+
 def test_the_seed_makes_a_rerun_reproducible() -> None:
     """Clipped source pixels are refilled with random noise, so without a fixed
     seed the same image gives different maps run to run."""
