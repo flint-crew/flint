@@ -253,6 +253,8 @@ class FFTBANEOptions(BaseOptions):
     """Pixels above this SNR are replaced by noise before the background is fitted"""
     seed: int = 1234
     """Seeds the noise clipped pixels are filled with, so a rerun reproduces the maps"""
+    invalidate_zeros: bool = True
+    """Treat pixels of exactly 0.0 as blank, as ``FitsCubeOptions.invalidate_zeros`` does. linmos fills outside its primary beam cutoff with zeros, not nans"""
 
 
 class _CubesForRMSynth(BaseOptions):

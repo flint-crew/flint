@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -115,6 +116,94 @@ def test_blanked_pixels_stay_blank() -> None:
     assert np.isfinite(rms[~blank]).all()
 
 
+def _footprint(radius: int) -> np.ndarray:
+    """Mask of a circular mosaic footprint, as linmos leaves after its cutoff"""
+    yy, xx = np.mgrid[0:NY, 0:NX]
+    return (yy - NY / 2) ** 2 + (xx - NX / 2) ** 2 < radius**2
+
+
+def test_the_linmos_zero_fill_is_treated_as_blank() -> None:
+    """linmos fills beyond its cutoff with exact zeros, not NaNs. Counted as
+    measured data those zeros take the seed median and mad_std to exactly zero
+    once more than half the plane is blank, and the maps collapse to zero
+    everywhere, which reads downstream as a noiseless image."""
+    inside = _footprint(radius=380)
+    assert (~inside).mean() > 0.5, "the collapse needs over half the plane blank"
+
+    sky = _sky(background=5e-4, rms=1e-3)
+    zero_filled = np.where(inside, sky, 0.0).astype(np.float32)
+    nan_filled = np.where(inside, sky, np.nan).astype(np.float32)
+
+    zero_bkg, zero_rms = robust_bane(image=zero_filled, header=_header())
+    nan_bkg, nan_rms = robust_bane(image=nan_filled, header=_header())
+
+    # The noise inside the footprint was measured, not zeroed
+    assert np.nanmedian(zero_rms[inside]) == pytest.approx(1e-3, rel=0.3)
+    # Blanking either way describes the same plane, so it measures the same
+    assert np.nanmedian(zero_rms[inside]) == pytest.approx(
+        np.nanmedian(nan_rms[inside]), rel=0.05
+    )
+    assert np.nanmedian(zero_bkg[inside]) == pytest.approx(
+        np.nanmedian(nan_bkg[inside]), rel=0.05
+    )
+
+    # And the maps blank where the image is blank, so the noise cube and the
+    # image cube it describes share a footprint
+    assert np.isnan(zero_rms[~inside]).all()
+    assert np.isnan(zero_bkg[~inside]).all()
+
+
+def test_invalidate_zeros_can_be_turned_off() -> None:
+    """Off, zeros count as measured data again, which is what a caller whose
+    zeros are real would want."""
+    inside = _footprint(radius=380)
+    zero_filled = np.where(inside, _sky(rms=1e-3), 0.0).astype(np.float32)
+
+    _, rms = robust_bane(
+        image=zero_filled,
+        header=_header(),
+        fft_bane_options=FFTBANEOptions(invalidate_zeros=False),
+    )
+
+    # Nothing is blank, so nothing is NaN, and the collapse described above is
+    # exactly what the zeros produce
+    assert np.isfinite(rms).all()
+    assert np.all(rms == 0.0)
+
+
+def test_the_rms_map_is_never_negative() -> None:
+    """The maps are zoomed back up with a cubic spline, which rings across the
+    step at a footprint edge and undershoots below zero. A negative noise
+    squares to a small variance, so an inverse-variance weight built from it
+    comes out orders of magnitude too large rather than obviously wrong."""
+    inside = _footprint(radius=480)
+    sky = _sky(rms=1e-3)
+
+    for filled in (
+        np.where(inside, sky, np.nan).astype(np.float32),
+        np.where(inside, sky, 0.0).astype(np.float32),
+    ):
+        _, rms = robust_bane(image=filled, header=_header())
+        assert not np.any(rms[np.isfinite(rms)] < 0.0)
+
+
+def test_a_wholly_blank_plane_returns_blank_maps_quietly() -> None:
+    """Nothing measured means no seeds to take a median and a mad_std of. Both
+    come back NaN off an empty slice and reach the same blank maps anyway, but
+    by way of a pair of numpy RuntimeWarnings. linmos hands over such a plane as
+    all zeros rather than all NaNs, so blanking the zeros is what reaches it."""
+    for plane in (
+        np.full((NY, NX), np.nan, dtype=np.float32),
+        np.zeros((NY, NX), dtype=np.float32),
+    ):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", RuntimeWarning)
+            background, rms = robust_bane(image=plane, header=_header())
+
+        assert np.isnan(background).all()
+        assert np.isnan(rms).all()
+
+
 def test_the_seed_makes_a_rerun_reproducible() -> None:
     """Clipped source pixels are refilled with random noise, so without a fixed
     seed the same image gives different maps run to run."""
@@ -168,7 +257,9 @@ def test_a_kernel_too_big_for_the_image_is_refused() -> None:
     image with a big step downsamples into exactly that."""
     with pytest.raises(ValueError, match="does not fit"):
         robust_bane(
-            image=np.zeros((64, 64), dtype=np.float32),
+            # Not zeros: those are blank now, and a wholly blank plane returns
+            # blank maps before the kernel is ever pressed against the image
+            image=np.ones((64, 64), dtype=np.float32),
             header=_header(),
             fft_bane_options=FFTBANEOptions(step_size=16, box_size=32),
         )

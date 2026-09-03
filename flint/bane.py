@@ -289,6 +289,12 @@ def _bane_round(
             background, zoom, order=3, grid_mode=True, mode="reflect"
         )
         rms = ndimage.zoom(rms, zoom, order=3, grid_mode=True, mode="reflect")
+        # The cubic spline rings across the step the nan_to_num above puts at
+        # the footprint edge, and undershoots to a negative noise. A negative
+        # error squares to a small positive variance, so an inverse-variance
+        # weight downstream comes out orders of magnitude too large rather than
+        # obviously wrong
+        rms = np.clip(rms, 0.0, None)
 
     return background, rms
 
@@ -314,10 +320,15 @@ def robust_bane(
     A plane with no usable beam gets blank maps, unless both sizes are given
     outright and so no beam is needed to size the kernel.
 
+    Blank pixels are those that are not finite and, unless
+    ``fft_bane_options.invalidate_zeros`` is unset, those of exactly zero. A
+    plane that is blank throughout gets blank maps, there being nothing to
+    measure.
+
     Args:
         image (NDArray[np.float32]): The image plane to measure
         header (fits.Header | dict[str, Any]): Its header, for the beam and pixel scale
-        fft_bane_options (FFTBANEOptions | None, optional): Step, box, clip and seed. Defaults to ``FFTBANEOptions()``.
+        fft_bane_options (FFTBANEOptions | None, optional): Step, box, clip, seed and zero blanking. Defaults to ``FFTBANEOptions()``.
         kernel_func (Callable, optional): Kernel shape. Defaults to ``gaussian_kernel``.
         rms_estimator (Callable, optional): First-pass RMS estimator. Defaults to ``mad_std``.
 
@@ -343,9 +354,27 @@ def robust_bane(
     )
 
     nan_mask = ~np.isfinite(image)
+    if fft_bane_options.invalidate_zeros:
+        # linmos fills outside its primary beam cutoff with exact zeros rather
+        # than nans, and a measured zero is not a blank: it drags the seed
+        # median and mad_std below down towards zero, and past half the plane
+        # being blank it takes both to exactly zero, whereupon round one clips
+        # every pixel as a source and refills it with zero-scaled noise. The
+        # maps come back identically zero, which reads downstream as noiseless
+        nan_mask = nan_mask | (image == 0.0)
     valid = (~nan_mask).astype(np.float32)
     filled = np.where(nan_mask, 0.0, image).astype(np.float32)
     finite = image[~nan_mask].ravel()
+
+    if finite.size == 0:
+        # Nothing was measured, so there are no seeds to take a median and a
+        # mad_std of. Both would come back NaN off an empty slice and propagate
+        # to the same blank maps, but noisily, by way of a pair of numpy
+        # RuntimeWarnings. A plane blanked by linmos rather than by the beam
+        # cutoff reaches this once its zeros count as blank
+        logger.warning("Every pixel of the plane is blank, returning blank maps")
+        blank = np.full_like(image, np.nan, dtype=np.float32)
+        return blank, blank.copy()
 
     # The median matters: testing |image| rather than |image - background| makes
     # every pixel a source as soon as the plane carries a DC offset
