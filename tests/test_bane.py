@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 from astropy.io import fits
 from astropy.wcs import WCS
+from scipy import ndimage
 
 from flint.bane import (
     FFTBANEOptions,
@@ -389,3 +390,57 @@ def test_a_wider_plane_is_measured_as_float32() -> None:
     assert wide_rms.dtype == rms.dtype == np.float32
     assert np.array_equal(wide_background, background, equal_nan=True)
     assert np.array_equal(wide_rms, rms, equal_nan=True)
+
+
+def test_fft_average_puts_the_smoothed_pixel_over_the_pixel_it_smooths() -> None:
+    """The kernel is zero-padded out to the image shape, which centres it on the
+    origin rather than on the pixel it smooths unless the window is taken at the
+    matching displacement. A flat image cannot show this - convolving a delta
+    can, and so can comparing against a convolution that is centred by
+    construction."""
+    image = np.zeros((64, 64), dtype=np.float32)
+    image[32, 20] = 1.0
+
+    for kernel in (gaussian_kernel(6), gaussian_kernel(9), tophat_kernel(8)):
+        kernel = (kernel / kernel.max()).astype(np.float32)
+        smoothed = fft_average(np.ascontiguousarray(image), kernel)
+
+        # Centre of mass rather than the brightest pixel: a tophat answers a
+        # delta with a disc of equal values, whose argmax is its first row
+        centre = ndimage.center_of_mass(smoothed)
+        assert centre == pytest.approx((32.0, 20.0), abs=0.01), (
+            f"a {kernel.shape} kernel moved the delta to {centre}"
+        )
+
+        # `pad_reflect` is np.pad's "reflect", which scipy calls "mirror"
+        centred = ndimage.convolve(image, kernel / kernel.sum(), mode="mirror")
+        assert np.allclose(smoothed, centred, atol=1e-6)
+
+
+def test_the_noise_map_lines_up_with_the_noise_it_measures() -> None:
+    """A background or noise map is read against the image it came from, so
+    where it puts a feature matters as much as the value it puts there. Both the
+    kernel centring and the step back up to full resolution can displace it, by
+    tens of pixels each and both in the same direction."""
+    shape = (512, 512)
+    centre_y, centre_x = 300, 180
+    yy, xx = np.mgrid[0 : shape[0], 0 : shape[1]].astype(np.float32)
+    # A smooth blob of louder noise: no edge, so nothing that could bias a
+    # centre by the way the map averages variance rather than amplitude
+    amplitude = 1.0 + 5.0 * np.exp(
+        -0.5 * (((xx - centre_x) / 50) ** 2 + ((yy - centre_y) / 50) ** 2)
+    )
+    rng = np.random.default_rng(11)
+    image = (rng.normal(0.0, 1e-3, shape) * amplitude).astype(np.float32)
+
+    _, rms = robust_bane(
+        image=image,
+        header=_header(shape),
+        fft_bane_options=FFTBANEOptions(step_size=10, box_size=6),
+    )
+
+    peak_y, peak_x = np.unravel_index(int(np.nanargmax(rms)), rms.shape)
+    # Comfortable for a blob this broad, and nowhere near the sixty-odd pixels
+    # an uncentred kernel and a mis-scaled step back up cost between them
+    assert abs(peak_y - centre_y) < 10, f"noise peak {peak_y} rows from {centre_y}"
+    assert abs(peak_x - centre_x) < 10, f"noise peak {peak_x} columns from {centre_x}"

@@ -91,6 +91,13 @@ def fft_average(
 
     Reflect-padded by the kernel size so the FFT's periodic wrap does not fold
     the far edge of the image back onto the near one.
+
+    ``_ft_kernel`` zero-pads the kernel out from index zero rather than centring
+    it on the origin, which convolves and displaces in one go: the result comes
+    back half a kernel further along each axis. The window is taken at that
+    displacement, which costs nothing and leaves a smoothed pixel sitting over
+    the pixel it smooths - a flat image hides this, but a noise map laid over
+    the image it describes does not.
     """
     pad_x, pad_y = kernel.shape
     image_padded = pad_reflect(array=image, pad_width=(pad_x, pad_y))
@@ -99,7 +106,9 @@ def fft_average(
     kernel_fft = _ft_kernel(kernel, shape=image_padded.shape)
     smooth = fft.irfft2(image_fft * kernel_fft, s=image_padded.shape) / kernel.sum()
 
-    return smooth[pad_x:-pad_x, pad_y:-pad_y]
+    nx, ny = image.shape
+    start_x, start_y = pad_x + pad_x // 2, pad_y + pad_y // 2
+    return smooth[start_x : start_x + nx, start_y : start_y + ny]
 
 
 @nb.njit(
@@ -211,10 +220,12 @@ def _downsample_slices(
 ) -> tuple[slice, slice]:
     """Slices taking every `step_size_pix` pixel, trimmed to an even count.
 
-    The sampled region runs from `step_size_pix` to `length - step_size_pix`
-    while the zoom back up stretches it over the whole image. That is the likely
-    cause of the offset upstream records as a TODO; sampling half a cell in
-    instead measured worse, so this keeps upstream's grid.
+    The sampled region runs from `step_size_pix` to `length - step_size_pix`,
+    so it does not cover the plane. `_to_full_resolution` puts the maps back
+    where these slices took them from, which is what upstream's TODO about an
+    offset is: scaling them over the whole plane instead moves them bodily.
+    Sampling half a cell in so a plain scaling would be honest was tried and is
+    only exact when the step divides the plane, so this keeps upstream's grid.
     """
     slices = []
     for length in (shape[0], shape[1]):
@@ -223,6 +234,46 @@ def _downsample_slices(
             stop -= 1
         slices.append(slice(step_size_pix, stop, step_size_pix))
     return slices[0], slices[1]
+
+
+def _to_full_resolution(
+    smoothed: NDArray[np.float32],
+    sampled_at: tuple[slice, slice],
+    shape: tuple[int, ...],
+) -> NDArray[np.float32]:
+    """Put a map measured on the downsampled grid back onto the plane's own grid.
+
+    ``ndimage.zoom`` takes a scale and nothing else, and the sampled grid is not
+    a pure scaling of the plane's: it starts a step in and stops a step short.
+    Stretching the maps over the whole plane instead of over the region actually
+    sampled moves every pixel of them - up and to the right, by tens of pixels
+    for a typical step, and growing across the field, since the error is a
+    stretch as well as a shift. The affine transform carries the offset too, so
+    a sample lands back on the pixel it was taken from.
+
+    Outside the sampled region the nearest sample is held rather than the grid
+    reflected, so the extrapolated border does not ring.
+
+    Args:
+        smoothed (NDArray[np.float32]): A map on the downsampled grid
+        sampled_at (tuple[slice, slice]): The slices that took that grid off the plane
+        shape (tuple[int, ...]): Shape of the plane to put it back on
+
+    Returns:
+        NDArray[np.float32]: The map on the plane's grid
+    """
+    # affine_transform reads `input[matrix @ output_index + offset]`, so this is
+    # the inverse of `sample k of axis i came from pixel start_i + k * step_i`
+    steps = np.array([axis.step for axis in sampled_at], dtype=np.float64)
+    starts = np.array([axis.start for axis in sampled_at], dtype=np.float64)
+    return ndimage.affine_transform(
+        smoothed,
+        matrix=1.0 / steps,
+        offset=-starts / steps,
+        output_shape=shape,
+        order=3,
+        mode="nearest",
+    )
 
 
 def _where_masked(
@@ -283,21 +334,19 @@ def _bane_round(
         loc=0, scale=1, size=n_source
     ) * _where_masked(rms, source_mask)
 
-    zoom: tuple[float, float] | None = None
+    sampled_at: tuple[slice, slice] | None = None
+    full_shape = clipped.shape
     if step_size_pix > 0:
         # Taken as contiguous copies here rather than as views handed to
         # `bane_fft`, so the full-size `clipped` can be dropped below before the
-        # zoom allocates the full-size maps to replace it
-        y_slice, x_slice = _downsample_slices(clipped.shape, step_size_pix)
+        # maps are put back on the plane's grid to replace it
+        y_slice, x_slice = _downsample_slices(full_shape, step_size_pix)
         downsampled = np.ascontiguousarray(clipped[y_slice, x_slice])
         # Built already downsampled: `bane_fft` is the only thing that wants a
         # float32 validity mask, and at full resolution that is another copy of
         # the whole plane
         round_valid = (~nan_mask[y_slice, x_slice]).astype(np.float32)
-        zoom = (
-            clipped.shape[0] / downsampled.shape[0],
-            clipped.shape[1] / downsampled.shape[1],
-        )
+        sampled_at = (y_slice, x_slice)
     else:
         downsampled = np.ascontiguousarray(clipped)
         round_valid = (~nan_mask).astype(np.float32)
@@ -320,13 +369,11 @@ def _bane_round(
     np.nan_to_num(smooth_background, nan=0.0, copy=False)
     np.nan_to_num(smooth_rms, nan=0.0, copy=False)
 
-    if zoom is not None:
-        smooth_background = ndimage.zoom(
-            smooth_background, zoom, order=3, grid_mode=True, mode="reflect"
+    if sampled_at is not None:
+        smooth_background = _to_full_resolution(
+            smooth_background, sampled_at, full_shape
         )
-        smooth_rms = ndimage.zoom(
-            smooth_rms, zoom, order=3, grid_mode=True, mode="reflect"
-        )
+        smooth_rms = _to_full_resolution(smooth_rms, sampled_at, full_shape)
         # The cubic spline rings across the step the nan_to_num above puts at
         # the footprint edge, and undershoots to a negative noise. A negative
         # error squares to a small positive variance, so an inverse-variance
