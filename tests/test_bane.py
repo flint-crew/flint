@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import tracemalloc
 import warnings
 from pathlib import Path
 
@@ -342,3 +343,49 @@ def test_robust_bane_without_a_beam_runs_on_given_sizes() -> None:
     )
     assert np.isfinite(background).all()
     assert np.nanmedian(rms) == pytest.approx(1e-3, rel=0.3)
+
+
+def test_the_working_memory_stays_a_small_multiple_of_the_plane() -> None:
+    """A channel is measured as one task on one worker, so the peak the routine
+    reaches - not the size of the maps it returns - is what has to fit. Held at
+    a few times the plane by keeping the seeds as scalars, building the clip
+    mask in place, and taking the validity mask already downsampled. The bound
+    is loose enough for numpy and scipy to allocate differently between
+    versions, and tight enough to catch a full-resolution array coming back."""
+    image = _sky()
+    header = _header()
+
+    # numba compiles on the first call, and the compilation allocates
+    robust_bane(image=image, header=header)
+
+    for options in (
+        FFTBANEOptions(),
+        FFTBANEOptions(step_size=8, box_size=12),
+        # A cut this low makes a source of most of the plane, so the refill
+        # draws its noise in bulk
+        FFTBANEOptions(clip_sigma=1.0),
+    ):
+        tracemalloc.start()
+        robust_bane(image=image, header=header, fft_bane_options=options)
+        _, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+
+        assert peak < 7 * image.nbytes, (
+            f"{options} peaked at {peak / image.nbytes:.1f}x the plane"
+        )
+
+
+def test_a_wider_plane_is_measured_as_float32() -> None:
+    """``bane_fft`` is compiled for float32 alone. A plane read from a FITS file
+    is float32 already, but a caller computing one in double precision should
+    get the maps rather than a numba typing error."""
+    image = _sky()
+    background, rms = robust_bane(image=image, header=_header())
+    wide_background, wide_rms = robust_bane(
+        image=image.astype(np.float64), header=_header()
+    )
+
+    assert wide_background.dtype == background.dtype == np.float32
+    assert wide_rms.dtype == rms.dtype == np.float32
+    assert np.array_equal(wide_background, background, equal_nan=True)
+    assert np.array_equal(wide_rms, rms, equal_nan=True)

@@ -225,12 +225,22 @@ def _downsample_slices(
     return slices[0], slices[1]
 
 
+def _where_masked(
+    value: NDArray[np.float32] | np.float32, mask: NDArray[np.bool_]
+) -> NDArray[np.float32] | np.float32:
+    """``value`` at the set pixels of `mask`, taking a scalar to mean everywhere.
+
+    Round one clips against one number for the whole plane, round two against
+    the maps round one made, and the refill below reads both the same way.
+    """
+    return value[mask] if isinstance(value, np.ndarray) else value
+
+
 def _bane_round(
-    filled: NDArray[np.float32],
-    valid: NDArray[np.float32],
+    image: NDArray[np.float32],
     nan_mask: NDArray[np.bool_],
-    background: NDArray[np.float32],
-    rms: NDArray[np.float32],
+    background: NDArray[np.float32] | np.float32,
+    rms: NDArray[np.float32] | np.float32,
     kernel: NDArray[np.float32],
     step_size_pix: int,
     clip_sigma: float,
@@ -241,62 +251,121 @@ def _bane_round(
 
     The refill carries the local background: zero-mean noise would drag the
     background down wherever a source was removed.
+
+    ``background`` and ``rms`` are either maps or, for the first round, the one
+    number each that describes the whole plane.
     """
     with np.errstate(invalid="ignore", divide="ignore"):
-        source_mask = (np.abs(filled - background) / rms > clip_sigma) & ~nan_mask
+        # Built in place: the plain expression holds the difference, its
+        # absolute value and the ratio as three separate full-size temporaries.
+        # A blank compares however its stand-in value happens to fall - a NaN
+        # never exceeds the threshold, a linmos zero may - so the mask is
+        # cleared over them below rather than the plane being zero-filled first
+        deviation = image - background
+        np.abs(deviation, out=deviation)
+        deviation /= rms
+        source_mask = deviation > clip_sigma
+    del deviation
+    source_mask[nan_mask] = False
+
+    n_source = int(source_mask.sum())
     logger.info(
-        f"BANE round {round_number}: refilling {source_mask.sum()} "
-        f"({source_mask.sum() / filled.size * 100:0.1f}%) source pixels with noise"
+        f"BANE round {round_number}: refilling {n_source} "
+        f"({n_source / image.size * 100:0.1f}%) source pixels with noise"
     )
 
-    clipped = filled.copy()
-    clipped[source_mask] = (
-        background[source_mask]
-        + rng.normal(loc=0, scale=1, size=source_mask.sum()) * rms[source_mask]
-    )
-    # Blanked pixels must stay at zero: bane_fft normalises by the smoothed
-    # validity mask and assumes they contribute nothing
-    clipped[nan_mask] = 0.0
+    # Blanked pixels have to hold zero: bane_fft normalises by the smoothed
+    # validity mask and assumes they contribute nothing. Built from `image` each
+    # round rather than from a zero-filled copy kept across both, which would be
+    # a second full-resolution plane held for the whole routine
+    clipped = np.where(nan_mask, np.float32(0.0), image)
+    clipped[source_mask] = _where_masked(background, source_mask) + rng.normal(
+        loc=0, scale=1, size=n_source
+    ) * _where_masked(rms, source_mask)
 
     zoom: tuple[float, float] | None = None
-    round_valid = valid
     if step_size_pix > 0:
+        # Taken as contiguous copies here rather than as views handed to
+        # `bane_fft`, so the full-size `clipped` can be dropped below before the
+        # zoom allocates the full-size maps to replace it
         y_slice, x_slice = _downsample_slices(clipped.shape, step_size_pix)
+        downsampled = np.ascontiguousarray(clipped[y_slice, x_slice])
+        # Built already downsampled: `bane_fft` is the only thing that wants a
+        # float32 validity mask, and at full resolution that is another copy of
+        # the whole plane
+        round_valid = (~nan_mask[y_slice, x_slice]).astype(np.float32)
         zoom = (
-            clipped.shape[0] / clipped[y_slice, x_slice].shape[0],
-            clipped.shape[1] / clipped[y_slice, x_slice].shape[1],
+            clipped.shape[0] / downsampled.shape[0],
+            clipped.shape[1] / downsampled.shape[1],
         )
-        clipped, round_valid = clipped[y_slice, x_slice], valid[y_slice, x_slice]
+    else:
+        downsampled = np.ascontiguousarray(clipped)
+        round_valid = (~nan_mask).astype(np.float32)
 
     # pad_reflect is njit-ed without bounds checking, so a kernel wider than the
     # image reads off the end and returns quietly wrong maps rather than raising
-    if any(pad >= length for pad, length in zip(kernel.shape, clipped.shape)):
+    if any(pad >= length for pad, length in zip(kernel.shape, downsampled.shape)):
         msg = (
-            f"A {kernel.shape} kernel does not fit the {clipped.shape} image it "
+            f"A {kernel.shape} kernel does not fit the {downsampled.shape} image it "
             "smooths. Lower step_size so less is downsampled away, or box_size "
             "for a smaller kernel."
         )
         raise ValueError(msg)
 
-    background, rms = bane_fft(
-        np.ascontiguousarray(clipped), kernel, np.ascontiguousarray(round_valid)
-    )
-    background = np.nan_to_num(background, nan=0.0)
-    rms = np.nan_to_num(rms, nan=0.0)
+    del clipped, source_mask
+
+    smooth_background, smooth_rms = bane_fft(downsampled, kernel, round_valid)
+    # In place throughout: both come straight out of bane_fft, so nothing else
+    # holds a view of them
+    np.nan_to_num(smooth_background, nan=0.0, copy=False)
+    np.nan_to_num(smooth_rms, nan=0.0, copy=False)
 
     if zoom is not None:
-        background = ndimage.zoom(
-            background, zoom, order=3, grid_mode=True, mode="reflect"
+        smooth_background = ndimage.zoom(
+            smooth_background, zoom, order=3, grid_mode=True, mode="reflect"
         )
-        rms = ndimage.zoom(rms, zoom, order=3, grid_mode=True, mode="reflect")
+        smooth_rms = ndimage.zoom(
+            smooth_rms, zoom, order=3, grid_mode=True, mode="reflect"
+        )
         # The cubic spline rings across the step the nan_to_num above puts at
         # the footprint edge, and undershoots to a negative noise. A negative
         # error squares to a small positive variance, so an inverse-variance
         # weight downstream comes out orders of magnitude too large rather than
         # obviously wrong
-        rms = np.clip(rms, 0.0, None)
+        np.clip(smooth_rms, 0.0, None, out=smooth_rms)
 
-    return background, rms
+    return smooth_background, smooth_rms
+
+
+def _seed_estimates(
+    image: NDArray[np.float32],
+    nan_mask: NDArray[np.bool_],
+    rms_estimator: Callable[[NDArray[np.float32]], float],
+) -> tuple[np.float32, np.float32] | None:
+    """The one background and RMS for the whole plane that round one clips against.
+
+    Returns None when nothing was measured, there being no seeds to take.
+
+    The median matters: testing |image| rather than |image - background| makes
+    every pixel a source as soon as the plane carries a DC offset.
+
+    Compacting the measured pixels costs a copy of most of the plane, and
+    ``rms_estimator`` copies it again; both are made and dropped here rather
+    than held across the rounds that follow, where the maps are the peak.
+
+    Args:
+        image (NDArray[np.float32]): The plane being measured
+        nan_mask (NDArray[np.bool_]): True wherever the plane is blank
+        rms_estimator (Callable): Estimator of the plane's noise, e.g. ``mad_std``
+
+    Returns:
+        tuple[np.float32, np.float32] | None: Seed background and RMS, or None if the plane is wholly blank
+    """
+    finite = image[~nan_mask].ravel()
+    if finite.size == 0:
+        return None
+    # float32, matching the maps they seed and the plane they came from
+    return np.float32(np.median(finite)), np.float32(rms_estimator(finite))
 
 
 def _needs_a_beam(fft_bane_options: FFTBANEOptions) -> bool:
@@ -324,6 +393,11 @@ def robust_bane(
     ``fft_bane_options.invalidate_zeros`` is unset, those of exactly zero. A
     plane that is blank throughout gets blank maps, there being nothing to
     measure.
+
+    Peaks at roughly five times the plane, the two maps and the working copies
+    of the plane the rounds need. A worker measuring a channel of its own has to
+    fit that, not just the maps it hands back - a 6000x6000 float32 plane is
+    137 MB and peaks near 600 MB. ``tests/test_bane.py`` holds the multiple.
 
     Args:
         image (NDArray[np.float32]): The image plane to measure
@@ -353,6 +427,11 @@ def robust_bane(
         kernel_func=kernel_func,
     )
 
+    # The rounds below smooth the plane itself rather than a zero-filled copy of
+    # it, and ``bane_fft`` is compiled for float32 alone. A plane read from a
+    # FITS file is float32 already, so this is a view rather than a copy
+    image = np.asarray(image, dtype=np.float32)
+
     nan_mask = ~np.isfinite(image)
     if fft_bane_options.invalidate_zeros:
         # linmos fills outside its primary beam cutoff with exact zeros rather
@@ -361,12 +440,10 @@ def robust_bane(
         # being blank it takes both to exactly zero, whereupon round one clips
         # every pixel as a source and refills it with zero-scaled noise. The
         # maps come back identically zero, which reads downstream as noiseless
-        nan_mask = nan_mask | (image == 0.0)
-    valid = (~nan_mask).astype(np.float32)
-    filled = np.where(nan_mask, 0.0, image).astype(np.float32)
-    finite = image[~nan_mask].ravel()
+        nan_mask |= image == 0.0
 
-    if finite.size == 0:
+    seeds = _seed_estimates(image=image, nan_mask=nan_mask, rms_estimator=rms_estimator)
+    if seeds is None:
         # Nothing was measured, so there are no seeds to take a median and a
         # mad_std of. Both would come back NaN off an empty slice and propagate
         # to the same blank maps, but noisily, by way of a pair of numpy
@@ -376,27 +453,27 @@ def robust_bane(
         blank = np.full_like(image, np.nan, dtype=np.float32)
         return blank, blank.copy()
 
-    # The median matters: testing |image| rather than |image - background| makes
-    # every pixel a source as soon as the plane carries a DC offset
-    background = np.full_like(filled, float(np.median(finite)))
-    rms = np.full_like(filled, float(rms_estimator(finite)))
-
     # A mosaic's noise rises with the primary beam, so one threshold clips real
     # noise at the edge while missing faint sources in the middle
     rng = np.random.default_rng(fft_bane_options.seed)
+    # Round one clips against the seed pair, round two against the maps round
+    # one made
+    clip_against: tuple[
+        NDArray[np.float32] | np.float32, NDArray[np.float32] | np.float32
+    ] = seeds
     for round_number in (1, 2):
         background, rms = _bane_round(
-            filled=filled,
-            valid=valid,
+            image=image,
             nan_mask=nan_mask,
-            background=background,
-            rms=rms,
+            background=clip_against[0],
+            rms=clip_against[1],
             kernel=kernel,
             step_size_pix=step_size_pix,
             clip_sigma=fft_bane_options.clip_sigma,
             rng=rng,
             round_number=round_number,
         )
+        clip_against = (background, rms)
 
     background[nan_mask] = np.nan
     rms[nan_mask] = np.nan
@@ -412,6 +489,9 @@ def bane_fits_image(
 
     Named ``_bkg.fits`` and ``_rms.fits`` beside the input, as the aegean BANE
     names them, so the two are interchangeable downstream.
+
+    Runs as one task per channel, so a worker's memory has to cover the peak
+    ``robust_bane`` reaches - see there for the multiple of the plane it takes.
 
     Args:
         image (Path): Single-plane FITS image to measure
