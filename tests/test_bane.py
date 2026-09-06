@@ -174,10 +174,11 @@ def test_invalidate_zeros_can_be_turned_off() -> None:
 
 
 def test_the_rms_map_is_never_negative() -> None:
-    """The maps are zoomed back up with a cubic spline, which rings across the
-    step at a footprint edge and undershoots below zero. A negative noise
-    squares to a small variance, so an inverse-variance weight built from it
-    comes out orders of magnitude too large rather than obviously wrong."""
+    """A negative noise squares to a small variance, so an inverse-variance
+    weight built from it comes out orders of magnitude too large rather than
+    obviously wrong. The linear step back up to full resolution cannot
+    undershoot, but a spline rings across the step at a footprint edge and
+    does, so this holds whatever it is interpolated with."""
     inside = _footprint(radius=480)
     sky = _sky(rms=1e-3)
 
@@ -441,6 +442,6 @@ def test_the_noise_map_lines_up_with_the_noise_it_measures() -> None:
 
     peak_y, peak_x = np.unravel_index(int(np.nanargmax(rms)), rms.shape)
     # Comfortable for a blob this broad, and nowhere near the sixty-odd pixels
-    # an uncentred kernel and a mis-scaled step back up cost between them
+    # an uncentred kernel and a wrongly scaled step back up cost between them
     assert abs(peak_y - centre_y) < 10, f"noise peak {peak_y} rows from {centre_y}"
     assert abs(peak_x - centre_x) < 10, f"noise peak {peak_x} columns from {centre_x}"
