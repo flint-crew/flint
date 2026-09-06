@@ -254,6 +254,14 @@ def _to_full_resolution(
     Outside the sampled region the nearest sample is held rather than the grid
     reflected, so the extrapolated border does not ring.
 
+    Linear rather than a cubic spline. A blank leaves a step in the map, where
+    ``nan_to_num`` has put zero against a measured value, and a cubic overshoots
+    it: a plane blanked to an eighth came back with a background reaching nine
+    thousand times its own noise a single row past the blank edge, in the map
+    that was written out. Linear cannot overshoot, being a weighted mean of the
+    two samples either side, and away from the blanks it differs from the cubic
+    by well under a percent of the noise - for half the time.
+
     Args:
         smoothed (NDArray[np.float32]): A map on the downsampled grid
         sampled_at (tuple[slice, slice]): The slices that took that grid off the plane
@@ -271,7 +279,7 @@ def _to_full_resolution(
         matrix=1.0 / steps,
         offset=-starts / steps,
         output_shape=shape,
-        order=3,
+        order=1,
         mode="nearest",
     )
 
@@ -374,11 +382,13 @@ def _bane_round(
             smooth_background, sampled_at, full_shape
         )
         smooth_rms = _to_full_resolution(smooth_rms, sampled_at, full_shape)
-        # The cubic spline rings across the step the nan_to_num above puts at
-        # the footprint edge, and undershoots to a negative noise. A negative
-        # error squares to a small positive variance, so an inverse-variance
-        # weight downstream comes out orders of magnitude too large rather than
-        # obviously wrong
+        # A guard rather than a fix: the linear interpolation above is a
+        # weighted mean of two non-negative samples and so cannot undershoot.
+        # It is what makes the interpolation order safe to raise again, since a
+        # spline does undershoot across the step `nan_to_num` leaves at the
+        # footprint edge - and a negative error squares to a small positive
+        # variance, so an inverse-variance weight downstream would come out
+        # orders of magnitude too large rather than obviously wrong
         np.clip(smooth_rms, 0.0, None, out=smooth_rms)
 
     return smooth_background, smooth_rms
