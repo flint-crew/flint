@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import tracemalloc
 import warnings
 from pathlib import Path
 
@@ -10,6 +11,7 @@ import numpy as np
 import pytest
 from astropy.io import fits
 from astropy.wcs import WCS
+from scipy import ndimage
 
 from flint.bane import (
     FFTBANEOptions,
@@ -172,10 +174,11 @@ def test_invalidate_zeros_can_be_turned_off() -> None:
 
 
 def test_the_rms_map_is_never_negative() -> None:
-    """The maps are zoomed back up with a cubic spline, which rings across the
-    step at a footprint edge and undershoots below zero. A negative noise
-    squares to a small variance, so an inverse-variance weight built from it
-    comes out orders of magnitude too large rather than obviously wrong."""
+    """A negative noise squares to a small variance, so an inverse-variance
+    weight built from it comes out orders of magnitude too large rather than
+    obviously wrong. The linear step back up to full resolution cannot
+    undershoot, but a spline rings across the step at a footprint edge and
+    does, so this holds whatever it is interpolated with."""
     inside = _footprint(radius=480)
     sky = _sky(rms=1e-3)
 
@@ -342,3 +345,129 @@ def test_robust_bane_without_a_beam_runs_on_given_sizes() -> None:
     )
     assert np.isfinite(background).all()
     assert np.nanmedian(rms) == pytest.approx(1e-3, rel=0.3)
+
+
+def test_the_working_memory_stays_a_small_multiple_of_the_plane() -> None:
+    """A channel is measured as one task on one worker, so the peak the routine
+    reaches - not the size of the maps it returns - is what has to fit. Held at
+    a few times the plane by keeping the seeds as scalars, building the clip
+    mask in place, and taking the validity mask already downsampled. The bound
+    is loose enough for numpy and scipy to allocate differently between
+    versions, and tight enough to catch a full-resolution array coming back."""
+    image = _sky()
+    header = _header()
+
+    # numba compiles on the first call, and the compilation allocates
+    robust_bane(image=image, header=header)
+
+    for options in (
+        FFTBANEOptions(),
+        FFTBANEOptions(step_size=8, box_size=12),
+        # A cut this low makes a source of most of the plane, so the refill
+        # draws its noise in bulk
+        FFTBANEOptions(clip_sigma=1.0),
+    ):
+        tracemalloc.start()
+        robust_bane(image=image, header=header, fft_bane_options=options)
+        _, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+
+        assert peak < 7 * image.nbytes, (
+            f"{options} peaked at {peak / image.nbytes:.1f}x the plane"
+        )
+
+
+def test_a_wider_plane_is_measured_as_float32() -> None:
+    """``bane_fft`` is compiled for float32 alone. A plane read from a FITS file
+    is float32 already, but a caller computing one in double precision should
+    get the maps rather than a numba typing error."""
+    image = _sky()
+    background, rms = robust_bane(image=image, header=_header())
+    wide_background, wide_rms = robust_bane(
+        image=image.astype(np.float64), header=_header()
+    )
+
+    assert wide_background.dtype == background.dtype == np.float32
+    assert wide_rms.dtype == rms.dtype == np.float32
+    assert np.array_equal(wide_background, background, equal_nan=True)
+    assert np.array_equal(wide_rms, rms, equal_nan=True)
+
+
+def test_fft_average_puts_the_smoothed_pixel_over_the_pixel_it_smooths() -> None:
+    """The kernel is zero-padded out to the image shape, which centres it on the
+    origin rather than on the pixel it smooths unless the window is taken at the
+    matching displacement. A flat image cannot show this - convolving a delta
+    can, and so can comparing against a convolution that is centred by
+    construction."""
+    image = np.zeros((64, 64), dtype=np.float32)
+    image[32, 20] = 1.0
+
+    for kernel in (gaussian_kernel(6), gaussian_kernel(9), tophat_kernel(8)):
+        kernel = (kernel / kernel.max()).astype(np.float32)
+        smoothed = fft_average(np.ascontiguousarray(image), kernel)
+
+        # Centre of mass rather than the brightest pixel: a tophat answers a
+        # delta with a disc of equal values, whose argmax is its first row
+        centre = ndimage.center_of_mass(smoothed)
+        assert centre == pytest.approx((32.0, 20.0), abs=0.01), (
+            f"a {kernel.shape} kernel moved the delta to {centre}"
+        )
+
+        # `pad_reflect` is np.pad's "reflect", which scipy calls "mirror"
+        centred = ndimage.convolve(image, kernel / kernel.sum(), mode="mirror")
+        assert np.allclose(smoothed, centred, atol=1e-6)
+
+
+def test_the_noise_map_lines_up_with_the_noise_it_measures() -> None:
+    """A background or noise map is read against the image it came from, so
+    where it puts a feature matters as much as the value it puts there. Both the
+    kernel centring and the step back up to full resolution can displace it, by
+    tens of pixels each and both in the same direction."""
+    shape = (512, 512)
+    centre_y, centre_x = 300, 180
+    yy, xx = np.mgrid[0 : shape[0], 0 : shape[1]].astype(np.float32)
+    # A smooth blob of louder noise: no edge, so nothing that could bias a
+    # centre by the way the map averages variance rather than amplitude
+    amplitude = 1.0 + 5.0 * np.exp(
+        -0.5 * (((xx - centre_x) / 50) ** 2 + ((yy - centre_y) / 50) ** 2)
+    )
+    rng = np.random.default_rng(11)
+    image = (rng.normal(0.0, 1e-3, shape) * amplitude).astype(np.float32)
+
+    _, rms = robust_bane(
+        image=image,
+        header=_header(shape),
+        fft_bane_options=FFTBANEOptions(step_size=10, box_size=6),
+    )
+
+    peak_y, peak_x = np.unravel_index(int(np.nanargmax(rms)), rms.shape)
+    # Comfortable for a blob this broad, and nowhere near the sixty-odd pixels
+    # an uncentred kernel and a wrongly scaled step back up cost between them
+    assert abs(peak_y - centre_y) < 10, f"noise peak {peak_y} rows from {centre_y}"
+    assert abs(peak_x - centre_x) < 10, f"noise peak {peak_x} columns from {centre_x}"
+
+
+def test_a_plane_measured_without_downsampling() -> None:
+    """``step_size=0`` smooths the plane at its own resolution, which is the one
+    path that never steps the maps back up. The kernel still has to be centred
+    on the pixel it smooths, so a blob of louder noise stays where it was put."""
+    shape = (512, 512)
+    centre_y, centre_x = 300, 180
+    yy, xx = np.mgrid[0 : shape[0], 0 : shape[1]].astype(np.float32)
+    amplitude = 1.0 + 5.0 * np.exp(
+        -0.5 * (((xx - centre_x) / 50) ** 2 + ((yy - centre_y) / 50) ** 2)
+    )
+    rng = np.random.default_rng(11)
+    image = (rng.normal(0.0, 1e-3, shape) * amplitude).astype(np.float32)
+
+    background, rms = robust_bane(
+        image=image,
+        header=_header(shape),
+        fft_bane_options=FFTBANEOptions(step_size=0, box_size=12),
+    )
+
+    assert np.isfinite(background).all()
+    assert np.isfinite(rms).all()
+    peak_y, peak_x = np.unravel_index(int(np.nanargmax(rms)), rms.shape)
+    assert abs(peak_y - centre_y) < 10, f"noise peak {peak_y} rows from {centre_y}"
+    assert abs(peak_x - centre_x) < 10, f"noise peak {peak_x} columns from {centre_x}"
