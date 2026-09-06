@@ -91,13 +91,6 @@ def fft_average(
 
     Reflect-padded by the kernel size so the FFT's periodic wrap does not fold
     the far edge of the image back onto the near one.
-
-    ``_ft_kernel`` zero-pads the kernel out from index zero rather than centring
-    it on the origin, which convolves and displaces in one go: the result comes
-    back half a kernel further along each axis. The window is taken at that
-    displacement, which costs nothing and leaves a smoothed pixel sitting over
-    the pixel it smooths - a flat image hides this, but a noise map laid over
-    the image it describes does not.
     """
     pad_x, pad_y = kernel.shape
     image_padded = pad_reflect(array=image, pad_width=(pad_x, pad_y))
@@ -106,6 +99,8 @@ def fft_average(
     kernel_fft = _ft_kernel(kernel, shape=image_padded.shape)
     smooth = fft.irfft2(image_fft * kernel_fft, s=image_padded.shape) / kernel.sum()
 
+    # `_ft_kernel` pads from index zero, not about the origin, so the result
+    # comes back half a kernel along each axis
     nx, ny = image.shape
     start_x, start_y = pad_x + pad_x // 2, pad_y + pad_y // 2
     return smooth[start_x : start_x + nx, start_y : start_y + ny]
@@ -220,12 +215,8 @@ def _downsample_slices(
 ) -> tuple[slice, slice]:
     """Slices taking every `step_size_pix` pixel, trimmed to an even count.
 
-    The sampled region runs from `step_size_pix` to `length - step_size_pix`,
-    so it does not cover the plane. `_to_full_resolution` puts the maps back
-    where these slices took them from, which is what upstream's TODO about an
-    offset is: scaling them over the whole plane instead moves them bodily.
-    Sampling half a cell in so a plain scaling would be honest was tried and is
-    only exact when the step divides the plane, so this keeps upstream's grid.
+    These do not cover the plane, so `_to_full_resolution` reads them to put
+    the maps back where they were taken from.
     """
     slices = []
     for length in (shape[0], shape[1]):
@@ -243,24 +234,9 @@ def _to_full_resolution(
 ) -> NDArray[np.float32]:
     """Put a map measured on the downsampled grid back onto the plane's own grid.
 
-    ``ndimage.zoom`` takes a scale and nothing else, and the sampled grid is not
-    a pure scaling of the plane's: it starts a step in and stops a step short.
-    Stretching the maps over the whole plane instead of over the region actually
-    sampled moves every pixel of them - up and to the right, by tens of pixels
-    for a typical step, and growing across the field, since the error is a
-    stretch as well as a shift. The affine transform carries the offset too, so
-    a sample lands back on the pixel it was taken from.
-
-    Outside the sampled region the nearest sample is held rather than the grid
-    reflected, so the extrapolated border does not ring.
-
-    Linear rather than a cubic spline. A blank leaves a step in the map, where
-    ``nan_to_num`` has put zero against a measured value, and a cubic overshoots
-    it: a plane blanked to an eighth came back with a background reaching nine
-    thousand times its own noise a single row past the blank edge, in the map
-    that was written out. Linear cannot overshoot, being a weighted mean of the
-    two samples either side, and away from the blanks it differs from the cubic
-    by well under a percent of the noise - for half the time.
+    An affine transform rather than `ndimage.zoom`, which takes a scale alone
+    and so cannot know the sampled grid starts a step in. Linear rather than a
+    spline, which overshoots the step a blank leaves in the map.
 
     Args:
         smoothed (NDArray[np.float32]): A map on the downsampled grid
@@ -282,17 +258,6 @@ def _to_full_resolution(
         order=1,
         mode="nearest",
     )
-
-
-def _where_masked(
-    value: NDArray[np.float32] | np.float32, mask: NDArray[np.bool_]
-) -> NDArray[np.float32] | np.float32:
-    """``value`` at the set pixels of `mask`, taking a scalar to mean everywhere.
-
-    Round one clips against one number for the whole plane, round two against
-    the maps round one made, and the refill below reads both the same way.
-    """
-    return value[mask] if isinstance(value, np.ndarray) else value
 
 
 def _bane_round(
@@ -338,9 +303,17 @@ def _bane_round(
     # round rather than from a zero-filled copy kept across both, which would be
     # a second full-resolution plane held for the whole routine
     clipped = np.where(nan_mask, np.float32(0.0), image)
-    clipped[source_mask] = _where_masked(background, source_mask) + rng.normal(
-        loc=0, scale=1, size=n_source
-    ) * _where_masked(rms, source_mask)
+    # Round one clips against one number for the whole plane, round two against
+    # the maps round one made
+    at_source: NDArray[np.float32] | np.float32
+    rms_at_source: NDArray[np.float32] | np.float32
+    if isinstance(background, np.ndarray) and isinstance(rms, np.ndarray):
+        at_source, rms_at_source = background[source_mask], rms[source_mask]
+    else:
+        at_source, rms_at_source = background, rms
+    clipped[source_mask] = (
+        at_source + rng.normal(loc=0, scale=1, size=n_source) * rms_at_source
+    )
 
     sampled_at: tuple[slice, slice] | None = None
     full_shape = clipped.shape
@@ -382,47 +355,11 @@ def _bane_round(
             smooth_background, sampled_at, full_shape
         )
         smooth_rms = _to_full_resolution(smooth_rms, sampled_at, full_shape)
-        # A guard rather than a fix: the linear interpolation above is a
-        # weighted mean of two non-negative samples and so cannot undershoot.
-        # It is what makes the interpolation order safe to raise again, since a
-        # spline does undershoot across the step `nan_to_num` leaves at the
-        # footprint edge - and a negative error squares to a small positive
-        # variance, so an inverse-variance weight downstream would come out
-        # orders of magnitude too large rather than obviously wrong
+        # A guard: linear interpolation cannot undershoot, but a spline can, and
+        # a negative error squares to a small positive variance downstream
         np.clip(smooth_rms, 0.0, None, out=smooth_rms)
 
     return smooth_background, smooth_rms
-
-
-def _seed_estimates(
-    image: NDArray[np.float32],
-    nan_mask: NDArray[np.bool_],
-    rms_estimator: Callable[[NDArray[np.float32]], float],
-) -> tuple[np.float32, np.float32] | None:
-    """The one background and RMS for the whole plane that round one clips against.
-
-    Returns None when nothing was measured, there being no seeds to take.
-
-    The median matters: testing |image| rather than |image - background| makes
-    every pixel a source as soon as the plane carries a DC offset.
-
-    Compacting the measured pixels costs a copy of most of the plane, and
-    ``rms_estimator`` copies it again; both are made and dropped here rather
-    than held across the rounds that follow, where the maps are the peak.
-
-    Args:
-        image (NDArray[np.float32]): The plane being measured
-        nan_mask (NDArray[np.bool_]): True wherever the plane is blank
-        rms_estimator (Callable): Estimator of the plane's noise, e.g. ``mad_std``
-
-    Returns:
-        tuple[np.float32, np.float32] | None: Seed background and RMS, or None if the plane is wholly blank
-    """
-    finite = image[~nan_mask].ravel()
-    if finite.size == 0:
-        return None
-    # float32, matching the maps they seed and the plane they came from
-    return np.float32(np.median(finite)), np.float32(rms_estimator(finite))
 
 
 def _needs_a_beam(fft_bane_options: FFTBANEOptions) -> bool:
@@ -499,8 +436,8 @@ def robust_bane(
         # maps come back identically zero, which reads downstream as noiseless
         nan_mask |= image == 0.0
 
-    seeds = _seed_estimates(image=image, nan_mask=nan_mask, rms_estimator=rms_estimator)
-    if seeds is None:
+    finite = image[~nan_mask].ravel()
+    if finite.size == 0:
         # Nothing was measured, so there are no seeds to take a median and a
         # mad_std of. Both would come back NaN off an empty slice and propagate
         # to the same blank maps, but noisily, by way of a pair of numpy
@@ -510,14 +447,18 @@ def robust_bane(
         blank = np.full_like(image, np.nan, dtype=np.float32)
         return blank, blank.copy()
 
+    # The median matters: testing |image| rather than |image - background| makes
+    # every pixel a source as soon as the plane carries a DC offset. Scalars,
+    # and dropped before the rounds: `finite` and the copy `rms_estimator` makes
+    # of it are each most of a plane
+    clip_against: tuple[
+        NDArray[np.float32] | np.float32, NDArray[np.float32] | np.float32
+    ] = (np.float32(np.median(finite)), np.float32(rms_estimator(finite)))
+    del finite
+
     # A mosaic's noise rises with the primary beam, so one threshold clips real
     # noise at the edge while missing faint sources in the middle
     rng = np.random.default_rng(fft_bane_options.seed)
-    # Round one clips against the seed pair, round two against the maps round
-    # one made
-    clip_against: tuple[
-        NDArray[np.float32] | np.float32, NDArray[np.float32] | np.float32
-    ] = seeds
     for round_number in (1, 2):
         background, rms = _bane_round(
             image=image,
