@@ -374,11 +374,11 @@ class RMSynthOptions(BaseOptions):
     n_error_samples: int = 1000
     """Monte-Carlo resamples used by compute_model_error"""
     debias_moments: bool = False
-    """Also compute a debiased (via rm_lite's debias_fdf) mom0/mom1/mom2 set per requested FDF"""
+    """Also compute a debiased (via rm_lite's debias_fdf) moment set per requested FDF, written with a '.debiased' suffix. Distinct from the mom0_debias map, which takes the noise's own sum off mom0 rather than debiasing the FDF first"""
     debias_filter_size: int = 5
     """Median filter size (pixels) used by mom0 debiasing"""
     lam_sq_0_m2: float | Literal["auto", "per_pixel"] = "auto"
-    """Reference lambda^2 the FDF is derotated to. 'auto' picks one value for the whole cube; 'per_pixel' gives each pixel its own, which also forces per_pixel_rmsf since the RMSF then differs pixel to pixel. A float pins it explicitly"""
+    """Reference lambda^2 the FDF is derotated to. 'auto' picks one value for the whole cube; 'per_pixel' gives each pixel its own, which also forces per_pixel_rmsf since the RMSF then differs pixel to pixel, and leaves the pi/pa_lam_sq_0 moment maps measuring every pixel at a different wavelength. A float pins it explicitly"""
     per_pixel_rmsf: bool = False
     """Compute the RMSF for each pixel rather than one shared by the cube. Roughly doubles the FDF's size. rm-lite turns this on itself when the weights make pixels disagree, as the linmos weight cubes do"""
     estimate_stokes_i_noise: bool = True
@@ -460,13 +460,11 @@ class RMSynthFieldOptions(BaseOptions):
     cube_products: list[Literal["dirty", "clean", "model"]] = []
     """Which Faraday dispersion function (FDF) cubes to write as FITS. Nothing by default, as these cubes can be large."""
     moment_products: list[Literal["dirty", "clean", "model"]] = ["clean"]
-    """Which FDF(s) to compute Faraday moment maps from."""
+    """Which FDF(s) to compute Faraday moment maps from: mom0 (raw, debiased and error), mom1 and mom2 with their errors, and the polarised intensity (raw, debiased and error) and angle (and error) at the reference lambda^2. Twelve (ny, nx) maps per FDF"""
     moment_threshold_snr: float = 5.0
     """SNR cut (times the theoretical FDF noise) applied before the moment maps are computed, the dirty ones included"""
-    peak_threshold_snr: float = 0.0
-    """SNR cut (times the theoretical FDF noise) below which peak statistics are blanked. Zero applies no cut: a peak is a single sample with no noise floor to integrate, and peak_pi_error is written beside it"""
     peak_products: list[Literal["dirty", "clean", "model"]] = []
-    """Which FDF(s) to measure peak statistics from: peak polarised intensity (raw and debiased), Faraday depth, polarisation angle and intrinsic angle, each with its error. Nine (ny, nx) maps per FDF, so empty by default -- at 16032^2 that is ~9 GB per entry"""
+    """Which FDF(s) to measure peak statistics from: peak polarised intensity (raw and debiased), Faraday depth, polarisation angle and intrinsic angle, each with its error. Nine (ny, nx) maps per FDF, so empty by default -- at 16032^2 that is ~9 GB per entry. No SNR cut is applied: a peak is a single sample with no noise floor to integrate, so select on peak_pi / peak_pi_error afterwards"""
     output_path: Path | None = None
     """Directory the FDF cube and moment products are written into. Defaults to alongside the input Stokes cubes"""
     sbid_copy_path: Path | None = None

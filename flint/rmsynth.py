@@ -55,11 +55,36 @@ from flint.options import (
 
 FDFLabel: TypeAlias = Literal["dirty", "clean", "model"]
 FDFThreshold: TypeAlias = float | np.ndarray | da.Array | None
-_MOMENT_NAMES = ("mom0", "mom1", "mom2")
+
+# The Faraday moments, as {FaradayMoments field: (file suffix, BUNIT, comment)}.
+# The moments used to be three unitless-looking maps; they now carry an error
+# each, and the polarisation at the reference lambda^2, which mixes Jy/beam,
+# rad/m2 and degrees in the one set -- so every map is stamped with its BUNIT.
+_MOMENT_MAPS = {
+    "mom0": ("mom0", "Jy/beam", "zeroth moment, total polarised intensity"),
+    "mom0_debias": ("mom0_debias", "Jy/beam", "mom0 less the noise's own sum"),
+    "mom0_error": ("mom0_error", "Jy/beam", "1-sigma on mom0"),
+    "mom1": ("mom1", "rad/m2", "first moment, mean Faraday depth"),
+    "mom1_error": ("mom1_error", "rad/m2", "1-sigma on mom1"),
+    "mom2": ("mom2", "rad/m2", "second moment, Faraday depth dispersion"),
+    "mom2_error": ("mom2_error", "rad/m2", "1-sigma on mom2"),
+    "pi_lam_sq_0": ("pi_lam_sq_0", "Jy/beam", "polarised intensity at lambda^2_0"),
+    "pi_lam_sq_0_debias": ("pi_lam_sq_0_debias", "Jy/beam", "debiased pi_lam_sq_0"),
+    "pi_lam_sq_0_error": ("pi_lam_sq_0_error", "Jy/beam", "1-sigma on pi_lam_sq_0"),
+    "pa_lam_sq_0": ("pa_lam_sq_0", "deg", "polarisation angle at lambda^2_0"),
+    "pa_lam_sq_0_error": ("pa_lam_sq_0_error", "deg", "1-sigma on pa_lam_sq_0"),
+}
+
+# ``debias=True`` rebuilds the FDF with the noise taken off each amplitude
+# first, which is exactly what rm-lite's own ``mom0_debias`` subtracts -- so it
+# returns ``mom0`` unchanged there, and writing a byte-identical copy of the
+# already-written ``mom0`` map under a second name would only invite reading
+# them as two measurements.
+_DEBIASED_MOMENT_MAPS = {
+    field: entry for field, entry in _MOMENT_MAPS.items() if field != "mom0_debias"
+}
 
 # The FDF peak statistics, as {FaradayPeaks field: (file suffix, BUNIT, comment)}.
-# Units matter more here than for the moments: three of these are angles in
-# degrees and two are Faraday depths, so a map with no BUNIT is easy to misread.
 _PEAK_MAPS = {
     "peak_pi": ("peak_pi", "Jy/beam", "peak polarised intensity"),
     "peak_pi_debias": ("peak_pi_debias", "Jy/beam", "debiased peak"),
@@ -194,40 +219,38 @@ def run_rmclean_3d(
 
 
 def write_moment_maps_to_fits(
-    moments: FaradayMoments,
+    moments: dict[str, np.ndarray],
     reference_header: fits.Header,
     output_prefix: Path,
     label: FDFLabel,
-    debiased_moments: FaradayMoments | None = None,
+    debiased_moments: dict[str, np.ndarray] | None = None,
 ) -> list[Path]:
-    """Write already-computed mom0/mom1/mom2 Faraday moment maps to FITS.
+    """Write already-computed Faraday moment maps to FITS.
 
     The moments are built lazily and computed by ``write_rm_products``, which
     keeps the (n_phi, ny, nx) FDF cube they reduce out of this process; only the
     (ny, nx) maps arrive here. See ``_lazy_faraday_moments``.
 
     Args:
-        moments (FaradayMoments): Computed mom0/mom1/mom2 maps, each (ny, nx)
+        moments (dict[str, np.ndarray]): Computed moment maps, each (ny, nx), keyed by ``_MOMENT_MAPS`` field
         reference_header (fits.Header): Header to derive the spatial WCS from (e.g. the Stokes Q cube header)
         output_prefix (Path): Common prefix for the output files
         label (FDFLabel): Which FDF the moments came from ('dirty', 'clean', or 'model'), used to name the outputs
-        debiased_moments (FaradayMoments | None, optional): Debiased moment set, written alongside with a ``.debiased`` suffix. Defaults to None.
+        debiased_moments (dict[str, np.ndarray] | None, optional): Debiased moment set, written alongside with a ``.debiased`` suffix. Defaults to None.
 
     Returns:
-        list[Path]: The written moment-map paths: three (mom0, mom1, mom2), plus
-        three more (mom0.debiased, mom1.debiased, mom2.debiased) if debiased_moments is given
+        list[Path]: The written moment-map paths: one per ``_MOMENT_MAPS`` entry,
+        plus one per ``_DEBIASED_MOMENT_MAPS`` entry if debiased_moments is given
     """
-    header = WCS(reference_header).celestial.to_header()
+    celestial = WCS(reference_header).celestial.to_header()
 
-    def _write(moment_set: FaradayMoments, suffix: str) -> list[Path]:
+    def _write(moment_set: dict[str, np.ndarray], suffix: str) -> list[Path]:
         written = []
-        for moment_name, moment_map in zip(
-            _MOMENT_NAMES,
-            (moment_set.mom0, moment_set.mom1, moment_set.mom2),
-        ):
-            output_path = Path(
-                f"{output_prefix}.fdf.{label}.{moment_name}{suffix}.fits"
-            )
+        for field, moment_map in moment_set.items():
+            name, unit, comment = _MOMENT_MAPS[field]
+            header = celestial.copy()
+            header["BUNIT"] = (unit, comment)
+            output_path = Path(f"{output_prefix}.fdf.{label}.{name}{suffix}.fits")
             fits.writeto(
                 output_path,
                 np.asarray(moment_map, dtype=np.float32),
@@ -427,18 +450,23 @@ def _lazy_faraday_moments(
     debias: bool = False,
     debias_filter_size: int = 5,
 ) -> FaradayMoments:
-    """Build the lazy mom0/mom1/mom2 maps of an FDF cube.
+    """Build the lazy Faraday moment maps of an FDF cube.
 
     ``calc_faraday_moments`` reduces along the (never-chunked) Faraday-depth
     axis, and ``debias_fdf`` handles dask via ``map_overlap``, so the result is
-    three lazy (ny, nx) maps that each spatial chunk contributes to
+    a set of lazy (ny, nx) maps that each spatial chunk contributes to
     independently. Computing these instead of the cube itself is what keeps the
     whole FDF out of the calling worker's memory.
+
+    The theoretical noise is what turns the errors and the debiased maps from
+    NaN into measurements, so it is passed whenever synthesis reported one --
+    it is the same noise the amplitude cut is derived from.
     """
     return calc_faraday_moments(
         fdf_cube,
         phi_arr_radm2=synth_results.phi_arr_radm2,
         fwhm_rmsf_radm2=synth_results.fwhm_rmsf_radm2,
+        fdf_error=synth_results.theoretical_noise.fdf_error_noise,
         threshold=threshold,
         debias=debias,
         lam_sq_0_m2=synth_results.lam_sq_0_m2 if debias else None,
@@ -558,20 +586,30 @@ def _compute_rm_products(
         futures = scheduler.compute(
             [compute_targets[key] for key in compute_keys], sync=False
         )
-    future_to_key = dict(zip(futures, compute_keys))
+    # Products that are the same expression share a dask key, so `compute`
+    # hands back one future for all of them -- rm-lite builds `mom0_error` and
+    # `pi_lam_sq_0_error` identically, for instance. One key per future would
+    # then quietly drop every product but the last of each such group, so the
+    # mapping is one-to-many and every key it carries is filled in.
+    future_to_keys: dict[Any, list[str]] = {}
+    for future, key in zip(futures, compute_keys):
+        future_to_keys.setdefault(future, []).append(key)
 
     computed: dict[str, Any] = {}
     with _seceded_if_on_a_worker():
-        for future in as_completed(futures):
-            key = future_to_key[future]
+        for future in as_completed(list(future_to_keys)):
+            keys = future_to_keys[future]
             # `.result()` re-raises whatever the worker raised, so a failed
             # product still surfaces here rather than being dropped
-            computed[key] = future.result()
+            result = future.result()
+            for key in keys:
+                computed[key] = result
             # Elapsed since submission, not this product's own runtime: they
             # share one graph, so "how far into the run are we" is the
             # answerable question
             logger.info(
-                f"[{len(computed):>2}/{len(compute_keys)}] {key} at {_elapsed(start)}"
+                f"[{len(computed):>2}/{len(compute_keys)}] "
+                f"{', '.join(keys)} at {_elapsed(start)}"
             )
 
     logger.info(f"Computed {len(compute_keys)} RM products in {_elapsed(start)}")
@@ -652,7 +690,6 @@ def write_rm_products(
     peak_products: list[FDFLabel],
     output_prefix: Path,
     moment_threshold_snr: float = 5.0,
-    peak_threshold_snr: float = 0.0,
     dask_client: Client | None = None,
 ) -> list[Path]:
     """Batch-compute and write the requested RM-synthesis/RM-CLEAN output products.
@@ -664,10 +701,9 @@ def write_rm_products(
         rmsynth_options (RMSynthOptions): Options controlling RM-synthesis
         rmclean_options (RMCleanOptions): Options controlling RM-CLEAN
         cube_products (list[FDFLabel]): Which FDF cube(s) to write ('dirty', 'clean', 'model')
-        moment_products (list[FDFLabel]): Which FDF(s) to compute Faraday moment maps from
+        moment_products (list[FDFLabel]): Which FDF(s) to compute Faraday moment maps from, twelve per entry
         peak_products (list[FDFLabel]): Which FDF(s) to write peak-statistic maps from, nine per entry
         moment_threshold_snr (float, optional): SNR cut applied before the moment maps. Defaults to 5.0.
-        peak_threshold_snr (float, optional): SNR cut below which peaks are blanked. Zero applies no cut. Defaults to 0.0.
         output_prefix (Path): Common prefix for the output files
         dask_client (Client | None, optional): A distributed Client (e.g. the one backing a Prefect ``DaskTaskRunner``) to compute across, rather than just the local worker. Defaults to None.
 
@@ -758,8 +794,10 @@ def write_rm_products(
             synth_results=synth_results,
             threshold=moment_threshold,
         )
-        for name, moment_map in zip(_MOMENT_NAMES, moments):
-            compute_targets[f"moment.{label}.{name}"] = moment_map
+        for field in _MOMENT_MAPS:
+            compute_targets[f"moment.{label}.{field}"] = getattr(moments, field).astype(
+                np.float32
+            )
         if rmsynth_options.debias_moments:
             debiased = _lazy_faraday_moments(
                 fdf_cube=fdf_sources[label],
@@ -768,23 +806,22 @@ def write_rm_products(
                 debias=True,
                 debias_filter_size=rmsynth_options.debias_filter_size,
             )
-            for name, moment_map in zip(_MOMENT_NAMES, debiased):
-                compute_targets[f"debiased.{label}.{name}"] = moment_map
+            for field in _DEBIASED_MOMENT_MAPS:
+                compute_targets[f"debiased.{label}.{field}"] = getattr(
+                    debiased, field
+                ).astype(np.float32)
     # Unconditional whenever RM-CLEAN ran: one small integer map, and the
     # diagnostic you want already written rather than a stage to repeat.
     if run_clean:
         assert clean_results is not None  # run_clean is `clean_results is not None`
         compute_targets["rmclean_niter"] = clean_results.iter_count_map
 
-    # rm-lite's own peaks cover only the clean FDF under its own threshold;
-    # deriving them here lets any requested FDF have them, the dirty one
-    # included. Cut separately from the moments and off by default: mom0
-    # integrates the whole Faraday depth axis, a peak is one sample with no such
-    # floor, and peak_pi_error is written beside it to judge significance.
-    peak_threshold = _snr_threshold(
-        peak_threshold_snr,
-        synth_results.theoretical_noise.fdf_error_noise,
-    )
+    # rm-lite's own peaks cover only the clean FDF; deriving them here lets any
+    # requested FDF have them, the dirty one included. No amplitude cut is
+    # applied, and rm-lite no longer offers one: mom0 integrates the whole
+    # Faraday depth axis and needs a cut to keep the noise out, but a peak is a
+    # single sample with no such floor, and ``peak_pi_error`` is written beside
+    # it, so ``peak_pi / peak_pi_error`` is the SNR to select on afterwards.
     for label in peak_products:
         peaks = calc_faraday_peaks(
             fdf_sources[label],
@@ -793,7 +830,6 @@ def write_rm_products(
             fdf_error=synth_results.theoretical_noise.fdf_error_noise,
             lam_sq_0_m2=synth_results.lam_sq_0_m2,
             lambda_sq_arr_m2=synth_results.lambda_sq_arr_m2,
-            threshold=peak_threshold,
         )
         for field in _PEAK_MAPS:
             compute_targets[f"peak.{label}.{field}"] = getattr(peaks, field).astype(
@@ -863,15 +899,16 @@ def write_rm_products(
     for label in moment_products:
         output_paths.extend(
             write_moment_maps_to_fits(
-                moments=FaradayMoments(
-                    *(computed[f"moment.{label}.{name}"] for name in _MOMENT_NAMES)
-                ),
+                moments={
+                    field: computed[f"moment.{label}.{field}"] for field in _MOMENT_MAPS
+                },
                 reference_header=reference_header,
                 output_prefix=output_prefix,
                 label=label,
-                debiased_moments=FaradayMoments(
-                    *(computed[f"debiased.{label}.{name}"] for name in _MOMENT_NAMES)
-                )
+                debiased_moments={
+                    field: computed[f"debiased.{label}.{field}"]
+                    for field in _DEBIASED_MOMENT_MAPS
+                }
                 if rmsynth_options.debias_moments
                 else None,
             )
