@@ -445,3 +445,29 @@ def test_the_noise_map_lines_up_with_the_noise_it_measures() -> None:
     # an uncentred kernel and a wrongly scaled step back up cost between them
     assert abs(peak_y - centre_y) < 10, f"noise peak {peak_y} rows from {centre_y}"
     assert abs(peak_x - centre_x) < 10, f"noise peak {peak_x} columns from {centre_x}"
+
+
+def test_a_plane_measured_without_downsampling() -> None:
+    """``step_size=0`` smooths the plane at its own resolution, which is the one
+    path that never steps the maps back up. The kernel still has to be centred
+    on the pixel it smooths, so a blob of louder noise stays where it was put."""
+    shape = (512, 512)
+    centre_y, centre_x = 300, 180
+    yy, xx = np.mgrid[0 : shape[0], 0 : shape[1]].astype(np.float32)
+    amplitude = 1.0 + 5.0 * np.exp(
+        -0.5 * (((xx - centre_x) / 50) ** 2 + ((yy - centre_y) / 50) ** 2)
+    )
+    rng = np.random.default_rng(11)
+    image = (rng.normal(0.0, 1e-3, shape) * amplitude).astype(np.float32)
+
+    background, rms = robust_bane(
+        image=image,
+        header=_header(shape),
+        fft_bane_options=FFTBANEOptions(step_size=0, box_size=12),
+    )
+
+    assert np.isfinite(background).all()
+    assert np.isfinite(rms).all()
+    peak_y, peak_x = np.unravel_index(int(np.nanargmax(rms)), rms.shape)
+    assert abs(peak_y - centre_y) < 10, f"noise peak {peak_y} rows from {centre_y}"
+    assert abs(peak_x - centre_x) < 10, f"noise peak {peak_x} columns from {centre_x}"
