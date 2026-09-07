@@ -39,7 +39,14 @@ from flint.prefect.flows.rmsynth_pipeline import (
 )
 
 from .test_convol import _write_cube_with_beam
-from .test_rmsynth import NX, NY, PHI_TRUE_RADM2, _make_i_cube, _make_qu_cubes
+from .test_rmsynth import (
+    MOMENT_MAPS,
+    NX,
+    NY,
+    PHI_TRUE_RADM2,
+    _make_i_cube,
+    _make_qu_cubes,
+)
 
 # create_name_from_common_fields rejects names it cannot decompose
 STEM = "SB12345.BENCH_0000+00.ch0000-0019"
@@ -125,8 +132,8 @@ def test_process_rmsynth_on_dask_cluster(
         zarr_store,
         tmp_path / f"{STEM}.fdf.clean.niter.fits",
     } | {
-        tmp_path / f"{STEM}.fdf.clean.{moment}.fits"
-        for moment in ("mom0", "mom1", "mom2")
+        tmp_path / f"{STEM}.fdf.clean.{name}.fits"
+        for name, _, _ in MOMENT_MAPS.values()
     }
     for path in output_paths:
         assert path.exists()
