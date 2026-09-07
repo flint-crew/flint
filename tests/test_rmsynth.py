@@ -24,9 +24,9 @@ from flint.options import (
     WeightCubesForRMSynth,
 )
 from flint.rmsynth import (
-    _DEBIASED_MOMENT_MAPS,
-    _MOMENT_MAPS,
-    _PEAK_MAPS,
+    DEBIASED_MOMENT_MAPS,
+    MOMENT_MAPS,
+    PEAK_MAPS,
     FDFLabel,
     RMSynth3DResults,
     _compute_rm_products,
@@ -239,7 +239,7 @@ def test_rmsynth_all_products(tmp_path: Path, qu_cubes: tuple[Path, Path]) -> No
 
     # One zarr store holding all three cubes, every moment map per label, and
     # the CLEAN iteration count that every RM-CLEAN run writes
-    assert len(output_paths) == 1 + 3 * len(_MOMENT_MAPS) + 1
+    assert len(output_paths) == 1 + 3 * len(MOMENT_MAPS) + 1
     for path in output_paths:
         assert path.exists()
 
@@ -248,7 +248,7 @@ def test_rmsynth_all_products(tmp_path: Path, qu_cubes: tuple[Path, Path]) -> No
     )
 
     for label in ("dirty", "clean", "model"):
-        for name, unit, _ in _MOMENT_MAPS.values():
+        for name, unit, _ in MOMENT_MAPS.values():
             moment_path = Path(f"{output_prefix}.fdf.{label}.{name}.fits")
             assert moment_path.exists()
             moment_header = fits.getheader(moment_path)
@@ -589,7 +589,7 @@ def test_rmsynth_debias_moments_runs(
     assert debiased_mom0_path in output_paths
     assert debiased_mom0_path.exists()
     # Every moment, every debiased moment, plus the CLEAN iteration count
-    assert len(output_paths) == len(_MOMENT_MAPS) + len(_DEBIASED_MOMENT_MAPS) + 1
+    assert len(output_paths) == len(MOMENT_MAPS) + len(DEBIASED_MOMENT_MAPS) + 1
     # ``debias_fdf`` already takes the noise off each amplitude, so rm-lite's
     # own mom0 debias is a no-op there and the map is not written twice
     assert not Path(f"{output_prefix}.fdf.clean.mom0_debias.debiased.fits").exists()
@@ -660,7 +660,7 @@ def test_moment_only_never_computes_a_full_cube(
     assert all(len(shape) == 2 for shape in computed_shapes), computed_shapes
     # 3 labels x every moment map, and nothing else, plus the CLEAN iteration
     # count -- all still (ny, nx)
-    assert len(computed_shapes) == 3 * len(_MOMENT_MAPS) + 1
+    assert len(computed_shapes) == 3 * len(MOMENT_MAPS) + 1
 
 
 def test_rmsynth_no_products_is_noop(
@@ -1013,7 +1013,7 @@ def test_linmos_weights_through_to_the_moment_maps(
 
     assert {path.name for path in output_paths} == {
         f"{output_prefix.name}.fdf.clean.{name}.fits"
-        for name, _, _ in _MOMENT_MAPS.values()
+        for name, _, _ in MOMENT_MAPS.values()
     } | {f"{output_prefix.name}.fdf.clean.niter.fits"}
 
     mom1 = fits.getdata(Path(f"{output_prefix}.fdf.clean.mom1.fits"))
@@ -1088,11 +1088,11 @@ def test_every_fdf_can_have_cubes_moments_and_peaks(
     for label in labels:
         moment_names = {
             f"{output_prefix.name}.fdf.{label}.{name}.fits"
-            for name, _, _ in _MOMENT_MAPS.values()
+            for name, _, _ in MOMENT_MAPS.values()
         }
         peak_names = {
             f"{output_prefix.name}.fdf.{label}.{name}.fits"
-            for name, _, _ in _PEAK_MAPS.values()
+            for name, _, _ in PEAK_MAPS.values()
         }
         assert moment_names <= names, label
         assert peak_names <= names, label

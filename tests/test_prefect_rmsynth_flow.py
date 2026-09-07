@@ -40,7 +40,7 @@ from flint.prefect.flows.rmsynth_pipeline import (
 
 from .test_convol import _write_cube_with_beam
 from .test_rmsynth import (
-    _MOMENT_MAPS,
+    MOMENT_MAPS,
     NX,
     NY,
     PHI_TRUE_RADM2,
@@ -133,7 +133,7 @@ def test_process_rmsynth_on_dask_cluster(
         tmp_path / f"{STEM}.fdf.clean.niter.fits",
     } | {
         tmp_path / f"{STEM}.fdf.clean.{name}.fits"
-        for name, _, _ in _MOMENT_MAPS.values()
+        for name, _, _ in MOMENT_MAPS.values()
     }
     for path in output_paths:
         assert path.exists()
