@@ -71,13 +71,6 @@ MOMENT_MAPS = {
     "pa_lam_sq_0_error": ("pa_lam_sq_0_error", "deg", "1-sigma on pa_lam_sq_0"),
 }
 
-# A debiased FDF returns `mom0_debias` unchanged, so writing it a second time
-# under a second name would read as a second measurement
-DEBIASED_MOMENT_MAPS = {
-    field: entry for field, entry in MOMENT_MAPS.items() if field != "mom0_debias"
-}
-
-# The FDF peak statistics, as {FaradayPeaks field: (file suffix, BUNIT, comment)}.
 PEAK_MAPS = {
     "peak_pi": ("peak_pi", "Jy/beam", "peak polarised intensity"),
     "peak_pi_debias": ("peak_pi_debias", "Jy/beam", "debiased peak"),
@@ -232,8 +225,8 @@ def write_moment_maps_to_fits(
         debiased_moments (FaradayMoments | None, optional): Debiased moment set, written alongside with a ``.debiased`` suffix. Defaults to None.
 
     Returns:
-        list[Path]: The written moment-map paths: one per ``MOMENT_MAPS`` entry,
-        plus one per ``DEBIASED_MOMENT_MAPS`` entry if debiased_moments is given
+        list[Path]: One path per ``MOMENT_MAPS`` entry, plus the debiased set
+        less ``mom0_debias`` if debiased_moments is given
     """
     celestial = WCS(reference_header).celestial.to_header()
 
@@ -258,9 +251,14 @@ def write_moment_maps_to_fits(
 
     output_paths = _write(moments, MOMENT_MAPS, suffix="")
     if debiased_moments is not None:
-        output_paths.extend(
-            _write(debiased_moments, DEBIASED_MOMENT_MAPS, suffix=".debiased")
-        )
+        # a debiased FDF leaves mom0_debias unchanged, so writing it again under
+        # a second name would read as a second measurement
+        debiased_maps = {
+            field: entry
+            for field, entry in MOMENT_MAPS.items()
+            if field != "mom0_debias"
+        }
+        output_paths.extend(_write(debiased_moments, debiased_maps, suffix=".debiased"))
 
     return output_paths
 

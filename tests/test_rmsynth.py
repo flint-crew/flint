@@ -24,7 +24,6 @@ from flint.options import (
     WeightCubesForRMSynth,
 )
 from flint.rmsynth import (
-    DEBIASED_MOMENT_MAPS,
     MOMENT_MAPS,
     PEAK_MAPS,
     FDFLabel,
@@ -588,8 +587,9 @@ def test_rmsynth_debias_moments_runs(
     assert mom0_path.exists()
     assert debiased_mom0_path in output_paths
     assert debiased_mom0_path.exists()
-    # Every moment, every debiased moment, plus the CLEAN iteration count
-    assert len(output_paths) == len(MOMENT_MAPS) + len(DEBIASED_MOMENT_MAPS) + 1
+    # Every moment, every debiased moment but mom0_debias, plus the CLEAN
+    # iteration count
+    assert len(output_paths) == len(MOMENT_MAPS) + (len(MOMENT_MAPS) - 1) + 1
     # ``debias_fdf`` already takes the noise off each amplitude, so rm-lite's
     # own mom0 debias is a no-op there and the map is not written twice
     assert not Path(f"{output_prefix}.fdf.clean.mom0_debias.debiased.fits").exists()
