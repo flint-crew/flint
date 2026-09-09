@@ -17,6 +17,7 @@ with a ``.``.
 from __future__ import annotations
 
 import re
+import socket
 from argparse import ArgumentParser
 from collections.abc import Collection
 from glob import glob
@@ -288,6 +289,7 @@ def combine_images_to_cube(
         Path: The path to the created FITS cube
     """
     logger.info("Combining subband images into fits cubes")
+    logger.info(f"Running on {socket.gethostname()=}")
 
     assert_common_pixel_grid(images=images)
 
