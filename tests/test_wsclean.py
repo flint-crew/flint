@@ -7,11 +7,13 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+import astropy.units as u
 import numpy as np
 import pytest
 from astropy.io import fits
 from fitscube.bounding_box import get_common_bounding_box
 from fitscube.extract import find_target_axis
+from radio_beam import Beams
 
 from flint.exceptions import (
     AttemptRerunException,
@@ -49,11 +51,16 @@ from flint.utils import get_packaged_resource_path
 
 
 def _write_channel_image(
-    path: Path, channel: int, shape: tuple[int, int], nan_border: int = 0
+    path: Path,
+    channel: int,
+    shape: tuple[int, int],
+    nan_border: int = 0,
+    bmaj: float = 0.01,
 ) -> Path:
     """A wsclean-like single channel image, with each pixel uniquely valued so
     that any scrambling of the data is detectable. A ``nan_border`` pixels wide
-    border of NaNs may be added to exercise bounding-box trimming."""
+    border of NaNs may be added to exercise bounding-box trimming. Vary ``bmaj``
+    across channels to have the cube carry a beam table."""
     ny, nx = shape
     data = (
         channel * 1000.0
@@ -68,7 +75,7 @@ def _write_channel_image(
     header = fits.Header(
         {
             "BUNIT": "JY/BEAM",
-            "BMAJ": 0.01,
+            "BMAJ": bmaj,
             "BMIN": 0.01,
             "BPA": 0.0,
             "CTYPE1": "RA---SIN",
@@ -354,6 +361,65 @@ def test_split_cube_into_planes(tmpdir) -> None:
 
     with pytest.raises(NamingException):
         split_cube_into_planes(cube=Path(shutil.copy(cube, Path(tmpdir) / "bad.fits")))
+
+
+def _write_varying_beam_cube(tmp_path: Path, channels: int) -> Path:
+    """A cube whose channels each have their own beam, so it carries a beam table"""
+    images = [
+        _write_channel_image(
+            tmp_path / f"SB1234.RACS_0000-00.beam00.round1-{channel:04d}-image.fits",
+            channel=channel,
+            shape=(6, 6),
+            bmaj=0.01 + channel * 1e-4,
+        )
+        for channel in range(channels)
+    ]
+    return combine_images_to_cube(
+        images=images,
+        prefix=f"{tmp_path}/SB1234.RACS_0000-00.beam00.round1",
+        mode="image",
+        fitscube_options=FitsCubeOptions(
+            invalidate_zeros=False, remove_original_images=False
+        ),
+    )
+
+
+def test_split_cube_into_planes_carries_channel_beams(tmp_path) -> None:
+    """A plane takes its own channel's beam out of the cube's beam table, and
+    stops claiming to carry a table of its own"""
+    channels = 5
+    cube = _write_varying_beam_cube(tmp_path=tmp_path, channels=channels)
+
+    with fits.open(cube) as open_fits:
+        assert open_fits[0].header["CASAMBM"], "Cube should carry a beam table"
+        beams = Beams.from_fits_bintable(open_fits["BEAMS"])
+
+    planes = split_cube_into_planes(cube=cube, output_path=tmp_path / "planes")
+
+    assert len(planes) == channels
+    for channel, plane in enumerate(planes):
+        header = fits.getheader(plane)
+        assert "CASAMBM" not in header
+        assert header["BMAJ"] == pytest.approx(beams[channel].major.to(u.deg).value)
+        assert header["BMIN"] == pytest.approx(beams[channel].minor.to(u.deg).value)
+        assert header["BPA"] == pytest.approx(beams[channel].pa.to(u.deg).value)
+
+
+def test_split_cube_into_planes_threaded_matches_serial(tmp_path) -> None:
+    """Spreading the plane writes over threads must not change what is written"""
+    cube = _write_varying_beam_cube(tmp_path=tmp_path, channels=5)
+
+    serial = split_cube_into_planes(
+        cube=cube, output_path=tmp_path / "serial", num_workers=1
+    )
+    threaded = split_cube_into_planes(
+        cube=cube, output_path=tmp_path / "threaded", num_workers=4
+    )
+
+    assert [plane.name for plane in serial] == [plane.name for plane in threaded]
+    for one, many in zip(serial, threaded):
+        assert np.array_equal(fits.getdata(one), fits.getdata(many))
+        assert fits.getheader(one).tostring() == fits.getheader(many).tostring()
 
 
 def test_transpose_and_sort_channel_images() -> None:

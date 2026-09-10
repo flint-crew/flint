@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import re
 import socket
+import time
 from argparse import ArgumentParser
 from collections.abc import Collection
 from glob import glob
@@ -34,8 +35,13 @@ from capn_crunch import (
 )
 from fitscube.bounding_box import BoundingBox
 from fitscube.combine_fits import combine_fits, compress_cube
-from fitscube.exceptions import TargetAxisMissingException
-from fitscube.extract import ExtractOptions, extract_plane_from_cube, find_target_axis
+from fitscube.exceptions import ShapeMismatchException, TargetAxisMissingException
+from fitscube.extract import (
+    ExtractPlanesOptions,
+    count_cube_planes,
+    extract_planes_from_cube,
+    find_target_axis,
+)
 
 from flint.exceptions import (
     AttemptRerunException,
@@ -243,27 +249,6 @@ def image_set_from_result(wsclean_result: WSCleanResult) -> ImageSet | None:
     return wsclean_result.image_set
 
 
-def assert_common_pixel_grid(images: Collection[Path]) -> None:
-    """Ensure a set of images all share the same spatial pixel grid.
-
-    ``fitscube`` writes each plane into the cube at a fixed byte offset, so
-    planes of differing shape are silently interleaved rather than rejected.
-
-    Args:
-        images (Collection[Path]): The images that will be stacked into a cube
-
-    Raises:
-        ShapeMismatchError: If the images do not share a common NAXIS1/NAXIS2
-    """
-    shapes = {
-        (header["NAXIS1"], header["NAXIS2"])
-        for header in (fits.getheader(image) for image in images)
-    }
-    if len(shapes) > 1:
-        msg = f"Images to be cubed have differing pixel grids: {shapes=}"
-        raise ShapeMismatchError(msg)
-
-
 def combine_images_to_cube(
     images: list[Path],
     prefix: str,
@@ -291,25 +276,33 @@ def combine_images_to_cube(
     logger.info("Combining subband images into fits cubes")
     logger.info(f"Running on {socket.gethostname()=}")
 
-    assert_common_pixel_grid(images=images)
-
     output_cube_name = create_image_cube_name(image_prefix=Path(prefix), mode=mode)
 
-    logger.info(f"Combining {len(images)} images. {images=}")
-    freqs = combine_fits(
-        file_list=images,
-        out_cube=output_cube_name,
-        max_workers=fitscube_options.max_workers,
-        invalidate_zeros=fitscube_options.invalidate_zeros,
-        bounding_box=fitscube_options.bounding_box
-        if bounding_box is None
-        else bounding_box,
-        create_blanks=fitscube_options.create_blanks,
+    logger.info(f"Combining {len(images)} images into {output_cube_name}")
+    logger.debug(f"{images=}")
+    start = time.perf_counter()
+    # fitscube checks the pixel grids itself, in parallel, before it writes
+    # anything, so there is no need to walk every header again first
+    try:
+        freqs = combine_fits(
+            file_list=images,
+            out_cube=output_cube_name,
+            max_workers=fitscube_options.max_workers,
+            invalidate_zeros=fitscube_options.invalidate_zeros,
+            bounding_box=fitscube_options.bounding_box
+            if bounding_box is None
+            else bounding_box,
+            create_blanks=fitscube_options.create_blanks,
+        )
+    except ShapeMismatchException as e:
+        msg = f"Images to be cubed have differing pixel grids: {e}"
+        raise ShapeMismatchError(msg) from e
+    logger.info(
+        f"Combined {len(images)} images into {output_cube_name.name} in "
+        f"{time.perf_counter() - start:.0f}s"
     )
-    rotate_cube(output_cube_name, inplace=fitscube_options.inplace)
 
-    # Write out the hdu to preserve the beam table constructed in fitscube
-    logger.info(f"Writing {output_cube_name=}")
+    rotate_cube(output_cube_name, inplace=fitscube_options.inplace)
 
     output_freqs_name = output_cube_name.with_suffix(".freqs_Hz.txt")
     np.savetxt(output_freqs_name, freqs.to("Hz").value)
@@ -318,8 +311,12 @@ def combine_images_to_cube(
         remove_files_folders(*images)
 
     if fitscube_options.compress:
+        start = time.perf_counter()
         output_cube_name = compress_cube(
             output_cube_name, method=fitscube_options.compress_method
+        )
+        logger.info(
+            f"Compressed to {output_cube_name.name} in {time.perf_counter() - start:.0f}s"
         )
 
     return output_cube_name
@@ -484,7 +481,9 @@ def transpose_and_sort_channel_images(
     return [list(channel_group) for channel_group in zip(*sorted_beams)]
 
 
-def split_cube_into_planes(cube: Path, output_path: Path | None = None) -> list[Path]:
+def split_cube_into_planes(
+    cube: Path, output_path: Path | None = None, num_workers: int = 4
+) -> list[Path]:
     """Extract each channel of a FITS cube into its own image, named following the
     flint processed name format so that the planes may be regrouped across beams
     by ``transpose_and_sort_channel_images``.
@@ -492,21 +491,22 @@ def split_cube_into_planes(cube: Path, output_path: Path | None = None) -> list[
     Args:
         cube (Path): The FITS cube to split apart
         output_path (Path | None, optional): Directory the planes are written into. Only the flint name fields are retained, so cubes that share them (e.g. an image cube and its weights) need separate directories. Defaults to alongside ``cube``.
+        num_workers (int, optional): Planes written at once. Defaults to 4.
 
     Returns:
         list[Path]: The per-channel images extracted from ``cube``
 
     Raises:
-        NotSupportedError: If ``cube`` is gzip-compressed. Splitting reopens
-            the cube once per channel, and astropy cannot memmap a gzip file,
-            so each reopen decompresses the entire cube into memory. Set
-            ``FitsCubeOptions.compress=False`` for cubes that get split.
+        NotSupportedError: If ``cube`` is gzip-compressed, as astropy cannot
+            memmap a compressed FITS file and would decompress the whole cube
+            into memory. Set ``FitsCubeOptions.compress=False`` for cubes that
+            get split.
     """
     if cube.suffix == ".gz":
         msg = (
             f"{cube=} is gzip-compressed and cannot be split into planes: "
-            "astropy cannot memmap a compressed FITS file, so each of the "
-            "per-channel reads would decompress the whole cube into memory. "
+            "astropy cannot memmap a compressed FITS file, so the per-channel "
+            "reads would decompress the whole cube into memory. "
             "Disable FitsCubeOptions.compress for cubes that will be split."
         )
         raise NotSupportedError(msg)
@@ -519,11 +519,6 @@ def split_cube_into_planes(cube: Path, output_path: Path | None = None) -> list[
     if output_path is not None:
         output_path.mkdir(parents=True, exist_ok=True)
 
-    with fits.open(cube, memmap=True, lazy_load_hdus=True) as open_fits:
-        header = open_fits[0].header
-    channels = int(header[f"NAXIS{find_target_axis(header=header).axis}"])
-    logger.info(f"Splitting {cube} into {channels} planes")
-
     def _plane_path(channel: int) -> Path:
         # Only the flint name fields are retained, so a single cube per beam
         # should be split at a time to avoid clobbering planes
@@ -535,15 +530,17 @@ def split_cube_into_planes(cube: Path, output_path: Path | None = None) -> list[
         )
         return Path(f"{plane_base}.fits")
 
-    return [
-        extract_plane_from_cube(
-            fits_cube=cube,
-            extract_options=ExtractOptions(
-                channel_index=channel, output_path=_plane_path(channel), overwrite=True
-            ),
-        )
-        for channel in range(channels)
-    ]
+    channels = count_cube_planes(header=fits.getheader(cube))
+    logger.info(f"Splitting {cube} into {channels} planes")
+
+    return extract_planes_from_cube(
+        cube,
+        ExtractPlanesOptions(
+            output_paths=[_plane_path(channel) for channel in range(channels)],
+            overwrite=True,
+            max_workers=num_workers,
+        ),
+    )
 
 
 def get_wsclean_output_source_list_path(
