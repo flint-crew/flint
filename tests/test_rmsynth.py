@@ -28,6 +28,7 @@ from flint.rmsynth import (
     PEAK_MAPS,
     FDFLabel,
     RMSynth3DResults,
+    _check_cubes_are_single_precision,
     _compute_rm_products,
     _snr_threshold,
     needs_rmclean,
@@ -682,6 +683,26 @@ def test_rmsynth_no_products_is_noop(
     assert not list(tmp_path.glob("*.fits")) or all(
         p in (stokes_q_cube, stokes_u_cube) for p in tmp_path.glob("*.fits")
     )
+
+
+def test_rmsynth_warns_about_double_precision_cubes(tmp_path, caplog) -> None:
+    """rm-lite takes the FDF's precision from the cubes, so a float64 cube
+    silently doubles every Faraday-depth array it builds."""
+    stokes_q_cube, stokes_u_cube = _make_qu_cubes(tmp_path)
+
+    with caplog.at_level("WARNING"):
+        _check_cubes_are_single_precision(stokes_q_cube, stokes_u_cube)
+    assert "double precision" not in caplog.text
+
+    doubled = tmp_path / "q_f8.fits"
+    with fits.open(stokes_q_cube) as hdul:
+        fits.PrimaryHDU(hdul[0].data.astype(np.float64), header=hdul[0].header).writeto(
+            doubled
+        )
+
+    with caplog.at_level("WARNING"):
+        _check_cubes_are_single_precision(doubled, stokes_u_cube)
+    assert "double precision" in caplog.text
 
 
 def test_rmsynth_rejects_compressed_cubes(tmp_path: Path) -> None:

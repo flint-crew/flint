@@ -120,6 +120,23 @@ def _check_cubes_memmappable(*cubes: Path | None) -> None:
         raise NotSupportedError(msg)
 
 
+def _check_cubes_are_single_precision(*cubes: Path | None) -> None:
+    """rm-lite takes the FDF's precision from the cubes it is given, so a
+    double-precision cube doubles every Faraday-depth array it builds. Warned
+    about rather than refused: it is a memory cost, not an error."""
+    double = [
+        cube
+        for cube in cubes
+        if cube is not None and fits.getheader(cube).get("BITPIX") == -64
+    ]
+    if double:
+        logger.warning(
+            f"{double} are double precision, so the FDF, RMSF and CLEAN cubes "
+            "will be complex128 and take twice the memory. Write the cubes as "
+            "float32 unless the extra precision is actually wanted."
+        )
+
+
 def run_rmsynth_3d(
     stokes_cubes: CubesForRMSynth,
     rmsynth_options: RMSynthOptions,
@@ -141,6 +158,7 @@ def run_rmsynth_3d(
     _check_cubes_memmappable(
         *stokes_cubes.paths, *(error_cubes.paths if error_cubes else ())
     )
+    _check_cubes_are_single_precision(*stokes_cubes.paths)
     stokes_i_kwargs = (
         {
             "stokes_i_file": stokes_cubes.i_path,
@@ -497,7 +515,8 @@ def _describe_rm_workload(
     per_pixel_rmsf = synth_results.rmsf_cube is not None
     return (
         f"{len(compute_keys)} products over {n_y}x{n_x} pixels and {n_phi} "
-        f"Faraday depths, in {n_chunks} chunks; "
+        f"Faraday depths in {fdf_cube.dtype}, in {n_chunks} chunks of "
+        f"{fdf_cube.chunksize[1]}x{fdf_cube.chunksize[2]} pixels; "
         f"per-pixel RMSF {'on' if per_pixel_rmsf else 'off'}"
     )
 
