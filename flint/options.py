@@ -364,7 +364,7 @@ class RMSynthOptions(BaseOptions):
     target_chunk_mb: float = 256
     """Target per-chunk memory footprint, in MB, when reading the Q/U cubes"""
     convert_to_zarr: bool = False
-    """Convert each cube to a zarr store beside it before reading, so cube.fits gives cube.zarr. Worth it for a wide image, where a FITS read is full-width whatever the chunk"""
+    """Convert each FITS cube to a zarr store beside it before reading"""
     fit_order: int = 2
     """Stokes I fractional-polarisation fit order; negative iterates orders and picks the best by AIC"""
     fit_function: Literal["log", "linear"] = "log"
