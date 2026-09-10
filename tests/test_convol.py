@@ -318,7 +318,7 @@ def test_cubes_share_common_beam_with_cutoff(tmp_path) -> None:
 
 
 def _write_plane_with_beam(path: Path, bmaj_arcsec: float | None) -> Path:
-    """A single channel image, cut out of a cube exactly as
+    """A single channel image, cut out of a cube the way
     ``split_cube_into_planes`` does, so the plane carries its channel's beam"""
     cube = _write_cube_with_beam(
         path.with_name(f"cube.{path.name}"), [bmaj_arcsec or 0.0] * 2
