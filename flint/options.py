@@ -363,6 +363,8 @@ class RMSynthOptions(BaseOptions):
     """finufft OpenMP threads per dask chunk"""
     target_chunk_mb: float = 256
     """Target per-chunk memory footprint, in MB, when reading the Q/U cubes"""
+    convert_to_zarr: Path | None = None
+    """Directory to copy the cubes into as zarr stores before reading them, chunked as the FDF needs. Worth it for a cube wide enough that the chunking has to split the image width, since a FITS block narrower than the image still costs a full-width read. None reads the cubes where they are"""
     fit_order: int = 2
     """Stokes I fractional-polarisation fit order; negative iterates orders and picks the best by AIC"""
     fit_function: Literal["log", "linear"] = "log"

@@ -193,6 +193,7 @@ def run_rmsynth_3d(
         per_pixel_rmsf=rmsynth_options.per_pixel_rmsf,
         nufft_nthreads=rmsynth_options.nufft_nthreads,
         target_chunk_mb=rmsynth_options.target_chunk_mb,
+        convert_to_zarr=rmsynth_options.convert_to_zarr,
         log_level=logging.INFO,
         **stokes_i_kwargs,
     )

@@ -801,7 +801,11 @@ def test_rmsynth_options_reach_rm_lite(
     monkeypatch.setattr(rmsynth_mod, "rmsynth_3d_from_fits", _capture)
 
     stokes_q_cube, stokes_u_cube = qu_cubes
-    rmsynth_options = RMSynthOptions(per_pixel_rmsf=True, estimate_stokes_i_noise=False)
+    rmsynth_options = RMSynthOptions(
+        per_pixel_rmsf=True,
+        estimate_stokes_i_noise=False,
+        convert_to_zarr=tmp_path / "stores",
+    )
     with pytest.raises(NotSupportedError, match="stop before synthesising"):
         _run_rmsynth_3d(
             stokes_q_cube=stokes_q_cube,
@@ -810,8 +814,11 @@ def test_rmsynth_options_reach_rm_lite(
             rmsynth_options=rmsynth_options,
         )
 
-    assert captured["per_pixel_rmsf"] is True
-    assert captured["estimate_stokes_i_noise"] is False
+    # Applied by flint after rm-lite returns, so they have nothing to forward.
+    flint_side = {"debias_moments", "debias_filter_size"}
+    for field in set(type(rmsynth_options).model_fields) - flint_side:
+        assert field in captured, f"{field} never reaches rm-lite"
+        assert captured[field] == getattr(rmsynth_options, field)
 
 
 def _within_cutoff(blank_outside: float) -> np.ndarray:
