@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 from unittest.mock import patch
 
+import dask.array as da
 import numpy as np
 import pytest
 from astropy.io import fits
@@ -23,9 +24,13 @@ from flint.options import (
     WeightCubesForRMSynth,
 )
 from flint.rmsynth import (
+    MOMENT_MAPS,
+    PEAK_MAPS,
     FDFLabel,
     RMSynth3DResults,
-    _snr_threshold,
+    check_cubes_are_single_precision,
+    compute_rm_products,
+    fdf_threshold_from_snr,
     needs_rmclean,
     run_rmclean_3d,
     run_rmsynth_3d,
@@ -182,7 +187,6 @@ def _synth_and_write(
     stokes_u_weight_cube: Path | None = None,
     peak_products: list[FDFLabel] = [],
     moment_threshold_snr: float = 5.0,
-    peak_threshold_snr: float = 0.0,
 ) -> list[Path]:
     if not cube_products and not moment_products and not peak_products:
         return []
@@ -216,7 +220,6 @@ def _synth_and_write(
         peak_products=peak_products,
         output_prefix=output_prefix,
         moment_threshold_snr=moment_threshold_snr,
-        peak_threshold_snr=peak_threshold_snr,
     )
 
 
@@ -234,9 +237,9 @@ def test_rmsynth_all_products(tmp_path: Path, qu_cubes: tuple[Path, Path]) -> No
         output_prefix=output_prefix,
     )
 
-    # One zarr store holding all three cubes, three moments per label, and the
-    # CLEAN iteration count that every RM-CLEAN run writes
-    assert len(output_paths) == 1 + 3 * 3 + 1
+    # One zarr store holding all three cubes, every moment map per label, and
+    # the CLEAN iteration count that every RM-CLEAN run writes
+    assert len(output_paths) == 1 + 3 * len(MOMENT_MAPS) + 1
     for path in output_paths:
         assert path.exists()
 
@@ -245,11 +248,14 @@ def test_rmsynth_all_products(tmp_path: Path, qu_cubes: tuple[Path, Path]) -> No
     )
 
     for label in ("dirty", "clean", "model"):
-        for moment in ("mom0", "mom1", "mom2"):
-            moment_path = Path(f"{output_prefix}.fdf.{label}.{moment}.fits")
+        for name, unit, _ in MOMENT_MAPS.values():
+            moment_path = Path(f"{output_prefix}.fdf.{label}.{name}.fits")
             assert moment_path.exists()
             moment_header = fits.getheader(moment_path)
             assert moment_header["NAXIS"] == 2
+            # Jy/beam, rad/m2 and degrees now share the one set, so a moment
+            # map without its unit is easy to misread
+            assert moment_header["BUNIT"] == unit
 
     clean_mom1 = fits.getdata(Path(f"{output_prefix}.fdf.clean.mom1.fits"))
     assert np.allclose(clean_mom1, PHI_TRUE_RADM2, atol=5.0)
@@ -512,6 +518,54 @@ def test_stokes_i_model_rebuilds_from_the_written_term_maps(
     )
 
 
+def test_moment_errors_are_measured_rather_than_blank(
+    tmp_path: Path, qu_cubes: tuple[Path, Path]
+) -> None:
+    """Every error and debiased moment map is NaN unless the theoretical noise
+    is handed to ``calc_faraday_moments``, and rm-lite defaults it to None -- so
+    forgetting to pass it writes a full set of blank maps rather than failing.
+
+    The polarised intensity at the reference lambda^2 is the other new map: it
+    keeps the phase ``mom0`` throws away, so it cannot exceed ``mom0`` and its
+    angle is a real angle in degrees.
+    """
+    stokes_q_cube, stokes_u_cube = qu_cubes
+    output_prefix = tmp_path / "field"
+
+    _synth_and_write(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        rmsynth_options=RMSynthOptions(),
+        rmclean_options=RMCleanOptions(),
+        cube_products=[],
+        moment_products=["clean"],
+        output_prefix=output_prefix,
+    )
+
+    def moment(name: str) -> np.ndarray:
+        return fits.getdata(Path(f"{output_prefix}.fdf.clean.{name}.fits"))
+
+    for name in ("mom0_error", "mom1_error", "mom2_error", "pi_lam_sq_0_error"):
+        assert np.all(np.isfinite(moment(name))), (
+            f"{name} is blank, so the theoretical noise never reached rm-lite"
+        )
+        assert np.all(moment(name) > 0.0), f"{name} is not a 1-sigma error"
+
+    mom0, mom0_debias = moment("mom0"), moment("mom0_debias")
+    assert np.all(np.isfinite(mom0_debias))
+    assert np.all(mom0_debias < mom0), "debiasing takes the noise's own sum off mom0"
+
+    pi_lam_sq_0 = moment("pi_lam_sq_0")
+    assert np.all(np.isfinite(pi_lam_sq_0))
+    # The coherent sum keeps the phase that mom0 discards, so it can only lose
+    # amplitude to it -- the ratio is the depolarisation at lambda^2_0
+    assert np.all(pi_lam_sq_0 <= mom0 * (1.0 + 1e-5))
+
+    pa_lam_sq_0 = moment("pa_lam_sq_0")
+    assert np.all(np.isfinite(pa_lam_sq_0))
+    assert np.all(np.abs(pa_lam_sq_0) <= 180.0)
+
+
 def test_rmsynth_debias_moments_runs(
     tmp_path: Path, qu_cubes: tuple[Path, Path]
 ) -> None:
@@ -534,8 +588,12 @@ def test_rmsynth_debias_moments_runs(
     assert mom0_path.exists()
     assert debiased_mom0_path in output_paths
     assert debiased_mom0_path.exists()
-    # Three moments, three debiased, plus the CLEAN iteration count
-    assert len(output_paths) == 6 + 1
+    # Every moment, every debiased moment but mom0_debias, plus the CLEAN
+    # iteration count
+    assert len(output_paths) == len(MOMENT_MAPS) + (len(MOMENT_MAPS) - 1) + 1
+    # ``debias_fdf`` already takes the noise off each amplitude, so rm-lite's
+    # own mom0 debias is a no-op there and the map is not written twice
+    assert not Path(f"{output_prefix}.fdf.clean.mom0_debias.debiased.fits").exists()
 
 
 def test_rmsynth_writes_fdf_cubes_to_zarr(
@@ -601,9 +659,9 @@ def test_moment_only_never_computes_a_full_cube(
     assert computed_shapes, "expected a batched dask.compute call"
     # Every gathered array is a 2D map; a 3D shape means an FDF cube came back.
     assert all(len(shape) == 2 for shape in computed_shapes), computed_shapes
-    # 3 labels x mom0/mom1/mom2, and nothing else.
-    # Nine moment maps plus the CLEAN iteration count, all still (ny, nx)
-    assert len(computed_shapes) == 9 + 1
+    # 3 labels x every moment map, and nothing else, plus the CLEAN iteration
+    # count -- all still (ny, nx)
+    assert len(computed_shapes) == 3 * len(MOMENT_MAPS) + 1
 
 
 def test_rmsynth_no_products_is_noop(
@@ -625,6 +683,26 @@ def test_rmsynth_no_products_is_noop(
     assert not list(tmp_path.glob("*.fits")) or all(
         p in (stokes_q_cube, stokes_u_cube) for p in tmp_path.glob("*.fits")
     )
+
+
+def test_rmsynth_warns_about_double_precision_cubes(tmp_path, caplog) -> None:
+    """rm-lite takes the FDF's precision from the cubes, so a float64 cube
+    silently doubles every Faraday-depth array it builds."""
+    stokes_q_cube, stokes_u_cube = _make_qu_cubes(tmp_path)
+
+    with caplog.at_level("WARNING"):
+        check_cubes_are_single_precision(stokes_q_cube, stokes_u_cube)
+    assert "double precision" not in caplog.text
+
+    doubled = tmp_path / "q_f8.fits"
+    with fits.open(stokes_q_cube) as hdul:
+        fits.PrimaryHDU(hdul[0].data.astype(np.float64), header=hdul[0].header).writeto(
+            doubled
+        )
+
+    with caplog.at_level("WARNING"):
+        check_cubes_are_single_precision(doubled, stokes_u_cube)
+    assert "double precision" in caplog.text
 
 
 def test_rmsynth_rejects_compressed_cubes(tmp_path: Path) -> None:
@@ -723,7 +801,11 @@ def test_rmsynth_options_reach_rm_lite(
     monkeypatch.setattr(rmsynth_mod, "rmsynth_3d_from_fits", _capture)
 
     stokes_q_cube, stokes_u_cube = qu_cubes
-    rmsynth_options = RMSynthOptions(per_pixel_rmsf=True, estimate_stokes_i_noise=False)
+    rmsynth_options = RMSynthOptions(
+        per_pixel_rmsf=True,
+        estimate_stokes_i_noise=False,
+        convert_to_zarr=True,
+    )
     with pytest.raises(NotSupportedError, match="stop before synthesising"):
         _run_rmsynth_3d(
             stokes_q_cube=stokes_q_cube,
@@ -732,8 +814,11 @@ def test_rmsynth_options_reach_rm_lite(
             rmsynth_options=rmsynth_options,
         )
 
-    assert captured["per_pixel_rmsf"] is True
-    assert captured["estimate_stokes_i_noise"] is False
+    # Applied by flint after rm-lite returns, so they have nothing to forward.
+    flint_side = {"debias_moments", "debias_filter_size"}
+    for field in set(type(rmsynth_options).model_fields) - flint_side:
+        assert field in captured, f"{field} never reaches rm-lite"
+        assert captured[field] == getattr(rmsynth_options, field)
 
 
 def _within_cutoff(blank_outside: float) -> np.ndarray:
@@ -955,8 +1040,8 @@ def test_linmos_weights_through_to_the_moment_maps(
     )
 
     assert {path.name for path in output_paths} == {
-        f"{output_prefix.name}.fdf.clean.{moment}.fits"
-        for moment in ("mom0", "mom1", "mom2")
+        f"{output_prefix.name}.fdf.clean.{name}.fits"
+        for name, _, _ in MOMENT_MAPS.values()
     } | {f"{output_prefix.name}.fdf.clean.niter.fits"}
 
     mom1 = fits.getdata(Path(f"{output_prefix}.fdf.clean.mom1.fits"))
@@ -1029,8 +1114,16 @@ def test_every_fdf_can_have_cubes_moments_and_peaks(
     # One zarr store holds every cube; moments and peaks are a file each
     assert f"{output_prefix.name}.fdf.zarr" in names
     for label in labels:
-        assert sum(f".{label}.mom" in name for name in names) == 3, label
-        assert sum(f".{label}.peak_" in name for name in names) == 9, label
+        moment_names = {
+            f"{output_prefix.name}.fdf.{label}.{name}.fits"
+            for name, _, _ in MOMENT_MAPS.values()
+        }
+        peak_names = {
+            f"{output_prefix.name}.fdf.{label}.{name}.fits"
+            for name, _, _ in PEAK_MAPS.values()
+        }
+        assert moment_names <= names, label
+        assert peak_names <= names, label
 
     # The peak Faraday depth is the recoverable truth in all three
     for label in labels:
@@ -1038,61 +1131,50 @@ def test_every_fdf_can_have_cubes_moments_and_peaks(
         assert np.nanmedian(peak_rm) == pytest.approx(PHI_TRUE_RADM2, abs=5.0), label
 
 
-def test_the_peak_and_moment_snr_cuts_are_independent(
+def test_the_moment_snr_cut_does_not_reach_the_peaks(
     tmp_path: Path, qu_cubes: tuple[Path, Path]
 ) -> None:
     """One cut used to serve both, so a noise estimate that blanked the moments
     took the peaks with it and the pair looked like a broken FDF rather than an
-    over-aggressive cut. They are separate options now, and each has to bite on
-    its own products only.
+    over-aggressive cut. Only the moments are cut now -- rm-lite dropped the
+    peak threshold entirely -- so the cut has to bite on the moments alone.
     """
     stokes_q_cube, stokes_u_cube = qu_cubes
+    output_prefix = tmp_path / "moments_cut"
 
-    def peak_pi_and_mom0(
-        prefix: str,
-        moment_threshold_snr: float = 5.0,
-        peak_threshold_snr: float = 0.0,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        output_prefix = tmp_path / prefix
-        _synth_and_write(
-            stokes_q_cube=stokes_q_cube,
-            stokes_u_cube=stokes_u_cube,
-            rmsynth_options=RMSynthOptions(),
-            rmclean_options=RMCleanOptions(),
-            cube_products=[],
-            moment_products=["dirty"],
-            peak_products=["dirty"],
-            output_prefix=output_prefix,
-            moment_threshold_snr=moment_threshold_snr,
-            peak_threshold_snr=peak_threshold_snr,
-        )
-        return (
-            fits.getdata(Path(f"{output_prefix}.fdf.dirty.peak_pi.fits")),
-            fits.getdata(Path(f"{output_prefix}.fdf.dirty.mom0.fits")),
-        )
+    _synth_and_write(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        rmsynth_options=RMSynthOptions(),
+        rmclean_options=RMCleanOptions(),
+        cube_products=[],
+        moment_products=["dirty"],
+        peak_products=["dirty"],
+        output_prefix=output_prefix,
+        # A cut nothing can clear, so anything it reaches is unmistakable
+        moment_threshold_snr=1e6,
+    )
+    peak_pi = fits.getdata(Path(f"{output_prefix}.fdf.dirty.peak_pi.fits"))
+    mom0 = fits.getdata(Path(f"{output_prefix}.fdf.dirty.mom0.fits"))
 
-    # A cut nothing can clear on one side leaves the other untouched. mom0 is
-    # nansum, so a fully cut spectrum reads 0 rather than NaN; a cut peak is NaN
-    peak_pi, mom0 = peak_pi_and_mom0("moments_cut", moment_threshold_snr=1e6)
     assert np.all(np.isfinite(peak_pi)), "the moment cut must not reach the peaks"
+    # mom0 is a nansum, so a fully cut spectrum reads 0 rather than NaN
     assert np.all(mom0 == 0.0)
 
-    peak_pi, mom0 = peak_pi_and_mom0("peaks_cut", peak_threshold_snr=1e6)
-    assert np.all(np.isnan(peak_pi))
-    assert np.all(mom0 > 0.0), "the peak cut must not reach the moments"
 
-
-def test_no_peak_cut_by_default_even_where_a_pixel_has_no_weight(
+def test_peaks_are_never_cut_even_where_a_pixel_has_no_weight(
     tmp_path: Path, qu_cubes: tuple[Path, Path]
 ) -> None:
-    """``peak_threshold_snr`` defaults to 0, meaning no cut at all. It cannot be
-    applied as ``0 * noise``: the theoretical noise is inf for a pixel linmos
-    blanked, ``0 * inf`` is NaN, and every comparison against NaN is False -- so
-    the cut meant to pass everything would instead blank the whole map."""
-    assert RMSynthFieldOptions().peak_threshold_snr == 0.0
-    assert _snr_threshold(0.0, np.float64(np.inf)) is None
-    assert _snr_threshold(0.0, np.array([1e-5, np.inf])) is None
-    assert _snr_threshold(5.0, np.float64(2.0)) == 10.0
+    """No SNR cut is applied to the peak maps: a peak is a single sample with no
+    noise floor to integrate, so ``peak_pi_error`` is written beside it and the
+    selection is made afterwards. Only the moment cut is left, and a zero there
+    cannot be applied as ``0 * noise``: the theoretical noise is inf for a pixel
+    linmos blanked, ``0 * inf`` is NaN, and every comparison against NaN is
+    False -- so the cut meant to pass everything would instead blank the map."""
+    assert not hasattr(RMSynthFieldOptions(), "peak_threshold_snr")
+    assert fdf_threshold_from_snr(0.0, np.float64(np.inf)) is None
+    assert fdf_threshold_from_snr(0.0, np.array([1e-5, np.inf])) is None
+    assert fdf_threshold_from_snr(5.0, np.float64(2.0)) == 10.0
 
     stokes_q_cube, stokes_u_cube = qu_cubes
     output_prefix = tmp_path / "default_cut"
@@ -1112,10 +1194,10 @@ def test_no_peak_cut_by_default_even_where_a_pixel_has_no_weight(
     peak_pi = fits.getdata(Path(f"{output_prefix}.fdf.dirty.peak_pi.fits"))
     inside_cutoff = _within_cutoff(1.5)
     assert np.all(np.isfinite(peak_pi[inside_cutoff])), (
-        "no cut was asked for, so every pixel carrying weight keeps its peak"
+        "no cut is applied, so every pixel carrying weight keeps its peak"
     )
     assert np.all(np.isnan(peak_pi[~inside_cutoff])), (
-        "a pixel linmos blanked has no FDF to peak, cut or no cut"
+        "a pixel linmos blanked has no FDF to peak"
     )
 
 
@@ -1349,7 +1431,7 @@ def test_rmclean_runs_once_per_chunk_on_a_distributed_client(
     """The same once-per-chunk guarantee as the threaded test, on the path a real
     pipeline run takes.
 
-    ``_compute_rm_products`` submits to a distributed Client as futures so it can
+    ``compute_rm_products`` submits to a distributed Client as futures so it can
     report each product as it lands. Submitting them one at a time instead would
     rebuild the shared synthesis/RM-CLEAN graph per product -- invisible in the
     output, just N times the runtime of the slowest stage. The threaded test
@@ -1402,8 +1484,49 @@ def test_rmclean_runs_once_per_chunk_on_a_distributed_client(
         cluster.close()
 
     assert len(tally.read_text()) == n_chunks, (
-        "nine moment maps off three FDFs must still clean each chunk once"
+        "every moment map off three FDFs must still clean each chunk once"
     )
+
+
+def test_products_sharing_a_dask_key_are_all_returned() -> None:
+    """Two products built from the same expression share a dask key, so
+    ``client.compute`` hands back a single future for both -- rm-lite derives
+    ``pi_lam_sq_0_error`` exactly as it does ``mom0_error``, so the moment maps
+    hit this on every run. Keying the results by future dropped all but the last
+    of each such group, which surfaced as a ``KeyError`` on a map that had in
+    fact been computed."""
+    from distributed import Client, LocalCluster
+
+    shared = da.arange(4, chunks=2) * 2.0
+    targets = {
+        "first": shared,
+        # A separate array with an identical graph, as rm-lite's two errors are
+        "second": da.arange(4, chunks=2) * 2.0,
+        "other": da.arange(4, chunks=2) + 1.0,
+    }
+
+    cluster = LocalCluster(
+        n_workers=1,
+        threads_per_worker=1,
+        processes=False,
+        dashboard_address=None,
+        silence_logs=logging.ERROR,
+    )
+    try:
+        with Client(cluster) as client:
+            computed = compute_rm_products(
+                compute_targets=targets,
+                fuse_config={},
+                scheduler=client,
+                workload="test",
+            )
+    finally:
+        cluster.close()
+
+    assert set(computed) == set(targets)
+    assert np.allclose(computed["first"], [0.0, 2.0, 4.0, 6.0])
+    assert np.allclose(computed["second"], computed["first"])
+    assert np.allclose(computed["other"], [1.0, 2.0, 3.0, 4.0])
 
 
 def test_computing_from_inside_a_worker_does_not_deadlock() -> None:
@@ -1423,10 +1546,10 @@ def test_computing_from_inside_a_worker_does_not_deadlock() -> None:
     import dask
     from distributed import Client, LocalCluster, get_client
 
-    from flint.rmsynth import _compute_rm_products
+    from flint.rmsynth import compute_rm_products
 
     def compute_on_the_worker() -> dict[str, object]:
-        return _compute_rm_products(
+        return compute_rm_products(
             compute_targets={"only": dask.delayed(int)(7)},
             fuse_config={},
             scheduler=get_client(),
@@ -1459,7 +1582,7 @@ def test_a_failed_product_is_raised_not_dropped(tmp_path: Path) -> None:
     import dask
     from distributed import Client, LocalCluster
 
-    from flint.rmsynth import _compute_rm_products
+    from flint.rmsynth import compute_rm_products
 
     def explode() -> None:
         msg = "this product could not be computed"
@@ -1475,7 +1598,7 @@ def test_a_failed_product_is_raised_not_dropped(tmp_path: Path) -> None:
     try:
         with Client(cluster) as client:
             with pytest.raises(ValueError, match="could not be computed"):
-                _compute_rm_products(
+                compute_rm_products(
                     compute_targets={
                         "fine": dask.delayed(int)(1),
                         "broken": dask.delayed(explode)(),
