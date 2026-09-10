@@ -137,20 +137,6 @@ def check_cubes_are_single_precision(*cubes: Path | None) -> None:
         )
 
 
-def zarr_store_directory(
-    stokes_cubes: CubesForRMSynth, rmsynth_options: RMSynthOptions
-) -> Path | None:
-    """Where the converted cubes go, or None when the conversion is off.
-
-    Named after the Stokes Q cube rather than taken from the options: one
-    strategy file runs over many fields, so a directory set there would have
-    every field write ``q.zarr`` over the last one's.
-    """
-    if not rmsynth_options.convert_to_zarr:
-        return None
-    return stokes_cubes.q_path.parent / f"{stokes_cubes.q_path.stem}.zarr"
-
-
 def run_rmsynth_3d(
     stokes_cubes: CubesForRMSynth,
     rmsynth_options: RMSynthOptions,
@@ -207,7 +193,7 @@ def run_rmsynth_3d(
         per_pixel_rmsf=rmsynth_options.per_pixel_rmsf,
         nufft_nthreads=rmsynth_options.nufft_nthreads,
         target_chunk_mb=rmsynth_options.target_chunk_mb,
-        convert_to_zarr=zarr_store_directory(stokes_cubes, rmsynth_options),
+        convert_to_zarr=rmsynth_options.convert_to_zarr,
         log_level=logging.INFO,
         **stokes_i_kwargs,
     )

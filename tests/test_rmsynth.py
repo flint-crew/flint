@@ -816,16 +816,9 @@ def test_rmsynth_options_reach_rm_lite(
 
     # Applied by flint after rm-lite returns, so they have nothing to forward.
     flint_side = {"debias_moments", "debias_filter_size"}
-    # A bool here, but rm-lite wants the directory flint picks for it.
-    transformed = {"convert_to_zarr"}
-    for field in set(type(rmsynth_options).model_fields) - flint_side - transformed:
+    for field in set(type(rmsynth_options).model_fields) - flint_side:
         assert field in captured, f"{field} never reaches rm-lite"
         assert captured[field] == getattr(rmsynth_options, field)
-
-    assert (
-        captured["convert_to_zarr"]
-        == stokes_q_cube.parent / f"{stokes_q_cube.stem}.zarr"
-    )
 
 
 def _within_cutoff(blank_outside: float) -> np.ndarray:
