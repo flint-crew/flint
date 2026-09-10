@@ -28,9 +28,9 @@ from flint.rmsynth import (
     PEAK_MAPS,
     FDFLabel,
     RMSynth3DResults,
-    _check_cubes_are_single_precision,
-    _compute_rm_products,
-    _snr_threshold,
+    check_cubes_are_single_precision,
+    compute_rm_products,
+    fdf_threshold_from_snr,
     needs_rmclean,
     run_rmclean_3d,
     run_rmsynth_3d,
@@ -691,7 +691,7 @@ def test_rmsynth_warns_about_double_precision_cubes(tmp_path, caplog) -> None:
     stokes_q_cube, stokes_u_cube = _make_qu_cubes(tmp_path)
 
     with caplog.at_level("WARNING"):
-        _check_cubes_are_single_precision(stokes_q_cube, stokes_u_cube)
+        check_cubes_are_single_precision(stokes_q_cube, stokes_u_cube)
     assert "double precision" not in caplog.text
 
     doubled = tmp_path / "q_f8.fits"
@@ -701,7 +701,7 @@ def test_rmsynth_warns_about_double_precision_cubes(tmp_path, caplog) -> None:
         )
 
     with caplog.at_level("WARNING"):
-        _check_cubes_are_single_precision(doubled, stokes_u_cube)
+        check_cubes_are_single_precision(doubled, stokes_u_cube)
     assert "double precision" in caplog.text
 
 
@@ -804,7 +804,7 @@ def test_rmsynth_options_reach_rm_lite(
     rmsynth_options = RMSynthOptions(
         per_pixel_rmsf=True,
         estimate_stokes_i_noise=False,
-        convert_to_zarr=tmp_path / "stores",
+        convert_to_zarr=True,
     )
     with pytest.raises(NotSupportedError, match="stop before synthesising"):
         _run_rmsynth_3d(
@@ -816,9 +816,16 @@ def test_rmsynth_options_reach_rm_lite(
 
     # Applied by flint after rm-lite returns, so they have nothing to forward.
     flint_side = {"debias_moments", "debias_filter_size"}
-    for field in set(type(rmsynth_options).model_fields) - flint_side:
+    # A bool here, but rm-lite wants the directory flint picks for it.
+    transformed = {"convert_to_zarr"}
+    for field in set(type(rmsynth_options).model_fields) - flint_side - transformed:
         assert field in captured, f"{field} never reaches rm-lite"
         assert captured[field] == getattr(rmsynth_options, field)
+
+    assert (
+        captured["convert_to_zarr"]
+        == stokes_q_cube.parent / f"{stokes_q_cube.stem}.zarr"
+    )
 
 
 def _within_cutoff(blank_outside: float) -> np.ndarray:
@@ -1172,9 +1179,9 @@ def test_peaks_are_never_cut_even_where_a_pixel_has_no_weight(
     linmos blanked, ``0 * inf`` is NaN, and every comparison against NaN is
     False -- so the cut meant to pass everything would instead blank the map."""
     assert not hasattr(RMSynthFieldOptions(), "peak_threshold_snr")
-    assert _snr_threshold(0.0, np.float64(np.inf)) is None
-    assert _snr_threshold(0.0, np.array([1e-5, np.inf])) is None
-    assert _snr_threshold(5.0, np.float64(2.0)) == 10.0
+    assert fdf_threshold_from_snr(0.0, np.float64(np.inf)) is None
+    assert fdf_threshold_from_snr(0.0, np.array([1e-5, np.inf])) is None
+    assert fdf_threshold_from_snr(5.0, np.float64(2.0)) == 10.0
 
     stokes_q_cube, stokes_u_cube = qu_cubes
     output_prefix = tmp_path / "default_cut"
@@ -1431,7 +1438,7 @@ def test_rmclean_runs_once_per_chunk_on_a_distributed_client(
     """The same once-per-chunk guarantee as the threaded test, on the path a real
     pipeline run takes.
 
-    ``_compute_rm_products`` submits to a distributed Client as futures so it can
+    ``compute_rm_products`` submits to a distributed Client as futures so it can
     report each product as it lands. Submitting them one at a time instead would
     rebuild the shared synthesis/RM-CLEAN graph per product -- invisible in the
     output, just N times the runtime of the slowest stage. The threaded test
@@ -1514,7 +1521,7 @@ def test_products_sharing_a_dask_key_are_all_returned() -> None:
     )
     try:
         with Client(cluster) as client:
-            computed = _compute_rm_products(
+            computed = compute_rm_products(
                 compute_targets=targets,
                 fuse_config={},
                 scheduler=client,
@@ -1546,10 +1553,10 @@ def test_computing_from_inside_a_worker_does_not_deadlock() -> None:
     import dask
     from distributed import Client, LocalCluster, get_client
 
-    from flint.rmsynth import _compute_rm_products
+    from flint.rmsynth import compute_rm_products
 
     def compute_on_the_worker() -> dict[str, object]:
-        return _compute_rm_products(
+        return compute_rm_products(
             compute_targets={"only": dask.delayed(int)(7)},
             fuse_config={},
             scheduler=get_client(),
@@ -1582,7 +1589,7 @@ def test_a_failed_product_is_raised_not_dropped(tmp_path: Path) -> None:
     import dask
     from distributed import Client, LocalCluster
 
-    from flint.rmsynth import _compute_rm_products
+    from flint.rmsynth import compute_rm_products
 
     def explode() -> None:
         msg = "this product could not be computed"
@@ -1598,7 +1605,7 @@ def test_a_failed_product_is_raised_not_dropped(tmp_path: Path) -> None:
     try:
         with Client(cluster) as client:
             with pytest.raises(ValueError, match="could not be computed"):
-                _compute_rm_products(
+                compute_rm_products(
                     compute_targets={
                         "fine": dask.delayed(int)(1),
                         "broken": dask.delayed(explode)(),

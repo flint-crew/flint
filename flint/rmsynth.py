@@ -120,7 +120,7 @@ def _check_cubes_memmappable(*cubes: Path | None) -> None:
         raise NotSupportedError(msg)
 
 
-def _check_cubes_are_single_precision(*cubes: Path | None) -> None:
+def check_cubes_are_single_precision(*cubes: Path | None) -> None:
     """rm-lite takes the FDF's precision from the cubes it is given, so a
     double-precision cube doubles every Faraday-depth array it builds. Warned
     about rather than refused: it is a memory cost, not an error."""
@@ -135,6 +135,20 @@ def _check_cubes_are_single_precision(*cubes: Path | None) -> None:
             "will be complex128 and take twice the memory. Write the cubes as "
             "float32 unless the extra precision is actually wanted."
         )
+
+
+def zarr_store_directory(
+    stokes_cubes: CubesForRMSynth, rmsynth_options: RMSynthOptions
+) -> Path | None:
+    """Where the converted cubes go, or None when the conversion is off.
+
+    Named after the Stokes Q cube rather than taken from the options: one
+    strategy file runs over many fields, so a directory set there would have
+    every field write ``q.zarr`` over the last one's.
+    """
+    if not rmsynth_options.convert_to_zarr:
+        return None
+    return stokes_cubes.q_path.parent / f"{stokes_cubes.q_path.stem}.zarr"
 
 
 def run_rmsynth_3d(
@@ -158,7 +172,7 @@ def run_rmsynth_3d(
     _check_cubes_memmappable(
         *stokes_cubes.paths, *(error_cubes.paths if error_cubes else ())
     )
-    _check_cubes_are_single_precision(*stokes_cubes.paths)
+    check_cubes_are_single_precision(*stokes_cubes.paths)
     stokes_i_kwargs = (
         {
             "stokes_i_file": stokes_cubes.i_path,
@@ -193,7 +207,7 @@ def run_rmsynth_3d(
         per_pixel_rmsf=rmsynth_options.per_pixel_rmsf,
         nufft_nthreads=rmsynth_options.nufft_nthreads,
         target_chunk_mb=rmsynth_options.target_chunk_mb,
-        convert_to_zarr=rmsynth_options.convert_to_zarr,
+        convert_to_zarr=zarr_store_directory(stokes_cubes, rmsynth_options),
         log_level=logging.INFO,
         **stokes_i_kwargs,
     )
@@ -446,7 +460,7 @@ def write_stokes_i_coeff_maps_to_fits(
     return output_paths
 
 
-def _snr_threshold(snr: float, fdf_error_noise: FDFThreshold) -> FDFThreshold:
+def fdf_threshold_from_snr(snr: float, fdf_error_noise: FDFThreshold) -> FDFThreshold:
     """An FDF amplitude cut ``snr`` times the theoretical noise, or None for no cut.
 
     Zero short-circuits rather than multiplying through: the noise is ``inf``
@@ -553,7 +567,7 @@ def _seceded_if_on_a_worker() -> Iterator[None]:
         rejoin()
 
 
-def _compute_rm_products(
+def compute_rm_products(
     compute_targets: dict[str, Any],
     fuse_config: dict[str, Any],
     scheduler: Client | str,
@@ -797,7 +811,7 @@ def write_rm_products(
     # (mom1/mom2 are then weighted by that noise and mean nothing). rm-lite
     # applies this same cut inside RM-CLEAN to its own moment maps, which flint
     # does not use, so it is rederived here from the shared theoretical noise.
-    moment_threshold = _snr_threshold(
+    moment_threshold = fdf_threshold_from_snr(
         moment_threshold_snr,
         synth_results.theoretical_noise.fdf_error_noise,
     )
@@ -895,7 +909,7 @@ def write_rm_products(
         if dask_client is not None
         else ("processes" if run_clean else "threads")
     )
-    computed = _compute_rm_products(
+    computed = compute_rm_products(
         compute_targets=compute_targets,
         fuse_config=fuse_config,
         scheduler=scheduler,
