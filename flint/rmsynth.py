@@ -801,10 +801,8 @@ def write_rm_products(
         moment_threshold_snr,
         synth_results.theoretical_noise.fdf_error_noise,
     )
-    # One `map_blocks` a label for all 21 maps rather than a chain per map: the
-    # maps are the bulk of the graph, and this is measurably 277 tasks a chunk
-    # against 132. Debiased maps cannot join it, since `debias_fdf` needs
-    # neighbouring pixels.
+    # All 21 maps in one task a chunk, rather than a chain per map. Debiased
+    # maps cannot join: `debias_fdf` needs neighbouring pixels.
     fused_maps = {
         label: faraday_maps(
             fdf_sources[label],
