@@ -30,6 +30,7 @@ os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 from rm_lite.tools_3d.rmclean import (  # noqa: E402
     RMClean3DResults,
+    faraday_maps,
     run_rmclean_from_synth,
 )
 from rm_lite.tools_3d.rmsynth import (  # noqa: E402
@@ -40,7 +41,6 @@ from rm_lite.utils.synthesis import (  # noqa: E402
     FaradayMoments,
     FaradayPeaks,
     calc_faraday_moments,
-    calc_faraday_peaks,
 )
 
 from flint.exceptions import NotSupportedError
@@ -801,16 +801,26 @@ def write_rm_products(
         moment_threshold_snr,
         synth_results.theoretical_noise.fdf_error_noise,
     )
-    for label in moment_products:
-        moments = _lazy_faraday_moments(
-            fdf_cube=fdf_sources[label],
-            synth_results=synth_results,
-            threshold=moment_threshold,
+    # All 21 maps in one task a chunk, rather than a chain per map. Debiased
+    # maps cannot join: `debias_fdf` needs neighbouring pixels.
+    fused_maps = {
+        label: faraday_maps(
+            fdf_sources[label],
+            phi_arr_radm2=synth_results.phi_arr_radm2,
+            fwhm_rmsf_radm2=synth_results.fwhm_rmsf_radm2,
+            lam_sq_0_m2=synth_results.lam_sq_0_m2,
+            lambda_sq_arr_m2=synth_results.lambda_sq_arr_m2,
+            fdf_noise=synth_results.theoretical_noise.fdf_error_noise,
+            moment_threshold=moment_threshold,
         )
+        for label in dict.fromkeys((*moment_products, *peak_products))
+    }
+
+    for label in moment_products:
         for field in MOMENT_MAPS:
-            compute_targets[f"moment.{label}.{field}"] = getattr(moments, field).astype(
-                np.float32
-            )
+            compute_targets[f"moment.{label}.{field}"] = fused_maps[label][
+                field
+            ].astype(np.float32)
         if rmsynth_options.debias_moments:
             debiased = _lazy_faraday_moments(
                 fdf_cube=fdf_sources[label],
@@ -836,16 +846,8 @@ def write_rm_products(
     # single sample with no such floor, and ``peak_pi_error`` is written beside
     # it, so ``peak_pi / peak_pi_error`` is the SNR to select on afterwards.
     for label in peak_products:
-        peaks = calc_faraday_peaks(
-            fdf_sources[label],
-            phi_arr_radm2=synth_results.phi_arr_radm2,
-            fwhm_rmsf_radm2=synth_results.fwhm_rmsf_radm2,
-            fdf_error=synth_results.theoretical_noise.fdf_error_noise,
-            lam_sq_0_m2=synth_results.lam_sq_0_m2,
-            lambda_sq_arr_m2=synth_results.lambda_sq_arr_m2,
-        )
         for field in PEAK_MAPS:
-            compute_targets[f"peak.{label}.{field}"] = getattr(peaks, field).astype(
+            compute_targets[f"peak.{label}.{field}"] = fused_maps[label][field].astype(
                 np.float32
             )
 
