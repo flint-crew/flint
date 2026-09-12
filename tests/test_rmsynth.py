@@ -1751,3 +1751,71 @@ def test_a_weight_cube_is_not_inverted_but_a_noise_cube_is(
                     error_cubes=error_cubes,
                 )
         assert captured["noise_files_are_weight"] is expected, error_cubes
+
+
+@pytest.mark.parametrize("per_pixel_noise", [False, True])
+def test_fused_faraday_maps_match_the_per_map_path(per_pixel_noise: bool) -> None:
+    """``faraday_maps`` must give exactly what a map-at-a-time derivation gives.
+
+    The products are built from the fused call, so a divergence here would
+    silently change every moment and peak map flint writes.
+    """
+    from rm_lite.tools_3d.rmclean import faraday_maps
+    from rm_lite.utils.synthesis import (
+        FaradayMoments,
+        FaradayPeaks,
+        calc_faraday_moments,
+        calc_faraday_peaks,
+    )
+
+    n_phi, ny, nx, rows = 401, 24, 32, 4
+    rng = np.random.default_rng(0)
+    phi_arr_radm2 = np.linspace(-2000, 2000, n_phi)
+    lambda_sq_arr_m2 = np.linspace(0.03, 0.08, 125)
+    values = (
+        rng.normal(size=(n_phi, ny, nx)) + 1j * rng.normal(size=(n_phi, ny, nx))
+    ).astype(np.complex64)
+    values[:, 0, 0] = np.nan  # a blank pixel, as a mosaic edge has
+    fdf_cube = da.from_array(values, chunks=(n_phi, rows, nx))
+
+    if per_pixel_noise:
+        noise = da.from_array(rng.random((ny, nx)) * 1e-2, chunks=(rows, nx))
+        threshold = noise * 5
+    else:
+        noise, threshold = 1e-2, 5e-2
+    lam_sq_0_m2 = 0.05
+
+    moments = calc_faraday_moments(
+        fdf_cube,
+        phi_arr_radm2=phi_arr_radm2,
+        fwhm_rmsf_radm2=50.0,
+        fdf_error=noise,
+        threshold=threshold,
+    )
+    peaks = calc_faraday_peaks(
+        fdf_cube,
+        phi_arr_radm2=phi_arr_radm2,
+        fwhm_rmsf_radm2=50.0,
+        fdf_error=noise,
+        lam_sq_0_m2=lam_sq_0_m2,
+        lambda_sq_arr_m2=lambda_sq_arr_m2,
+    )
+    fused = faraday_maps(
+        fdf_cube,
+        phi_arr_radm2=phi_arr_radm2,
+        fwhm_rmsf_radm2=50.0,
+        lam_sq_0_m2=lam_sq_0_m2,
+        lambda_sq_arr_m2=lambda_sq_arr_m2,
+        fdf_noise=noise,
+        moment_threshold=threshold,
+    )
+
+    for source, fields in (
+        (moments, FaradayMoments._fields),
+        (peaks, FaradayPeaks._fields),
+    ):
+        for field in fields:
+            expected = np.asarray(da.asarray(getattr(source, field)).compute())
+            np.testing.assert_array_equal(
+                np.asarray(fused[field].compute()), expected, err_msg=field
+            )
