@@ -17,8 +17,16 @@ from jolly_roger.tractor import TukeyTractorOptions
 from flint.imager.wsclean import WSCleanOptions
 from flint.logging import logger
 from flint.masking import MaskingOptions
+from flint.misc.holo import ConcatHoloOptions
 from flint.naming import add_timestamp_to_path
-from flint.options import ArchiveOptions, FitsCubeOptions
+from flint.options import (
+    ArchiveOptions,
+    FFTBANEOptions,
+    FitsCubeOptions,
+    RMCleanOptions,
+    RMSynthOptions,
+    SpiceOptions,
+)
 from flint.peel.potato import PotatoPeelOptions
 from flint.selfcal.casa import GainCalOptions
 from flint.source_finding.aegean import AegeanOptions, BANEOptions
@@ -33,7 +41,7 @@ from flint.source_finding.aegean import AegeanOptions, BANEOptions
 # Known headers must **always** be present in the strategy file
 KNOWN_HEADERS = ("defaults", "version")
 # Known options are optional, but if present must be in the correct format
-KNOWN_OPERATIONS = ("selfcal", "stokesv", "subtractcube", "polarisation")
+KNOWN_OPERATIONS = ("selfcal", "stokesv", "subtractcube", "polarisation", "rmsynth")
 FORMAT_VERSION = 0.2
 MODE_OPTIONS_MAPPING = {
     "wsclean": WSCleanOptions,
@@ -45,6 +53,12 @@ MODE_OPTIONS_MAPPING = {
     "potatopeel": PotatoPeelOptions,
     "fitscube": FitsCubeOptions,
     "tukeytractor": TukeyTractorOptions,
+    "rmsynth": RMSynthOptions,
+    "rmclean": RMCleanOptions,
+    # "bane" is the containerised aegean BANE; this is the FFT one in flint.bane
+    "fftbane": FFTBANEOptions,
+    "concatholo": ConcatHoloOptions,
+    "spice": SpiceOptions,
 }
 POLARISATION_MAPPING = {
     "total": "i",
@@ -352,6 +366,23 @@ def get_options_from_strategy(
     if update_options:
         logger.debug(f"Updating options with {update_options=}")
         options.update(update_options)
+
+    if polarisation is not None and mode == "wsclean":
+        # Hardcoded to keep parallel imaging of all Stokes/MSs safe and to
+        # avoid spurious spectral fitting / source lists on Q, U and V.
+        hardcoded_options: dict[str, Any] = {"no_update_model_required": True}
+        if polarisation == "linear":
+            hardcoded_options["fit_spectral_pol"] = None
+        if polarisation in ("linear", "circular"):
+            hardcoded_options["save_source_list"] = False
+
+        for key, value in hardcoded_options.items():
+            if key in options and options[key] != value:
+                logger.warning(
+                    f"Requested {key}={options[key]!r} for {polarisation=} wsclean "
+                    f"options is not supported. Hardcoding to {value!r}."
+                )
+        options.update(hardcoded_options)
 
     return options
 

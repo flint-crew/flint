@@ -621,6 +621,24 @@ def test_polarisation_fitscube_sibling_mode(package_strategy_polarisation) -> No
     assert fitscube_options["compress_method"] == "gzip"
 
 
+def test_polarisation_spice_sibling_mode(package_strategy_polarisation) -> None:
+    """spice, like fitscube, sits directly under the polarisation operation
+    as a sibling of the total/linear/circular polarisation types."""
+    strategy = package_strategy_polarisation
+    strategy["polarisation"]["spice"] = {
+        "n_beamwidths": 2.0,
+    }
+
+    verify_configuration(input_strategy=strategy)
+
+    spice_options = get_options_from_strategy(
+        strategy=strategy,
+        operation="polarisation",
+        mode="spice",
+    )
+    assert spice_options["n_beamwidths"] == 2.0
+
+
 def test_verify_polarisation_catches_bad_override(
     package_strategy_polarisation,
 ) -> None:

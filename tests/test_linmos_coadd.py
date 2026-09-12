@@ -59,20 +59,24 @@ def test_create_name_to_linmos_options():
 
 def test_get_image_weight_plane():
     """The extraction of weights per plane"""
-    data = np.arange(100).reshape((10, 10))
+    mean = 0
+    rms = 2
+    weight = 1.0 / (rms**2)
+    data = np.random.default_rng(42).normal(loc=mean, scale=rms, size=(100, 100))
 
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError):
         _get_image_weight_plane(image_data=data, mode="noexists")  # type: ignore
 
+    # Sampling noise on the estimated rms, so compare to a few percent
     assert np.isclose(
-        0.0016,
+        weight,
         _get_image_weight_plane(image_data=data, mode="mad", stride=1),
-        atol=0.0001,
+        rtol=0.05,
     )
     assert np.isclose(
-        0.00120012,
+        weight,
         _get_image_weight_plane(image_data=data, mode="std", stride=1),
-        atol=0.0001,
+        rtol=0.05,
     )
 
     data = np.arange(100).reshape((10, 10)) * np.nan

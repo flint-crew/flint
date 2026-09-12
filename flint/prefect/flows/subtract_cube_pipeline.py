@@ -251,6 +251,7 @@ def task_combine_all_linmos_images(
         time_domain_mode=time_domain,
         bounding_box=fits_cube_options.bounding_box,
         invalidate_zeros=fits_cube_options.invalidate_zeros,
+        create_blanks=fits_cube_options.create_blanks,
     )
 
     if fits_cube_options.remove_original_images:

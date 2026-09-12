@@ -9,6 +9,7 @@ from typing import Literal, NamedTuple
 
 import numpy as np
 from astropy.io import fits
+from astropy.stats import mad_std
 from capn_crunch import BaseOptions, add_options_to_parser, create_options_from_parser
 
 from flint.exceptions import ShapeMismatchError
@@ -58,7 +59,7 @@ class LinmosOptions(BaseOptions):
     """Delete the images that were coaddede together. Defaults to False."""
 
 
-class BoundingBox(NamedTuple):
+class BoundingBox(BaseOptions):
     """Simple container to represent a bounding box"""
 
     xmin: int
@@ -71,6 +72,19 @@ class BoundingBox(NamedTuple):
     """Maximum y pixel, exclusive (i.e. slice ready)"""
     original_shape: tuple[int, int]
     """The original shape of the image. If constructed against a cube this is the shape of a single plane."""
+
+    def clip(self) -> BoundingBox | None:
+        """Clip to ``original_shape``, or None if the box falls entirely off it
+
+        Returns:
+            BoundingBox | None: The clipped box, or None if nothing remains
+        """
+        ny, nx = self.original_shape
+        xmin, xmax = max(0, self.xmin), min(ny, self.xmax)
+        ymin, ymax = max(0, self.ymin), min(nx, self.ymax)
+        if xmin >= xmax or ymin >= ymax:
+            return None
+        return self.with_options(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax)
 
 
 class LinmosParsetSummary(NamedTuple):
@@ -265,38 +279,35 @@ def _get_image_weight_plane(
     Args:
         image_data (np.ndarray): Data to consider
         mode (str, optional): Statistic computation mode. Defaults to "mad".
-        stride (int, optional): Include every n'th pixel when computing the weight. '1' includes all pixels. Defaults to 1.
+        stride (int, optional): Include every n'th pixel when computing the weight. '1' includes all pixels. Defaults to 4.
 
     Raises:
-        ValueError: Raised when modes unknown
+        ValueError: Raised when mode is unknown
 
     Returns:
-        float: The inverse variance weight computerd
+        float: The inverse variance weight computed
     """
 
     weight_modes = ("mad", "std")
-    assert mode in weight_modes, (
-        f"Invalid {mode=} specified. Available modes: {weight_modes}"
-    )
+    if mode not in weight_modes:
+        raise ValueError(f"Invalid {mode=} specified. Available modes: {weight_modes}")
 
-    # remove non-finite numbers that would ruin the statistic
-    image_data = image_data[np.isfinite(image_data)][::stride]
+    # Drop non-finite values that would ruin the statistic
+    image_data = image_data[::stride]
+    image_data = image_data[np.isfinite(image_data)]
 
-    if np.all(~np.isfinite(image_data)):
+    if image_data.size == 0:
         return 0.0
 
     if mode == "mad":
-        median = np.median(image_data)
-        mad = np.median(np.abs(image_data - median))
-        weight = 1.0 / mad**2
-    elif mode == "std":
-        std = np.std(image_data)
-        weight = 1.0 / std**2
-    else:
-        raise ValueError(f"Invalid {mode=} specified. Available modes: {weight_modes}")
+        rms = mad_std(image_data, ignore_nan=True)
+    else:  # mode == "std"
+        rms = np.nanstd(image_data)
 
-    float_weight = float(weight)
-    return float_weight if np.isfinite(float_weight) else 0.0
+    # Force RMS to 0 if close
+    rms = 0.0 if np.isclose(rms, 0.0) else rms
+    weight = float(1.0 / (rms**2) if rms > 0.0 else 0.0)
+    return weight if np.isfinite(weight) else 0.0
 
 
 def get_image_weight(
