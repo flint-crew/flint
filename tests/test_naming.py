@@ -421,26 +421,26 @@ def test_get_beam_resolution_str():
 
 def test_every_resolution_mode_is_supported():
     """``ResolutionModes`` is the vocabulary, so nothing in it may be rejected"""
-    from typing import get_args
-
     from flint.naming import ResolutionModes
 
-    for mode in get_args(ResolutionModes):
+    for mode in ResolutionModes:
         assert get_beam_resolution_str(mode=mode) == mode
+        # A member is already its own suffix, which is the point of the StrEnum
+        assert f"{mode}" == mode.value
 
 
 def test_create_image_cube_name_carries_the_resolution():
     """The natural and total cubes of one Stokes differ only by resolution, so
     that has to be in the name or they would collide"""
+    from flint.naming import ResolutionModes
+
     prefix = Path("SB59058.RACS_1626-84.pol")
 
     natural = create_image_cube_name(
-        image_prefix=Path(f"{prefix}.{get_beam_resolution_str(mode='natural')}"),
-        mode="image",
+        image_prefix=Path(f"{prefix}.{ResolutionModes.NATURAL}"), mode="image"
     )
     total = create_image_cube_name(
-        image_prefix=Path(f"{prefix}.{get_beam_resolution_str(mode='total')}"),
-        mode="image",
+        image_prefix=Path(f"{prefix}.{ResolutionModes.TOTAL}"), mode="image"
     )
 
     assert natural == Path("SB59058.RACS_1626-84.pol.natural.image.cube.fits")

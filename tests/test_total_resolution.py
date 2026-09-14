@@ -21,7 +21,7 @@ from flint.convol import (
     get_common_beam,
 )
 from flint.imager.wsclean import combine_images_to_cube, split_cube_into_planes
-from flint.naming import get_beam_resolution_str
+from flint.naming import ResolutionModes
 from flint.options import FitsCubeOptions
 from flint.prefect.common.imaging import (
     _resolution_suffix,
@@ -129,7 +129,7 @@ def _planes_at_total_resolution(
             plane=plane,
             beam_shape=total_beam,
             cutoff=cutoff,
-            convol_suffix=get_beam_resolution_str(mode="total"),
+            convol_suffix=ResolutionModes.TOTAL,
         )
         for plane in planes
     ]
@@ -168,6 +168,6 @@ def test_a_channel_beyond_the_cutoff_is_blanked_not_convolved(tmp_path: Path) ->
 def test_resolution_suffix_labels_both_sets() -> None:
     """Each cube says which resolution it is at, rather than one of them being
     the unlabelled default"""
-    assert _resolution_suffix("pol", "natural") == "pol.natural"
-    assert _resolution_suffix("pol", "total") == "pol.total"
-    assert _resolution_suffix(None, "total") == "total"
+    assert _resolution_suffix("pol", ResolutionModes.NATURAL) == "pol.natural"
+    assert _resolution_suffix("pol", ResolutionModes.TOTAL) == "pol.total"
+    assert _resolution_suffix(None, ResolutionModes.TOTAL) == "total"

@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
+from enum import StrEnum
 from pathlib import Path
-from typing import Any, Literal, NamedTuple, TypeVar, get_args
+from typing import Any, NamedTuple, TypeVar
 
 from flint.exceptions import NamingException
 from flint.logging import logger
@@ -314,14 +315,26 @@ def create_imaging_name_prefix(
     return ".".join(names)
 
 
-ResolutionModes = Literal["optimal", "fixed", "raw", "natural", "total"]
-"""The resolution a product is at. 'optimal'/'fixed' say how a single beam was
-chosen, 'natural'/'total' whether a cube's beam follows frequency or covers the
-whole band."""
+class ResolutionModes(StrEnum):
+    """The resolution a product is at, as it appears in its file name"""
+
+    OPTIMAL = "optimal"
+    """A single beam solved over the images"""
+    FIXED = "fixed"
+    """A single beam the user asked for"""
+    RAW = "raw"
+    """No common resolution imposed"""
+    NATURAL = "natural"
+    """One beam per channel, so resolution follows frequency"""
+    TOTAL = "total"
+    """One beam covering the whole band"""
 
 
 def get_beam_resolution_str(mode: ResolutionModes, marker: str | None = None) -> str:
     """The filename suffix marking a product at ``mode`` resolution.
+
+    A ``ResolutionModes`` is already its own suffix, so this is only needed to
+    append a ``marker`` or to accept a mode that is still a loose string.
 
     Args:
         mode (ResolutionModes): The resolution the product is at
@@ -333,12 +346,9 @@ def get_beam_resolution_str(mode: ResolutionModes, marker: str | None = None) ->
     Returns:
         str: The suffix to use
     """
-    supported_modes = get_args(ResolutionModes)
-    mode_str = mode.lower()
-    if mode_str not in supported_modes:
-        raise ValueError(f"Received {mode=}, supported modes are {supported_modes}")
+    resolution = ResolutionModes(str(mode).lower())
 
-    return mode_str + marker if marker else mode_str
+    return f"{resolution}{marker}" if marker else str(resolution)
 
 
 def update_beam_resolution_field_in_path(

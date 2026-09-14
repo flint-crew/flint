@@ -16,7 +16,7 @@ from prefect.futures import PrefectFuture
 from flint.bane import BANEMaps
 from flint.convol import BeamShape
 from flint.logging import logger
-from flint.naming import get_beam_resolution_str
+from flint.naming import ResolutionModes
 from flint.options import (
     CubesForRMSynth,
     ErrorCubesForRMSynth,
@@ -72,7 +72,7 @@ def convolve_cubes_to_common_resolution(
     beam_shape: BeamShape,
     output_path: Path | None = None,
     beam_cutoff: float | None = None,
-    convol_suffix: str = get_beam_resolution_str(mode="total"),
+    convol_suffix: str = ResolutionModes.TOTAL,
     fft_bane_options: FFTBANEOptions | None = None,
 ) -> CommonResolutionCubes:
     """Bring a set of FITS cubes to the one resolution described by

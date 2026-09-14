@@ -68,7 +68,6 @@ from flint.naming import (
     FITSMaskNames,
     ResolutionModes,
     create_name_from_common_fields,
-    get_beam_resolution_str,
     get_fits_cube_from_paths,
 )
 from flint.options import FieldOptions, FitsCubeOptions, SubtractFieldOptions
@@ -897,7 +896,7 @@ def create_convol_linmos_images(
     """
     parsets: list[LinmosResult] = []
 
-    beam_str: str = get_beam_resolution_str(mode="optimal")
+    beam_str: str = ResolutionModes.OPTIMAL
     linmos_suffixes: list[str] = [beam_str]
     if additional_linmos_suffix_str:
         linmos_suffixes.insert(0, additional_linmos_suffix_str)
@@ -963,7 +962,10 @@ def task_convolve_linmos_to_fixed_shape(
     image_to_smooth = linmos_result.image_fits
 
     output_image_path: Path = update_beam_resolution_field_in_path(
-        path=image_to_smooth, original_mode="optimal", updated_mode="fixed", marker="."
+        path=image_to_smooth,
+        original_mode=ResolutionModes.OPTIMAL,
+        updated_mode=ResolutionModes.FIXED,
+        marker=".",
     )
 
     assert field_options.fixed_beam_shape, (
@@ -1017,8 +1019,7 @@ class LinmosCubes(NamedTuple):
 
 def _resolution_suffix(suffix_str: str | None, mode: ResolutionModes) -> str:
     """The linmos suffix with the resolution of the product appended"""
-    resolution = get_beam_resolution_str(mode=mode)
-    return f"{suffix_str}.{resolution}" if suffix_str else resolution
+    return f"{suffix_str}.{mode}" if suffix_str else str(mode)
 
 
 def linmos_channel_groups_to_cubes(
@@ -1108,7 +1109,7 @@ def linmos_channel_groups_to_cubes(
                 plane=image_plane,
                 beam_shape=total_beam_shape,
                 cutoff=beam_cutoff,
-                convol_suffix=get_beam_resolution_str(mode="total"),
+                convol_suffix=ResolutionModes.TOTAL,
             )
             total_planes.append(total_plane)
 
@@ -1136,7 +1137,7 @@ def linmos_channel_groups_to_cubes(
     # removing the per-channel mosaics once cubed.
     cube_prefix = task_create_name_from_common_fields.submit(
         in_paths=image_planes,
-        additional_suffixes=_resolution_suffix(suffix_str, "natural"),
+        additional_suffixes=_resolution_suffix(suffix_str, ResolutionModes.NATURAL),
     )
     cubes = {
         mode: task_combine_images_to_cube.submit(
@@ -1160,7 +1161,7 @@ def linmos_channel_groups_to_cubes(
     total_prefix = (
         task_create_name_from_common_fields.submit(
             in_paths=image_planes,
-            additional_suffixes=_resolution_suffix(suffix_str, "total"),
+            additional_suffixes=_resolution_suffix(suffix_str, ResolutionModes.TOTAL),
         )
         if total_planes
         else None
