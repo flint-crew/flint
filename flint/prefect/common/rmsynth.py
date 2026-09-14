@@ -14,8 +14,9 @@ from prefect import unmapped
 from prefect.futures import PrefectFuture
 
 from flint.bane import BANEMaps
-from flint.convol import BeamShape, convolve_plane_to_beam
+from flint.convol import BeamShape
 from flint.logging import logger
+from flint.naming import ResolutionModes
 from flint.options import (
     CubesForRMSynth,
     ErrorCubesForRMSynth,
@@ -28,6 +29,7 @@ from flint.prefect.caching import task
 from flint.prefect.common.imaging import (
     task_bane_fits_image,
     task_combine_images_to_cube,
+    task_convolve_plane_to_beam,
     task_remove_files_folders,
     task_split_cube_into_planes,
 )
@@ -39,8 +41,6 @@ from flint.rmsynth import (
     run_rmsynth_3d,
     write_rm_products,
 )
-
-task_convolve_plane_to_beam = task(convolve_plane_to_beam)
 
 
 class CommonResolutionCubes(NamedTuple):
@@ -72,7 +72,7 @@ def convolve_cubes_to_common_resolution(
     beam_shape: BeamShape,
     output_path: Path | None = None,
     beam_cutoff: float | None = None,
-    convol_suffix: str = "conv",
+    convol_suffix: str = ResolutionModes.TOTAL,
     fft_bane_options: FFTBANEOptions | None = None,
 ) -> CommonResolutionCubes:
     """Bring a set of FITS cubes to the one resolution described by
@@ -91,7 +91,7 @@ def convolve_cubes_to_common_resolution(
         beam_shape (BeamShape): The resolution every channel is brought to
         output_path (Path | None, optional): Directory the new cubes are written into. Defaults to alongside each input cube.
         beam_cutoff (float | None, optional): Channels coarser than this, in arcsec, are blanked rather than convolved to. Defaults to no cutoff.
-        convol_suffix (str, optional): The marker added to the name of a smoothed plane, and of the cube they are stacked into. Defaults to 'conv'.
+        convol_suffix (str, optional): The marker added to the name of a smoothed plane, and of the cube they are stacked into. Defaults to 'total'.
         fft_bane_options (FFTBANEOptions | None, optional): When given, each convolved plane also gets a BANE background and RMS map, stacked into their own cubes. Measured after the convolution, so they describe the resolution rm-synthesis actually builds the FDF at. Defaults to None.
 
     Returns:

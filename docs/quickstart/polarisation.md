@@ -54,13 +54,6 @@ Two options steer this:
 - `--fixed-beam-shape`: convolve every channel to this `(arcsec, arcsec, deg)`
   beam instead of solving one, which gives a cube of constant resolution.
 
-RM-synthesis is only meaningful when every channel shares one beam, so the
-rm-synth stage brings its own inputs to a single 'total' beam covering the whole
-band. It writes those as new `.conv.fits` cubes and leaves the natural-resolution
-cubes alone, so both are available: the natural cubes to archive, the total cubes
-to synthesise from. See `RMSynthFieldOptions.beam_cutoff` to drop the coarsest
-channels from that solve rather than smoothing the whole band to reach them.
-
 ## Spectro-polarimetric imaging in WSClean
 
 We encourage users to carefully read the [WSclean documentation](https://wsclean.readthedocs.io/en/latest/). In practice, we have encountered a few common 'gotchas' when producing polarisation cube. As always, a user should pay attention to the output logs to see e.g. how many iterations have been performed and what the stopping criterion was. We also encourage the inspection of image, model, and residual products to see how well (or not) deconvolution has performed.
