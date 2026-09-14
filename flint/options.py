@@ -229,6 +229,8 @@ class PolFieldOptions(BaseOptions):
     """Cutoff in arcseconds to use when calculating the common beam to convol to"""
     fixed_beam_shape: tuple[float, float, float] | None = None
     """Specify the final beamsize of linmos field images in (arcsec, arcsec, deg)"""
+    total_resolution_cubes: bool = False
+    """Also write cubes at one beam covering the whole band, which RM synthesis needs"""
     pb_cutoff: float = 0.1
     """Primary beam attenuation cutoff to use during linmos"""
     bane_noise: bool = False

@@ -344,6 +344,7 @@ def _stage_mocks(
     tmp_path: Path,
     convolved_cubes: list[Path],
     bane_cubes: bool = False,
+    total_cubes: bool = False,
 ):
     """Replace every stage subflow of ``process_racs_all`` with a mock, so the
     wiring between them can be checked without imaging anything."""
@@ -370,6 +371,24 @@ def _stage_mocks(
         else {},
         rms_cubes={"q": tmp_path / "q_rms.fits", "u": tmp_path / "u_rms.fits"}
         if bane_cubes
+        else {},
+        total_stokes_cubes={
+            "q": tmp_path / "q.total.fits",
+            "u": tmp_path / "u.total.fits",
+        }
+        if total_cubes
+        else {},
+        total_bkg_cubes={
+            "q": tmp_path / "q.total_bkg.fits",
+            "u": tmp_path / "u.total_bkg.fits",
+        }
+        if total_cubes and bane_cubes
+        else {},
+        total_rms_cubes={
+            "q": tmp_path / "q.total_rms.fits",
+            "u": tmp_path / "u.total_rms.fits",
+        }
+        if total_cubes and bane_cubes
         else {},
         mfs_products={},
         terminal_futures=[],
@@ -531,6 +550,131 @@ def test_the_bane_cubes_are_spiced(
         *pol_result.weight_cubes.values(),
         *pol_result.bkg_cubes.values(),
         *pol_result.rms_cubes.values(),
+    ]
+
+
+def _pol_field_options():
+    """The options the racs-all flow handed the polarisation stage"""
+    from flint.prefect.flows import racs_all_pipeline
+
+    return racs_all_pipeline.process_science_fields_pol.with_options.return_value.call_args.kwargs[
+        "pol_field_options"
+    ]
+
+
+def test_the_polarisation_stage_is_asked_for_total_resolution_cubes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """rm-synth needs one beam across the band. Made while the co-added planes
+    are still in hand, rather than by splitting the finished cubes apart again in
+    the rm-synth stage, so the flow turns this on itself."""
+    _stage_mocks(monkeypatch=monkeypatch, tmp_path=tmp_path, convolved_cubes=[])
+
+    _run_racs_all(tmp_path=tmp_path)
+
+    assert _pol_field_options().total_resolution_cubes
+
+
+def test_no_total_resolution_cubes_when_rmsynth_is_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nothing else reads them, so without the rm-synth stage they would be a
+    second set of full-size cubes written for no one."""
+    _stage_mocks(monkeypatch=monkeypatch, tmp_path=tmp_path, convolved_cubes=[])
+    container = tmp_path / "container.sif"
+    container.touch()
+    catalogue = tmp_path / "components.fits"
+    catalogue.touch()
+
+    with prefect_test_harness(), disable_run_logger():
+        process_racs_all(
+            pipeline_options=RACSAllPipelineOptions(
+                imaging_cluster_config=tmp_path,
+                polarisation_cluster_config=tmp_path,
+                spice_cluster_config=tmp_path,
+                skip_rmsynth=True,
+            ),
+            racs_all_options=RACSAllOptions(
+                low_data=tmp_path, mid_data=tmp_path, high_data=tmp_path
+            ),
+            pol_field_options=PolFieldOptions(
+                wsclean_container=container, yandasoft_container=container
+            ),
+            rmsynth_field_options=RMSynthFieldOptions(),
+            spice_field_options=SpiceFieldOptions(catalogue=catalogue),
+        )
+
+    assert not _pol_field_options().total_resolution_cubes
+
+
+def test_rmsynth_is_given_the_total_resolution_cubes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The natural cubes are what gets archived; the total cubes are what the FDF
+    is built from. Handing over the natural ones would have rm-synth convolve
+    them all over again."""
+    pol_result, _, rmsynth_stage = _stage_mocks(
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        convolved_cubes=[],
+        bane_cubes=True,
+        total_cubes=True,
+    )
+
+    _run_racs_all(tmp_path=tmp_path)
+
+    options = _rmsynth_options(rmsynth_stage)
+    assert options.stokes_cubes.q_path == pol_result.total_stokes_cubes["q"]
+    # The noise has to describe the resolution the FDF is built at, so the RMS
+    # measured on the natural planes is the wrong one here
+    assert isinstance(options.error_cubes, NoiseCubesForRMSynth)
+    assert options.error_cubes.q_path == pol_result.total_rms_cubes["q"]
+
+
+def test_the_natural_cubes_are_used_when_there_are_no_total_ones(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """rm-synth keeps its own convolution, so a polarisation stage that wrote no
+    total cubes still has something to synthesise from."""
+    pol_result, _, rmsynth_stage = _stage_mocks(
+        monkeypatch=monkeypatch, tmp_path=tmp_path, convolved_cubes=[], bane_cubes=True
+    )
+
+    _run_racs_all(tmp_path=tmp_path)
+
+    options = _rmsynth_options(rmsynth_stage)
+    assert options.stokes_cubes.q_path == pol_result.stokes_cubes["q"]
+    assert options.error_cubes.q_path == pol_result.rms_cubes["q"]
+
+
+def test_the_total_cubes_are_spiced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """They are full-size cubes on the same pixel grid as the natural ones. Left
+    out they would sit untrimmed and uncompressed beside everything that was."""
+    pol_result, spice_stage, _ = _stage_mocks(
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        convolved_cubes=[],
+        bane_cubes=True,
+        total_cubes=True,
+    )
+
+    _run_racs_all(tmp_path=tmp_path)
+
+    spiced = spice_stage.with_options.return_value.call_args.kwargs[
+        "spice_field_options"
+    ]
+    assert spiced.cubes == [
+        *pol_result.stokes_cubes.values(),
+        *pol_result.total_stokes_cubes.values(),
+    ]
+    assert spiced.weight_cubes == [
+        *pol_result.weight_cubes.values(),
+        *pol_result.bkg_cubes.values(),
+        *pol_result.rms_cubes.values(),
+        *pol_result.total_bkg_cubes.values(),
+        *pol_result.total_rms_cubes.values(),
     ]
 
 

@@ -33,6 +33,7 @@ from flint.convol import (
     BeamShape,
     convolve_images,
     convolve_images_or_blank,
+    convolve_plane_to_beam,
     get_common_beam,
 )
 from flint.flagging import flag_ms_aoflagger
@@ -65,6 +66,7 @@ from flint.ms import (
 )
 from flint.naming import (
     FITSMaskNames,
+    ResolutionModes,
     create_name_from_common_fields,
     get_beam_resolution_str,
     get_fits_cube_from_paths,
@@ -102,6 +104,7 @@ task_create_apply_solutions_cmd: Task[P, R] = task(create_apply_solutions_cmd)
 task_rename_column_in_ms: Task[P, R] = task(rename_column_in_ms)
 task_convolve_images = task(convolve_images)
 task_convolve_images_or_blank = task(convolve_images_or_blank)
+task_convolve_plane_to_beam = task(convolve_plane_to_beam)
 task_split_and_get_image_set = task(split_and_get_image_set)
 task_image_set_from_result = task(image_set_from_result)
 task_combine_images_to_cube = task(combine_images_to_cube)
@@ -999,11 +1002,23 @@ class LinmosCubes(NamedTuple):
     """Background cube, None unless BANE was asked for"""
     rms: PrefectFuture[Path] | None = None
     """RMS noise cube, None unless BANE was asked for"""
+    total_image: PrefectFuture[Path] | None = None
+    """The image cube at one beam covering the band, None unless asked for"""
+    total_bkg: PrefectFuture[Path] | None = None
+    """Background cube measured on the total-resolution planes"""
+    total_rms: PrefectFuture[Path] | None = None
+    """RMS noise cube measured on the total-resolution planes"""
 
     @property
     def futures(self) -> list[PrefectFuture[Path]]:
         """Every cube actually being made, for callers that only need to wait"""
         return [future for future in self if future is not None]
+
+
+def _resolution_suffix(suffix_str: str | None, mode: ResolutionModes) -> str:
+    """The linmos suffix with the resolution of the product appended"""
+    resolution = get_beam_resolution_str(mode=mode)
+    return f"{suffix_str}.{resolution}" if suffix_str else resolution
 
 
 def linmos_channel_groups_to_cubes(
@@ -1016,6 +1031,8 @@ def linmos_channel_groups_to_cubes(
     suffix_str: str | None = None,
     holofile: Path | None = None,
     fft_bane_options: FFTBANEOptions | None = None,
+    total_beam_shape: PrefectFuture[BeamShape] | None = None,
+    beam_cutoff: float | None = None,
 ) -> LinmosCubes:
     """Co-add beam images one channel at a time, in parallel, then stack the
     resulting mosaics back into image and weight cubes.
@@ -1035,6 +1052,8 @@ def linmos_channel_groups_to_cubes(
         suffix_str (str | None, optional): Additional suffix added to the linmos and cube names. Defaults to None.
         holofile (Path | None, optional): Holography file overriding the one in ``linmos_options``. Defaults to None.
         fft_bane_options (FFTBANEOptions | None, optional): When given, each co-added channel also gets a BANE background and RMS map, stacked into their own cubes. Defaults to None, i.e. no BANE.
+        total_beam_shape (PrefectFuture[BeamShape] | None, optional): When given, each co-added plane is also convolved to this one beam and stacked into a second set of cubes. See ``total_beam_from_channel_groups``. Defaults to None, i.e. the natural-resolution cubes alone.
+        beam_cutoff (float | None, optional): Planes coarser than this, in arcsec, are blanked rather than convolved to ``total_beam_shape``. Defaults to no cutoff.
 
     Returns:
         LinmosCubes: The cubes being created
@@ -1051,6 +1070,9 @@ def linmos_channel_groups_to_cubes(
     weight_planes: list[PrefectFuture[Path]] = []
     bkg_planes: list[PrefectFuture[Path]] = []
     rms_planes: list[PrefectFuture[Path]] = []
+    total_planes: list[PrefectFuture[Path]] = []
+    total_bkg_planes: list[PrefectFuture[Path]] = []
+    total_rms_planes: list[PrefectFuture[Path]] = []
     for channel_idx, beam_images in enumerate(channel_groups):
         linmos_result = task_linmos_images.submit(
             image_list=list(beam_images),
@@ -1081,6 +1103,28 @@ def linmos_channel_groups_to_cubes(
             bkg_planes.append(task_getattr.submit(bane_maps, "bkg_image"))
             rms_planes.append(task_getattr.submit(bane_maps, "rms_image"))
 
+        if total_beam_shape is not None:
+            # Convolved here, while the plane is already in hand, rather than by
+            # splitting the finished cube back apart downstream
+            total_plane = task_convolve_plane_to_beam.submit(
+                plane=image_plane,
+                beam_shape=total_beam_shape,
+                cutoff=beam_cutoff,
+                convol_suffix=get_beam_resolution_str(mode="total"),
+            )
+            total_planes.append(total_plane)
+
+            if fft_bane_options is not None:
+                total_bane_maps = task_bane_fits_image.submit(
+                    image=total_plane, fft_bane_options=fft_bane_options
+                )
+                total_bkg_planes.append(
+                    task_getattr.submit(total_bane_maps, "bkg_image")
+                )
+                total_rms_planes.append(
+                    task_getattr.submit(total_bane_maps, "rms_image")
+                )
+
     bounding_box: bool | PrefectFuture[BoundingBox] = False
     if fitscube_options.bounding_box:
         # Passing the future in is what forms the barrier - every channel has to
@@ -1093,7 +1137,8 @@ def linmos_channel_groups_to_cubes(
     # Stack the per-channel mosaics back into image and weight cubes,
     # removing the per-channel mosaics once cubed.
     cube_prefix = task_create_name_from_common_fields.submit(
-        in_paths=image_planes, additional_suffixes=suffix_str
+        in_paths=image_planes,
+        additional_suffixes=_resolution_suffix(suffix_str, "natural"),
     )
     cubes = {
         mode: task_combine_images_to_cube.submit(
@@ -1102,6 +1147,9 @@ def linmos_channel_groups_to_cubes(
             mode=mode,
             fitscube_options=fitscube_options,
             bounding_box=bounding_box,
+            # ``remove_original_images`` has the image cube delete the planes the
+            # total convolution reads, so it may not run until that has finished
+            wait_for=(total_planes or None) if mode == "image" else None,
         )
         for planes, mode in (
             (image_planes, "image"),
@@ -1111,11 +1159,37 @@ def linmos_channel_groups_to_cubes(
         )
         if planes
     }
+    total_prefix = (
+        task_create_name_from_common_fields.submit(
+            in_paths=image_planes,
+            additional_suffixes=_resolution_suffix(suffix_str, "total"),
+        )
+        if total_planes
+        else None
+    )
+    total_cubes = {
+        mode: task_combine_images_to_cube.submit(
+            images=planes,
+            prefix=total_prefix,
+            mode=mode,
+            fitscube_options=fitscube_options,
+            bounding_box=bounding_box,
+        )
+        for planes, mode in (
+            (total_planes, "image"),
+            (total_bkg_planes, "bkg"),
+            (total_rms_planes, "rms"),
+        )
+        if planes
+    }
     return LinmosCubes(
         image=cubes["image"],
         weight=cubes["weight"],
         bkg=cubes.get("bkg"),
         rms=cubes.get("rms"),
+        total_image=total_cubes.get("image"),
+        total_bkg=total_cubes.get("bkg"),
+        total_rms=total_cubes.get("rms"),
     )
 
 
@@ -1252,6 +1326,39 @@ def convolve_channel_groups_to_natural_resolution(
         stokes: [future.result() for future in futures]
         for stokes, futures in convolved_groups.items()
     }
+
+
+def total_beam_from_channel_groups(
+    stokes_channel_groups: dict[str, list[list[Path]]],
+    cutoff: float | None = None,
+    fixed_beam_shape: Sequence[float] | None = None,
+) -> PrefectFuture[BeamShape]:
+    """Solve the one beam that covers every channel of every Stokes, which is the
+    'total' resolution mode of racs_tools and what RM-synthesis needs of its
+    inputs.
+
+    Solved over a single image per channel.
+    ``convolve_channel_groups_to_natural_resolution`` has already brought every
+    beam and every Stokes of a channel to one resolution, so the rest of a
+    channel's images carry nothing the first does not.
+
+    Args:
+        stokes_channel_groups (dict[str, list[list[Path]]]): For each Stokes, the beam images of each channel, already at their natural resolution
+        cutoff (float | None, optional): Images whose major axis exceeds this, in arcsec, are left out of the solve rather than dragging the beam out to them. Defaults to no cutoff.
+        fixed_beam_shape (Sequence[float] | None, optional): Use this (arcsec, arcsec, deg) rather than solving one. Defaults to solving.
+
+    Returns:
+        PrefectFuture[BeamShape]: The beam every channel is brought to
+    """
+    channel_groups = next(iter(stokes_channel_groups.values()))
+    channel_images = [beam_images[0] for beam_images in channel_groups]
+    logger.info(f"Solving a total common beam over {len(channel_images)} channels")
+
+    return task_get_common_beam_from_images.submit(
+        image_paths=channel_images,
+        cutoff=cutoff,
+        fixed_beam_shape=fixed_beam_shape,
+    )
 
 
 def convolve_mfs_beam_images_to_common_resolution(

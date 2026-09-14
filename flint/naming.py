@@ -7,7 +7,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal, NamedTuple, TypeVar
+from typing import Any, Literal, NamedTuple, TypeVar, get_args
 
 from flint.exceptions import NamingException
 from flint.logging import logger
@@ -314,35 +314,29 @@ def create_imaging_name_prefix(
     return ".".join(names)
 
 
-ResolutionModes = Literal["optimal", "fixed"]
+ResolutionModes = Literal["optimal", "fixed", "raw", "natural", "total"]
+"""The resolution a product is at. 'optimal'/'fixed' say how a single beam was
+chosen, 'natural'/'total' whether a cube's beam follows frequency or covers the
+whole band."""
 
 
 def get_beam_resolution_str(mode: ResolutionModes, marker: str | None = None) -> str:
-    """Map a beam resolution mode to an appropriate suffix. This
-    is located her in anticipation of other imaging modes.
-
-    Supported modes are: 'optimal', 'fixed', 'raw'
+    """The filename suffix marking a product at ``mode`` resolution.
 
     Args:
-        mode (Literal["fixed","optimal"]): The mode of image resolution to use.
-        marker (Optional[str], optional): Append the marker to the end of the returned mode string. If None mode string is returned. Defaults to None.
+        mode (ResolutionModes): The resolution the product is at
+        marker (str | None, optional): Appended to the suffix when given. Defaults to None.
 
     Raises:
         ValueError: Raised when an unrecognised mode is supplied
 
     Returns:
-        str: The appropriate string for mapped mode
+        str: The suffix to use
     """
-    # NOTE: Arguably this is a trash and needless function. Adding it
-    # in case other modes are ever needed or referenced. No idea whether
-    # it will ever been needed and could be removed in future.
-    supported_modes: dict[str, str] = dict(optimal="optimal", fixed="fixed", raw="raw")
-    if mode.lower() not in supported_modes.keys():
-        raise ValueError(
-            f"Received {mode=}, supported modes are {supported_modes.keys()}"
-        )
-
-    mode_str = supported_modes[mode.lower()]
+    supported_modes = get_args(ResolutionModes)
+    mode_str = mode.lower()
+    if mode_str not in supported_modes:
+        raise ValueError(f"Received {mode=}, supported modes are {supported_modes}")
 
     return mode_str + marker if marker else mode_str
 

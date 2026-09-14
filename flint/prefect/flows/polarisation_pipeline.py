@@ -53,6 +53,7 @@ from flint.prefect.common.imaging import (
     task_split_and_get_image_set,
     task_transpose_and_sort_channel_images,
     task_wsclean_imager,
+    total_beam_from_channel_groups,
 )
 from flint.prefect.common.utils import (
     task_create_field_summary,
@@ -77,6 +78,12 @@ class PolPipelineResult(BaseOptions):
     """BANE background cube per imaged polarisation. Empty unless asked for"""
     rms_cubes: dict[str, Path] = {}
     """BANE RMS cube per imaged polarisation, measured off the co-added planes. Empty unless asked for"""
+    total_stokes_cubes: dict[str, Path] = {}
+    """The Stokes cube at one beam covering the band, per polarisation. Empty unless ``PolFieldOptions.total_resolution_cubes`` was set"""
+    total_bkg_cubes: dict[str, Path] = {}
+    """BANE background cube per polarisation, measured on the total-resolution planes. Empty unless both were asked for"""
+    total_rms_cubes: dict[str, Path] = {}
+    """BANE RMS cube per polarisation, measured on the total-resolution planes. What rm-synthesis wants, as it describes the resolution the FDF is built at"""
     mfs_products: dict[str, dict[str, Path]]
     """MFS image/model/residual products co-added per Stokes parameter, keyed by Stokes ('i', 'q', 'u', 'v') then product type ('image', 'model', 'residual'). Only populated for Stokes imaged under a polarisation with ``WSCleanOptions.flint_save_mfs_products`` set"""
     terminal_futures: list[PrefectFuture[Any]]
@@ -369,6 +376,19 @@ def process_science_fields_pol(
         fixed_beam_shape=pol_field_options.fixed_beam_shape,
     )
 
+    # Solved once over every Stokes, so each of them is cubed at the same total
+    # resolution. Every channel already shares a beam across Stokes, so a beam
+    # solved per Stokes here would only find the same answer three times.
+    total_beam_shape = (
+        total_beam_from_channel_groups(
+            stokes_channel_groups=stokes_channel_groups,
+            cutoff=pol_field_options.beam_cutoff,
+            fixed_beam_shape=pol_field_options.fixed_beam_shape,
+        )
+        if pol_field_options.total_resolution_cubes
+        else None
+    )
+
     # Stokes I beam images (per channel) are needed to correct widefield leakage
     # in the Stokes Q/U mosaics. If Stokes I was not imaged we cannot do this.
     i_channel_groups = stokes_channel_groups.get("i")
@@ -403,6 +423,9 @@ def process_science_fields_pol(
     stokes_weight_cubes: dict[str, PrefectFuture[Path]] = {}
     stokes_bkg_cubes: dict[str, PrefectFuture[Path]] = {}
     stokes_rms_cubes: dict[str, PrefectFuture[Path]] = {}
+    stokes_total_cubes: dict[str, PrefectFuture[Path]] = {}
+    stokes_total_bkg_cubes: dict[str, PrefectFuture[Path]] = {}
+    stokes_total_rms_cubes: dict[str, PrefectFuture[Path]] = {}
     all_input_images: list[Path] = []
     for stokes, channel_groups in stokes_channel_groups.items():
         with tags(f"stokes-{stokes}"):
@@ -423,12 +446,22 @@ def process_science_fields_pol(
                 fitscube_options=fitscube_options,
                 suffix_str=POL_NAME_SUFFIX,
                 fft_bane_options=fft_bane_options,
+                total_beam_shape=total_beam_shape,
+                beam_cutoff=pol_field_options.beam_cutoff,
             )
             stokes_image_cubes[stokes] = stokes_cubes.image
             stokes_weight_cubes[stokes] = stokes_cubes.weight
             if stokes_cubes.bkg is not None and stokes_cubes.rms is not None:
                 stokes_bkg_cubes[stokes] = stokes_cubes.bkg
                 stokes_rms_cubes[stokes] = stokes_cubes.rms
+            if stokes_cubes.total_image is not None:
+                stokes_total_cubes[stokes] = stokes_cubes.total_image
+            if (
+                stokes_cubes.total_bkg is not None
+                and stokes_cubes.total_rms is not None
+            ):
+                stokes_total_bkg_cubes[stokes] = stokes_cubes.total_bkg
+                stokes_total_rms_cubes[stokes] = stokes_cubes.total_rms
             cube_results.extend(stokes_cubes.futures)
 
     # Remove the convolved per-beam channel images now that every cube is built.
@@ -511,6 +544,15 @@ def process_science_fields_pol(
         },
         rms_cubes={
             stokes: future.result() for stokes, future in stokes_rms_cubes.items()
+        },
+        total_stokes_cubes={
+            stokes: future.result() for stokes, future in stokes_total_cubes.items()
+        },
+        total_bkg_cubes={
+            stokes: future.result() for stokes, future in stokes_total_bkg_cubes.items()
+        },
+        total_rms_cubes={
+            stokes: future.result() for stokes, future in stokes_total_rms_cubes.items()
         },
         weight_cubes={
             stokes: future.result() for stokes, future in stokes_weight_cubes.items()

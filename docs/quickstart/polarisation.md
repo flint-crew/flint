@@ -54,12 +54,26 @@ Two options steer this:
 - `--fixed-beam-shape`: convolve every channel to this `(arcsec, arcsec, deg)`
   beam instead of solving one, which gives a cube of constant resolution.
 
-RM-synthesis is only meaningful when every channel shares one beam, so the
-rm-synth stage brings its own inputs to a single 'total' beam covering the whole
-band. It writes those as new `.conv.fits` cubes and leaves the natural-resolution
-cubes alone, so both are available: the natural cubes to archive, the total cubes
-to synthesise from. See `RMSynthFieldOptions.beam_cutoff` to drop the coarsest
-channels from that solve rather than smoothing the whole band to reach them.
+RM-synthesis is only meaningful when every channel shares one beam, the 'total'
+sense of `RACS-tools`. Setting `--total-resolution-cubes` convolves each co-added
+plane to that single beam as well, and stacks those into a second set of cubes.
+Both sets are then written, and the resolution is part of the name:
+
+```
+SB59058.RACS_1626-84.pol.natural.image.cube.fits
+SB59058.RACS_1626-84.pol.total.image.cube.fits
+```
+
+The natural cubes are the ones to archive; the total cubes are the ones to
+synthesise from. The `racs-all` flow sets this itself whenever the rm-synth stage
+runs, so that stage is handed cubes already at one beam and does no convolution
+of its own.
+
+Run standalone, the rm-synth stage still checks the cubes it is given and brings
+them to a total beam when they do not share one, writing its own `.total` cubes
+and leaving the inputs alone. See `RMSynthFieldOptions.beam_cutoff` to drop the
+coarsest channels from that solve rather than smoothing the whole band to reach
+them.
 
 ## Spectro-polarimetric imaging in WSClean
 
