@@ -1104,8 +1104,6 @@ def linmos_channel_groups_to_cubes(
             rms_planes.append(task_getattr.submit(bane_maps, "rms_image"))
 
         if total_beam_shape is not None:
-            # Convolved here, while the plane is already in hand, rather than by
-            # splitting the finished cube back apart downstream
             total_plane = task_convolve_plane_to_beam.submit(
                 plane=image_plane,
                 beam_shape=total_beam_shape,
