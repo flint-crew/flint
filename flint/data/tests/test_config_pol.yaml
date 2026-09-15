@@ -107,9 +107,19 @@ polarisation:
   total:
     wsclean:
       squared_channel_joining: false
+      flint_save_mfs_products: true
   linear:
     wsclean:
       join_polarizations: true
       squared_channel_joining: true
   circular:
     wsclean: {}
+
+rmsynth:
+  rmsynth:
+    phi_max_radm2: 1000.0
+    # 'auto', 'per_pixel', or a lambda^2 in m^2
+    lam_sq_0_m2: auto
+  rmclean:
+    auto_mask: 7
+    auto_threshold: 1
