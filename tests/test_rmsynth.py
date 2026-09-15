@@ -34,6 +34,7 @@ from flint.rmsynth import (
     needs_rmclean,
     run_rmclean_3d,
     run_rmsynth_3d,
+    write_rm_product_to_fits,
     write_rm_products,
     write_stokes_i_coeff_maps_to_fits,
 )
@@ -379,6 +380,81 @@ def test_rmsynth_writes_a_named_map_per_stokes_i_model_term(
             fits.getdata(Path(f"{output_prefix}.stokesi.coeff.alpha.fits")),
             equal_nan=True,
         )
+
+
+def test_compute_rm_products_keeps_what_the_writer_returns() -> None:
+    """Given a writer, the batch comes back holding paths, not the maps.
+
+    That is what bounds the memory: there are 21 maps a label at `ny * nx` each,
+    and a wide mosaic cannot hold them all at once waiting for the last one.
+    """
+    import dask.array as dask_array
+
+    targets = {
+        "first": dask_array.arange(4, chunks=2) * 2.0,
+        "second": dask_array.arange(4, chunks=2) + 1.0,
+    }
+    seen = {}
+
+    def writer(key: str, value: object) -> list[Path]:
+        seen[key] = np.asarray(value).tolist()
+        return [Path(f"{key}.fits")]
+
+    computed = compute_rm_products(
+        compute_targets=targets,
+        fuse_config={},
+        scheduler="synchronous",
+        workload="test",
+        on_result=writer,
+    )
+
+    assert seen == {"first": [0.0, 2.0, 4.0, 6.0], "second": [1.0, 2.0, 3.0, 4.0]}
+    assert computed == {"first": [Path("first.fits")], "second": [Path("second.fits")]}
+
+
+@pytest.mark.parametrize(
+    ("key", "expected"),
+    [
+        ("moment.clean.mom0", "{prefix}.fdf.clean.mom0.fits"),
+        ("debiased.clean.mom0", "{prefix}.fdf.clean.mom0.debiased.fits"),
+        ("peak.dirty.peak_pi", "{prefix}.fdf.dirty.peak_pi.fits"),
+        ("peak.dirty.peak_rm_radm2", "{prefix}.fdf.dirty.peak_rm.fits"),
+        ("stokes_i_alpha", "{prefix}.stokesi.alpha.fits"),
+    ],
+)
+def test_write_rm_product_names_each_product(
+    tmp_path: Path, key: str, expected: str
+) -> None:
+    """Every compute key resolves to the file the grouped writers would give it."""
+    reference_header = fits.getheader(_make_i_cube(tmp_path))
+    output_prefix = tmp_path / "test_field"
+
+    written = write_rm_product_to_fits(
+        key=key,
+        data=np.zeros((NY, NX)),
+        reference_header=reference_header,
+        output_prefix=output_prefix,
+    )
+
+    assert written == [Path(expected.format(prefix=output_prefix))]
+    assert written[0].exists()
+
+
+def test_debiased_mom0_debias_is_not_written_twice(tmp_path: Path) -> None:
+    """Debiasing leaves mom0_debias alone, so a second copy under a second name
+    would read as a second measurement."""
+    reference_header = fits.getheader(_make_i_cube(tmp_path))
+
+    assert (
+        write_rm_product_to_fits(
+            key="debiased.clean.mom0_debias",
+            data=np.zeros((NY, NX)),
+            reference_header=reference_header,
+            output_prefix=tmp_path / "test_field",
+        )
+        == []
+    )
+    assert not list(tmp_path.glob("*.debiased.fits"))
 
 
 def test_stokes_i_coeff_maps_without_an_error_cube(tmp_path: Path) -> None:

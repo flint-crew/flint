@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Literal, TypeAlias
@@ -71,6 +71,13 @@ MOMENT_MAPS = {
     "pa_lam_sq_0_error": ("pa_lam_sq_0_error", "deg", "1-sigma on pa_lam_sq_0"),
 }
 
+STOKES_I_MAP_SUFFIXES = {
+    "stokes_i_ref_flux": "stokesi.ref_flux",
+    "stokes_i_alpha": "stokesi.alpha",
+    "stokes_i_alpha_error": "stokesi.alpha_error",
+    "stokes_i_model_order": "stokesi.model_order",
+}
+
 PEAK_MAPS = {
     "peak_pi": ("peak_pi", "Jy/beam", "peak polarised intensity"),
     "peak_pi_debias": ("peak_pi_debias", "Jy/beam", "debiased peak"),
@@ -82,6 +89,14 @@ PEAK_MAPS = {
     "peak_pa0_deg": ("peak_pa0", "deg", "intrinsic polarisation angle"),
     "peak_pa0_error_deg": ("peak_pa0_error", "deg", "1-sigma on the intrinsic angle"),
 }
+
+
+def _write_map(data: np.ndarray, header: fits.Header, output_path: Path) -> Path:
+    """Write one float32 map, the last step of every writer here."""
+    fits.writeto(
+        output_path, np.asarray(data, dtype=np.float32), header, overwrite=True
+    )
+    return output_path
 
 
 def needs_rmclean(
@@ -247,37 +262,22 @@ def write_moment_maps_to_fits(
         list[Path]: One path per ``MOMENT_MAPS`` entry, plus the debiased set
         less ``mom0_debias`` if debiased_moments is given
     """
-    celestial = WCS(reference_header).celestial.to_header()
 
-    def _write(
-        moment_set: FaradayMoments,
-        maps: dict[str, tuple[str, str, str]],
-        suffix: str,
-    ) -> list[Path]:
-        written = []
-        for field, (name, unit, comment) in maps.items():
-            header = celestial.copy()
-            header["BUNIT"] = (unit, comment)
-            output_path = Path(f"{output_prefix}.fdf.{label}.{name}{suffix}.fits")
-            fits.writeto(
-                output_path,
-                np.asarray(getattr(moment_set, field), dtype=np.float32),
-                header,
-                overwrite=True,
+    def _write(moment_set: FaradayMoments, kind: str) -> list[Path]:
+        return [
+            path
+            for field in MOMENT_MAPS
+            for path in write_rm_product_to_fits(
+                key=f"{kind}.{label}.{field}",
+                data=getattr(moment_set, field),
+                reference_header=reference_header,
+                output_prefix=output_prefix,
             )
-            written.append(output_path)
-        return written
+        ]
 
-    output_paths = _write(moments, MOMENT_MAPS, suffix="")
+    output_paths = _write(moments, "moment")
     if debiased_moments is not None:
-        # a debiased FDF leaves mom0_debias unchanged, so writing it again under
-        # a second name would read as a second measurement
-        debiased_maps = {
-            field: entry
-            for field, entry in MOMENT_MAPS.items()
-            if field != "mom0_debias"
-        }
-        output_paths.extend(_write(debiased_moments, debiased_maps, suffix=".debiased"))
+        output_paths.extend(_write(debiased_moments, "debiased"))
 
     return output_paths
 
@@ -344,25 +344,18 @@ def write_stokes_i_fit_maps_to_fits(
     Returns:
         list[Path]: The written map paths, one per entry in ``stokes_i_maps``
     """
-    suffixes = {
-        "stokes_i_ref_flux": "stokesi.ref_flux",
-        "stokes_i_alpha": "stokesi.alpha",
-        "stokes_i_alpha_error": "stokesi.alpha_error",
-        "stokes_i_model_order": "stokesi.model_order",
-    }
-    header = _stokes_i_fit_header(
-        reference_header=reference_header,
-        ref_freq_hz=ref_freq_hz,
-        fit_function=fit_function,
-    )
-    output_paths = []
-    for key, data in stokes_i_maps.items():
-        output_path = Path(f"{output_prefix}.{suffixes[key]}.fits")
-        fits.writeto(
-            output_path, np.asarray(data, dtype=np.float32), header, overwrite=True
+    return [
+        path
+        for key, data in stokes_i_maps.items()
+        for path in write_rm_product_to_fits(
+            key=key,
+            data=data,
+            reference_header=reference_header,
+            output_prefix=output_prefix,
+            ref_freq_hz=ref_freq_hz,
+            fit_function=fit_function,
         )
-        output_paths.append(output_path)
-    return output_paths
+    ]
 
 
 def write_stokes_i_coeff_maps_to_fits(
@@ -558,6 +551,7 @@ def compute_rm_products(
     fuse_config: dict[str, Any],
     scheduler: Client | str,
     workload: str,
+    on_result: Callable[[str, Any], Any] | None = None,
 ) -> dict[str, Any]:
     """Compute every product in one shared pass, reporting each as it lands.
 
@@ -579,9 +573,15 @@ def compute_rm_products(
         fuse_config (dict[str, Any]): Dask fusion settings the submission must be made under
         scheduler (Client | str): A distributed Client, or a local scheduler name
         workload (str): Description of the work, logged up front. See ``_describe_rm_workload``
+        on_result (Callable[[str, Any], Any] | None, optional): Called with each
+            key and its value as that value lands, and what it returns is kept
+            in place of the value. Pass a writer to keep one product in memory
+            rather than all of them: the maps are ``ny * nx`` each and there are
+            21 per label. Defaults to None, keeping the values themselves.
 
     Returns:
-        dict[str, Any]: The computed value for each key in ``compute_targets``
+        dict[str, Any]: Per key, the computed value, or whatever ``on_result``
+        returned for it
     """
     compute_keys = list(compute_targets.keys())
     start = time.time()
@@ -593,7 +593,12 @@ def compute_rm_products(
                 *(compute_targets[key] for key in compute_keys), scheduler=scheduler
             )
         logger.info(f"Computed {len(compute_keys)} RM products in {_elapsed(start)}")
-        return dict(zip(compute_keys, computed_values))
+        # A local scheduler hands back every product at once, so there is
+        # nothing to stream; `on_result` still runs, for one code path downstream.
+        computed_locally = dict(zip(compute_keys, computed_values))
+        if on_result is None:
+            return computed_locally
+        return {key: on_result(key, value) for key, value in computed_locally.items()}
 
     logger.info(f"Computing RM products ({workload})")
     with dask.config.set(fuse_config):
@@ -616,7 +621,11 @@ def compute_rm_products(
             # product still surfaces here rather than being dropped
             result = future.result()
             for key in keys:
-                computed[key] = result
+                computed[key] = result if on_result is None else on_result(key, result)
+            # The local copy is the only one this process holds, so letting it
+            # go here is what keeps the peak to one product rather than all of
+            # them. Pointless without `on_result`, which has already consumed it.
+            del result
             # Elapsed since submission, not this product's own runtime: they
             # share one graph, so "how far into the run are we" is the
             # answerable question
@@ -676,20 +685,117 @@ def write_peak_maps_to_fits(
     Returns:
         list[Path]: The written map paths, nine per FDF
     """
-    celestial = WCS(reference_header).celestial.to_header()
-    output_paths = []
-    for field, (suffix, unit, comment) in PEAK_MAPS.items():
-        header = celestial.copy()
-        header["BUNIT"] = (unit, comment)
-        output_path = Path(f"{output_prefix}.fdf.{label}.{suffix}.fits")
-        fits.writeto(
-            output_path,
-            np.asarray(getattr(peaks, field), dtype=np.float32),
-            header,
-            overwrite=True,
+    return [
+        path
+        for field in PEAK_MAPS
+        for path in write_rm_product_to_fits(
+            key=f"peak.{label}.{field}",
+            data=getattr(peaks, field),
+            reference_header=reference_header,
+            output_prefix=output_prefix,
         )
-        output_paths.append(output_path)
-    return output_paths
+    ]
+
+
+def write_rm_product_to_fits(
+    key: str,
+    data: np.ndarray,
+    reference_header: fits.Header,
+    output_prefix: Path,
+    ref_freq_hz: float | None = None,
+    fit_function: str | None = None,
+    coeff_names: tuple[str, ...] | None = None,
+) -> list[Path]:
+    """Write one computed product, named and united from its compute key.
+
+    ``write_rm_products`` computes its products as a batch and writes each one
+    as it lands, so this takes a single map rather than a set: holding the whole
+    set costs ``21 * ny * nx * 4`` bytes a label, which no chunk setting bounds.
+    The grouped writers above take the same maps when a caller already has them
+    all in hand.
+
+    Args:
+        key (str): Compute key, e.g. ``moment.clean.mom0`` or ``stokes_i_alpha``
+        data (np.ndarray): The computed map, (ny, nx), or (n_coeff, ny, nx) for the model terms
+        reference_header (fits.Header): Header to derive the spatial WCS from
+        output_prefix (Path): Common prefix for the output files
+        ref_freq_hz (float | None, optional): Frequency the Stokes I fit is referenced to. Defaults to None.
+        fit_function (str | None, optional): The Stokes I fit function. Defaults to None.
+        coeff_names (tuple[str, ...] | None, optional): Name of each plane of the model-term cube. Defaults to None.
+
+    Returns:
+        list[Path]: The paths written, empty for a key with no FITS output
+    """
+    kind, _, rest = key.partition(".")
+
+    if kind in ("moment", "debiased", "peak"):
+        label, _, field = rest.partition(".")
+        maps = PEAK_MAPS if kind == "peak" else MOMENT_MAPS
+        # A debiased FDF leaves mom0_debias unchanged, so writing it again under
+        # a second name would read as a second measurement.
+        if kind == "debiased" and field == "mom0_debias":
+            return []
+        name, unit, comment = maps[field]
+        suffix = ".debiased" if kind == "debiased" else ""
+        header = WCS(reference_header).celestial.to_header()
+        header["BUNIT"] = (unit, comment)
+        return [
+            _write_map(
+                data, header, Path(f"{output_prefix}.fdf.{label}.{name}{suffix}.fits")
+            )
+        ]
+
+    if key == "rmclean_niter":
+        return [
+            write_rmclean_niter_map_to_fits(
+                niter_map=data,
+                reference_header=reference_header,
+                output_prefix=output_prefix,
+            )
+        ]
+
+    if key in STOKES_I_MAP_SUFFIXES:
+        header = _stokes_i_fit_header(
+            reference_header=reference_header,
+            ref_freq_hz=ref_freq_hz,
+            fit_function=fit_function,
+        )
+        path = Path(f"{output_prefix}.{STOKES_I_MAP_SUFFIXES[key]}.fits")
+        return [_write_map(data, header, path)]
+
+    if key in ("stokes_i_coeff", "stokes_i_coeff_error"):
+        # The plane names are what make the terms usable, so without them the
+        # maps are not worth writing.
+        if coeff_names is None:
+            logger.warning(
+                "rm-lite returned Stokes I model terms with no names for them, so "
+                "the per-term maps cannot be written."
+            )
+            return []
+        is_error = key.endswith("_error")
+        written = []
+        for index, name in enumerate(coeff_names):
+            header = _stokes_i_fit_header(
+                reference_header=reference_header,
+                ref_freq_hz=ref_freq_hz,
+                fit_function=fit_function,
+                coeff=(index, name),
+            )
+            if is_error:
+                # Marginal, i.e. sqrt(diag(pcov)): it ignores the strong
+                # correlations between the terms, so it is not the error on the
+                # model itself.
+                header.add_comment(
+                    "1-sigma marginal error; ignores inter-term correlation."
+                )
+            suffix = "_error" if is_error else ""
+            path = Path(f"{output_prefix}.stokesi.coeff.{name}{suffix}.fits")
+            written.append(_write_map(data[index], header, path))
+        return written
+
+    # The zarr cubes are written by `dask.array.store` as they compute, so the
+    # result carries nothing to write here.
+    return []
 
 
 def write_rm_products(
@@ -897,95 +1003,34 @@ def write_rm_products(
         if dask_client is not None
         else ("processes" if run_clean else "threads")
     )
-    computed = compute_rm_products(
+    # Read before the compute, so each product can go straight to disk as it
+    # lands rather than waiting on the batch.
+    reference_header = fits.getheader(stokes_q_cube)
+
+    def write_product(key: str, data: Any) -> list[Path]:
+        return write_rm_product_to_fits(
+            key=key,
+            data=data,
+            reference_header=reference_header,
+            output_prefix=output_prefix,
+            ref_freq_hz=synth_results.stokes_i_ref_freq_hz,
+            fit_function=rmsynth_options.fit_function,
+            coeff_names=synth_results.stokes_i_coeff_names,
+        )
+
+    written = compute_rm_products(
         compute_targets=compute_targets,
         fuse_config=fuse_config,
         scheduler=scheduler,
         workload=_describe_rm_workload(
             synth_results=synth_results, compute_keys=list(compute_targets)
         ),
+        on_result=write_product,
     )
-
-    reference_header = fits.getheader(stokes_q_cube)
 
     output_paths: list[Path] = []
     if zarr_store_path is not None:
         output_paths.append(zarr_store_path)
-    for label in moment_products:
-        output_paths.extend(
-            write_moment_maps_to_fits(
-                moments=FaradayMoments(
-                    **{
-                        field: computed[f"moment.{label}.{field}"]
-                        for field in MOMENT_MAPS
-                    }
-                ),
-                reference_header=reference_header,
-                output_prefix=output_prefix,
-                label=label,
-                debiased_moments=FaradayMoments(
-                    **{
-                        field: computed[f"debiased.{label}.{field}"]
-                        for field in MOMENT_MAPS
-                    }
-                )
-                if rmsynth_options.debias_moments
-                else None,
-            )
-        )
-
-    if "rmclean_niter" in computed:
-        output_paths.append(
-            write_rmclean_niter_map_to_fits(
-                niter_map=computed["rmclean_niter"],
-                reference_header=reference_header,
-                output_prefix=output_prefix,
-            )
-        )
-
-    for label in peak_products:
-        output_paths.extend(
-            write_peak_maps_to_fits(
-                peaks=FaradayPeaks(
-                    **{field: computed[f"peak.{label}.{field}"] for field in PEAK_MAPS}
-                ),
-                reference_header=reference_header,
-                output_prefix=output_prefix,
-                label=label,
-            )
-        )
-
-    if stokes_i_maps:
-        output_paths.extend(
-            write_stokes_i_fit_maps_to_fits(
-                stokes_i_maps={key: computed[key] for key in stokes_i_maps},
-                reference_header=reference_header,
-                output_prefix=output_prefix,
-                ref_freq_hz=synth_results.stokes_i_ref_freq_hz,
-                fit_function=rmsynth_options.fit_function,
-            )
-        )
-
-    if "stokes_i_coeff" in stokes_i_coeff_cubes:
-        # The plane names are what make the terms usable, so without them the
-        # maps are not worth writing -- but they arrive with the cube, so this
-        # would take an rm-lite change to reach.
-        if synth_results.stokes_i_coeff_names is None:
-            logger.warning(
-                "rm-lite returned Stokes I model terms with no names for them, so "
-                "the per-term maps cannot be written."
-            )
-        else:
-            output_paths.extend(
-                write_stokes_i_coeff_maps_to_fits(
-                    coeff_cube=computed["stokes_i_coeff"],
-                    coeff_names=synth_results.stokes_i_coeff_names,
-                    reference_header=reference_header,
-                    output_prefix=output_prefix,
-                    ref_freq_hz=synth_results.stokes_i_ref_freq_hz,
-                    fit_function=rmsynth_options.fit_function,
-                    coeff_error_cube=computed.get("stokes_i_coeff_error"),
-                )
-            )
-
+    for paths in written.values():
+        output_paths.extend(paths)
     return output_paths
