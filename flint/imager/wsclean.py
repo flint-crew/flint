@@ -1080,7 +1080,7 @@ def create_wsclean_cmd(
         wsclean_options=wsclean_options, ms=example_ms
     )
     move_directory = example_ms.path.parent
-    hold_directory: Path | None = Path(name_argument_path).parent
+    hold_directory = Path(name_argument_path).parent
     bind_dir_paths.append(hold_directory)
 
     unknowns: list[tuple[Any, Any]] = []
