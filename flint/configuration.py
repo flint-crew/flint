@@ -13,6 +13,7 @@ from typing import Any
 
 import yaml
 from jolly_roger.tractor import TukeyTractorOptions
+from pydantic import ValidationError
 
 from flint.imager.wsclean import WSCleanOptions
 from flint.logging import logger
@@ -457,9 +458,9 @@ def verify_configuration(input_strategy: Strategy, raise_on_error: bool = True) 
                     options = input_strategy["defaults"][default_options]
                     try:
                         _ = MODE_OPTIONS_MAPPING[default_options](**options)
-                    except TypeError as typeerror:
+                    except (TypeError, ValidationError) as error:
                         errors.append(
-                            f"{default_options=} mode in defaults incorrectly formed. {typeerror} "
+                            f"{default_options=} mode in defaults incorrectly formed. {error} "
                         )
                 except Exception as exception:
                     errors.append(f"{exception}")
@@ -497,9 +498,9 @@ def verify_configuration(input_strategy: Strategy, raise_on_error: bool = True) 
                     )
                     try:
                         _ = MODE_OPTIONS_MAPPING[mode](**options)
-                    except TypeError as typeerror:
+                    except (TypeError, ValidationError) as error:
                         errors.append(
-                            f"{mode=} mode in {round_info=} incorrectly formed. {typeerror} "
+                            f"{mode=} mode in {round_info=} incorrectly formed. {error} "
                         )
                 except Exception as exception:
                     errors.append(f"{exception}")
@@ -520,9 +521,9 @@ def verify_configuration(input_strategy: Strategy, raise_on_error: bool = True) 
                         )
                         try:
                             _ = MODE_OPTIONS_MAPPING[mode](**options)
-                        except TypeError as typeerror:
+                        except (TypeError, ValidationError) as error:
                             errors.append(
-                                f"{mode=} mode in polarisation={key!r} incorrectly formed. {typeerror} "
+                                f"{mode=} mode in polarisation={key!r} incorrectly formed. {error} "
                             )
                     except Exception as exception:
                         errors.append(f"{exception}")
@@ -538,9 +539,9 @@ def verify_configuration(input_strategy: Strategy, raise_on_error: bool = True) 
                     )
                     try:
                         _ = MODE_OPTIONS_MAPPING[key](**options)
-                    except TypeError as typeerror:
+                    except (TypeError, ValidationError) as error:
                         errors.append(
-                            f"{key=} mode in operation='polarisation' incorrectly formed. {typeerror} "
+                            f"{key=} mode in operation='polarisation' incorrectly formed. {error} "
                         )
                 except Exception as exception:
                     errors.append(f"{exception}")
@@ -563,9 +564,9 @@ def verify_configuration(input_strategy: Strategy, raise_on_error: bool = True) 
                     )
                     try:
                         _ = MODE_OPTIONS_MAPPING[mode](**options)
-                    except TypeError as typeerror:
+                    except (TypeError, ValidationError) as error:
                         errors.append(
-                            f"{mode=} mode in {operation=} incorrectly formed. {typeerror} "
+                            f"{mode=} mode in {operation=} incorrectly formed. {error} "
                         )
                 except Exception as exception:
                     errors.append(f"{exception}")
