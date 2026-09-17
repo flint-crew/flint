@@ -881,6 +881,29 @@ def test_create_wsclean_name_argument(ms_example):
     )
 
 
+def test_create_wsclean_name_argument_hold_dir(ms_example) -> None:
+    """flint_hold_dir sets the -name directory, and takes precedence over temp_dir"""
+
+    ms = MS.cast(ms=Path(ms_example))
+    name = "SB39400.RACS_0635-31.beam0.small.i"
+
+    wsclean_options = WSCleanOptions(flint_hold_dir="/jack/sparrow")
+    name_argument_path = create_wsclean_name_argument(
+        wsclean_options=wsclean_options, ms=ms
+    )
+
+    assert f"/jack/sparrow/{name}" == str(name_argument_path)
+
+    wsclean_options_2 = WSCleanOptions(
+        flint_hold_dir="/jack/sparrow", temp_dir="/davey/jones"
+    )
+    name_argument_path = create_wsclean_name_argument(
+        wsclean_options=wsclean_options_2, ms=ms
+    )
+
+    assert f"/jack/sparrow/{name}" == str(name_argument_path)
+
+
 def test_create_wsclean_name_argument_with_list_mss(ms_example) -> None:
     """Ensure that the generated name argument behaves as expected.
     This uses list of MS to create the base name."""
@@ -933,6 +956,23 @@ def test_create_wsclean_command_excludes_flint_save_mfs_products(ms_example):
     assert isinstance(command, WSCleanResult)
     assert "flint" not in command.cmd
     assert "mfs" not in command.cmd.lower()
+
+
+def test_create_wsclean_command_hold_dir(ms_example, tmpdir) -> None:
+    """flint_hold_dir drives -name only, and leaves -temp-dir alone"""
+    hold_dir = Path(tmpdir) / "hold"
+    temp_dir = Path(tmpdir) / "temp"
+    wsclean_options = WSCleanOptions(flint_hold_dir=hold_dir, temp_dir=temp_dir)
+
+    command = create_wsclean_cmd(
+        ms_list=MS.cast(ms_example), wsclean_options=wsclean_options
+    )
+
+    assert "flint" not in command.cmd
+    assert f"-temp-dir {temp_dir}" in command.cmd
+    assert f"-name {hold_dir}/" in command.cmd
+    assert hold_dir in command.bind_dirs
+    assert command.move_hold_directories == (Path(ms_example).parent, hold_dir)
 
 
 def test_create_wsclean_command_with_list_ms(ms_example) -> None:

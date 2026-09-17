@@ -101,9 +101,10 @@ class WSCleanOptions(BaseOptions):
     with `$` it is assumed to be a environment variable, it is will be looked up.
     Some basic attempts to determine if it is a path is made.
 
-    Should the `temp_dir` options be specified then all images will be
-    created in this location, and then moved over to the same parent directory
-    as the imaged MS. This is done by setting the wsclean `-name` argument.
+    Should `flint_hold_dir` (or, failing that, `temp_dir`) be specified then all
+    images will be created in this location, and then moved over to the same
+    parent directory as the imaged MS. This is done by setting the wsclean
+    `-name` argument.
 
     Options that start with `flint_` are ignored when generating the wsclean command
     and generally denote some other flint specific operation.
@@ -220,6 +221,8 @@ class WSCleanOptions(BaseOptions):
     """An additional trailing token appended to the constructed wsclean ``-name``, e.g. to disambiguate outputs from different pipelines imaging the same measurement set"""
     flint_save_mfs_products: bool = False
     """Save the MFS image, model and residual products (co-added and leakage-corrected the same way as the science image), rather than just the image"""
+    flint_hold_dir: str | Path | None = None
+    """Directory images are written to before being moved beside the MS. Takes precedence over ``temp_dir`` for this purpose"""
 
 
 class WSCleanResult(BaseOptions):
@@ -906,8 +909,8 @@ def create_wsclean_name_argument(
 ) -> Path:
     """Create the value that will be provided to wsclean -name argument. This has
     to be generated. Among things to consider is the desired output directory of imaging
-    files. This by default will be alongside the measurement set. If a `temp_dir`
-    has been specified then output files will be written here.
+    files. This by default will be alongside the measurement set, and is
+    overridden by `flint_hold_dir`, or failing that `temp_dir`.
 
     If the input ``ms`` is an instance of ``MSs`` then the first measurement
     set will be used to base the name from.
@@ -938,11 +941,15 @@ def create_wsclean_name_argument(
     )
 
     # Now resolve the directory part
-    name_dir: Path | str | None = name_ms.path.parent
-    temp_dir = wsclean_options_dict.get("temp_dir", None)
-    if temp_dir:
+    hold_dir = wsclean_options_dict.get("flint_hold_dir") or wsclean_options_dict.get(
+        "temp_dir"
+    )
+    name_dir: Path | str | None = (
         # attempt to resolve possible environment variables flexibly
-        name_dir = parse_environment_variables(variable=temp_dir)
+        parse_environment_variables(variable=str(hold_dir))
+        if hold_dir
+        else name_ms.path.parent
+    )
 
     assert name_dir is not None, f"{name_dir=} is None, which is bad"
 
@@ -1035,10 +1042,10 @@ def create_wsclean_cmd(
     For the most part these are one-to-one mappings to the wsclean CLI with the
     exceptions being:
     #. the `-name` argument will be generated and supplied to the CLI string and will default to the parent directory and name of the supplied measurement set
-    #. If `wsclean_options.temp_dir` is specified this directory is used in place of the measurement sets parent directory
+    #. If `wsclean_options.flint_hold_dir` or `wsclean_options.temp_dir` is specified this directory is used in place of the measurement sets parent directory
 
     If `container` is supplied to immediately execute this command then the
-    output wsclean image products will be moved from the `temp-dir` to the
+    output wsclean image products will be moved from the hold directory to the
     same directory as the measurement set.
 
     Args:
@@ -1073,7 +1080,8 @@ def create_wsclean_cmd(
         wsclean_options=wsclean_options, ms=example_ms
     )
     move_directory = example_ms.path.parent
-    hold_directory: Path | None = Path(name_argument_path).parent
+    hold_directory = Path(name_argument_path).parent
+    bind_dir_paths.append(hold_directory)
 
     unknowns: list[tuple[Any, Any]] = []
     logger.info("Creating wsclean command.")
@@ -1106,7 +1114,7 @@ def create_wsclean_cmd(
     bind_dir_paths += [ms.path.parent for ms in ms_list]
 
     # TODO: Currently there are two calls into the `parse_environment_variable`
-    # when processing the `-temp-dir` and `-name` options. When using the `FLINT_UUID`
+    # when processing the `-temp-dir`/`flint_hold_dir` and `-name` options. When using the `FLINT_UUID`
     # option two separate UUIDs are being used. This is a dirty hack to see if
     # things work. Captains and their ships need better.`
     for bind_dir_path in bind_dir_paths:
@@ -1494,11 +1502,12 @@ def wsclean_imager(
         logger.info("Updatting fitscube options with user-provided items. ")
         fitscube_options = fitscube_options.with_options(**update_fitscube_options)
 
-    if isinstance(wsclean_options.temp_dir, str):
-        logger.info(f"Resolving potential expansion for {wsclean_options.temp_dir=}")
-        temp_dir = parse_environment_variables(wsclean_options.temp_dir)
-        logger.info(f"Updating wsclean options with {temp_dir=}")
-        wsclean_options = wsclean_options.with_options(temp_dir=temp_dir)
+    for field in ("temp_dir", "flint_hold_dir"):
+        value = getattr(wsclean_options, field)
+        if isinstance(value, str):
+            resolved = parse_environment_variables(value)
+            logger.info(f"Resolved {field} to {resolved}")
+            wsclean_options = wsclean_options.with_options(**{field: resolved})
 
     assert ms_list[0].column is not None, (
         "A MS column needs to be elected for imaging. "
