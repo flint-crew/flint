@@ -8,7 +8,12 @@
     field leading. The centre is taken as the mean of the images' own reference
     directions, so it does not have to be known separately. Beam numbering will
     not do this: `closepack36` numbers beam 0 into a corner of the footprint,
-    `square_6x6` does not.
+    `square_6x6` does not. Confirmed by running askapsoft's own
+    `LinmosAccumulator::setOutputParameters` over a closepack36 footprint: the
+    output reference direction comes out exactly equal to that of whichever
+    image is listed first, with only the reference pixel moved. Leading with a
+    central image also trims the output, 161.8 against 171.6 Mpix for the same
+    36 beams, since the bounding box of a centred frame is tighter.
 
     At the edge of a band 1 field this takes the integrated flux error from
     ~0.93% to ~0.38%. `linmos` has no option for an arbitrary output centre, so
