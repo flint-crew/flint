@@ -2,34 +2,13 @@
 
 ## Unreleased
 
-- Changes to how `linmos` mosaics are formed, both affecting the flux scale
-  - `linmos` builds its output frame from whichever image is listed first, so
-    the input images are now ordered with the one nearest the centre of the
-    field leading. The centre is taken as the mean of the images' own reference
-    directions, so it does not have to be known separately. Beam numbering will
-    not do this: `closepack36` numbers beam 0 into a corner of the footprint,
-    `square_6x6` does not. Confirmed by running askapsoft's own
-    `LinmosAccumulator::setOutputParameters` over a closepack36 footprint: the
-    output reference direction comes out exactly equal to that of whichever
-    image is listed first, with only the reference pixel moved. Leading with a
-    central image also trims the output, 161.8 against 171.6 Mpix for the same
-    36 beams, since the bounding box of a centred frame is tighter.
-
-    At the edge of a band 1 field this takes the integrated flux error from
-    ~0.93% to ~0.38%. `linmos` has no option for an arbitrary output centre, so
-    the most central input image is the best on offer; a frame centred on the
-    centroid itself would give ~0.31%, but no beam sits there. Beam 0 is
-    already the most central beam of `square_6x6`, so nothing changes for
-    those fields.
-  - Added `LinmosOptions.regrid_method`, defaulting to `cubic`. The `linmos`
-    default of `linear` suppresses the peak of a source by up to ~1.74% at the
-    top of band 1 and ~0.77% at 20 arcsec, varying with where the source falls
-    between pixels. Measured through casacore's own `ImageRegrid`, the one
-    `linmos` drives: `cubic` brings it to ~0.07%, while `lanczos` is worse
-    than `cubic` at ~1.1%. Integrated flux is unaffected by the choice.
-    `regrid.decimate` was left at its default, having no measurable effect
-    between 1 and 10.
-
+- Added `LinmosOptions.regrid_method`, defaulting to `cubic`. `linmos` regrids
+  every input onto the output frame and its own default is `linear`, which
+  suppresses the peak of a source. Measured through yandasoft 1.16.5 itself at
+  13.2 arcsec: `linear` costs -0.83% of the peak, `cubic` -0.01%. Worst case
+  over sub-pixel position, measured through casacore's `ImageRegrid`, is -1.74%
+  for `linear`. Integrated flux is unaffected by the choice, as is
+  `regrid.decimate`, which was left alone.
 
 # v0.3.0
 

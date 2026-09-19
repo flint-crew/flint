@@ -7,11 +7,8 @@ from collections.abc import Collection
 from pathlib import Path
 from typing import Literal, NamedTuple
 
-import astropy.units as u
 import numpy as np
-from astropy.coordinates import SkyCoord
 from astropy.io import fits
-from astropy.wcs import WCS
 from capn_crunch import BaseOptions, add_options_to_parser, create_options_from_parser
 
 from flint.exceptions import ShapeMismatchError
@@ -518,45 +515,6 @@ def _file_list_to_string(file_list: Collection[Path]) -> str:
     return img_list
 
 
-def central_image_order(images: Collection[Path]) -> tuple[int, ...]:
-    """Indices of ``images``, the one nearest the centre of the field first.
-
-    linmos takes the output coordinate frame from whichever image is listed
-    first and only shifts its reference pixel to cover the others, so the
-    mosaic's tangent point is that image's. Leading with the most central image
-    keeps the tangent point near the middle of the data, where regridding
-    distorts the restoring beam least. Beam numbering will not do this: which
-    beam sits at the centre depends on the footprint.
-
-    There is no option for an arbitrary output centre, so this picks the most
-    central input image rather than centring the frame on the centroid itself.
-
-    The centre is the mean of the images' own reference directions, so the field
-    centre does not have to be known from anywhere else.
-
-    Args:
-        images (Collection[Path]): The images that will be coadded.
-
-    Returns:
-        tuple[int, ...]: Indices into ``images``, closest to the centre first.
-    """
-    images = list(images)
-    crvals = np.array(
-        [WCS(fits.getheader(image)).celestial.wcs.crval for image in images]
-    )
-    directions = SkyCoord(ra=crvals[:, 0] * u.deg, dec=crvals[:, 1] * u.deg)
-    # Averaged as vectors, else a field spanning 0h or sitting near a pole
-    # averages to a direction nowhere near the beams it is drawn from
-    centre = SkyCoord(directions.cartesian.mean(), frame=directions.frame)
-    separations = centre.separation(directions).to(u.deg).value
-    order = np.argsort(separations, kind="stable")
-    logger.info(
-        f"Leading linmos with {images[order[0]].name}, "
-        f"{separations[order[0]]:.3f} deg from the centre of the field"
-    )
-    return tuple(int(idx) for idx in order)
-
-
 def generate_linmos_parameter_set(
     images: Collection[Path],
     linmos_names: LinmosNames,
@@ -582,19 +540,6 @@ def generate_linmos_parameter_set(
     if stokesi_images is not None and len(stokesi_images) != len(images):
         raise ValueError(
             f"Stokes I images provided {len(stokesi_images)} do not match the number of input images {len(images)}"
-        )
-
-    # An explicit weight list is already in the caller's order and cannot be
-    # permuted with the images, so the order is left alone in that case
-    if weight_list is None:
-        order = central_image_order(images=images)
-        images = [images[idx] for idx in order]
-        if stokesi_images is not None:
-            stokesi_images = [stokesi_images[idx] for idx in order]
-    else:
-        logger.warning(
-            "A weight list was supplied, so the images are left in the order given. "
-            "linmos will take the mosaic frame from the first of them."
         )
 
     img_list = _file_list_to_string(images)
