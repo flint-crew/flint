@@ -528,6 +528,9 @@ def central_image_order(images: Collection[Path]) -> tuple[int, ...]:
     distorts the restoring beam least. Beam numbering will not do this: which
     beam sits at the centre depends on the footprint.
 
+    There is no option for an arbitrary output centre, so this picks the most
+    central input image rather than centring the frame on the centroid itself.
+
     The centre is the mean of the images' own reference directions, so the field
     centre does not have to be known from anywhere else.
 

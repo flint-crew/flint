@@ -9,6 +9,13 @@
     directions, so it does not have to be known separately. Beam numbering will
     not do this: `closepack36` numbers beam 0 into a corner of the footprint,
     `square_6x6` does not.
+
+    At the edge of a band 1 field this takes the integrated flux error from
+    ~0.93% to ~0.38%. `linmos` has no option for an arbitrary output centre, so
+    the most central input image is the best on offer; a frame centred on the
+    centroid itself would give ~0.31%, but no beam sits there. Beam 0 is
+    already the most central beam of `square_6x6`, so nothing changes for
+    those fields.
   - Added `LinmosOptions.regrid_method`, defaulting to `cubic`. The `linmos`
     default of `linear` suppresses the peak of a source by up to ~1.7% at the
     top of band 1, varying with sub-pixel position.
