@@ -56,6 +56,8 @@ class LinmosOptions(BaseOptions):
     """Overwrite the linmos parset file generated if it exists. Defaults to False."""
     remove_original_images: bool = False
     """Delete the images that were coaddede together. Defaults to False."""
+    regrid_method: str = "cubic"
+    """Interpolation linmos regrids the input images with. Its own default is 'linear', which noticeably suppresses the peak of a source. Accepts 'nearest', 'linear', 'cubic' or 'lanczos'. Defaults to 'cubic'."""
 
 
 class BoundingBox(NamedTuple):
@@ -573,6 +575,7 @@ def generate_linmos_parameter_set(
         f"linmos.beams            = {beam_order_list}\n"
         # f"linmos.beamangle        = {beam_angle_list}\n"
         f"linmos.imagetype        = fits\n"
+        f"linmos.regrid.method    = {linmos_options.regrid_method}\n"
         f"linmos.outname          = {parent_dir / linmos_names.image_fits.stem!s}\n"
         f"linmos.outweight        = {parent_dir / linmos_names.weight_fits.stem!s}\n"
         f"# For ASKAPsoft>1.3.0\n"
