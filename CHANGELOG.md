@@ -17,8 +17,13 @@
     already the most central beam of `square_6x6`, so nothing changes for
     those fields.
   - Added `LinmosOptions.regrid_method`, defaulting to `cubic`. The `linmos`
-    default of `linear` suppresses the peak of a source by up to ~1.7% at the
-    top of band 1, varying with sub-pixel position.
+    default of `linear` suppresses the peak of a source by up to ~1.74% at the
+    top of band 1 and ~0.77% at 20 arcsec, varying with where the source falls
+    between pixels. Measured through casacore's own `ImageRegrid`, the one
+    `linmos` drives: `cubic` brings it to ~0.07%, while `lanczos` is worse
+    than `cubic` at ~1.1%. Integrated flux is unaffected by the choice.
+    `regrid.decimate` was left at its default, having no measurable effect
+    between 1 and 10.
 
 
 # v0.3.0
