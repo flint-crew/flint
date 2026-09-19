@@ -24,7 +24,11 @@ from flint.coadd.linmos import (
     generate_weights_list_and_files,
     trim_fits_image,
 )
-from flint.naming import create_linmos_base_path
+from flint.naming import (
+    create_linmos_base_path,
+    create_linmos_names,
+    extract_beam_from_name,
+)
 
 
 def get_lots_of_names_2() -> list[Path]:
@@ -414,3 +418,266 @@ def test_bounding_box_with_mask():
     assert bb.xmax == 600  # the maximum is exclusive, i.e. slice ready
     assert bb.ymin == 20
     assert bb.ymax == 500  # the maximum is exclusive, i.e. slice ready
+
+
+def write_beam_image(path: Path, ra_deg: float, dec_deg: float) -> Path:
+    """A tiny image whose reference direction is the one given."""
+    header = fits.Header(
+        {
+            "CTYPE1": "RA---SIN",
+            "CTYPE2": "DEC--SIN",
+            "CRVAL1": ra_deg,
+            "CRVAL2": dec_deg,
+            "CRPIX1": 2.0,
+            "CRPIX2": 2.0,
+            "CDELT1": -1.5 / 3600.0,
+            "CDELT2": 1.5 / 3600.0,
+        }
+    )
+    fits.writeto(path, np.zeros((4, 4), dtype=np.float32), header=header)
+    return path
+
+
+def closepack36_offsets(pitch_deg: float = 0.9) -> list[tuple[float, float]]:
+    """Beam offsets of closepack36, in beam order. Beam 0 is a corner beam."""
+    x0 = 3 * pitch_deg - pitch_deg / (2 * np.sqrt(2))
+    y0 = -pitch_deg / (2 * np.sqrt(2)) - np.sqrt(3) * pitch_deg
+    offsets = []
+    for row in range(6):
+        y = y0 + row * pitch_deg * np.sqrt(3) / 2
+        for col in range(6):
+            offsets.append((x0 - (col if row % 2 == 0 else col + 0.5) * pitch_deg, y))
+    mean_x = float(np.mean([offset[0] for offset in offsets]))
+    mean_y = float(np.mean([offset[1] for offset in offsets]))
+    return [(x - mean_x, y - mean_y) for x, y in offsets]
+
+
+def square36_offsets(pitch_deg: float = 0.9) -> list[tuple[float, float]]:
+    """Beam offsets of square_6x6, in beam order. Beam 0 is near the centre."""
+    layout = [
+        31,
+        30,
+        29,
+        28,
+        27,
+        26,
+        32,
+        13,
+        12,
+        11,
+        10,
+        25,
+        33,
+        14,
+        2,
+        3,
+        9,
+        24,
+        34,
+        15,
+        0,
+        1,
+        8,
+        23,
+        35,
+        4,
+        5,
+        6,
+        7,
+        22,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+    ]
+    offsets: list[tuple[float, float]] = [(0.0, 0.0)] * 36
+    for position, beam in enumerate(layout):
+        row, col = divmod(position, 6)
+        offsets[beam] = ((2.5 - col) * pitch_deg, (row - 2.5) * pitch_deg)
+    return offsets
+
+
+def write_footprint(tmp_path: Path, offsets, centre=(180.0, -45.0)) -> list[Path]:
+    """One image per beam, placed at exact angular offsets from a field centre."""
+    import astropy.units as u
+    from astropy.coordinates import SkyCoord
+
+    origin = SkyCoord(ra=centre[0] * u.deg, dec=centre[1] * u.deg)
+    paths = []
+    for beam, (east, north) in enumerate(offsets):
+        position = origin.directional_offset_by(
+            position_angle=np.arctan2(east, north) * u.rad,
+            separation=np.hypot(east, north) * u.deg,
+        )
+        path = tmp_path / f"SB1234.RACS_1200-45.beam{beam:02d}.round4.i.fits"
+        paths.append(
+            write_beam_image(path, float(position.ra.deg), float(position.dec.deg))
+        )
+    return paths
+
+
+def separations_from_centre(images: list[Path]) -> np.ndarray:
+    """Angular distance of each image from the mean of their directions."""
+    import astropy.units as u
+    from astropy.coordinates import SkyCoord
+
+    ras = np.array([fits.getheader(image)["CRVAL1"] for image in images])
+    decs = np.array([fits.getheader(image)["CRVAL2"] for image in images])
+    directions = SkyCoord(ra=ras * u.deg, dec=decs * u.deg)
+    centre = SkyCoord(directions.cartesian.mean(), frame=directions.frame)
+    return centre.separation(directions).to(u.deg).value
+
+
+def parse_parset_list(parset: str, key: str) -> list[str]:
+    """The bracketed list a parset key is set to."""
+    for line in parset.splitlines():
+        if line.split("=")[0].strip() == key:
+            return line.split("=", 1)[1].strip().strip("[]").split(",")
+    raise KeyError(f"{key} not in parset")
+
+
+@pytest.mark.parametrize(
+    ("offsets_func", "beam_zero_is_central"),
+    [(closepack36_offsets, False), (square36_offsets, True)],
+)
+def test_central_image_order_leads_with_central_image(
+    tmp_path, offsets_func, beam_zero_is_central
+):
+    """The most central image leads, whichever beam number it happens to carry."""
+    from flint.coadd.linmos import central_image_order
+
+    images = write_footprint(tmp_path, offsets_func())
+
+    order = central_image_order(images=images)
+    separations = separations_from_centre(images)
+
+    assert sorted(order) == list(range(len(images)))
+    assert separations[order[0]] == pytest.approx(separations.min(), abs=1e-6)
+    assert list(separations[list(order)]) == sorted(separations[list(order)])
+    # closepack36 rasters a hex lattice, so its beam 0 sits at a corner
+    assert (order[0] == 0) is beam_zero_is_central
+
+
+def test_central_image_order_is_independent_of_input_order(tmp_path):
+    """The same image leads whichever way round they arrive."""
+    from flint.coadd.linmos import central_image_order
+
+    images = write_footprint(tmp_path, closepack36_offsets())
+    shuffled = list(reversed(images))
+
+    forward = central_image_order(images=images)
+    reverse = central_image_order(images=shuffled)
+
+    assert images[forward[0]] == shuffled[reverse[0]]
+
+
+def test_central_image_order_near_the_pole(tmp_path):
+    """A high declination field must not be averaged in RA alone."""
+    from flint.coadd.linmos import central_image_order
+
+    images = write_footprint(tmp_path, closepack36_offsets(), centre=(180.0, -84.0))
+
+    order = central_image_order(images=images)
+    separations = separations_from_centre(images)
+
+    assert separations[order[0]] == pytest.approx(separations.min(), abs=1e-6)
+    assert separations[order[0]] < 1.0
+
+
+def test_central_image_order_with_a_flagged_beam(tmp_path):
+    """Dropping the most central beam promotes the next one, not beam 0."""
+    from flint.coadd.linmos import central_image_order
+
+    images = write_footprint(tmp_path, closepack36_offsets())
+    dropped = int(np.argmin(separations_from_centre(images)))
+    kept = [image for idx, image in enumerate(images) if idx != dropped]
+
+    order = central_image_order(images=kept)
+    separations = separations_from_centre(kept)
+
+    assert kept[order[0]] != images[dropped]
+    assert separations[order[0]] == pytest.approx(separations.min(), abs=1e-6)
+
+
+def test_linmos_parset_sets_a_regrid_method(tmp_path):
+    """linmos defaults to linear interpolation, which suppresses source peaks."""
+    from flint.coadd.linmos import generate_linmos_parameter_set
+
+    images = write_footprint(tmp_path, closepack36_offsets())
+    summary = generate_linmos_parameter_set(
+        images=images,
+        linmos_names=create_linmos_names(name_prefix=str(tmp_path / "field")),
+        linmos_options=LinmosOptions(),
+    )
+
+    assert "linmos.regrid.method    = cubic" in summary.parset_path.read_text()
+
+
+def test_linmos_parset_regrid_method_is_configurable(tmp_path):
+    """So the change can be compared against products made the old way."""
+    from flint.coadd.linmos import generate_linmos_parameter_set
+
+    images = write_footprint(tmp_path, closepack36_offsets())
+    summary = generate_linmos_parameter_set(
+        images=images,
+        linmos_names=create_linmos_names(name_prefix=str(tmp_path / "field")),
+        linmos_options=LinmosOptions(regrid_method="linear"),
+    )
+
+    assert "linmos.regrid.method    = linear" in summary.parset_path.read_text()
+
+
+def test_linmos_parset_leads_with_the_central_image(tmp_path):
+    """linmos takes the mosaic frame from whichever image is listed first."""
+    from flint.coadd.linmos import generate_linmos_parameter_set
+
+    images = write_footprint(tmp_path, closepack36_offsets())
+    summary = generate_linmos_parameter_set(
+        images=images,
+        linmos_names=create_linmos_names(name_prefix=str(tmp_path / "field")),
+        linmos_options=LinmosOptions(),
+    )
+    parset = summary.parset_path.read_text()
+
+    central = images[int(np.argmin(separations_from_centre(images)))]
+    names = parse_parset_list(parset, "linmos.names")
+    assert names[0] == str(central).replace(".fits", "")
+    assert len(names) == len(images)
+    # the beam list has to follow the images it describes
+    beams = parse_parset_list(parset, "linmos.beams")
+    assert beams[0] == str(extract_beam_from_name(central.name))
+    assert beams[0] != "0"
+
+
+def test_linmos_parset_reorders_stokesi_with_the_images(tmp_path):
+    """Stokes I images are matched to the inputs by position, so must follow them."""
+    from flint.coadd.linmos import generate_linmos_parameter_set
+
+    holofile = tmp_path / "holo.fits"
+    fits.writeto(holofile, np.zeros((2, 2), dtype=np.float32))
+
+    offsets = closepack36_offsets()
+    qu_dir = tmp_path / "q"
+    i_dir = tmp_path / "i"
+    qu_dir.mkdir()
+    i_dir.mkdir()
+    images = write_footprint(qu_dir, offsets)
+    stokesi = write_footprint(i_dir, offsets)
+
+    summary = generate_linmos_parameter_set(
+        images=images,
+        linmos_names=create_linmos_names(name_prefix=str(tmp_path / "field")),
+        linmos_options=LinmosOptions(
+            holofile=holofile, stokesi_images=stokesi, force_remove_leakage=True
+        ),
+    )
+    parset = summary.parset_path.read_text()
+
+    names = parse_parset_list(parset, "linmos.names")
+    stokesi_names = parse_parset_list(parset, "linmos.stokesinames")
+    assert len(names) == len(stokesi_names) == len(images)
+    # every image keeps the Stokes I image of its own beam alongside it
+    for name, stokesi_name in zip(names, stokesi_names):
+        assert Path(name).name == Path(stokesi_name).name

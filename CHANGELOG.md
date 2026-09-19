@@ -1,5 +1,19 @@
 # Change log
 
+## Unreleased
+
+- Changes to how `linmos` mosaics are formed, both affecting the flux scale
+  - `linmos` builds its output frame from whichever image is listed first, so
+    the input images are now ordered with the one nearest the centre of the
+    field leading. The centre is taken as the mean of the images' own reference
+    directions, so it does not have to be known separately. Beam numbering will
+    not do this: `closepack36` numbers beam 0 into a corner of the footprint,
+    `square_6x6` does not.
+  - Added `LinmosOptions.regrid_method`, defaulting to `cubic`. The `linmos`
+    default of `linear` suppresses the peak of a source by up to ~1.7% at the
+    top of band 1, varying with sub-pixel position.
+
+
 # v0.3.0
 
 - Attempts to clean up the prefect tasks related to convolution and linmos
