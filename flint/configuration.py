@@ -573,8 +573,8 @@ def verify_configuration(input_strategy: Strategy, raise_on_error: bool = True) 
 
     valid_config = len(errors) == 0
     if not valid_config:
-        for error in errors:
-            logger.warning(error)
+        for message in errors:
+            logger.warning(message)
 
         if raise_on_error:
             raise ValueError("Configuration file not valid. ")
