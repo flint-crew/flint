@@ -40,6 +40,7 @@ from rm_lite.tools_3d.rmsynth import (  # noqa: E402
 from rm_lite.utils.synthesis import (  # noqa: E402
     FaradayMoments,
     FaradayPeaks,
+    FDFUnits,
     calc_faraday_moments,
 )
 
@@ -79,9 +80,9 @@ STOKES_I_MAP_SUFFIXES = {
 }
 
 PEAK_MAPS = {
-    "peak_pi": ("peak_pi", "Jy/beam", "peak polarised intensity"),
-    "peak_pi_debias": ("peak_pi_debias", "Jy/beam", "debiased peak"),
-    "peak_pi_error": ("peak_pi_error", "Jy/beam", "1-sigma on the peak"),
+    "peak_pi": ("peak_pi", "Jy/beam/RMSF", "peak polarised intensity"),
+    "peak_pi_debias": ("peak_pi_debias", "Jy/beam/RMSF", "debiased peak"),
+    "peak_pi_error": ("peak_pi_error", "Jy/beam/RMSF", "1-sigma on the peak"),
     "peak_rm_radm2": ("peak_rm", "rad/m2", "Faraday depth of the peak"),
     "peak_rm_error_radm2": ("peak_rm_error", "rad/m2", "1-sigma on the depth"),
     "peak_pa_deg": ("peak_pa", "deg", "polarisation angle at the peak"),
@@ -89,6 +90,15 @@ PEAK_MAPS = {
     "peak_pa0_deg": ("peak_pa0", "deg", "intrinsic polarisation angle"),
     "peak_pa0_error_deg": ("peak_pa0_error", "deg", "1-sigma on the intrinsic angle"),
 }
+
+
+def fdf_units_for(label: FDFLabel) -> FDFUnits:
+    """Amplitude units of an FDF product.
+
+    RM-synthesis output is per RMSF; the CLEAN component model is a list of
+    fluxes, so summing it must not divide by the RMSF area as well.
+    """
+    return "integrated" if label == "model" else "per_rmsf"
 
 
 def _write_map(data: np.ndarray, header: fits.Header, output_path: Path) -> Path:
@@ -455,6 +465,7 @@ def _lazy_faraday_moments(
     fdf_cube: dask.array.Array,
     synth_results: RMSynth3DResults,
     threshold: FDFThreshold,
+    fdf_units: FDFUnits,
     debias: bool = False,
     debias_filter_size: int = 5,
 ) -> FaradayMoments:
@@ -474,6 +485,7 @@ def _lazy_faraday_moments(
         fdf_cube,
         phi_arr_radm2=synth_results.phi_arr_radm2,
         fwhm_rmsf_radm2=synth_results.fwhm_rmsf_radm2,
+        fdf_units=fdf_units,
         fdf_error=synth_results.theoretical_noise.fdf_error_noise,
         threshold=threshold,
         debias=debias,
@@ -914,6 +926,7 @@ def write_rm_products(
             fdf_sources[label],
             phi_arr_radm2=synth_results.phi_arr_radm2,
             fwhm_rmsf_radm2=synth_results.fwhm_rmsf_radm2,
+            fdf_units=fdf_units_for(label),
             lam_sq_0_m2=synth_results.lam_sq_0_m2,
             lambda_sq_arr_m2=synth_results.lambda_sq_arr_m2,
             fdf_noise=synth_results.theoretical_noise.fdf_error_noise,
@@ -932,6 +945,7 @@ def write_rm_products(
                 fdf_cube=fdf_sources[label],
                 synth_results=synth_results,
                 threshold=None,
+                fdf_units=fdf_units_for(label),
                 debias=True,
                 debias_filter_size=rmsynth_options.debias_filter_size,
             )

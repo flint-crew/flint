@@ -1865,6 +1865,7 @@ def test_fused_faraday_maps_match_the_per_map_path(per_pixel_noise: bool) -> Non
         fdf_cube,
         phi_arr_radm2=phi_arr_radm2,
         fwhm_rmsf_radm2=50.0,
+        fdf_units="per_rmsf",
         fdf_error=noise,
         threshold=threshold,
     )
@@ -1880,6 +1881,7 @@ def test_fused_faraday_maps_match_the_per_map_path(per_pixel_noise: bool) -> Non
         fdf_cube,
         phi_arr_radm2=phi_arr_radm2,
         fwhm_rmsf_radm2=50.0,
+        fdf_units="per_rmsf",
         lam_sq_0_m2=lam_sq_0_m2,
         lambda_sq_arr_m2=lambda_sq_arr_m2,
         fdf_noise=noise,
@@ -1895,3 +1897,61 @@ def test_fused_faraday_maps_match_the_per_map_path(per_pixel_noise: bool) -> Non
             np.testing.assert_array_equal(
                 np.asarray(fused[field].compute()), expected, err_msg=field
             )
+
+
+def test_model_moments_are_on_the_flux_scale(
+    tmp_path: Path, qu_cubes: tuple[Path, Path]
+) -> None:
+    """The CLEAN model is a list of fluxes, not per-RMSF amplitudes.
+
+    Reading it as per-RMSF divides mom0 by the RMSF area a second time, which
+    put the model maps a factor of ~13 (the RMSF area in Faraday pixels) below
+    the peak for the RACS band. Every pixel of the fixture holds the same
+    Faraday-simple source, so the cleaned flux has to land on the peak's scale.
+    """
+    stokes_q_cube, stokes_u_cube = qu_cubes
+    output_prefix = tmp_path / "test_field"
+
+    _synth_and_write(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        rmsynth_options=RMSynthOptions(),
+        rmclean_options=RMCleanOptions(),
+        cube_products=[],
+        moment_products=["model"],
+        peak_products=["clean"],
+        output_prefix=output_prefix,
+    )
+
+    model_mom0 = fits.getdata(Path(f"{output_prefix}.fdf.model.mom0.fits"))
+    clean_peak = fits.getdata(Path(f"{output_prefix}.fdf.clean.peak_pi.fits"))
+
+    assert np.median(model_mom0) == pytest.approx(np.median(clean_peak), rel=0.25)
+
+
+def test_peak_maps_are_written_per_rmsf(
+    tmp_path: Path, qu_cubes: tuple[Path, Path]
+) -> None:
+    # mom0 has the RMSF area divided out and the peak has not, so the two
+    # cannot both be written as plain Jy/beam.
+    stokes_q_cube, stokes_u_cube = qu_cubes
+    output_prefix = tmp_path / "test_field"
+
+    _synth_and_write(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        rmsynth_options=RMSynthOptions(),
+        rmclean_options=RMCleanOptions(),
+        cube_products=[],
+        moment_products=["clean"],
+        peak_products=["clean"],
+        output_prefix=output_prefix,
+    )
+
+    for name, unit, _ in PEAK_MAPS.values():
+        header = fits.getheader(Path(f"{output_prefix}.fdf.clean.{name}.fits"))
+        assert header["BUNIT"] == unit, name
+    peak_header = fits.getheader(Path(f"{output_prefix}.fdf.clean.peak_pi.fits"))
+    mom0_header = fits.getheader(Path(f"{output_prefix}.fdf.clean.mom0.fits"))
+    assert peak_header["BUNIT"] == "Jy/beam/RMSF"
+    assert mom0_header["BUNIT"] == "Jy/beam"
