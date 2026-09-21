@@ -1904,10 +1904,9 @@ def test_model_moments_are_on_the_flux_scale(
 ) -> None:
     """The CLEAN model is a list of fluxes, not per-RMSF amplitudes.
 
-    Reading it as per-RMSF divides mom0 by the RMSF area a second time, which
-    put the model maps a factor of ~13 (the RMSF area in Faraday pixels) below
-    the peak for the RACS band. Every pixel of the fixture holds the same
-    Faraday-simple source, so the cleaned flux has to land on the peak's scale.
+    Reading it as per-RMSF divides mom0 by the RMSF area a second time. Every
+    pixel of the fixture holds the same Faraday-simple source, so the cleaned
+    flux has to land on the peak's scale.
     """
     stokes_q_cube, stokes_u_cube = qu_cubes
     output_prefix = tmp_path / "test_field"
