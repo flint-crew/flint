@@ -648,7 +648,17 @@ def compute_rm_products(
 
     computed: dict[str, Any] = {}
     with _seceded_if_on_a_worker():
-        for future in as_completed(list(future_to_keys)):
+        # `loop` has to be given. Left out, `as_completed` tracks the futures on
+        # `default_client().loop`, and the client backing a prefect task is
+        # deliberately not the default -- so that is the *worker's* loop, while
+        # `.result()` below waits on this client's own. An `asyncio.Event` binds
+        # to the first loop that blocks on it, so the mismatch stays hidden while
+        # every drained future is already finished: waiting on a set event never
+        # looks at the loop. The first one dask has to re-wait -- `Client._gather`
+        # rescheduling a key whose data went missing -- raises `is bound to a
+        # different event loop` instead, turning a recoverable retry into a dead
+        # flow.
+        for future in as_completed(list(future_to_keys), loop=scheduler.loop):
             keys = future_to_keys[future]
             # `.result()` re-raises whatever the worker raised, so a failed
             # product still surfaces here rather than being dropped

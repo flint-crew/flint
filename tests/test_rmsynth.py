@@ -1671,6 +1671,78 @@ def test_computing_from_inside_a_worker_does_not_deadlock() -> None:
         cluster.close()
 
 
+def test_futures_are_drained_on_the_owning_clients_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``as_completed`` must be told which event loop to wait on.
+
+    Its ``loop`` defaults to ``default_client().loop``, and the client that owns
+    these futures is deliberately not the default one: ``task_write_rm_products``
+    asks for it with ``set_as_default=False``, which also keeps it out of
+    ``_current_client``. On a worker the default is then the worker's *own*
+    client, whose loop is the worker's, while ``.result()`` waits on this
+    client's private loop.
+
+    An ``asyncio.Event`` binds to the first loop that blocks on it, so the two
+    loops coexist quietly for as long as every drained future is already
+    finished -- waiting on a set event returns without ever asking which loop it
+    belongs to. The first future dask has to genuinely re-wait blows up instead:
+    ``Client._gather`` clears the event when it reschedules a key whose data went
+    missing, and the next wait raises ``is bound to a different event loop``,
+    losing a whole run over what should have been a retry.
+
+    Reproducing that needs a key to go missing mid-drain, so the loop this asks
+    for is asserted directly. Two live clients are what makes the assertion mean
+    anything: with only the owning one the default resolves back to it and the
+    wrong loop is the right loop by accident.
+    """
+    import dask
+    from distributed import Client, LocalCluster
+
+    from flint import rmsynth as rmsynth_module
+
+    loops: list[object] = []
+    real_as_completed = rmsynth_module.as_completed
+
+    def recording_as_completed(futures, **kwargs):  # type: ignore[no-untyped-def]
+        loops.append(kwargs.get("loop"))
+        return real_as_completed(futures, **kwargs)
+
+    monkeypatch.setattr(rmsynth_module, "as_completed", recording_as_completed)
+
+    cluster = LocalCluster(
+        n_workers=1,
+        threads_per_worker=1,
+        processes=False,
+        dashboard_address=None,
+        silence_logs=logging.ERROR,
+    )
+    try:
+        # The default is handed the cluster, so it shares its loop -- the worker's
+        # own client does the same with `loop=worker.loop`. The owning one
+        # connects by address with no loop, as `get_dask_client` does, and gets
+        # its own loop thread. That split is the whole bug.
+        with (
+            Client(cluster) as default_client,
+            Client(cluster.scheduler_address, set_as_default=False) as owning_client,
+        ):
+            assert owning_client.loop is not default_client.loop, (
+                "a second Client must get its own loop for this to test anything"
+            )
+            computed = compute_rm_products(
+                compute_targets={"only": dask.delayed(int)(3)},
+                fuse_config={},
+                scheduler=owning_client,
+                workload="1 product (test)",
+            )
+            assert computed == {"only": 3}
+            assert loops == [owning_client.loop], (
+                "the futures must be drained on the loop `.result()` waits on"
+            )
+    finally:
+        cluster.close()
+
+
 def test_a_failed_product_is_raised_not_dropped(tmp_path: Path) -> None:
     """Draining futures as they complete must not swallow one that failed.
 
