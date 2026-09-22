@@ -142,7 +142,8 @@ def test_create_field_options():
         no_imaging=args.no_imaging,
         reference_catalogue_directory=args.reference_catalogue_directory,
         linmos_residuals=args.linmos_residuals,
-        beam_cutoff=args.beam_cutoff,
+        mfs_beam_cutoff=args.mfs_beam_cutoff,
+        cube_beam_cutoff=args.cube_beam_cutoff,
         pb_cutoff=args.pb_cutoff,
         use_preflagger=args.use_preflagger,
     )
@@ -189,7 +190,8 @@ def test_create_field_options2():
         no_imaging=args.no_imaging,
         reference_catalogue_directory=args.reference_catalogue_directory,
         linmos_residuals=args.linmos_residuals,
-        beam_cutoff=args.beam_cutoff,
+        mfs_beam_cutoff=args.mfs_beam_cutoff,
+        cube_beam_cutoff=args.cube_beam_cutoff,
         pb_cutoff=args.pb_cutoff,
         use_preflagger=args.use_preflagger,
     )
@@ -236,7 +238,8 @@ def test_create_field_options3():
         no_imaging=args.no_imaging,
         reference_catalogue_directory=args.reference_catalogue_directory,
         linmos_residuals=args.linmos_residuals,
-        beam_cutoff=args.beam_cutoff,
+        mfs_beam_cutoff=args.mfs_beam_cutoff,
+        cube_beam_cutoff=args.cube_beam_cutoff,
         pb_cutoff=args.pb_cutoff,
         use_preflagger=args.use_preflagger,
     )

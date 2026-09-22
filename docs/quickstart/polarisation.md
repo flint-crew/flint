@@ -45,12 +45,16 @@ A channel's beam is solved over every footprint beam of every Stokes at that
 channel, so channel N of I, Q and U share one resolution and a per-channel
 polarisation product (e.g. polarised intensity) is meaningful.
 
-Two options steer this:
+Three options steer this:
 
-- `--beam-cutoff`: a beam coarser than this, in arcseconds, is left out of the
-  solve and its image is blanked instead of convolved. A channel where every
-  image is beyond the cutoff has no beam to convolve to at all, so the whole
-  channel is blanked and marked as carrying no PSF.
+- `--cube-beam-cutoff`: a beam coarser than this, in arcseconds, is left out of
+  the per-channel solve and its image is blanked instead of convolved. A channel
+  where every image is beyond the cutoff has no beam to convolve to at all, so
+  the whole channel is blanked and marked as carrying no PSF.
+- `--mfs-beam-cutoff`: the same, for the MFS image/model/residual products. An
+  MFS product has no frequency axis for the beam to vary over, so it gets a
+  single common beam of its own rather than the one the coarsest channel of the
+  cube needed, and a cutoff of its own to go with it.
 - `--fixed-beam-shape`: convolve every channel to this `(arcsec, arcsec, deg)`
   beam instead of solving one, which gives a cube of constant resolution.
 

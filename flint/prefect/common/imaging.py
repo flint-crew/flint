@@ -760,7 +760,7 @@ def task_linmos_images(
 def convolve_then_linmos(
     wsclean_results: Collection[WSCleanResult],
     beam_shape: BeamShape,
-    field_options: FieldOptions | SubtractFieldOptions,
+    field_options: FieldOptions,
     linmos_suffix_str: str | None,
     field_summary: FieldSummary | None = None,
     convol_mode: str = "image",
@@ -795,7 +795,7 @@ def convolve_then_linmos(
     conv_images = task_convolve_image.map(
         wsclean_result=wsclean_results,
         beam_shape=unmapped(beam_shape),  # type: ignore
-        cutoff=field_options.beam_cutoff,
+        cutoff=field_options.mfs_beam_cutoff,
         mode=convol_mode,
         filter_str=convol_filter,
         convol_suffix_str=convol_suffix_str,
@@ -838,7 +838,7 @@ def task_common_beam_convolve_linmos(
 ) -> LinmosResult:
     beam_shape = task_get_common_beam_from_results.fn(
         wsclean_results=wsclean_results,
-        cutoff=field_options.beam_cutoff,
+        cutoff=field_options.cube_beam_cutoff,
         filter_str="image.",
     )
 
@@ -846,7 +846,7 @@ def task_common_beam_convolve_linmos(
         task_convolve_image.fn(
             wsclean_result=wsclean_result,
             beam_shape=beam_shape,
-            cutoff=field_options.beam_cutoff,
+            cutoff=field_options.cube_beam_cutoff,
             mode=convol_mode,
             filter_str=convol_filter,
             convol_suffix_str=convol_suffix_str,
@@ -907,7 +907,7 @@ def create_convol_linmos_images(
 
     beam_shape = task_get_common_beam_from_results.submit(
         wsclean_results=wsclean_results,
-        cutoff=field_options.beam_cutoff,
+        cutoff=field_options.mfs_beam_cutoff,
         filter_str=".MFS.",
     )
     # NOTE: The order matters here. The last linmos file is used
@@ -1216,12 +1216,12 @@ def create_convolve_linmos_cubes(
 
     beam_shapes = task_get_common_beam_from_images.map(
         image_paths=channel_groups,  # type: ignore
-        cutoff=unmapped(field_options.beam_cutoff),  # type: ignore
+        cutoff=unmapped(field_options.cube_beam_cutoff),  # type: ignore
     )
     convolved_channel_groups: list[list[Path]] = task_convolve_images.map(
         image_paths=channel_groups,  # type: ignore
         beam_shape=beam_shapes,  # type: ignore
-        cutoff=unmapped(field_options.beam_cutoff),  # type: ignore
+        cutoff=unmapped(field_options.cube_beam_cutoff),  # type: ignore
     ).result()
 
     # The unconvolved planes have been superseded by convolved_channel_groups

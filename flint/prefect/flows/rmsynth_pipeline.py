@@ -150,7 +150,7 @@ def process_rmsynth(
     common_resolution = _resolve_common_resolution_cubes(
         stokes_cubes=stokes_cube_paths,
         output_path=rmsynth_field_options.output_path,
-        beam_cutoff=rmsynth_field_options.beam_cutoff,
+        beam_cutoff=rmsynth_field_options.cube_beam_cutoff,
         fft_bane_options=FFTBANEOptions(
             **get_options_from_strategy(
                 strategy=strategy, operation="rmsynth", mode="fftbane"
