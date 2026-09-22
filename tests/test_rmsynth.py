@@ -28,6 +28,7 @@ from flint.rmsynth import (
     PEAK_MAPS,
     FDFLabel,
     RMSynth3DResults,
+    _warn_on_no_error_cubes,
     check_cubes_are_single_precision,
     compute_rm_products,
     fdf_threshold_from_snr,
@@ -779,6 +780,28 @@ def test_rmsynth_warns_about_double_precision_cubes(tmp_path, caplog) -> None:
     with caplog.at_level("WARNING"):
         check_cubes_are_single_precision(doubled, stokes_u_cube)
     assert "double precision" in caplog.text
+
+
+def test_rmsynth_warns_when_it_has_no_error_cubes(tmp_path, caplog) -> None:
+    """Without them rm-lite shares one per-channel noise across the whole field,
+    which makes an SNR-scaled CLEAN mask meaningless at a mosaic's edge."""
+    q_path, u_path = _make_qu_cubes(tmp_path)
+    cubes = CubesForRMSynth(q_path=q_path, u_path=u_path)
+
+    with caplog.at_level("WARNING"):
+        _warn_on_no_error_cubes(None)
+    assert "No error or weight cubes given" in caplog.text
+
+    caplog.clear()
+    with caplog.at_level("WARNING"):
+        _warn_on_no_error_cubes(NoiseCubesForRMSynth(q_path=q_path, u_path=u_path))
+    assert "No error or weight cubes given" not in caplog.text
+
+    # And the warning really is on the path rm-synthesis takes.
+    caplog.clear()
+    with caplog.at_level("WARNING"):
+        run_rmsynth_3d(stokes_cubes=cubes, rmsynth_options=RMSynthOptions())
+    assert "No error or weight cubes given" in caplog.text
 
 
 def test_rmsynth_rejects_compressed_cubes(tmp_path: Path) -> None:

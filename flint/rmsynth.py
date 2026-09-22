@@ -145,6 +145,26 @@ def _check_cubes_memmappable(*cubes: Path | None) -> None:
         raise NotSupportedError(msg)
 
 
+def _warn_on_no_error_cubes(error_cubes: ErrorCubesForRMSynth | None) -> None:
+    """Warn that rm-lite is about to measure the noise off the cubes themselves.
+
+    Its fallback is one ``mad_std`` per channel plane, so every pixel is told
+    the whole field's noise. On a mosaic, whose edge is far noisier than its
+    middle, that makes an SNR-scaled CLEAN mask meaningless out there and
+    RM-CLEAN grinds on noise. Warned about rather than refused: it is the right
+    answer for a cube of uniform noise.
+    """
+    if error_cubes is not None:
+        return
+    logger.warning(
+        "No error or weight cubes given, so rm-lite will estimate one noise "
+        "per channel from the Q/U cubes and share it across the field. Pass "
+        "the BANE RMS or linmos weight cubes for anything with a noise "
+        "gradient -- on a mosaic the auto-mask is otherwise far too low at the "
+        "edges, and RM-CLEAN will clean noise there."
+    )
+
+
 def check_cubes_are_single_precision(*cubes: Path | None) -> None:
     """rm-lite takes the FDF's precision from the cubes it is given, so a
     double-precision cube doubles every Faraday-depth array it builds. Warned
@@ -184,6 +204,7 @@ def run_rmsynth_3d(
         *stokes_cubes.paths, *(error_cubes.paths if error_cubes else ())
     )
     check_cubes_are_single_precision(*stokes_cubes.paths)
+    _warn_on_no_error_cubes(error_cubes)
     stokes_i_kwargs = (
         {
             "stokes_i_file": stokes_cubes.i_path,
