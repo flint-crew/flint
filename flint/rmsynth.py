@@ -648,7 +648,8 @@ def compute_rm_products(
 
     computed: dict[str, Any] = {}
     with _seceded_if_on_a_worker():
-        for future in as_completed(list(future_to_keys)):
+        # Without loop=, as_completed uses the worker's loop, not this client's.
+        for future in as_completed(list(future_to_keys), loop=scheduler.loop):
             keys = future_to_keys[future]
             # `.result()` re-raises whatever the worker raised, so a failed
             # product still surfaces here rather than being dropped
