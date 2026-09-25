@@ -259,6 +259,36 @@ def _to_full_resolution(
     )
 
 
+@nb.njit(parallel=True, cache=True)
+def block_stats(
+    image: NDArray[np.float32],
+    nan_mask: NDArray[np.bool_],
+    block: int,
+) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
+    """Median and median absolute deviation of each `block` by `block` tile.
+
+    NaN for a tile less than a quarter of whose pixels are valid.
+    """
+    n_y, n_x = image.shape[0] // block, image.shape[1] // block
+    median = np.full((n_y, n_x), np.nan, dtype=np.float32)
+    mad = np.full((n_y, n_x), np.nan, dtype=np.float32)
+    for row in nb.prange(n_y):
+        values = np.empty(block * block, dtype=np.float32)
+        for col in range(n_x):
+            count = 0
+            for y in range(row * block, (row + 1) * block):
+                for x in range(col * block, (col + 1) * block):
+                    if not nan_mask[y, x]:
+                        values[count] = image[y, x]
+                        count += 1
+            if count < block * block // 4:
+                continue
+            centre = np.median(values[:count])
+            median[row, col] = centre
+            mad[row, col] = np.median(np.abs(values[:count] - centre))
+    return median, mad
+
+
 def local_seed(
     image: NDArray[np.float32],
     nan_mask: NDArray[np.bool_],
@@ -280,21 +310,7 @@ def local_seed(
     """
     # A plane smaller than a block is measured as one block
     block = min(block, *image.shape)
-    n_y, n_x = image.shape[0] // block, image.shape[1] // block
-    median = np.full((n_y, n_x), np.nan, dtype=np.float32)
-    mad = np.full((n_y, n_x), np.nan, dtype=np.float32)
-    # A strip of blocks at a time, as blanking and reshaping copy what they take
-    for row in range(n_y):
-        rows, cols = slice(row * block, (row + 1) * block), slice(0, n_x * block)
-        strip = np.where(nan_mask[rows, cols], np.nan, image[rows, cols])
-        blocks = strip.reshape(block, n_x, block).transpose(1, 0, 2).reshape(n_x, -1)
-        measured = np.isfinite(blocks).sum(axis=1) >= blocks.shape[1] // 4
-        if not measured.any():
-            continue
-        blocks = blocks[measured]
-        centre = np.nanmedian(blocks, axis=1)
-        median[row, measured] = centre
-        mad[row, measured] = np.nanmedian(np.abs(blocks - centre[:, None]), axis=1)
+    median, mad = block_stats(image, nan_mask, block)
 
     unmeasured = ~np.isfinite(mad)
     if unmeasured.all():

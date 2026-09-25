@@ -16,6 +16,7 @@ from scipy import ndimage
 from flint.bane import (
     FFTBANEOptions,
     bane_fits_image,
+    block_stats,
     fft_average,
     gaussian_kernel,
     get_kernel,
@@ -508,3 +509,27 @@ def test_a_source_larger_than_a_block_is_still_clipped() -> None:
     _, rms = robust_bane(image=image, header=_header())
 
     assert np.nanmedian(rms[590:650, 840:900]) == pytest.approx(1e-3, rel=0.2)
+
+
+@pytest.mark.filterwarnings("ignore:All-NaN slice:RuntimeWarning")
+def test_block_stats_matches_numpy() -> None:
+    """The compiled block statistics agree with numpy's, skip blank pixels, and
+    leave a block too blank to measure as NaN."""
+    rng = np.random.default_rng(0)
+    image = rng.normal(size=(40, 60)).astype(np.float32)
+    nan_mask = rng.random(image.shape) < 0.2
+    nan_mask[:10, :10] = True
+    nan_mask[10:20, 10:20] = rng.random((10, 10)) < 0.8
+
+    median, mad = block_stats(image, nan_mask, 10)
+
+    blocks = np.where(nan_mask, np.nan, image).reshape(4, 10, 6, 10).swapaxes(1, 2)
+    blocks = blocks.reshape(4, 6, 100)
+    expected = np.nanmedian(blocks, axis=-1)
+    expected_mad = np.nanmedian(np.abs(blocks - expected[..., None]), axis=-1)
+    too_blank = np.isfinite(blocks).sum(axis=-1) < 25
+    expected[too_blank] = expected_mad[too_blank] = np.nan
+
+    assert too_blank[0, 0]
+    assert np.allclose(median, expected, equal_nan=True)
+    assert np.allclose(mad, expected_mad, equal_nan=True)
