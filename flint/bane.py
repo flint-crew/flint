@@ -19,7 +19,6 @@ import numba as nb
 import numpy as np
 import rocket_fft  # noqa: F401
 from astropy.io import fits
-from astropy.stats import mad_std
 from astropy.wcs import WCS
 from astropy.wcs.utils import proj_plane_pixel_scales
 from numpy import fft
@@ -260,11 +259,68 @@ def _to_full_resolution(
     )
 
 
+def local_seed(
+    image: NDArray[np.float32],
+    nan_mask: NDArray[np.bool_],
+    block: int,
+) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
+    """Background and RMS maps from the median and MAD of `block`-pixel blocks.
+
+    What the first round clips against. One number for the whole plane is far
+    too low for a region of loud artefacts, which then gets clipped away as if
+    it were a source and refilled with the quiet noise of the rest.
+
+    Args:
+        image (NDArray[np.float32]): The image plane
+        nan_mask (NDArray[np.bool_]): Its blank pixels
+        block (int): Side of each block, in pixels
+
+    Returns:
+        tuple[NDArray[np.float32], NDArray[np.float32]]: Background and RMS, shaped like `image`
+    """
+    # A plane smaller than a block is measured as one block
+    block = min(block, *image.shape)
+    n_y, n_x = image.shape[0] // block, image.shape[1] // block
+    median = np.full((n_y, n_x), np.nan, dtype=np.float32)
+    mad = np.full((n_y, n_x), np.nan, dtype=np.float32)
+    # A strip of blocks at a time, as blanking and reshaping copy what they take
+    for row in range(n_y):
+        rows, cols = slice(row * block, (row + 1) * block), slice(0, n_x * block)
+        strip = np.where(nan_mask[rows, cols], np.nan, image[rows, cols])
+        blocks = strip.reshape(block, n_x, block).transpose(1, 0, 2).reshape(n_x, -1)
+        measured = np.isfinite(blocks).sum(axis=1) >= blocks.shape[1] // 4
+        if not measured.any():
+            continue
+        blocks = blocks[measured]
+        centre = np.nanmedian(blocks, axis=1)
+        median[row, measured] = centre
+        mad[row, measured] = np.nanmedian(np.abs(blocks - centre[:, None]), axis=1)
+
+    unmeasured = ~np.isfinite(mad)
+    if unmeasured.all():
+        # Too few valid pixels for any one block to be measured on its own
+        valid = image[~nan_mask]
+        median[:] = np.median(valid)
+        mad[:] = np.median(np.abs(valid - median[0, 0]))
+    elif unmeasured.any():
+        _, nearest = ndimage.distance_transform_edt(unmeasured, return_indices=True)
+        median, mad = median[tuple(nearest)], mad[tuple(nearest)]
+
+    centres = (slice((block - 1) / 2, None, block),) * 2
+    maps = []
+    # The median filter, so a source larger than one block is still clipped
+    for grid in (median, 1.4826 * mad):
+        grid = ndimage.median_filter(grid, size=3, mode="nearest")
+        maps.append(_to_full_resolution(grid, centres, image.shape))
+
+    return maps[0], maps[1]
+
+
 def _bane_round(
     image: NDArray[np.float32],
     nan_mask: NDArray[np.bool_],
-    background: NDArray[np.float32] | np.float32,
-    rms: NDArray[np.float32] | np.float32,
+    background: NDArray[np.float32],
+    rms: NDArray[np.float32],
     kernel: NDArray[np.float32],
     step_size_pix: int,
     clip_sigma: float,
@@ -275,9 +331,6 @@ def _bane_round(
 
     The refill carries the local background: zero-mean noise would drag the
     background down wherever a source was removed.
-
-    ``background`` and ``rms`` are either maps or, for the first round, the one
-    number each that describes the whole plane.
     """
     with np.errstate(invalid="ignore", divide="ignore"):
         # Built in place: the plain expression holds the difference, its
@@ -303,16 +356,9 @@ def _bane_round(
     # round rather than from a zero-filled copy kept across both, which would be
     # a second full-resolution plane held for the whole routine
     clipped = np.where(nan_mask, np.float32(0.0), image)
-    # Round one clips against one number for the whole plane, round two against
-    # the maps round one made
-    at_source: NDArray[np.float32] | np.float32
-    rms_at_source: NDArray[np.float32] | np.float32
-    if isinstance(background, np.ndarray) and isinstance(rms, np.ndarray):
-        at_source, rms_at_source = background[source_mask], rms[source_mask]
-    else:
-        at_source, rms_at_source = background, rms
     clipped[source_mask] = (
-        at_source + rng.normal(loc=0, scale=1, size=n_source) * rms_at_source
+        background[source_mask]
+        + rng.normal(loc=0, scale=1, size=n_source) * rms[source_mask]
     )
 
     sampled_at: tuple[slice, slice] | None = None
@@ -373,12 +419,12 @@ def robust_bane(
     header: fits.Header | dict[str, Any],
     fft_bane_options: FFTBANEOptions | None = None,
     kernel_func: Callable[[int], NDArray[np.float32]] = gaussian_kernel,
-    rms_estimator: Callable[[NDArray[np.float32]], float] = mad_std,
 ) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
     """Background and RMS maps of a single image plane.
 
-    Two passes: the first clips sources against one background and noise for the
-    plane, the second against the maps the first produced.
+    Two passes: the first clips sources against the median and MAD of blocks a
+    step across (see ``local_seed``), the second against the maps the first
+    produced.
 
     A plane with no usable beam gets blank maps, unless both sizes are given
     outright and so no beam is needed to size the kernel.
@@ -398,7 +444,6 @@ def robust_bane(
         header (fits.Header | dict[str, Any]): Its header, for the beam and pixel scale
         fft_bane_options (FFTBANEOptions | None, optional): Step, box, clip, seed and zero blanking. Defaults to ``FFTBANEOptions()``.
         kernel_func (Callable, optional): Kernel shape. Defaults to ``gaussian_kernel``.
-        rms_estimator (Callable, optional): First-pass RMS estimator. Defaults to ``mad_std``.
 
     Returns:
         tuple[NDArray[np.float32], NDArray[np.float32]]: Background and RMS, shaped like `image`
@@ -430,31 +475,25 @@ def robust_bane(
     if fft_bane_options.invalidate_zeros:
         # linmos fills outside its primary beam cutoff with exact zeros rather
         # than nans, and a measured zero is not a blank: it drags the seed
-        # median and mad_std below down towards zero, and past half the plane
-        # being blank it takes both to exactly zero, whereupon round one clips
-        # every pixel as a source and refills it with zero-scaled noise. The
-        # maps come back identically zero, which reads downstream as noiseless
+        # median and MAD towards zero, and where most of a block is blank it
+        # takes both to exactly zero, whereupon round one clips every pixel
+        # there as a source and refills it with zero-scaled noise. The maps
+        # come back zero, which reads downstream as noiseless
         nan_mask |= image == 0.0
 
-    finite = image[~nan_mask].ravel()
-    if finite.size == 0:
+    if nan_mask.all():
         # Nothing was measured, so there are no seeds to take a median and a
-        # mad_std of. Both would come back NaN off an empty slice and propagate
-        # to the same blank maps, but noisily, by way of a pair of numpy
-        # RuntimeWarnings. A plane blanked by linmos rather than by the beam
-        # cutoff reaches this once its zeros count as blank
+        # MAD of. A plane blanked by linmos rather than by the beam cutoff
+        # reaches this once its zeros count as blank
         logger.warning("Every pixel of the plane is blank, returning blank maps")
         blank = np.full_like(image, np.nan, dtype=np.float32)
         return blank, blank.copy()
 
-    # The median matters: testing |image| rather than |image - background| makes
-    # every pixel a source as soon as the plane carries a DC offset. Scalars,
-    # and dropped before the rounds: `finite` and the copy `rms_estimator` makes
-    # of it are each most of a plane
-    clip_against: tuple[
-        NDArray[np.float32] | np.float32, NDArray[np.float32] | np.float32
-    ] = (np.float32(np.median(finite)), np.float32(rms_estimator(finite)))
-    del finite
+    clip_against = local_seed(
+        image=image,
+        nan_mask=nan_mask,
+        block=step_size_pix if step_size_pix > 0 else kernel.shape[0],
+    )
 
     # A mosaic's noise rises with the primary beam, so one threshold clips real
     # noise at the edge while missing faint sources in the middle

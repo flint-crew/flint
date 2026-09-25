@@ -167,10 +167,11 @@ def test_invalidate_zeros_can_be_turned_off() -> None:
         fft_bane_options=FFTBANEOptions(invalidate_zeros=False),
     )
 
-    # Nothing is blank, so nothing is NaN, and the collapse described above is
-    # exactly what the zeros produce
+    # Nothing is blank, so nothing is NaN, and the zeros are measured as the
+    # noiseless data they claim to be
     assert np.isfinite(rms).all()
-    assert np.all(rms == 0.0)
+    assert np.median(rms[~_footprint(radius=480)]) < 1e-4
+    assert np.median(rms[_footprint(radius=300)]) == pytest.approx(1e-3, rel=0.3)
 
 
 def test_the_rms_map_is_never_negative() -> None:
@@ -440,11 +441,16 @@ def test_the_noise_map_lines_up_with_the_noise_it_measures() -> None:
         fft_bane_options=FFTBANEOptions(step_size=10, box_size=6),
     )
 
-    peak_y, peak_x = np.unravel_index(int(np.nanargmax(rms)), rms.shape)
+    # Centre of mass of the excess, not the brightest pixel: the argmax of a
+    # noisy map wanders by tens of pixels from one noise realisation to the next
+    excess = np.clip(rms - np.nanmedian(rms), 0.0, None)
+    peak_y, peak_x = ndimage.center_of_mass(excess)
     # Comfortable for a blob this broad, and nowhere near the sixty-odd pixels
     # an uncentred kernel and a wrongly scaled step back up cost between them
-    assert abs(peak_y - centre_y) < 10, f"noise peak {peak_y} rows from {centre_y}"
-    assert abs(peak_x - centre_x) < 10, f"noise peak {peak_x} columns from {centre_x}"
+    assert abs(peak_y - centre_y) < 10, f"noise peak {peak_y:.1f} rows from {centre_y}"
+    assert abs(peak_x - centre_x) < 10, (
+        f"noise peak {peak_x:.1f} columns from {centre_x}"
+    )
 
 
 def test_a_plane_measured_without_downsampling() -> None:
@@ -468,6 +474,37 @@ def test_a_plane_measured_without_downsampling() -> None:
 
     assert np.isfinite(background).all()
     assert np.isfinite(rms).all()
-    peak_y, peak_x = np.unravel_index(int(np.nanargmax(rms)), rms.shape)
-    assert abs(peak_y - centre_y) < 10, f"noise peak {peak_y} rows from {centre_y}"
-    assert abs(peak_x - centre_x) < 10, f"noise peak {peak_x} columns from {centre_x}"
+    excess = np.clip(rms - np.nanmedian(rms), 0.0, None)
+    peak_y, peak_x = ndimage.center_of_mass(excess)
+    assert abs(peak_y - centre_y) < 10, f"noise peak {peak_y:.1f} rows from {centre_y}"
+    assert abs(peak_x - centre_x) < 10, (
+        f"noise peak {peak_x:.1f} columns from {centre_x}"
+    )
+
+
+def test_a_region_of_loud_artefacts_is_measured_as_noise() -> None:
+    """Clipped against one noise level for the whole plane, a region of loud
+    artefacts is clipped away entirely and refilled with the quiet noise of the
+    rest, so the map reads it as quiet. It has to come back loud."""
+    rng = np.random.default_rng(0)
+    yy, xx = np.mgrid[0:NY, 0:NX]
+    truth = np.full((NY, NX), 1e-3, dtype=np.float32)
+    truth[(yy < 450) & (xx < 450)] = 0.1
+    image = (rng.normal(0, 1, (NY, NX)) * truth).astype(np.float32)
+
+    _, rms = robust_bane(image=image, header=_header())
+
+    assert np.nanmedian(rms[50:400, 50:400]) == pytest.approx(0.1, rel=0.3)
+    assert np.nanmedian(rms[600:, 600:]) == pytest.approx(1e-3, rel=0.3)
+
+
+def test_a_source_larger_than_a_block_is_still_clipped() -> None:
+    """The first round clips against blocks a step across. A source filling a
+    whole block must not become that block's background, or the noise map
+    rises around it."""
+    image = _sky(rms=1e-3)
+    image[600:640, 850:890] += 0.05
+
+    _, rms = robust_bane(image=image, header=_header())
+
+    assert np.nanmedian(rms[590:650, 840:900]) == pytest.approx(1e-3, rel=0.2)
