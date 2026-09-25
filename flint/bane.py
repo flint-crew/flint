@@ -226,6 +226,35 @@ def _downsample_slices(
     return slices[0], slices[1]
 
 
+@nb.njit(parallel=True, cache=True)
+def bilinear_upsample(
+    grid: NDArray[np.float32],
+    starts: tuple[float, float],
+    steps: tuple[float, float],
+    shape: tuple[int, int],
+) -> NDArray[np.float32]:
+    """Linearly interpolate `grid`, whose sample k sits at `start + k * step`,
+    onto every pixel of `shape`, holding the edge values beyond the grid."""
+    axes = []
+    for axis in range(2):
+        n = grid.shape[axis]
+        position = (np.arange(shape[axis]) - starts[axis]) / steps[axis]
+        position = np.minimum(np.maximum(position, 0.0), n - 1)
+        lower = np.minimum(position.astype(np.int64), max(n - 2, 0))
+        axes.append((lower, np.minimum(lower + 1, n - 1), position - lower))
+    (y0, y1, wy), (x0, x1, wx) = axes[0], axes[1]
+
+    out = np.empty(shape, dtype=np.float32)
+    for i in nb.prange(shape[0]):
+        a, b, fy = y0[i], y1[i], wy[i]
+        for j in range(shape[1]):
+            c, d, fx = x0[j], x1[j], wx[j]
+            top = grid[a, c] + fx * (grid[a, d] - grid[a, c])
+            bottom = grid[b, c] + fx * (grid[b, d] - grid[b, c])
+            out[i, j] = top + fy * (bottom - top)
+    return out
+
+
 def _to_full_resolution(
     smoothed: NDArray[np.float32],
     sampled_at: tuple[slice, slice],
@@ -233,9 +262,8 @@ def _to_full_resolution(
 ) -> NDArray[np.float32]:
     """Put a map measured on the downsampled grid back onto the plane's own grid.
 
-    An affine transform rather than `ndimage.zoom`, which takes a scale alone
-    and so cannot know the sampled grid starts a step in. Linear rather than a
-    spline, which overshoots the step a blank leaves in the map.
+    Linear rather than a spline, which overshoots the step a blank leaves in
+    the map.
 
     Args:
         smoothed (NDArray[np.float32]): A map on the downsampled grid
@@ -245,17 +273,11 @@ def _to_full_resolution(
     Returns:
         NDArray[np.float32]: The map on the plane's grid
     """
-    # affine_transform reads `input[matrix @ output_index + offset]`, so this is
-    # the inverse of `sample k of axis i came from pixel start_i + k * step_i`
-    steps = np.array([axis.step for axis in sampled_at], dtype=np.float64)
-    starts = np.array([axis.start for axis in sampled_at], dtype=np.float64)
-    return ndimage.affine_transform(
-        smoothed,
-        matrix=1.0 / steps,
-        offset=-starts / steps,
-        output_shape=shape,
-        order=1,
-        mode="nearest",
+    return bilinear_upsample(
+        np.ascontiguousarray(smoothed, dtype=np.float32),
+        (float(sampled_at[0].start), float(sampled_at[1].start)),
+        (float(sampled_at[0].step), float(sampled_at[1].step)),
+        (int(shape[0]), int(shape[1])),
     )
 
 

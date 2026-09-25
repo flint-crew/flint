@@ -15,6 +15,7 @@ from scipy import ndimage
 
 from flint.bane import (
     FFTBANEOptions,
+    _to_full_resolution,
     bane_fits_image,
     block_stats,
     fft_average,
@@ -533,3 +534,29 @@ def test_block_stats_matches_numpy() -> None:
     assert too_blank[0, 0]
     assert np.allclose(median, expected, equal_nan=True)
     assert np.allclose(mad, expected_mad, equal_nan=True)
+
+
+def test_the_step_back_up_matches_scipy() -> None:
+    """The compiled interpolation is scipy's linear affine transform with the
+    edges held, for the downsampled grid and the seed's block centres alike."""
+    rng = np.random.default_rng(0)
+    grid = rng.normal(size=(17, 23)).astype(np.float32)
+    shape = (500, 700)
+
+    for sampled_at in (
+        (slice(30, 480, 30), slice(30, 690, 30)),
+        (slice(14.5, None, 30), slice(14.5, None, 30)),
+    ):
+        steps = np.array([axis.step for axis in sampled_at], dtype=np.float64)
+        starts = np.array([axis.start for axis in sampled_at], dtype=np.float64)
+        expected = ndimage.affine_transform(
+            grid,
+            matrix=1.0 / steps,
+            offset=-starts / steps,
+            output_shape=shape,
+            order=1,
+            mode="nearest",
+        )
+        assert np.allclose(
+            _to_full_resolution(grid, sampled_at, shape), expected, atol=1e-5
+        )
