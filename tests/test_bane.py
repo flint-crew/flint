@@ -15,8 +15,8 @@ from scipy import ndimage
 
 from flint.bane import (
     FFTBANEOptions,
-    _to_full_resolution,
     bane_fits_image,
+    bilinear_upsample,
     block_stats,
     fft_average,
     gaussian_kernel,
@@ -55,8 +55,7 @@ def _sky(background: float = 0.0, rms: float = 1e-3, seed: int = 0) -> np.ndarra
 
 
 def test_pad_reflect_matches_numpy() -> None:
-    """It is a numba-compatible np.pad(mode='reflect'), so it has to agree with
-    the thing it replaces."""
+    """Agrees with np.pad(mode='reflect')"""
     rng = np.random.default_rng(0)
     array = rng.normal(size=(17, 23)).astype(np.float32)
 
@@ -68,8 +67,7 @@ def test_pad_reflect_matches_numpy() -> None:
 
 
 def test_fft_average_preserves_a_flat_image() -> None:
-    """The kernel is normalised by its own sum, so smoothing a constant image
-    returns that constant rather than scaling it."""
+    """Smoothing a constant image returns that constant"""
     image = np.full((128, 128), 3.0, dtype=np.float32)
 
     for kernel in (gaussian_kernel(5), tophat_kernel(8)):
@@ -77,9 +75,7 @@ def test_fft_average_preserves_a_flat_image() -> None:
 
 
 def test_bane_recovers_a_varying_background_and_rms() -> None:
-    """The point of BANE: both the background and the noise vary across the
-    image, and a single number for either would be wrong. Neither is uniform
-    here, and the sources must not drag the noise up."""
+    """Tracks a background and noise that both vary across the plane"""
     rng = np.random.default_rng(0)
     yy, xx = np.mgrid[0:NY, 0:NX]
     truth_bkg = 2e-3 * (yy / NY)
@@ -94,19 +90,15 @@ def test_bane_recovers_a_varying_background_and_rms() -> None:
     assert np.isfinite(background).all()
     assert np.isfinite(rms).all()
 
-    # Downsampling and smoothing bias both low, so this is a loose check that
-    # the maps track the truth rather than a tight one on their values
     assert np.nanmedian(background) == pytest.approx(np.median(truth_bkg), rel=0.3)
     assert np.nanmedian(rms) == pytest.approx(np.median(truth_rms), rel=0.3)
 
-    # The gradient is the part a scalar noise estimate cannot express
     assert np.nanmedian(rms[:, -100:]) > 1.5 * np.nanmedian(rms[:, :100])
     assert np.nanmedian(background[-100:, :]) > np.nanmedian(background[:100, :])
 
 
 def test_blanked_pixels_stay_blank() -> None:
-    """A linmos mosaic blanks beyond its cutoff. Those pixels have no data to
-    measure, so they come back NaN rather than as an extrapolated background."""
+    """NaN pixels come back NaN in both maps"""
     image = _sky()
     blank = np.zeros_like(image, dtype=bool)
     blank[:50, :] = True
@@ -127,10 +119,7 @@ def _footprint(radius: int) -> np.ndarray:
 
 
 def test_the_linmos_zero_fill_is_treated_as_blank() -> None:
-    """linmos fills beyond its cutoff with exact zeros, not NaNs. Counted as
-    measured data those zeros take the seed median and mad_std to exactly zero
-    once more than half the plane is blank, and the maps collapse to zero
-    everywhere, which reads downstream as a noiseless image."""
+    """A zero-filled footprint measures the same as a NaN-filled one"""
     inside = _footprint(radius=380)
     assert (~inside).mean() > 0.5, "the collapse needs over half the plane blank"
 
@@ -141,9 +130,7 @@ def test_the_linmos_zero_fill_is_treated_as_blank() -> None:
     zero_bkg, zero_rms = robust_bane(image=zero_filled, header=_header())
     nan_bkg, nan_rms = robust_bane(image=nan_filled, header=_header())
 
-    # The noise inside the footprint was measured, not zeroed
     assert np.nanmedian(zero_rms[inside]) == pytest.approx(1e-3, rel=0.3)
-    # Blanking either way describes the same plane, so it measures the same
     assert np.nanmedian(zero_rms[inside]) == pytest.approx(
         np.nanmedian(nan_rms[inside]), rel=0.05
     )
@@ -151,15 +138,12 @@ def test_the_linmos_zero_fill_is_treated_as_blank() -> None:
         np.nanmedian(nan_bkg[inside]), rel=0.05
     )
 
-    # And the maps blank where the image is blank, so the noise cube and the
-    # image cube it describes share a footprint
     assert np.isnan(zero_rms[~inside]).all()
     assert np.isnan(zero_bkg[~inside]).all()
 
 
 def test_invalidate_zeros_can_be_turned_off() -> None:
-    """Off, zeros count as measured data again, which is what a caller whose
-    zeros are real would want."""
+    """With invalidate_zeros off, zeros are measured as data"""
     inside = _footprint(radius=380)
     zero_filled = np.where(inside, _sky(rms=1e-3), 0.0).astype(np.float32)
 
@@ -169,19 +153,13 @@ def test_invalidate_zeros_can_be_turned_off() -> None:
         fft_bane_options=FFTBANEOptions(invalidate_zeros=False),
     )
 
-    # Nothing is blank, so nothing is NaN, and the zeros are measured as the
-    # noiseless data they claim to be
     assert np.isfinite(rms).all()
     assert np.median(rms[~_footprint(radius=480)]) < 1e-4
     assert np.median(rms[_footprint(radius=300)]) == pytest.approx(1e-3, rel=0.3)
 
 
 def test_the_rms_map_is_never_negative() -> None:
-    """A negative noise squares to a small variance, so an inverse-variance
-    weight built from it comes out orders of magnitude too large rather than
-    obviously wrong. The linear step back up to full resolution cannot
-    undershoot, but a spline rings across the step at a footprint edge and
-    does, so this holds whatever it is interpolated with."""
+    """The RMS map has no negative values at a footprint edge"""
     inside = _footprint(radius=480)
     sky = _sky(rms=1e-3)
 
@@ -194,10 +172,7 @@ def test_the_rms_map_is_never_negative() -> None:
 
 
 def test_a_wholly_blank_plane_returns_blank_maps_quietly() -> None:
-    """Nothing measured means no seeds to take a median and a mad_std of. Both
-    come back NaN off an empty slice and reach the same blank maps anyway, but
-    by way of a pair of numpy RuntimeWarnings. linmos hands over such a plane as
-    all zeros rather than all NaNs, so blanking the zeros is what reaches it."""
+    """An all-blank plane gives blank maps without numpy warnings"""
     for plane in (
         np.full((NY, NX), np.nan, dtype=np.float32),
         np.zeros((NY, NX), dtype=np.float32),
@@ -211,12 +186,9 @@ def test_a_wholly_blank_plane_returns_blank_maps_quietly() -> None:
 
 
 def test_the_seed_makes_a_rerun_reproducible() -> None:
-    """Clipped source pixels are refilled with random noise, so without a fixed
-    seed the same image gives different maps run to run."""
+    """The same seed gives the same maps, a different one does not"""
     image = _sky()
-    # A cut low enough that the refilled pixels survive the downsampling; at the
-    # default 5 sigma only a handful of pixels are touched and the maps agree
-    # whatever the seed
+    # Low enough that the refilled pixels survive the downsampling
     options = FFTBANEOptions(clip_sigma=1.0)
 
     first, _ = robust_bane(image=image, header=_header(), fft_bane_options=options)
@@ -232,8 +204,7 @@ def test_the_seed_makes_a_rerun_reproducible() -> None:
 
 
 def test_get_kernel_sizes_itself_from_the_beam() -> None:
-    """Unset sizes come from the restoring beam, at 3 and 10 beams. A negative
-    value keeps that behaviour but sets the beam count."""
+    """Unset sizes are 3 and 10 beams; negative sizes set the beam count"""
     kernel, step = get_kernel(header=_header())
     assert step == 3 * PIX_PER_BEAM
     assert kernel.max() == pytest.approx(1.0)
@@ -247,8 +218,7 @@ def test_get_kernel_sizes_itself_from_the_beam() -> None:
 
 
 def test_get_kernel_needs_a_beam_it_can_read() -> None:
-    """Without a beam there is nothing to size the kernel against, so it says so
-    rather than picking a number."""
+    """Sizing from a header with no beam raises"""
     header = _header()
     for key in ("BMAJ", "BMIN", "BPA"):
         del header[key]
@@ -258,9 +228,7 @@ def test_get_kernel_needs_a_beam_it_can_read() -> None:
 
 
 def test_a_kernel_too_big_for_the_image_is_refused() -> None:
-    """``pad_reflect`` is njit-ed without bounds checking, so a kernel wider than
-    the image it pads reads off the end and returns quietly wrong maps. A small
-    image with a big step downsamples into exactly that."""
+    """A kernel wider than the downsampled image raises"""
     with pytest.raises(ValueError, match="does not fit"):
         robust_bane(
             # Not zeros: those are blank now, and a wholly blank plane returns
@@ -272,9 +240,7 @@ def test_a_kernel_too_big_for_the_image_is_refused() -> None:
 
 
 def test_bane_fits_image_writes_maps_on_the_input_grid(tmp_path: Path) -> None:
-    """The maps are stacked into cubes beside the image they came from, so they
-    have to keep its shape, including the degenerate axes a linmos plane carries.
-    """
+    """The maps keep the input's name, shape and degenerate axes"""
     image = _sky(background=0.0, rms=1e-3)
     header = _header()
     # A linmos plane is (stokes, freq, ny, nx)
@@ -294,8 +260,7 @@ def test_bane_fits_image_writes_maps_on_the_input_grid(tmp_path: Path) -> None:
 
 
 def test_bane_fits_image_refuses_a_cube(tmp_path: Path) -> None:
-    """Only single planes are ported, so a real cube is an error rather than a
-    silently measured first channel."""
+    """A cube raises rather than measuring its first channel"""
     fits_path = tmp_path / "cube.fits"
     fits.writeto(
         fits_path, np.zeros((4, 32, 32), dtype=np.float32), _header(), overwrite=True
@@ -309,10 +274,7 @@ def test_bane_fits_image_refuses_a_cube(tmp_path: Path) -> None:
 def test_bane_fits_image_blanks_a_plane_with_no_beam(
     tmp_path: Path, beamless: str, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """A blank channel loses its beam keywords through linmos, or carries the
-    zero beam that marks it as holding no PSF. Neither can size a kernel, and
-    neither holds signal, so the maps come out blank rather than raising and
-    taking the whole cube with them."""
+    """A missing or zero beam gives blank maps and a warning"""
     header = _header()
     for key in ("BMAJ", "BMIN", "BPA"):
         if beamless == "missing":
@@ -326,8 +288,6 @@ def test_bane_fits_image_blanks_a_plane_with_no_beam(
     with caplog.at_level(logging.WARNING, logger="flint"):
         bkg_path, rms_path = bane_fits_image(image=fits_path)
 
-    # A zero beam sizes a 1x1 all-NaN kernel rather than raising, so the maps
-    # coming out blank does not on its own say the beam was checked
     assert "No usable beam" in caplog.text
 
     for path in (bkg_path, rms_path):
@@ -336,7 +296,7 @@ def test_bane_fits_image_blanks_a_plane_with_no_beam(
 
 
 def test_robust_bane_without_a_beam_runs_on_given_sizes() -> None:
-    """The beam only sizes the kernel, so sizes given outright need no beam"""
+    """Sizes given outright need no beam"""
     header = _header()
     for key in ("BMAJ", "BMIN", "BPA"):
         del header[key]
@@ -351,23 +311,17 @@ def test_robust_bane_without_a_beam_runs_on_given_sizes() -> None:
 
 
 def test_the_working_memory_stays_a_small_multiple_of_the_plane() -> None:
-    """A channel is measured as one task on one worker, so the peak the routine
-    reaches - not the size of the maps it returns - is what has to fit. Held at
-    a few times the plane by keeping the seeds as scalars, building the clip
-    mask in place, and taking the validity mask already downsampled. The bound
-    is loose enough for numpy and scipy to allocate differently between
-    versions, and tight enough to catch a full-resolution array coming back."""
+    """Peak memory stays a small multiple of the plane"""
     image = _sky()
     header = _header()
 
-    # numba compiles on the first call, and the compilation allocates
+    # Compile first, as compilation allocates
     robust_bane(image=image, header=header)
 
     for options in (
         FFTBANEOptions(),
         FFTBANEOptions(step_size=8, box_size=12),
-        # A cut this low makes a source of most of the plane, so the refill
-        # draws its noise in bulk
+        # Makes a source of most of the plane
         FFTBANEOptions(clip_sigma=1.0),
     ):
         tracemalloc.start()
@@ -381,9 +335,7 @@ def test_the_working_memory_stays_a_small_multiple_of_the_plane() -> None:
 
 
 def test_a_wider_plane_is_measured_as_float32() -> None:
-    """``bane_fft`` is compiled for float32 alone. A plane read from a FITS file
-    is float32 already, but a caller computing one in double precision should
-    get the maps rather than a numba typing error."""
+    """A float64 plane gives the same float32 maps"""
     image = _sky()
     background, rms = robust_bane(image=image, header=_header())
     wide_background, wide_rms = robust_bane(
@@ -397,11 +349,7 @@ def test_a_wider_plane_is_measured_as_float32() -> None:
 
 
 def test_fft_average_puts_the_smoothed_pixel_over_the_pixel_it_smooths() -> None:
-    """The kernel is zero-padded out to the image shape, which centres it on the
-    origin rather than on the pixel it smooths unless the window is taken at the
-    matching displacement. A flat image cannot show this - convolving a delta
-    can, and so can comparing against a convolution that is centred by
-    construction."""
+    """Smoothing does not shift the image"""
     image = np.zeros((64, 64), dtype=np.float32)
     image[32, 20] = 1.0
 
@@ -409,28 +357,22 @@ def test_fft_average_puts_the_smoothed_pixel_over_the_pixel_it_smooths() -> None
         kernel = (kernel / kernel.max()).astype(np.float32)
         smoothed = fft_average(np.ascontiguousarray(image), kernel)
 
-        # Centre of mass rather than the brightest pixel: a tophat answers a
-        # delta with a disc of equal values, whose argmax is its first row
+        # Not argmax, which a tophat's flat disc puts on its first row
         centre = ndimage.center_of_mass(smoothed)
         assert centre == pytest.approx((32.0, 20.0), abs=0.01), (
             f"a {kernel.shape} kernel moved the delta to {centre}"
         )
 
-        # `pad_reflect` is np.pad's "reflect", which scipy calls "mirror"
+        # np.pad's "reflect" is scipy's "mirror"
         centred = ndimage.convolve(image, kernel / kernel.sum(), mode="mirror")
         assert np.allclose(smoothed, centred, atol=1e-6)
 
 
 def test_the_noise_map_lines_up_with_the_noise_it_measures() -> None:
-    """A background or noise map is read against the image it came from, so
-    where it puts a feature matters as much as the value it puts there. Both the
-    kernel centring and the step back up to full resolution can displace it, by
-    tens of pixels each and both in the same direction."""
+    """A patch of louder noise stays where it is in the RMS map"""
     shape = (512, 512)
     centre_y, centre_x = 300, 180
     yy, xx = np.mgrid[0 : shape[0], 0 : shape[1]].astype(np.float32)
-    # A smooth blob of louder noise: no edge, so nothing that could bias a
-    # centre by the way the map averages variance rather than amplitude
     amplitude = 1.0 + 5.0 * np.exp(
         -0.5 * (((xx - centre_x) / 50) ** 2 + ((yy - centre_y) / 50) ** 2)
     )
@@ -443,12 +385,9 @@ def test_the_noise_map_lines_up_with_the_noise_it_measures() -> None:
         fft_bane_options=FFTBANEOptions(step_size=10, box_size=6),
     )
 
-    # Centre of mass of the excess, not the brightest pixel: the argmax of a
-    # noisy map wanders by tens of pixels from one noise realisation to the next
+    # Not argmax, which wanders by tens of pixels with the noise
     excess = np.clip(rms - np.nanmedian(rms), 0.0, None)
     peak_y, peak_x = ndimage.center_of_mass(excess)
-    # Comfortable for a blob this broad, and nowhere near the sixty-odd pixels
-    # an uncentred kernel and a wrongly scaled step back up cost between them
     assert abs(peak_y - centre_y) < 10, f"noise peak {peak_y:.1f} rows from {centre_y}"
     assert abs(peak_x - centre_x) < 10, (
         f"noise peak {peak_x:.1f} columns from {centre_x}"
@@ -456,9 +395,7 @@ def test_the_noise_map_lines_up_with_the_noise_it_measures() -> None:
 
 
 def test_a_plane_measured_without_downsampling() -> None:
-    """``step_size=0`` smooths the plane at its own resolution, which is the one
-    path that never steps the maps back up. The kernel still has to be centred
-    on the pixel it smooths, so a blob of louder noise stays where it was put."""
+    """step_size=0 works and does not shift the RMS map"""
     shape = (512, 512)
     centre_y, centre_x = 300, 180
     yy, xx = np.mgrid[0 : shape[0], 0 : shape[1]].astype(np.float32)
@@ -485,9 +422,7 @@ def test_a_plane_measured_without_downsampling() -> None:
 
 
 def test_a_region_of_loud_artefacts_is_measured_as_noise() -> None:
-    """Clipped against one noise level for the whole plane, a region of loud
-    artefacts is clipped away entirely and refilled with the quiet noise of the
-    rest, so the map reads it as quiet. It has to come back loud."""
+    """A loud artefact region is measured as loud, not clipped away"""
     rng = np.random.default_rng(0)
     yy, xx = np.mgrid[0:NY, 0:NX]
     truth = np.full((NY, NX), 1e-3, dtype=np.float32)
@@ -501,9 +436,7 @@ def test_a_region_of_loud_artefacts_is_measured_as_noise() -> None:
 
 
 def test_a_source_larger_than_a_block_is_still_clipped() -> None:
-    """The first round clips against blocks a step across. A source filling a
-    whole block must not become that block's background, or the noise map
-    rises around it."""
+    """A source larger than one seed tile does not raise the RMS around it"""
     image = _sky(rms=1e-3)
     image[600:640, 850:890] += 0.05
 
@@ -514,8 +447,7 @@ def test_a_source_larger_than_a_block_is_still_clipped() -> None:
 
 @pytest.mark.filterwarnings("ignore:All-NaN slice:RuntimeWarning")
 def test_block_stats_matches_numpy() -> None:
-    """The compiled block statistics agree with numpy's, skip blank pixels, and
-    leave a block too blank to measure as NaN."""
+    """Agrees with numpy's nanmedian, with sparse tiles left NaN"""
     rng = np.random.default_rng(0)
     image = rng.normal(size=(40, 60)).astype(np.float32)
     nan_mask = rng.random(image.shape) < 0.2
@@ -537,26 +469,19 @@ def test_block_stats_matches_numpy() -> None:
 
 
 def test_the_step_back_up_matches_scipy() -> None:
-    """The compiled interpolation is scipy's linear affine transform with the
-    edges held, for the downsampled grid and the seed's block centres alike."""
-    rng = np.random.default_rng(0)
-    grid = rng.normal(size=(17, 23)).astype(np.float32)
+    """Agrees with scipy's linear affine_transform"""
+    grid = np.random.default_rng(0).normal(size=(17, 23)).astype(np.float32)
     shape = (500, 700)
 
-    for sampled_at in (
-        (slice(30, 480, 30), slice(30, 690, 30)),
-        (slice(14.5, None, 30), slice(14.5, None, 30)),
-    ):
-        steps = np.array([axis.step for axis in sampled_at], dtype=np.float64)
-        starts = np.array([axis.start for axis in sampled_at], dtype=np.float64)
+    for start, step in ((30.0, 30.0), (14.5, 30.0)):
         expected = ndimage.affine_transform(
             grid,
-            matrix=1.0 / steps,
-            offset=-starts / steps,
+            matrix=np.full(2, 1 / step),
+            offset=np.full(2, -start / step),
             output_shape=shape,
             order=1,
             mode="nearest",
         )
         assert np.allclose(
-            _to_full_resolution(grid, sampled_at, shape), expected, atol=1e-5
+            bilinear_upsample(grid, start, step, shape), expected, atol=1e-5
         )
