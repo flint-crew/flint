@@ -96,8 +96,8 @@ class SubtractFieldOptions(BaseOptions):
     """Path to the holography FITS cube that will be used when co-adding beams"""
     linmos_residuals: bool = False
     """Linmos the cleaning residuals together into a field image"""
-    beam_cutoff: float = 150
-    """Cutoff in arcseconds to use when calculating the common beam to convol to"""
+    cube_beam_cutoff: float = 150
+    """Cutoff in arcseconds to use when calculating the common beam each cube channel is convolved to"""
     pb_cutoff: float = 0.1
     """Primary beam attenuation cutoff to use during linmos"""
     stagger_delay_seconds: float | None = None
@@ -167,8 +167,10 @@ class FieldOptions(BaseOptions):
     """Path to the directory container the reference catalogues, used to generate validation plots"""
     linmos_residuals: bool = False
     """Linmos the cleaning residuals together into a field image"""
-    beam_cutoff: float = 150
-    """Cutoff in arcseconds to use when calculating the common beam to convol to"""
+    mfs_beam_cutoff: float = 150
+    """Cutoff in arcseconds to use when calculating the common beam the MFS images are convolved to"""
+    cube_beam_cutoff: float = 150
+    """Cutoff in arcseconds to use when calculating the common beam each cube channel is convolved to"""
     fixed_beam_shape: tuple[float, float, float] | None = None
     """Specify the final beamsize of linmos field images in (arcsec, arcsec, deg)"""
     pb_cutoff: float = 0.1
@@ -225,8 +227,10 @@ class PolFieldOptions(BaseOptions):
     """Path to the singularity CASA container"""
     holofile: Path | None = None
     """Path to the holography FITS cube that will be used when co-adding beams"""
-    beam_cutoff: float = 150
-    """Cutoff in arcseconds to use when calculating the common beam to convol to"""
+    mfs_beam_cutoff: float = 150
+    """Cutoff in arcseconds to use when calculating the common beam the MFS images are convolved to"""
+    cube_beam_cutoff: float = 150
+    """Cutoff in arcseconds to use when calculating the common beam each cube channel is convolved to"""
     fixed_beam_shape: tuple[float, float, float] | None = None
     """Specify the final beamsize of linmos field images in (arcsec, arcsec, deg)"""
     total_resolution_cubes: bool = False
@@ -459,7 +463,7 @@ class RMSynthFieldOptions(BaseOptions):
     """Measure BANE cubes off the common-resolution cubes and take the FDF noise from the RMS. Parameters come from the strategy's ``fftbane`` mode. Supersedes ``error_cubes``, which describe the unconvolved inputs"""
     imaging_strategy: Path | None = None
     """Path to a FLINT imaging yaml file that contains the RMSynthOptions/RMCleanOptions settings to use"""
-    beam_cutoff: float | None = None
+    cube_beam_cutoff: float | None = None
     """Cutoff in arcseconds to use when bringing the input cubes to a common beam. Channels coarser than this are blanked instead of dragging every channel out to their resolution. Defaults to no cutoff"""
     cube_products: list[Literal["dirty", "clean", "model"]] = []
     """Which Faraday dispersion function (FDF) cubes to write as FITS. Nothing by default, as these cubes can be large."""
@@ -545,8 +549,10 @@ class RACSAllOptions(BaseOptions):
     """Path to the directory container the reference catalogues, used to generate validation plots"""
     linmos_residuals: bool = False
     """Linmos the cleaning residuals together into a field image"""
-    beam_cutoff: float = 150
-    """Cutoff in arcseconds to use when calculating the common beam to convol to"""
+    mfs_beam_cutoff: float = 150
+    """Cutoff in arcseconds to use when calculating the common beam the MFS images are convolved to"""
+    cube_beam_cutoff: float = 150
+    """Cutoff in arcseconds to use when calculating the common beam each cube channel is convolved to"""
     pb_cutoff: float = 0.1
     """Primary beam attenuation cutoff to use during linmos"""
     use_beam_masks: bool = False

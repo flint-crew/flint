@@ -372,7 +372,7 @@ def process_science_fields_pol(
     }
     stokes_channel_groups = convolve_channel_groups_to_natural_resolution(
         stokes_channel_groups=stokes_channel_groups,
-        cutoff=pol_field_options.beam_cutoff,
+        cutoff=pol_field_options.cube_beam_cutoff,
         fixed_beam_shape=pol_field_options.fixed_beam_shape,
     )
 
@@ -382,7 +382,7 @@ def process_science_fields_pol(
     total_beam_shape = (
         total_beam_from_channel_groups(
             stokes_channel_groups=stokes_channel_groups,
-            cutoff=pol_field_options.beam_cutoff,
+            cutoff=pol_field_options.cube_beam_cutoff,
             fixed_beam_shape=pol_field_options.fixed_beam_shape,
         )
         if pol_field_options.total_resolution_cubes
@@ -447,7 +447,7 @@ def process_science_fields_pol(
                 suffix_str=POL_NAME_SUFFIX,
                 fft_bane_options=fft_bane_options,
                 total_beam_shape=total_beam_shape,
-                beam_cutoff=pol_field_options.beam_cutoff,
+                beam_cutoff=pol_field_options.cube_beam_cutoff,
             )
             stokes_image_cubes[stokes] = stokes_cubes.image
             stokes_weight_cubes[stokes] = stokes_cubes.weight
@@ -483,7 +483,7 @@ def process_science_fields_pol(
     }
     mfs_beam_paths = convolve_mfs_beam_images_to_common_resolution(
         mfs_beam_images=mfs_beam_paths,
-        cutoff=pol_field_options.beam_cutoff,
+        cutoff=pol_field_options.mfs_beam_cutoff,
         fixed_beam_shape=pol_field_options.fixed_beam_shape,
     )
 
