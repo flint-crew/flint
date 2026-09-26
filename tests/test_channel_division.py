@@ -25,7 +25,7 @@ from flint.imager.wsclean import (
     WSCleanOptions,
     _resolve_wsclean_key_value_to_cli_str,
 )
-from flint.prefect.flows.racs_all_continuum_selfcal import _apply_cube_division
+from flint.prefect.flows.racs_all_continuum_selfcal import apply_cube_division
 
 
 def mock_wsclean_division(
@@ -209,7 +209,7 @@ def test_apply_cube_division() -> None:
         n_blank_planes=0,
     )
 
-    updated = _apply_cube_division(
+    updated = apply_cube_division(
         update_wsclean_options={"channels_out": 16, "niter": 10},
         cube_division=division,
     )
@@ -222,7 +222,7 @@ def test_apply_cube_division() -> None:
     # An explicit division in the strategy is left alone
     pinned = {"channels_out": 16, "channel_division_frequencies": (3e9,)}
     assert (
-        _apply_cube_division(update_wsclean_options=pinned, cube_division=division)
+        apply_cube_division(update_wsclean_options=pinned, cube_division=division)
         == pinned
     )
 
