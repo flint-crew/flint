@@ -43,6 +43,7 @@ from fitscube.extract import (
     find_target_axis,
 )
 
+from flint.convol import BeamShape
 from flint.exceptions import (
     AttemptRerunException,
     CleanDivergenceError,
@@ -258,6 +259,7 @@ def combine_images_to_cube(
     mode: str,
     fitscube_options: FitsCubeOptions,
     bounding_box: bool | BoundingBox | None = None,
+    beam_shape: BeamShape | None = None,
 ) -> Path:
     """Combine wsclean subband channel images into a cube. Each collection attribute
     of the input `image_set` will be inspected. The MFS images will be ignored.
@@ -272,6 +274,8 @@ def combine_images_to_cube(
         bounding_box (bool | BoundingBox | None, optional): Overrides ``fitscube_options.bounding_box``
         when given. Used to force a box shared with another cube (e.g. weights) rather than
         letting fitscube compute one for this cube alone. Defaults to None.
+        beam_shape (BeamShape | None, optional): The one beam every plane was convolved to. When given the
+        cube records it in its header and carries no beam table. Defaults to None.
 
     Returns:
         Path: The path to the created FITS cube
@@ -306,6 +310,8 @@ def combine_images_to_cube(
     )
 
     rotate_cube(output_cube_name, inplace=fitscube_options.inplace)
+    if beam_shape is not None:
+        set_cube_beam(cube=output_cube_name, beam_shape=beam_shape)
 
     output_freqs_name = output_cube_name.with_suffix(".freqs_Hz.txt")
     np.savetxt(output_freqs_name, freqs.to("Hz").value)
@@ -1138,6 +1144,57 @@ def create_wsclean_cmd(
         move_hold_directories=(move_directory, hold_directory),
         image_prefix_str=str(name_argument_path),
     )
+
+
+def set_cube_beam(cube: Path, beam_shape: BeamShape) -> Path:
+    """Write ``beam_shape`` into the cube's header and drop any beam table.
+
+    fitscube writes a table whenever the planes' beams differ, and the blank
+    planes of a cube convolved to one beam carry a zero beam that counts as a
+    difference. CARTA can not open the table that results.
+
+    Args:
+        cube (Path): The cube to update in place
+        beam_shape (BeamShape): The beam every populated plane is at
+
+    Returns:
+        Path: The updated cube
+    """
+    with fits.open(cube) as open_fits:
+        header = open_fits[0].header.copy()
+        file_info = open_fits.fileinfo(0)
+    assert file_info is not None, f"Can not locate the primary HDU of {cube}"
+    header_size = file_info["datLoc"] - file_info["hdrLoc"]
+    data_end = file_info["datLoc"] + file_info["datSpan"]
+
+    header.remove("CASAMBM", ignore_missing=True)
+    fitscube_comments = ("The PSF in each", "Full beam information", "The value '")
+    for idx in reversed(range(len(header))):
+        card = header.cards[idx]
+        if card.keyword == "COMMENT" and str(card.value).startswith(fitscube_comments):
+            del header[idx]
+    header["BMAJ"] = beam_shape.bmaj_arcsec / 3600
+    header["BMIN"] = beam_shape.bmin_arcsec / 3600
+    header["BPA"] = beam_shape.bpa_deg
+    while len(header.tostring()) < header_size:
+        header.append(fits.Card(), useblanks=False, bottom=True)
+
+    if len(header.tostring()) > header_size:
+        logger.info(f"New header outgrows the old in {cube.name}, rewriting the file")
+        with fits.open(cube, mode="update") as open_fits:
+            del open_fits[1:]
+            open_fits[0].header = header
+        return cube
+
+    # Only the header changes and the table sits after the data, so the cube's
+    # data is left where it is rather than rewriting the whole file
+    logger.info(f"Setting the beam of {cube.name} to {beam_shape}")
+    with cube.open("r+b") as file_handle:
+        file_handle.seek(file_info["hdrLoc"])
+        file_handle.write(header.tostring().encode("ascii"))
+        file_handle.truncate(data_end)
+
+    return cube
 
 
 def rotate_cube(output_cube_path: str | Path, inplace: bool = True) -> Path:
