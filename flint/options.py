@@ -372,7 +372,11 @@ class RMSynthOptions(BaseOptions):
     fit_function: Literal["log", "linear"] = "log"
     """Stokes I fit function: 'log' is a power law, 'linear' is a polynomial"""
     stokes_i_snr_cut: float | None = 5.0
-    """Below this frequency-averaged Stokes I SNR a pixel falls back to a flat model. None fits every pixel"""
+    """Below this frequency-averaged Stokes I SNR a pixel is not fitted and falls back to the model set by stokes_i_weighting. None fits every pixel"""
+    stokes_i_weighting: Literal["global", "per_pixel"] | None = "global"
+    """How the inverse-variance weights follow the Stokes I division. 'global' uses one field-wide power law, so every pixel shares one RMSF; 'per_pixel' uses each pixel's own model, for the most SNR but an RMSF that varies with spectral index; None keeps 1/sigma^2 and a flat fallback. Only used with a Stokes I cube and a noise-based weight_type"""
+    stokes_i_weight_alpha: float | Literal["auto"] = "auto"
+    """Spectral index of the field-wide power law, or 'auto' to fit it to the field's mean Stokes I. Pin it to give several fields one RMSF"""
     compute_model_error: bool = False
     """Monte-Carlo the Stokes I fit's per-pixel model error via n_error_samples resamples. Only used if a Stokes I cube is given"""
     n_error_samples: int = 1000

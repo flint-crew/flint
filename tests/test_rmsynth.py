@@ -441,6 +441,27 @@ def test_write_rm_product_names_each_product(
     assert written[0].exists()
 
 
+@pytest.mark.parametrize("key", ["peak.dirty.peak_pi", "stokes_i_ref_flux"])
+def test_write_rm_product_records_the_stokes_i_weights(
+    tmp_path: Path, key: str
+) -> None:
+    """A PI or Stokes I map says how the weights followed the Stokes I model."""
+    reference_header = fits.getheader(_make_i_cube(tmp_path))
+
+    (written,) = write_rm_product_to_fits(
+        key=key,
+        data=np.zeros((NY, NX)),
+        reference_header=reference_header,
+        output_prefix=tmp_path / "test_field",
+        stokes_i_weighting="global",
+        stokes_i_weight_alpha=-0.8,
+    )
+
+    header = fits.getheader(written)
+    assert header["SIWEIGHT"] == "global"
+    assert header["SIWALPHA"] == -0.8
+
+
 def test_debiased_mom0_debias_is_not_written_twice(tmp_path: Path) -> None:
     """Debiasing leaves mom0_debias alone, so a second copy under a second name
     would read as a second measurement."""
