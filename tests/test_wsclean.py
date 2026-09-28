@@ -15,6 +15,7 @@ from fitscube.bounding_box import get_common_bounding_box
 from fitscube.extract import find_target_axis
 from radio_beam import Beams
 
+from flint.convol import BeamShape
 from flint.exceptions import (
     AttemptRerunException,
     CleanDivergenceError,
@@ -39,6 +40,7 @@ from flint.imager.wsclean import (
     merge_image_sets,
     rename_wsclean_prefix_in_image_set,
     rotate_cube,
+    set_cube_beam,
     split_and_get_image_set,
     split_cube_into_planes,
     split_image_set,
@@ -403,6 +405,73 @@ def test_split_cube_into_planes_carries_channel_beams(tmp_path) -> None:
         assert header["BMAJ"] == pytest.approx(beams[channel].major.to(u.deg).value)
         assert header["BMIN"] == pytest.approx(beams[channel].minor.to(u.deg).value)
         assert header["BPA"] == pytest.approx(beams[channel].pa.to(u.deg).value)
+
+
+def test_combine_images_to_cube_single_beam_drops_beam_table(tmp_path) -> None:
+    """A cube convolved to one beam keeps it in the header, even with a blanked
+    plane whose zero beam would otherwise have fitscube write a table"""
+    images = [
+        _write_channel_image(
+            tmp_path / f"SB1234.RACS_0000-00.beam00.round1-{channel:04d}-image.fits",
+            channel=channel,
+            shape=(6, 6),
+        )
+        for channel in range(4)
+    ]
+    with fits.open(images[2], mode="update") as open_fits:
+        for key in ("BMAJ", "BMIN", "BPA"):
+            open_fits[0].header[key] = 0.0
+
+    beam_shape = BeamShape(bmaj_arcsec=40.0, bmin_arcsec=30.0, bpa_deg=10.0)
+    cube = combine_images_to_cube(
+        images=images,
+        prefix=f"{tmp_path}/SB1234.RACS_0000-00.beam00.round1",
+        mode="image",
+        fitscube_options=FitsCubeOptions(
+            invalidate_zeros=False, remove_original_images=False
+        ),
+        beam_shape=beam_shape,
+    )
+
+    with fits.open(cube) as open_fits:
+        open_fits.verify("exception")
+        assert len(open_fits) == 1
+        header = open_fits[0].header
+        data = open_fits[0].data
+    assert "CASAMBM" not in header
+    assert not any("beam" in str(comment) for comment in header["COMMENT"])
+    assert header["BMAJ"] == pytest.approx(40.0 / 3600)
+    assert header["BMIN"] == pytest.approx(30.0 / 3600)
+    assert header["BPA"] == pytest.approx(10.0)
+    for channel in (0, 1, 3):
+        assert np.array_equal(
+            data[channel].squeeze(), fits.getdata(images[channel]).squeeze()
+        )
+    assert np.all(np.isnan(data[2]))
+
+
+def test_set_cube_beam_rewrites_when_header_grows(tmp_path) -> None:
+    """A header with no room for the beam keys still gets them, and the table goes"""
+    data = np.arange(16, dtype=np.float32).reshape(4, 4)
+    primary = fits.PrimaryHDU(data=data)
+    primary.header["CASAMBM"] = True
+    # Fill the header's only block, so adding BMAJ/BMIN/BPA needs another
+    while len(primary.header.tostring()) == 2880:
+        primary.header.add_history("padding")
+    primary.header.remove("HISTORY")
+    beam_table = fits.BinTableHDU.from_columns(
+        [fits.Column(name="BMAJ", format="E", array=[1.0])], name="BEAMS"
+    )
+    cube = tmp_path / "cube.fits"
+    fits.HDUList([primary, beam_table]).writeto(cube)
+
+    set_cube_beam(cube=cube, beam_shape=BeamShape(20.0, 10.0, 5.0))
+
+    with fits.open(cube) as open_fits:
+        assert len(open_fits) == 1
+        assert "CASAMBM" not in open_fits[0].header
+        assert open_fits[0].header["BMAJ"] == pytest.approx(20.0 / 3600)
+        assert np.array_equal(open_fits[0].data, data)
 
 
 def test_split_cube_into_planes_threaded_matches_serial(tmp_path) -> None:

@@ -1173,6 +1173,7 @@ def linmos_channel_groups_to_cubes(
             mode=mode,
             fitscube_options=fitscube_options,
             bounding_box=bounding_box,
+            beam_shape=total_beam_shape,
         )
         for planes, mode in (
             (total_planes, "image"),
