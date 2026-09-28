@@ -227,64 +227,111 @@ def bilinear_upsample(
     return out
 
 
+@nb.njit(cache=True)
+def clipped_stats(values: NDArray[np.float32]) -> tuple[float, float]:
+    """Median and MAD-based sigma of sorted `values`, clipped at 3 sigma until stable"""
+    lo, hi = 0, len(values)
+    centre, spread = np.nan, np.nan
+    for _ in range(5):
+        n = hi - lo
+        mid = lo + n // 2
+        centre = values[mid] if n % 2 else 0.5 * (values[mid - 1] + values[mid])
+
+        # The MAD, walking outward from the centre through the sorted window
+        left = np.searchsorted(values[lo:hi], centre) + lo - 1
+        right = left + 1
+        distances = np.empty(n // 2 + 1, dtype=np.float64)
+        for k in range(n // 2 + 1):
+            if right >= hi or (
+                left >= lo and centre - values[left] <= values[right] - centre
+            ):
+                distances[k] = centre - values[left]
+                left -= 1
+            else:
+                distances[k] = values[right] - centre
+                right += 1
+        mad = (
+            distances[n // 2]
+            if n % 2
+            else 0.5 * (distances[n // 2 - 1] + distances[n // 2])
+        )
+        spread = 1.4826 * mad
+
+        new_lo = np.searchsorted(values, centre - 3 * spread, side="left")
+        new_hi = np.searchsorted(values, centre + 3 * spread, side="right")
+        new_lo, new_hi = max(new_lo, lo), min(new_hi, hi)
+        if (new_lo == lo and new_hi == hi) or new_hi - new_lo < 2:
+            break
+        lo, hi = new_lo, new_hi
+    return centre, spread
+
+
 @nb.njit(parallel=True, cache=True)
-def block_stats(
+def box_stats(
     image: NDArray[np.float32],
     nan_mask: NDArray[np.bool_],
-    block: int,
+    step: int,
+    box: int,
 ) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
-    """Median and MAD of each `block`-square tile, NaN if under a quarter valid"""
-    n_y, n_x = image.shape[0] // block, image.shape[1] // block
+    """Clipped median and sigma of a `box`-wide square every `step` pixels.
+
+    About 20 by 20 pixels are sampled from each box. NaN where fewer than 30
+    of them are valid.
+    """
+    n_y, n_x = max(image.shape[0] // step, 1), max(image.shape[1] // step, 1)
+    half, stride = box // 2, max(1, box // 20)
     median = np.full((n_y, n_x), np.nan, dtype=np.float32)
-    mad = np.full((n_y, n_x), np.nan, dtype=np.float32)
+    sigma = np.full((n_y, n_x), np.nan, dtype=np.float32)
     for row in nb.prange(n_y):
-        values = np.empty(block * block, dtype=np.float32)
+        values = np.empty((box // stride + 1) ** 2, dtype=np.float32)
+        centre_y = row * step + step // 2
         for col in range(n_x):
+            centre_x = col * step + step // 2
             count = 0
-            for y in range(row * block, (row + 1) * block):
-                for x in range(col * block, (col + 1) * block):
+            for y in range(
+                max(centre_y - half, 0),
+                min(centre_y + half + 1, image.shape[0]),
+                stride,
+            ):
+                for x in range(
+                    max(centre_x - half, 0),
+                    min(centre_x + half + 1, image.shape[1]),
+                    stride,
+                ):
                     if not nan_mask[y, x]:
                         values[count] = image[y, x]
                         count += 1
-            if count < block * block // 4:
-                continue
-            centre = np.median(values[:count])
-            median[row, col] = centre
-            mad[row, col] = np.median(np.abs(values[:count] - centre))
-    return median, mad
+            if count >= 30:
+                median[row, col], sigma[row, col] = clipped_stats(
+                    np.sort(values[:count])
+                )
+    return median, sigma
 
 
 def local_seed(
     image: NDArray[np.float32],
     nan_mask: NDArray[np.bool_],
-    block: int,
+    step: int,
+    box: int,
 ) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
-    """Background and RMS maps from the median and MAD of `block`-pixel tiles.
+    """Background and RMS maps from the clipped statistics of overlapping boxes.
 
-    What the first round clips against. A single value for the whole plane
-    would clip away every loud artefact region as a source.
+    What the first round clips against. Anything of either sign covering a
+    small part of a box is clipped as a source, and a loud region filling most
+    of one is measured as noise.
     """
-    block = min(block, *image.shape)
-    median, mad = block_stats(image, nan_mask, block)
+    median, sigma = box_stats(image, nan_mask, step, box)
 
-    unmeasured = ~np.isfinite(mad)
+    unmeasured = ~np.isfinite(sigma)
     if unmeasured.all():
-        valid = image[~nan_mask]
-        median[:] = np.median(valid)
-        mad[:] = np.median(np.abs(valid - median[0, 0]))
+        median[:], sigma[:] = clipped_stats(np.sort(image[~nan_mask]))
     elif unmeasured.any():
         _, nearest = ndimage.distance_transform_edt(unmeasured, return_indices=True)
-        median, mad = median[tuple(nearest)], mad[tuple(nearest)]
+        median, sigma = median[tuple(nearest)], sigma[tuple(nearest)]
 
-    # Filtered so a source larger than one tile is still clipped
     background, rms = (
-        bilinear_upsample(
-            ndimage.median_filter(grid, size=3, mode="nearest"),
-            (block - 1) / 2,
-            block,
-            image.shape,
-        )
-        for grid in (median, 1.4826 * mad)
+        bilinear_upsample(grid, step // 2, step, image.shape)
+        for grid in (median, sigma)
     )
     return background, rms
 
@@ -413,7 +460,8 @@ def robust_bane(
     background, rms = local_seed(
         image=image,
         nan_mask=nan_mask,
-        block=step_size_pix if step_size_pix > 0 else kernel.shape[0],
+        step=step_size_pix if step_size_pix > 0 else kernel.shape[0] // 2,
+        box=kernel.shape[0] * max(step_size_pix, 1) // 2,
     )
     rng = np.random.default_rng(fft_bane_options.seed)
     for round_number in (1, 2):
