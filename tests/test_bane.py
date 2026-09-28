@@ -17,10 +17,12 @@ from flint.bane import (
     FFTBANEOptions,
     bane_fits_image,
     bilinear_upsample,
-    block_stats,
+    box_stats,
+    clipped_stats,
     fft_average,
     gaussian_kernel,
     get_kernel,
+    local_seed,
     pad_reflect,
     robust_bane,
     tophat_kernel,
@@ -421,22 +423,23 @@ def test_a_plane_measured_without_downsampling() -> None:
     )
 
 
-def test_a_region_of_loud_artefacts_is_measured_as_noise() -> None:
+@pytest.mark.parametrize("start, stop", [(0, 450), (100, 350)])
+def test_a_region_of_loud_artefacts_is_measured_as_noise(start: int, stop: int) -> None:
     """A loud artefact region is measured as loud, not clipped away"""
     rng = np.random.default_rng(0)
-    yy, xx = np.mgrid[0:NY, 0:NX]
     truth = np.full((NY, NX), 1e-3, dtype=np.float32)
-    truth[(yy < 450) & (xx < 450)] = 0.1
+    truth[start:stop, start:stop] = 0.1
     image = (rng.normal(0, 1, (NY, NX)) * truth).astype(np.float32)
 
     _, rms = robust_bane(image=image, header=_header())
 
-    assert np.nanmedian(rms[50:400, 50:400]) == pytest.approx(0.1, rel=0.3)
+    inside = slice(start + 50, stop - 50)
+    assert np.nanmedian(rms[inside, inside]) == pytest.approx(0.1, rel=0.3)
     assert np.nanmedian(rms[600:, 600:]) == pytest.approx(1e-3, rel=0.3)
 
 
-def test_a_source_larger_than_a_block_is_still_clipped() -> None:
-    """A source larger than one seed tile does not raise the RMS around it"""
+def test_a_source_larger_than_a_step_is_still_clipped() -> None:
+    """A source larger than one step does not raise the RMS around it"""
     image = _sky(rms=1e-3)
     image[600:640, 850:890] += 0.05
 
@@ -445,27 +448,79 @@ def test_a_source_larger_than_a_block_is_still_clipped() -> None:
     assert np.nanmedian(rms[590:650, 840:900]) == pytest.approx(1e-3, rel=0.2)
 
 
-@pytest.mark.filterwarnings("ignore:All-NaN slice:RuntimeWarning")
-def test_block_stats_matches_numpy() -> None:
-    """Agrees with numpy's nanmedian, with sparse tiles left NaN"""
+@pytest.mark.parametrize("signed", [False, True])
+def test_resolved_sources_of_either_sign_do_not_raise_the_rms(signed: bool) -> None:
+    """Sources a few beams wide, positive or of both signs, are clipped"""
     rng = np.random.default_rng(0)
-    image = rng.normal(size=(40, 60)).astype(np.float32)
-    nan_mask = rng.random(image.shape) < 0.2
-    nan_mask[:10, :10] = True
-    nan_mask[10:20, 10:20] = rng.random((10, 10)) < 0.8
+    image = rng.normal(0, 1e-3, (NY, NX)).astype(np.float32)
+    yy, xx = np.mgrid[0:NY, 0:NX]
+    for _ in range(40):
+        y, x = rng.uniform(40, NY - 40, 2)
+        peak = 10 ** rng.uniform(-1.3, 0.5) * (rng.choice([-1, 1]) if signed else 1)
+        sigma = rng.uniform(1.0, 3.0) * PIX_PER_BEAM / 2.355
+        image += peak * np.exp(-0.5 * ((yy - y) ** 2 + (xx - x) ** 2) / sigma**2)
 
-    median, mad = block_stats(image, nan_mask, 10)
+    _, rms = robust_bane(image=image, header=_header())
 
-    blocks = np.where(nan_mask, np.nan, image).reshape(4, 10, 6, 10).swapaxes(1, 2)
-    blocks = blocks.reshape(4, 6, 100)
-    expected = np.nanmedian(blocks, axis=-1)
-    expected_mad = np.nanmedian(np.abs(blocks - expected[..., None]), axis=-1)
-    too_blank = np.isfinite(blocks).sum(axis=-1) < 25
-    expected[too_blank] = expected_mad[too_blank] = np.nan
+    assert np.percentile(rms, 99) < 2.5e-3
 
-    assert too_blank[0, 0]
-    assert np.allclose(median, expected, equal_nan=True)
-    assert np.allclose(mad, expected_mad, equal_nan=True)
+
+def test_a_sparse_plane_is_seeded_from_the_whole_plane() -> None:
+    """With too few valid pixels for any one box, the seed uses the whole plane"""
+    image = np.random.default_rng(0).normal(0, 1e-3, (NY, NX)).astype(np.float32)
+    nan_mask = np.random.default_rng(1).random(image.shape) > 0.02
+
+    background, rms = local_seed(image, nan_mask, 30, 135)
+
+    assert np.ptp(rms) == 0
+    assert rms[0, 0] == pytest.approx(1e-3, rel=0.2)
+    assert abs(background[0, 0]) < 3e-4
+
+
+def _clipped_reference(values: np.ndarray) -> tuple[float, float]:
+    """numpy version of ``clipped_stats``"""
+    for _ in range(5):
+        centre = np.median(values)
+        spread = 1.4826 * np.median(np.abs(values - centre))
+        keep = np.abs(values - centre) <= 3 * spread
+        if keep.all() or keep.sum() < 2:
+            break
+        values = values[keep]
+    return centre, spread
+
+
+@pytest.mark.parametrize("compiled", [True, False])
+def test_clipped_stats_matches_numpy(compiled: bool) -> None:
+    """Agrees with a numpy version, outliers of both signs clipped"""
+    func = clipped_stats if compiled else clipped_stats.py_func
+    rng = np.random.default_rng(0)
+    for size in (30, 31, 400, 401):
+        values = rng.normal(size=size).astype(np.float32)
+        values[: size // 10] += rng.choice([-1, 1], size // 10) * 30
+        centre, spread = func(np.sort(values))
+
+        assert (centre, spread) == pytest.approx(_clipped_reference(values), abs=1e-6)
+        if size > 100:
+            assert spread == pytest.approx(1.0, rel=0.2)
+
+
+@pytest.mark.parametrize("compiled", [True, False])
+def test_box_stats_samples_each_box(compiled: bool) -> None:
+    """One clipped median and sigma per step, NaN where a box is too blank"""
+    func = box_stats if compiled else box_stats.py_func
+    rng = np.random.default_rng(0)
+    image = rng.normal(size=(60, 80)).astype(np.float32)
+    nan_mask = np.zeros(image.shape, dtype=bool)
+    nan_mask[:30, :30] = True
+
+    median, sigma = func(image, nan_mask, 20, 20)
+
+    assert median.shape == sigma.shape == (3, 4)
+    assert np.isnan(median[0, 0]) and np.isnan(sigma[0, 0])
+    box = image[40:61, 60:80].ravel()
+    assert (median[2, 3], sigma[2, 3]) == pytest.approx(
+        _clipped_reference(box), abs=1e-6
+    )
 
 
 def test_the_step_back_up_matches_scipy() -> None:
@@ -473,15 +528,14 @@ def test_the_step_back_up_matches_scipy() -> None:
     grid = np.random.default_rng(0).normal(size=(17, 23)).astype(np.float32)
     shape = (500, 700)
 
-    for start, step in ((30.0, 30.0), (14.5, 30.0)):
-        expected = ndimage.affine_transform(
-            grid,
-            matrix=np.full(2, 1 / step),
-            offset=np.full(2, -start / step),
-            output_shape=shape,
-            order=1,
-            mode="nearest",
-        )
-        assert np.allclose(
-            bilinear_upsample(grid, start, step, shape), expected, atol=1e-5
-        )
+    for func in (bilinear_upsample, bilinear_upsample.py_func):
+        for start, step in ((30.0, 30.0), (14.5, 30.0)):
+            expected = ndimage.affine_transform(
+                grid,
+                matrix=np.full(2, 1 / step),
+                offset=np.full(2, -start / step),
+                output_shape=shape,
+                order=1,
+                mode="nearest",
+            )
+            assert np.allclose(func(grid, start, step, shape), expected, atol=1e-5)
