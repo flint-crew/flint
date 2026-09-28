@@ -675,7 +675,10 @@ def compute_rm_products(
 
 
 def write_rmclean_niter_map_to_fits(
-    niter_map: np.ndarray, reference_header: fits.Header, output_prefix: Path
+    niter_map: np.ndarray,
+    reference_header: fits.Header,
+    output_prefix: Path,
+    fdf_tag: str = "fdf",
 ) -> Path:
     """Write the per-pixel RM-CLEAN iteration count.
 
@@ -689,13 +692,14 @@ def write_rmclean_niter_map_to_fits(
         niter_map (np.ndarray): Computed (ny, nx) iteration count
         reference_header (fits.Header): Header to derive the spatial WCS from
         output_prefix (Path): Common prefix for the output file
+        fdf_tag (str, optional): What the FDF products are named after. Defaults to "fdf".
 
     Returns:
         Path: The written map path
     """
     header = WCS(reference_header).celestial.to_header()
     header["BUNIT"] = ("", "CLEAN iterations")
-    output_path = Path(f"{output_prefix}.fdf.clean.niter.fits")
+    output_path = Path(f"{output_prefix}.{fdf_tag}.clean.niter.fits")
     # int32 rather than rm-lite's int64: max_iter is 1e5 by default, so half the
     # bytes carry every value this can hold
     fits.writeto(
@@ -753,6 +757,7 @@ def write_rm_product_to_fits(
     coeff_names: tuple[str, ...] | None = None,
     stokes_i_weighting: str | None = None,
     stokes_i_weight_alpha: float | None = None,
+    fdf_tag: str = "fdf",
 ) -> list[Path]:
     """Write one computed product, named and united from its compute key.
 
@@ -772,6 +777,7 @@ def write_rm_product_to_fits(
         coeff_names (tuple[str, ...] | None, optional): Name of each plane of the model-term cube. Defaults to None.
         stokes_i_weighting (str | None, optional): How the weights followed the Stokes I division, recorded as ``SIWEIGHT``. Defaults to None.
         stokes_i_weight_alpha (float | None, optional): Spectral index of the weight template, recorded as ``SIWALPHA``. Defaults to None.
+        fdf_tag (str, optional): What the FDF products are named after, "fdf" or "fdf_no_i" for the run without Stokes I. Defaults to "fdf".
 
     Returns:
         list[Path]: The paths written, empty for a key with no FITS output
@@ -792,7 +798,9 @@ def write_rm_product_to_fits(
         _stamp_stokes_i_weights(header, stokes_i_weighting, stokes_i_weight_alpha)
         return [
             _write_map(
-                data, header, Path(f"{output_prefix}.fdf.{label}.{name}{suffix}.fits")
+                data,
+                header,
+                Path(f"{output_prefix}.{fdf_tag}.{label}.{name}{suffix}.fits"),
             )
         ]
 
@@ -802,6 +810,7 @@ def write_rm_product_to_fits(
                 niter_map=data,
                 reference_header=reference_header,
                 output_prefix=output_prefix,
+                fdf_tag=fdf_tag,
             )
         ]
 
@@ -863,6 +872,7 @@ def write_rm_products(
     output_prefix: Path,
     moment_threshold_snr: float = 5.0,
     dask_client: Client | None = None,
+    fdf_tag: str = "fdf",
 ) -> list[Path]:
     """Batch-compute and write the requested RM-synthesis/RM-CLEAN output products.
 
@@ -878,6 +888,7 @@ def write_rm_products(
         moment_threshold_snr (float, optional): SNR cut applied before the moment maps. Defaults to 5.0.
         output_prefix (Path): Common prefix for the output files
         dask_client (Client | None, optional): A distributed Client (e.g. the one backing a Prefect ``DaskTaskRunner``) to compute across, rather than just the local worker. Defaults to None.
+        fdf_tag (str, optional): What the FDF products are named after, "fdf" or "fdf_no_i" for the run without Stokes I. Defaults to "fdf".
 
     Returns:
         list[Path]: Every FITS path written
@@ -898,7 +909,7 @@ def write_rm_products(
     # FDF cubes are only ever written to zarr, chunk-by-chunk with each worker
     # writing its own chunk. Gathering an (n_phi, ny, nx) cube into this process
     # to write it as FITS is tens of GB on a real mosaic.
-    zarr_store_path = Path(f"{output_prefix}.fdf.zarr") if cube_products else None
+    zarr_store_path = Path(f"{output_prefix}.{fdf_tag}.zarr") if cube_products else None
 
     # Blockwise fusion has to be off for both the `dask.array.store` below and
     # the `dask.compute` at the end of this function, or the FDF cubes cost an
@@ -1073,6 +1084,7 @@ def write_rm_products(
             coeff_names=synth_results.stokes_i_coeff_names,
             stokes_i_weighting=synth_results.stokes_i_weighting,
             stokes_i_weight_alpha=synth_results.stokes_i_weight_alpha,
+            fdf_tag=fdf_tag,
         )
 
     written = compute_rm_products(
