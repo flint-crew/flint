@@ -1,15 +1,5 @@
 # Change log
 
-## Unreleased
-
-- Added `LinmosOptions.regrid_method`, defaulting to `cubic`. `linmos` regrids
-  every input onto the output frame and its own default is `linear`, which
-  suppresses the peak of a source. Measured through yandasoft 1.16.5 itself at
-  13.2 arcsec: `linear` costs -0.83% of the peak, `cubic` -0.01%. Worst case
-  over sub-pixel position, measured through casacore's `ImageRegrid`, is -1.74%
-  for `linear`. Integrated flux is unaffected by the choice, as is
-  `regrid.decimate`, which was left alone.
-
 # v0.3.0
 
 - Attempts to clean up the prefect tasks related to convolution and linmos
