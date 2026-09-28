@@ -56,8 +56,8 @@ class LinmosOptions(BaseOptions):
     """Overwrite the linmos parset file generated if it exists. Defaults to False."""
     remove_original_images: bool = False
     """Delete the images that were coaddede together. Defaults to False."""
-    regrid_method: str = "cubic"
-    """Interpolation linmos regrids the input images with. Its own default is 'linear', which noticeably suppresses the peak of a source. Accepts 'nearest', 'linear', 'cubic' or 'lanczos'. Defaults to 'cubic'."""
+    regrid_method: Literal["nearest", "linear", "cubic", "lanczos"] = "cubic"
+    """Interpolation linmos regrids the inputs with. Its own default, 'linear', suppresses the peak of a source. Defaults to 'cubic'."""
 
 
 class BoundingBox(NamedTuple):
@@ -534,15 +534,14 @@ def generate_linmos_parameter_set(
         LinmosParsetSummary: Important components around the generated parset file.
     """
 
-    images = list(images)
-    stokesi_images = linmos_options.stokesi_images
-
-    if stokesi_images is not None and len(stokesi_images) != len(images):
-        raise ValueError(
-            f"Stokes I images provided {len(stokesi_images)} do not match the number of input images {len(images)}"
-        )
-
     img_list = _file_list_to_string(images)
+
+    if linmos_options.stokesi_images is not None and len(
+        linmos_options.stokesi_images
+    ) != len(images):
+        raise ValueError(
+            f"Stokes I images provided {len(linmos_options.stokesi_images)} do not match the number of input images {len(images)}"
+        )
 
     # If no weights_list has been provided (and therefore no optimal
     # beam-wise weighting) assume that all beams are of about the same
@@ -610,7 +609,7 @@ def generate_linmos_parameter_set(
         holofile=linmos_options.holofile,
         pol_axis=linmos_options.pol_axis,
         remove_leakage=remove_leakage,
-        stokesi_images=stokesi_images,
+        stokesi_images=linmos_options.stokesi_images,
     )
 
     # Now write the file, me hearty

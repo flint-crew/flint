@@ -21,13 +21,11 @@ from flint.coadd.linmos import (
     _get_image_weight_plane,
     _linmos_cleanup,
     create_bound_box,
+    generate_linmos_parameter_set,
     generate_weights_list_and_files,
     trim_fits_image,
 )
-from flint.naming import (
-    create_linmos_base_path,
-    create_linmos_names,
-)
+from flint.naming import create_linmos_base_path, create_linmos_names
 
 
 def get_lots_of_names_2() -> list[Path]:
@@ -419,92 +417,28 @@ def test_bounding_box_with_mask():
     assert bb.ymax == 500  # the maximum is exclusive, i.e. slice ready
 
 
-def write_beam_image(path: Path, ra_deg: float, dec_deg: float) -> Path:
-    """A tiny image whose reference direction is the one given."""
-    header = fits.Header(
-        {
-            "CTYPE1": "RA---SIN",
-            "CTYPE2": "DEC--SIN",
-            "CRVAL1": ra_deg,
-            "CRVAL2": dec_deg,
-            "CRPIX1": 2.0,
-            "CRPIX2": 2.0,
-            "CDELT1": -1.5 / 3600.0,
-            "CDELT2": 1.5 / 3600.0,
-        }
-    )
-    fits.writeto(path, np.zeros((4, 4), dtype=np.float32), header=header)
-    return path
+@pytest.mark.parametrize(
+    ("linmos_options", "expected"),
+    [(LinmosOptions(), "cubic"), (LinmosOptions(regrid_method="linear"), "linear")],
+)
+def test_linmos_parset_sets_the_regrid_method(tmp_path, linmos_options, expected):
+    """linmos' own default is linear, which suppresses the peak of a source."""
+    images = []
+    for beam in range(2):
+        image = tmp_path / f"SB1234.RACS_1200-45.beam{beam:02d}.round4.i.fits"
+        create_fits_image(image, image_size=(64, 64), set_to_nan=False)
+        images.append(image)
 
-
-def closepack36_offsets(pitch_deg: float = 0.9) -> list[tuple[float, float]]:
-    """Beam offsets of closepack36, in beam order. Beam 0 is a corner beam."""
-    x0 = 3 * pitch_deg - pitch_deg / (2 * np.sqrt(2))
-    y0 = -pitch_deg / (2 * np.sqrt(2)) - np.sqrt(3) * pitch_deg
-    offsets = []
-    for row in range(6):
-        y = y0 + row * pitch_deg * np.sqrt(3) / 2
-        for col in range(6):
-            offsets.append((x0 - (col if row % 2 == 0 else col + 0.5) * pitch_deg, y))
-    mean_x = float(np.mean([offset[0] for offset in offsets]))
-    mean_y = float(np.mean([offset[1] for offset in offsets]))
-    return [(x - mean_x, y - mean_y) for x, y in offsets]
-
-
-def write_footprint(tmp_path: Path, offsets, centre=(180.0, -45.0)) -> list[Path]:
-    """One image per beam, placed at exact angular offsets from a field centre."""
-    import astropy.units as u
-    from astropy.coordinates import SkyCoord
-
-    origin = SkyCoord(ra=centre[0] * u.deg, dec=centre[1] * u.deg)
-    paths = []
-    for beam, (east, north) in enumerate(offsets):
-        position = origin.directional_offset_by(
-            position_angle=np.arctan2(east, north) * u.rad,
-            separation=np.hypot(east, north) * u.deg,
-        )
-        path = tmp_path / f"SB1234.RACS_1200-45.beam{beam:02d}.round4.i.fits"
-        paths.append(
-            write_beam_image(path, float(position.ra.deg), float(position.dec.deg))
-        )
-    return paths
-
-
-def separations_from_centre(images: list[Path]) -> np.ndarray:
-    """Angular distance of each image from the mean of their directions."""
-    import astropy.units as u
-    from astropy.coordinates import SkyCoord
-
-    ras = np.array([fits.getheader(image)["CRVAL1"] for image in images])
-    decs = np.array([fits.getheader(image)["CRVAL2"] for image in images])
-    directions = SkyCoord(ra=ras * u.deg, dec=decs * u.deg)
-    centre = SkyCoord(directions.cartesian.mean(), frame=directions.frame)
-    return centre.separation(directions).to(u.deg).value
-
-
-def test_linmos_parset_sets_a_regrid_method(tmp_path):
-    """linmos defaults to linear interpolation, which suppresses source peaks."""
-    from flint.coadd.linmos import generate_linmos_parameter_set
-
-    images = write_footprint(tmp_path, closepack36_offsets())
     summary = generate_linmos_parameter_set(
         images=images,
         linmos_names=create_linmos_names(name_prefix=str(tmp_path / "field")),
-        linmos_options=LinmosOptions(),
+        linmos_options=linmos_options,
+        weight_list="[weight0,weight1]",
     )
 
-    assert "linmos.regrid.method    = cubic" in summary.parset_path.read_text()
-
-
-def test_linmos_parset_regrid_method_is_configurable(tmp_path):
-    """So the change can be compared against products made the old way."""
-    from flint.coadd.linmos import generate_linmos_parameter_set
-
-    images = write_footprint(tmp_path, closepack36_offsets())
-    summary = generate_linmos_parameter_set(
-        images=images,
-        linmos_names=create_linmos_names(name_prefix=str(tmp_path / "field")),
-        linmos_options=LinmosOptions(regrid_method="linear"),
-    )
-
-    assert "linmos.regrid.method    = linear" in summary.parset_path.read_text()
+    parset = summary.parset_path.read_text()
+    method = [
+        line for line in parset.splitlines() if line.startswith("linmos.regrid.method")
+    ]
+    assert len(method) == 1
+    assert method[0].split("=")[1].strip() == expected
