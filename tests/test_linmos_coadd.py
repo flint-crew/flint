@@ -22,10 +22,11 @@ from flint.coadd.linmos import (
     _linmos_cleanup,
     blank_zero_pixels,
     create_bound_box,
+    generate_linmos_parameter_set,
     generate_weights_list_and_files,
     trim_fits_image,
 )
-from flint.naming import create_linmos_base_path
+from flint.naming import create_linmos_base_path, create_linmos_names
 
 
 def get_lots_of_names_2() -> list[Path]:
@@ -461,3 +462,30 @@ def test_bounding_box_with_mask():
     assert bb.xmax == 600  # the maximum is exclusive, i.e. slice ready
     assert bb.ymin == 20
     assert bb.ymax == 500  # the maximum is exclusive, i.e. slice ready
+
+
+@pytest.mark.parametrize(
+    ("linmos_options", "expected"),
+    [(LinmosOptions(), "cubic"), (LinmosOptions(regrid_method="linear"), "linear")],
+)
+def test_linmos_parset_sets_the_regrid_method(tmp_path, linmos_options, expected):
+    """linmos' own default is linear, which suppresses the peak of a source."""
+    images = []
+    for beam in range(2):
+        image = tmp_path / f"SB1234.RACS_1200-45.beam{beam:02d}.round4.i.fits"
+        create_fits_image(image, image_size=(64, 64), set_to_nan=False)
+        images.append(image)
+
+    summary = generate_linmos_parameter_set(
+        images=images,
+        linmos_names=create_linmos_names(name_prefix=str(tmp_path / "field")),
+        linmos_options=linmos_options,
+        weight_list="[weight0,weight1]",
+    )
+
+    parset = summary.parset_path.read_text()
+    method = [
+        line for line in parset.splitlines() if line.startswith("linmos.regrid.method")
+    ]
+    assert len(method) == 1
+    assert method[0].split("=")[1].strip() == expected
