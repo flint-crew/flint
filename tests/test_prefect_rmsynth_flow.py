@@ -7,6 +7,7 @@ tasks, the nested ``get_dask_client()``) is actually exercised."""
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import astropy.units as u
 import numpy as np
@@ -27,7 +28,9 @@ from flint.convol import (
 from flint.options import (
     CubesForRMSynth,
     FFTBANEOptions,
+    RMCleanOptions,
     RMSynthFieldOptions,
+    RMSynthOptions,
     WeightCubesForRMSynth,
 )
 from flint.prefect.common.rmsynth import CommonResolutionCubes
@@ -239,6 +242,60 @@ def test_process_rmsynth_with_stokes_i_on_dask_cluster(
     assert np.allclose(alpha, -0.7, atol=0.1), (
         "the fitted spectral index does not match the Stokes I cube's -0.7"
     )
+
+
+def test_fdf_no_i_reruns_without_stokes_i_at_the_same_lam_sq_0(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The second set drops Stokes I, keeps the corrected lambda^2_0, and is named apart."""
+    submitted: dict[str, dict[str, Any]] = {}
+
+    class _Done:
+        def __init__(self, value: object) -> None:
+            self.value = value
+
+        def result(self) -> object:
+            return self.value
+
+    def _recorder(name: str, value: object = None):
+        def submit(**kwargs: object) -> _Done:
+            submitted[name] = kwargs
+            return _Done(value)
+
+        return submit
+
+    written = [tmp_path / "field.fdf_no_i.clean.mom0.fits"]
+    for task, name, value in (
+        (rmsynth_pipeline.task_rmsynth, "rmsynth", None),
+        (rmsynth_pipeline.task_rmclean, "rmclean", "clean"),
+        (rmsynth_pipeline.task_write_rm_products, "write", written),
+    ):
+        monkeypatch.setattr(task, "submit", _recorder(name, value))
+
+    cubes = CubesForRMSynth(
+        q_path=tmp_path / "q.fits",
+        u_path=tmp_path / "u.fits",
+        i_path=tmp_path / "i.fits",
+    )
+    paths = rmsynth_pipeline._write_rm_products_without_stokes_i(
+        stokes_cubes=cubes,
+        error_cubes=None,
+        rmsynth_options=RMSynthOptions(write_fdf_no_i=True),
+        rmclean_options=RMCleanOptions(),
+        lam_sq_0_m2=0.07,
+        run_clean=True,
+        rmsynth_field_options=RMSynthFieldOptions(
+            stokes_cubes=cubes, moment_products=["clean"]
+        ),
+        output_prefix=tmp_path / "field",
+    )
+
+    assert paths == written
+    synth_kwargs = submitted["rmsynth"]
+    assert synth_kwargs["stokes_cubes"].i_path is None
+    assert synth_kwargs["rmsynth_options"].lam_sq_0_m2 == 0.07
+    assert submitted["write"]["fdf_tag"] == "fdf_no_i"
+    assert submitted["write"]["clean_results"] is not None
 
 
 def _resolve_cubes(

@@ -441,6 +441,97 @@ def test_write_rm_product_names_each_product(
     assert written[0].exists()
 
 
+@pytest.mark.parametrize(
+    ("key", "expected"),
+    [
+        ("moment.clean.mom0", "{prefix}.fdf_no_i.clean.mom0.fits"),
+        ("peak.dirty.peak_pi", "{prefix}.fdf_no_i.dirty.peak_pi.fits"),
+        ("rmclean_niter", "{prefix}.fdf_no_i.clean.niter.fits"),
+    ],
+)
+def test_write_rm_product_names_the_fdf_after_its_tag(
+    tmp_path: Path, key: str, expected: str
+) -> None:
+    """The run without Stokes I writes the same products under its own name."""
+    output_prefix = tmp_path / "test_field"
+    written = write_rm_product_to_fits(
+        key=key,
+        data=np.zeros((NY, NX)),
+        reference_header=fits.getheader(_make_i_cube(tmp_path)),
+        output_prefix=output_prefix,
+        fdf_tag="fdf_no_i",
+    )
+    assert written == [Path(expected.format(prefix=output_prefix))]
+
+
+def test_fdf_no_i_covers_the_pixels_the_stokes_i_correction_blanks(
+    tmp_path: Path, qu_cubes: tuple[Path, Path]
+) -> None:
+    """Corrected maps are blank where Stokes I is too faint to fit; fdf_no_i is not."""
+    stokes_q_cube, stokes_u_cube = qu_cubes
+    stokes_i_cube = _make_i_cube(tmp_path)
+    with fits.open(stokes_i_cube, mode="update") as hdul:
+        hdul[0].data[:, 0, :] *= 1e-4
+    rmsynth_options = RMSynthOptions()
+    corrected = _run_rmsynth_3d(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        rmsynth_options=rmsynth_options,
+        stokes_i_cube=stokes_i_cube,
+    )
+    no_i_options = rmsynth_options.with_options(lam_sq_0_m2=corrected.lam_sq_0_m2)
+    no_i = _run_rmsynth_3d(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        rmsynth_options=no_i_options,
+    )
+    output_prefix = tmp_path / "field"
+    for synth_results, options, fdf_tag in (
+        (corrected, rmsynth_options, "fdf"),
+        (no_i, no_i_options, "fdf_no_i"),
+    ):
+        write_rm_products(
+            synth_results=synth_results,
+            clean_results=None,
+            stokes_q_cube=stokes_q_cube,
+            rmsynth_options=options,
+            rmclean_options=RMCleanOptions(),
+            cube_products=[],
+            moment_products=[],
+            peak_products=["dirty"],
+            output_prefix=output_prefix,
+            fdf_tag=fdf_tag,
+        )
+
+    corrected_pi = fits.getdata(Path(f"{output_prefix}.fdf.dirty.peak_pi.fits"))
+    no_i_pi = fits.getdata(Path(f"{output_prefix}.fdf_no_i.dirty.peak_pi.fits"))
+    assert np.isnan(corrected_pi[0]).all()
+    assert np.isfinite(corrected_pi[1:]).all()
+    assert np.isfinite(no_i_pi).all()
+    assert no_i.lam_sq_0_m2 == corrected.lam_sq_0_m2
+
+
+@pytest.mark.parametrize("key", ["peak.dirty.peak_pi", "stokes_i_ref_flux"])
+def test_write_rm_product_records_the_stokes_i_weights(
+    tmp_path: Path, key: str
+) -> None:
+    """A PI or Stokes I map says how the weights followed the Stokes I model."""
+    reference_header = fits.getheader(_make_i_cube(tmp_path))
+
+    (written,) = write_rm_product_to_fits(
+        key=key,
+        data=np.zeros((NY, NX)),
+        reference_header=reference_header,
+        output_prefix=tmp_path / "test_field",
+        stokes_i_weighting="global",
+        stokes_i_weight_alpha=-0.8,
+    )
+
+    header = fits.getheader(written)
+    assert header["SIWEIGHT"] == "global"
+    assert header["SIWALPHA"] == -0.8
+
+
 def test_debiased_mom0_debias_is_not_written_twice(tmp_path: Path) -> None:
     """Debiasing leaves mom0_debias alone, so a second copy under a second name
     would read as a second measurement."""
@@ -914,7 +1005,7 @@ def test_rmsynth_options_reach_rm_lite(
         )
 
     # Applied by flint after rm-lite returns, so they have nothing to forward.
-    flint_side = {"debias_moments", "debias_filter_size"}
+    flint_side = {"debias_moments", "debias_filter_size", "write_fdf_no_i"}
     for field in set(type(rmsynth_options).model_fields) - flint_side:
         assert field in captured, f"{field} never reaches rm-lite"
         assert captured[field] == getattr(rmsynth_options, field)
@@ -1393,12 +1484,13 @@ def test_multiscale_rmclean_is_refused_rather_than_ignored(tmp_path: Path) -> No
 
 
 def test_stokes_i_fit_on_noise_stays_finite(tmp_path: Path) -> None:
-    """With the SNR cut working, a noise-only cube must come back with no
-    polarised flux and nothing infinite.
+    """With the SNR cut working, a noise-only cube must come back blank, with
+    nothing infinite.
 
     A power law fitted to a noise spectrum is unconstrained and can dip to
     ~1e-10 mid-band; Q/U divided by that is an infinite FDF and an infinite
-    mom0. The cut is what stops those pixels being fitted at all.
+    mom0. The cut is what stops those pixels being fitted at all, and with no
+    Stokes I model they have no corrected FDF.
     """
     q_cube, u_cube, i_cube, i_weight_cube = _make_noise_only_cubes(tmp_path)
     output_prefix = tmp_path / "noise_field"
@@ -1417,9 +1509,7 @@ def test_stokes_i_fit_on_noise_stays_finite(tmp_path: Path) -> None:
 
     for label in ("dirty", "clean"):
         mom0 = fits.getdata(Path(f"{output_prefix}.fdf.{label}.mom0.fits"))
-        assert np.isfinite(mom0).all(), f"{label} mom0 has non-finite pixels"
-        # Nothing clears the moment threshold, so there is no polarised flux
-        assert np.allclose(mom0, 0.0), f"{label} mom0 found flux in pure noise"
+        assert np.isnan(mom0).all(), f"{label} mom0 has a pixel the cut let through"
 
 
 @pytest.mark.parametrize(
