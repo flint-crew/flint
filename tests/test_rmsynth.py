@@ -1395,12 +1395,13 @@ def test_multiscale_rmclean_is_refused_rather_than_ignored(tmp_path: Path) -> No
 
 
 def test_stokes_i_fit_on_noise_stays_finite(tmp_path: Path) -> None:
-    """With the SNR cut working, a noise-only cube must come back with no
-    polarised flux and nothing infinite.
+    """With the SNR cut working, a noise-only cube must come back blank, and
+    nothing infinite.
 
     A power law fitted to a noise spectrum is unconstrained and can dip to
     ~1e-10 mid-band; Q/U divided by that is an infinite FDF and an infinite
-    mom0. The cut is what stops those pixels being fitted at all.
+    mom0. The cut is what stops those pixels being fitted at all, and rm-lite
+    blanks a pixel it has no Stokes I model for.
     """
     q_cube, u_cube, i_cube, i_weight_cube = _make_noise_only_cubes(tmp_path)
     output_prefix = tmp_path / "noise_field"
@@ -1419,9 +1420,9 @@ def test_stokes_i_fit_on_noise_stays_finite(tmp_path: Path) -> None:
 
     for label in ("dirty", "clean"):
         mom0 = fits.getdata(Path(f"{output_prefix}.fdf.{label}.mom0.fits"))
-        assert np.isfinite(mom0).all(), f"{label} mom0 has non-finite pixels"
-        # Nothing clears the moment threshold, so there is no polarised flux
-        assert np.allclose(mom0, 0.0), f"{label} mom0 found flux in pure noise"
+        assert not np.isinf(mom0).any(), f"{label} mom0 has infinite pixels"
+        # No pixel clears the Stokes I cut, so none has a model to divide by
+        assert np.isnan(mom0).all(), f"{label} mom0 found flux in pure noise"
 
 
 @pytest.mark.parametrize(
