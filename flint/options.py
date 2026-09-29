@@ -385,6 +385,10 @@ class RMSynthOptions(BaseOptions):
     """Reference lambda^2 the FDF is derotated to. 'auto' picks one value for the whole cube; 'per_pixel' gives each pixel its own, which also forces per_pixel_rmsf"""
     per_pixel_rmsf: bool = False
     """Compute the RMSF for each pixel"""
+    do_fit_rmsf: bool = False
+    """Take the RMSF FWHM from a Gaussian fit to the main lobe of the shared RMSF, rather than the analytic 3.8 / (lambda^2 range)"""
+    rmsf_fitting_size: float = 1.25
+    """Width of that fit's window in analytic FWHMs, cut at the main lobe's first minimum"""
     estimate_stokes_i_noise: bool = True
     """Derive the per-channel Stokes I error from the Stokes I cube when no Stokes I weight cube is given. A weight cube takes precedence"""
 

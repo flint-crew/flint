@@ -904,6 +904,8 @@ def test_rmsynth_options_reach_rm_lite(
         per_pixel_rmsf=True,
         estimate_stokes_i_noise=False,
         convert_to_zarr=True,
+        do_fit_rmsf=True,
+        rmsf_fitting_size=1.5,
     )
     with pytest.raises(NotSupportedError, match="stop before synthesising"):
         _run_rmsynth_3d(

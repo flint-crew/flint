@@ -237,6 +237,8 @@ def run_rmsynth_3d(
         weight_type=rmsynth_options.weight_type,
         robust=rmsynth_options.robust,
         per_pixel_rmsf=rmsynth_options.per_pixel_rmsf,
+        do_fit_rmsf=rmsynth_options.do_fit_rmsf,
+        rmsf_fitting_size=rmsynth_options.rmsf_fitting_size,
         nufft_nthreads=rmsynth_options.nufft_nthreads,
         target_chunk_mb=rmsynth_options.target_chunk_mb,
         convert_to_zarr=rmsynth_options.convert_to_zarr,
