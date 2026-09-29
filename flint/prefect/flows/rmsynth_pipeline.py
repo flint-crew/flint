@@ -104,6 +104,51 @@ def _resolve_common_resolution_cubes(
     )
 
 
+def _write_rm_products_without_stokes_i(
+    stokes_cubes: CubesForRMSynth,
+    error_cubes: ErrorCubesForRMSynth | None,
+    rmsynth_options: RMSynthOptions,
+    rmclean_options: RMCleanOptions,
+    lam_sq_0_m2: float,
+    run_clean: bool,
+    rmsynth_field_options: RMSynthFieldOptions,
+    output_prefix: Path,
+) -> list[Path]:
+    """The requested products again with no Stokes I, as ``fdf_no_i``.
+
+    The corrected products are blank wherever Stokes I has no usable model, so
+    this set covers every pixel instead, at the corrected run's lambda^2_0 so
+    the angles of the two compare directly.
+    """
+    if rmsynth_options.lam_sq_0_m2 != "per_pixel":
+        rmsynth_options = rmsynth_options.with_options(lam_sq_0_m2=lam_sq_0_m2)
+    synth_result = task_rmsynth.submit(
+        stokes_cubes=stokes_cubes.with_options(i_path=None),
+        rmsynth_options=rmsynth_options,
+        error_cubes=error_cubes,
+    )
+    clean_result = (
+        task_rmclean.submit(
+            rm_synth_results=synth_result, rmclean_options=rmclean_options
+        )
+        if run_clean
+        else None
+    )
+    return task_write_rm_products.submit(
+        synth_results=synth_result,
+        clean_results=clean_result,
+        stokes_q_cube=stokes_cubes.q_path,
+        rmsynth_options=rmsynth_options,
+        rmclean_options=rmclean_options,
+        cube_products=rmsynth_field_options.cube_products,
+        moment_products=rmsynth_field_options.moment_products,
+        peak_products=rmsynth_field_options.peak_products,
+        output_prefix=output_prefix,
+        moment_threshold_snr=rmsynth_field_options.moment_threshold_snr,
+        fdf_tag="fdf_no_i",
+    ).result()
+
+
 @flow(name="Flint RM-Synthesis Pipeline")
 def process_rmsynth(
     rmsynth_field_options: RMSynthFieldOptions,
@@ -210,6 +255,20 @@ def process_rmsynth(
     )
 
     written_paths = output_paths.result()
+
+    if rmsynth_options.write_fdf_no_i and stokes_cubes.i_path is not None:
+        written_paths.extend(
+            _write_rm_products_without_stokes_i(
+                stokes_cubes=stokes_cubes,
+                error_cubes=error_cubes,
+                rmsynth_options=rmsynth_options,
+                rmclean_options=rmclean_options,
+                lam_sq_0_m2=synth_result.result().lam_sq_0_m2,
+                run_clean=run_clean,
+                rmsynth_field_options=rmsynth_field_options,
+                output_prefix=output_prefix,
+            )
+        )
 
     if rmsynth_field_options.sbid_copy_path:
         task_archive_sbid.submit(

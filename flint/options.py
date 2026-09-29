@@ -372,7 +372,11 @@ class RMSynthOptions(BaseOptions):
     fit_function: Literal["log", "linear"] = "log"
     """Stokes I fit function: 'log' is a power law, 'linear' is a polynomial"""
     stokes_i_snr_cut: float | None = 5.0
-    """Below this frequency-averaged Stokes I SNR a pixel falls back to a flat model. None fits every pixel"""
+    """Below this frequency-averaged Stokes I SNR a pixel is not fitted, so it is blank in every Stokes I corrected product (see write_fdf_no_i). None fits every pixel"""
+    stokes_i_weighting: Literal["global", "per_pixel"] | None = "global"
+    """How the inverse-variance weights follow the Stokes I division. 'global' uses one field-wide power law, so every pixel shares one RMSF; 'per_pixel' uses each pixel's own model, for the most SNR but an RMSF that varies with spectral index; None keeps 1/sigma^2. Only used with a Stokes I cube and a noise-based weight_type"""
+    stokes_i_weight_alpha: float | Literal["auto"] = "auto"
+    """Spectral index of the field-wide power law, or 'auto' to fit it to the field's mean Stokes I. Pin it to give several fields one RMSF"""
     compute_model_error: bool = False
     """Monte-Carlo the Stokes I fit's per-pixel model error via n_error_samples resamples. Only used if a Stokes I cube is given"""
     n_error_samples: int = 1000
@@ -391,6 +395,8 @@ class RMSynthOptions(BaseOptions):
     """Width of that fit's window in analytic FWHMs, cut at the main lobe's first minimum"""
     estimate_stokes_i_noise: bool = True
     """Derive the per-channel Stokes I error from the Stokes I cube when no Stokes I weight cube is given. A weight cube takes precedence"""
+    write_fdf_no_i: bool = False
+    """Also write every requested product without the Stokes I correction, named 'fdf_no_i' rather than 'fdf', so every pixel with Q/U data has a value. Shares the corrected run's lambda^2_0 unless lam_sq_0_m2 is 'per_pixel'. Only used with a Stokes I cube"""
 
 
 class RMCleanOptions(BaseOptions):
