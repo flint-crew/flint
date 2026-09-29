@@ -104,6 +104,12 @@ def _resolve_common_resolution_cubes(
     )
 
 
+def _zarr_store_or_cube(cube: Path) -> Path:
+    """The zarr store rm-lite wrote beside ``cube``, or ``cube`` if there is none."""
+    store = cube.with_suffix(".zarr")
+    return store if store.is_dir() else cube
+
+
 def _write_rm_products_without_stokes_i(
     stokes_cubes: CubesForRMSynth,
     error_cubes: ErrorCubesForRMSynth | None,
@@ -122,10 +128,26 @@ def _write_rm_products_without_stokes_i(
     """
     if rmsynth_options.lam_sq_0_m2 != "per_pixel":
         rmsynth_options = rmsynth_options.with_options(lam_sq_0_m2=lam_sq_0_m2)
+    no_i_cubes = stokes_cubes.with_options(i_path=None)
+    no_i_errors = error_cubes
+    # rm-lite rewrites a store for every FITS cube it is given, so hand it the
+    # ones the corrected run wrote from these same cubes. Not without error
+    # cubes: rm-lite then measures the noise over whole planes of the Q/U
+    # files, which it reads from the FITS rather than a chunked store.
+    if rmsynth_options.convert_to_zarr and error_cubes is not None:
+        no_i_cubes = no_i_cubes.with_options(
+            q_path=_zarr_store_or_cube(stokes_cubes.q_path),
+            u_path=_zarr_store_or_cube(stokes_cubes.u_path),
+        )
+        no_i_errors = error_cubes.with_options(
+            q_path=_zarr_store_or_cube(error_cubes.q_path),
+            u_path=_zarr_store_or_cube(error_cubes.u_path),
+            i_path=None,
+        )
     synth_result = task_rmsynth.submit(
-        stokes_cubes=stokes_cubes.with_options(i_path=None),
+        stokes_cubes=no_i_cubes,
         rmsynth_options=rmsynth_options,
-        error_cubes=error_cubes,
+        error_cubes=no_i_errors,
     )
     clean_result = (
         task_rmclean.submit(
