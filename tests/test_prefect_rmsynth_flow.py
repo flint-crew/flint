@@ -244,10 +244,13 @@ def test_process_rmsynth_with_stokes_i_on_dask_cluster(
     )
 
 
-def test_fdf_no_i_reruns_without_stokes_i_at_the_same_lam_sq_0(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The second set drops Stokes I, keeps the corrected lambda^2_0, and is named apart."""
+def _run_without_stokes_i(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error_cubes: WeightCubesForRMSynth | None = None,
+    **options: Any,
+) -> tuple[list[Path], dict[str, dict[str, Any]]]:
+    """``_write_rm_products_without_stokes_i`` with its tasks recorded, not run."""
     submitted: dict[str, dict[str, Any]] = {}
 
     class _Done:
@@ -279,8 +282,8 @@ def test_fdf_no_i_reruns_without_stokes_i_at_the_same_lam_sq_0(
     )
     paths = rmsynth_pipeline._write_rm_products_without_stokes_i(
         stokes_cubes=cubes,
-        error_cubes=None,
-        rmsynth_options=RMSynthOptions(write_fdf_no_i=True),
+        error_cubes=error_cubes,
+        rmsynth_options=RMSynthOptions(write_fdf_no_i=True, **options),
         rmclean_options=RMCleanOptions(),
         lam_sq_0_m2=0.07,
         run_clean=True,
@@ -289,13 +292,91 @@ def test_fdf_no_i_reruns_without_stokes_i_at_the_same_lam_sq_0(
         ),
         output_prefix=tmp_path / "field",
     )
-
     assert paths == written
+    return paths, submitted
+
+
+def test_fdf_no_i_reruns_without_stokes_i_at_the_same_lam_sq_0(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The second set drops Stokes I, keeps the corrected lambda^2_0, and is named apart."""
+    _, submitted = _run_without_stokes_i(tmp_path, monkeypatch)
+
     synth_kwargs = submitted["rmsynth"]
     assert synth_kwargs["stokes_cubes"].i_path is None
     assert synth_kwargs["rmsynth_options"].lam_sq_0_m2 == 0.07
     assert submitted["write"]["fdf_tag"] == "fdf_no_i"
     assert submitted["write"]["clean_results"] is not None
+    # The products still take their WCS from the FITS cube.
+    assert submitted["write"]["stokes_q_cube"] == tmp_path / "q.fits"
+
+
+def _weight_cubes(tmp_path: Path) -> WeightCubesForRMSynth:
+    return WeightCubesForRMSynth(
+        q_path=tmp_path / "q.weight.fits",
+        u_path=tmp_path / "u.weight.fits",
+        i_path=tmp_path / "i.weight.fits",
+    )
+
+
+def test_fdf_no_i_reads_the_stores_the_corrected_run_wrote(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Q, U and their weights come from the existing zarr stores, not a new copy."""
+    for name in ("q", "u", "q.weight", "u.weight"):
+        (tmp_path / f"{name}.zarr").mkdir()
+
+    _, submitted = _run_without_stokes_i(
+        tmp_path, monkeypatch, _weight_cubes(tmp_path), convert_to_zarr=True
+    )
+
+    cubes = submitted["rmsynth"]["stokes_cubes"]
+    errors = submitted["rmsynth"]["error_cubes"]
+    assert (cubes.q_path, cubes.u_path, cubes.i_path) == (
+        tmp_path / "q.zarr",
+        tmp_path / "u.zarr",
+        None,
+    )
+    assert isinstance(errors, WeightCubesForRMSynth)
+    assert (errors.q_path, errors.u_path, errors.i_path) == (
+        tmp_path / "q.weight.zarr",
+        tmp_path / "u.weight.zarr",
+        None,
+    )
+
+
+@pytest.mark.parametrize(
+    ("convert_to_zarr", "with_errors", "stores"),
+    [
+        pytest.param(False, True, True, id="no-zarr"),
+        pytest.param(True, False, True, id="no-error-cubes"),
+        pytest.param(True, True, False, id="no-stores"),
+    ],
+)
+def test_fdf_no_i_keeps_the_fits_cubes_otherwise(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    convert_to_zarr: bool,
+    with_errors: bool,
+    stores: bool,
+) -> None:
+    """No stores to reuse, or a noise estimate that wants the FITS: nothing swapped."""
+    if stores:
+        for name in ("q", "u", "q.weight", "u.weight"):
+            (tmp_path / f"{name}.zarr").mkdir()
+
+    _, submitted = _run_without_stokes_i(
+        tmp_path,
+        monkeypatch,
+        _weight_cubes(tmp_path) if with_errors else None,
+        convert_to_zarr=convert_to_zarr,
+    )
+
+    cubes = submitted["rmsynth"]["stokes_cubes"]
+    assert (cubes.q_path, cubes.u_path) == (tmp_path / "q.fits", tmp_path / "u.fits")
+    errors = submitted["rmsynth"]["error_cubes"]
+    if with_errors:
+        assert errors.q_path == tmp_path / "q.weight.fits"
 
 
 def _resolve_cubes(

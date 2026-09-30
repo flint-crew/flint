@@ -172,7 +172,10 @@ def check_cubes_are_single_precision(*cubes: Path | None) -> None:
     double = [
         cube
         for cube in cubes
-        if cube is not None and fits.getheader(cube).get("BITPIX") == -64
+        # A zarr store was converted from a FITS cube already checked here.
+        if cube is not None
+        and cube.suffix != ".zarr"
+        and fits.getheader(cube).get("BITPIX") == -64
     ]
     if double:
         logger.warning(

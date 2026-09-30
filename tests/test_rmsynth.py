@@ -511,6 +511,67 @@ def test_fdf_no_i_covers_the_pixels_the_stokes_i_correction_blanks(
     assert no_i.lam_sq_0_m2 == corrected.lam_sq_0_m2
 
 
+def test_fdf_no_i_reuses_the_corrected_runs_zarr_stores(
+    tmp_path: Path, qu_cubes: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The run without Stokes I reads the stores the corrected run wrote, and
+    gives the FDF it would have given from the FITS cubes."""
+    import rm_lite.tools_3d.rmsynth as rmsynth_3d_mod
+
+    from flint.prefect.flows.rmsynth_pipeline import _zarr_store_or_cube
+
+    stokes_q_cube, stokes_u_cube = qu_cubes
+    freq_hz = np.linspace(700e6, 1300e6, N_CHAN)
+    weights = {
+        s: _make_weight_cube(tmp_path, (N_CHAN, NY, NX), freq_hz, 1e-3, f"stokes{s}")
+        for s in "qu"
+    }
+    options = RMSynthOptions(convert_to_zarr=True)
+    _run_rmsynth_3d(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        rmsynth_options=options,
+        stokes_i_cube=_make_i_cube(tmp_path),
+        stokes_q_weight_cube=weights["q"],
+        stokes_u_weight_cube=weights["u"],
+    )
+
+    converted: list[Path] = []
+    convert = rmsynth_3d_mod.fits_cube_to_zarr
+
+    def counting(fits_file, *args, **kwargs):
+        converted.append(Path(fits_file))
+        return convert(fits_file, *args, **kwargs)
+
+    monkeypatch.setattr(rmsynth_3d_mod, "fits_cube_to_zarr", counting)
+    from_stores = _run_rmsynth_3d(
+        stokes_q_cube=_zarr_store_or_cube(stokes_q_cube),
+        stokes_u_cube=_zarr_store_or_cube(stokes_u_cube),
+        rmsynth_options=options,
+        stokes_q_weight_cube=_zarr_store_or_cube(weights["q"]),
+        stokes_u_weight_cube=_zarr_store_or_cube(weights["u"]),
+    )
+    assert converted == []
+
+    from_fits = _run_rmsynth_3d(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        rmsynth_options=RMSynthOptions(),
+        stokes_q_weight_cube=weights["q"],
+        stokes_u_weight_cube=weights["u"],
+    )
+    np.testing.assert_allclose(
+        from_stores.fdf_dirty_cube.compute(), from_fits.fdf_dirty_cube.compute()
+    )
+
+
+def test_single_precision_check_skips_zarr_stores(tmp_path: Path) -> None:
+    """A store has no FITS header to read; its cube was checked when converted."""
+    store = tmp_path / "cube.zarr"
+    store.mkdir()
+    check_cubes_are_single_precision(store)
+
+
 @pytest.mark.parametrize("key", ["peak.dirty.peak_pi", "stokes_i_ref_flux"])
 def test_write_rm_product_records_the_stokes_i_weights(
     tmp_path: Path, key: str
