@@ -244,7 +244,7 @@ requires-dist = [
     { name = "configargparse", specifier = ">=1.7" },
     { name = "crystalball", specifier = ">=0.4.3" },
     { name = "dask-jobqueue" },
-    { name = "fitscube", extras = ["pgzip"], specifier = ">=2.7" },
+    { name = "fitscube", extras = ["pgzip"], specifier = ">=2.8" },
     { name = "fixms", marker = "extra == 'all'", specifier = ">=0.4.0" },
     { name = "fixms", marker = "extra == 'casa'", specifier = ">=0.4.0" },
     { name = "furo", marker = "extra == 'all'" },
@@ -1257,7 +1257,7 @@ wheels = [
 
 [[package]]
 name = "fitscube"
-version = "2.7.0"
+version = "2.8.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "astropy" },
@@ -1265,9 +1265,9 @@ dependencies = [
     { name = "radio-beam" },
     { name = "tqdm" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d8/bf/57d9b6b603af3d5ea0f56b920fef44e3315d2ba085cd8bea6a7b117c0cce/fitscube-2.7.0.tar.gz", hash = "sha256:a8c7071c18da9e079274a06d31d9ce7115ccf7248c88fc18b7719faaaf916adb", size = 796080, upload-time = "2026-09-10T12:48:56.239Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/dc/6d/c2a738d9106446cb9bf05de9c94c1940ad90e986544a0505701de637ef7e/fitscube-2.8.0.tar.gz", hash = "sha256:915fb7adfa7a477722e89dff874094b4f9d65904ceb97c0dba1a79f13feb864e", size = 799285, upload-time = "2026-09-30T00:54:04.275Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f1/c9/0e905a4f885652911d48d4a9408f9ba72123d36dbf8ff999fdbd7697d3e8/fitscube-2.7.0-py3-none-any.whl", hash = "sha256:45ca2895b53aaff23b86b0465af90c28c93ff3e9c78fc438d34409919e590e1b", size = 32346, upload-time = "2026-09-10T12:48:54.683Z" },
+    { url = "https://files.pythonhosted.org/packages/ac/8e/fa51b243fd97f2cf44e2776d1f03a2e19eb37938721bcd072f67929a9a9d/fitscube-2.8.0-py3-none-any.whl", hash = "sha256:0f71a0cc438c3a27d32d449f270fddbbafa2a29757bf3714be7df8e3b15bb6b5", size = 33653, upload-time = "2026-09-30T00:54:02.867Z" },
 ]
 
 [package.optional-dependencies]
