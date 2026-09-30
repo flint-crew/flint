@@ -294,7 +294,7 @@ In general usage the following `prefect` configuration settings may be of use, p
 ```bash
 export PREFECT_API_URL="http://${YOUR_MACHINE_ADDRESS}:4200/api"
 export PREFECT_HOME="$(pwd)/prefect"
-export PREFECT_LOGGING_EXTRA_LOGGERS="flint,fixms"
+export PREFECT_LOGGING_EXTRA_LOGGERS="flint,fixms,rm-lite"
 export PREFECT_LOGGING_LEVEL="INFO"
 export PREFECT_RESULTS_PERSIST_BY_DEFAULT=true
 ```
