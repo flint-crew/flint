@@ -330,6 +330,71 @@ def test_rmsynth_with_stokes_i_writes_fit_maps(
     assert 700e6 < header["REFFREQ"] < 1300e6
 
 
+@pytest.mark.parametrize("lam_sq_0_m2", [0.1, "per_pixel"])
+def test_every_map_carries_the_run_metadata(
+    tmp_path: Path, qu_cubes: tuple[Path, Path], lam_sq_0_m2: float | str
+) -> None:
+    """A map is read on its own downstream, so it carries lambda^2_0, the RMSF and the band."""
+    stokes_q_cube, stokes_u_cube = qu_cubes
+    output_paths = _synth_and_write(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        stokes_i_cube=_make_i_cube(tmp_path),
+        rmsynth_options=RMSynthOptions(lam_sq_0_m2=lam_sq_0_m2),
+        rmclean_options=RMCleanOptions(),
+        cube_products=[],
+        moment_products=["clean"],
+        peak_products=["clean"],
+        output_prefix=tmp_path / "test_field",
+        stokes_i_weight_cube=_make_i_weight_cube(tmp_path),
+    )
+    freq_hz = np.linspace(700e6, 1300e6, N_CHAN)
+    lambda_sq_range_m2 = np.ptp((299792458.0 / freq_hz) ** 2)
+    maps = [path for path in output_paths if path.suffix == ".fits"]
+    assert any(".niter." in path.name for path in maps)
+    assert any(".stokesi.coeff." in path.name for path in maps)
+    for path in maps:
+        header = fits.getheader(path)
+        assert header["NCHAN"] == N_CHAN, path.name
+        assert header["FREQMIN"] == pytest.approx(freq_hz[0])
+        assert header["FREQMAX"] == pytest.approx(freq_hz[-1])
+        assert header["CHANWID"] == pytest.approx(freq_hz[1] - freq_hz[0], rel=1e-6)
+        assert header["RMSFFWHM"] == pytest.approx(3.8 / lambda_sq_range_m2)
+        assert header["MAXSCALE"] == pytest.approx(
+            np.pi * (freq_hz[-1] / 299792458.0) ** 2
+        )
+        if lam_sq_0_m2 == "per_pixel":
+            assert "LAMSQ0" not in header
+        else:
+            assert header["LAMSQ0"] == pytest.approx(lam_sq_0_m2)
+
+
+def test_a_per_pixel_reference_frequency_is_written_as_a_map(
+    tmp_path: Path, qu_cubes: tuple[Path, Path]
+) -> None:
+    """With a per-pixel lambda^2_0 the Stokes I terms are each pixel's own, so their
+    reference frequency is a map rather than a REFFREQ card."""
+    stokes_q_cube, stokes_u_cube = qu_cubes
+    output_prefix = tmp_path / "test_field"
+    output_paths = _synth_and_write(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        stokes_i_cube=_make_i_cube(tmp_path),
+        rmsynth_options=RMSynthOptions(lam_sq_0_m2="per_pixel"),
+        rmclean_options=RMCleanOptions(),
+        cube_products=[],
+        moment_products=["dirty"],
+        output_prefix=output_prefix,
+        stokes_i_weight_cube=_make_i_weight_cube(tmp_path),
+    )
+    ref_freq_path = Path(f"{output_prefix}.stokesi.ref_freq.fits")
+    assert ref_freq_path in output_paths
+    ref_freq_hz = fits.getdata(ref_freq_path)
+    assert ref_freq_hz.shape == (NY, NX)
+    assert np.all((700e6 < ref_freq_hz) & (ref_freq_hz < 1300e6))
+    assert "REFFREQ" not in fits.getheader(Path(f"{output_prefix}.stokesi.alpha.fits"))
+
+
 @pytest.mark.parametrize(
     ("fit_function", "expected_names"),
     [("log", ("flux", "alpha", "beta")), ("linear", ("c0", "c1", "c2"))],

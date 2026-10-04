@@ -77,6 +77,7 @@ STOKES_I_MAP_SUFFIXES = {
     "stokes_i_alpha": "stokesi.alpha",
     "stokes_i_alpha_error": "stokesi.alpha_error",
     "stokes_i_model_order": "stokesi.model_order",
+    "stokes_i_ref_freq": "stokesi.ref_freq",
 }
 
 PEAK_MAPS = {
@@ -679,11 +680,48 @@ def compute_rm_products(
     return computed
 
 
+HeaderCards: TypeAlias = dict[str, tuple[Any, str]]
+
+
+def rm_synthesis_header_cards(
+    synth_results: RMSynth3DResults, lam_sq_0_m2: float | str
+) -> HeaderCards:
+    """The run's reference lambda^2, RMSF width and band, for every 2D map's header.
+
+    Without them a map cannot be read on its own: angles are at lambda^2_0, and
+    errors and complexity tests need the RMSF. A per-pixel lambda^2_0 has no one
+    value, so it is left out.
+    """
+    lambda_sq_arr_m2 = synth_results.lambda_sq_arr_m2
+    freq_arr_hz = np.sort(299792458.0 / np.sqrt(lambda_sq_arr_m2))
+    cards: HeaderCards = {
+        "RMSFFWHM": (float(synth_results.fwhm_rmsf_radm2), "RMSF FWHM [rad/m2]"),
+        "MAXSCALE": (
+            float(np.pi / np.nanmin(lambda_sq_arr_m2)),
+            "Largest Faraday depth scale [rad/m2]",
+        ),
+        "FREQMIN": (float(freq_arr_hz[0]), "Lowest channel frequency [Hz]"),
+        "FREQMAX": (float(freq_arr_hz[-1]), "Highest channel frequency [Hz]"),
+        "NCHAN": (int(freq_arr_hz.size), "Channels in the RM-synthesis"),
+        "CHANWID": (
+            float(np.median(np.diff(freq_arr_hz))) if freq_arr_hz.size > 1 else 0.0,
+            "Median channel width [Hz]",
+        ),
+    }
+    if lam_sq_0_m2 != "per_pixel":
+        cards["LAMSQ0"] = (
+            float(synth_results.lam_sq_0_m2),
+            "Reference lambda^2 of the angles [m2]",
+        )
+    return cards
+
+
 def write_rmclean_niter_map_to_fits(
     niter_map: np.ndarray,
     reference_header: fits.Header,
     output_prefix: Path,
     fdf_tag: str = "fdf",
+    header_cards: HeaderCards | None = None,
 ) -> Path:
     """Write the per-pixel RM-CLEAN iteration count.
 
@@ -698,12 +736,14 @@ def write_rmclean_niter_map_to_fits(
         reference_header (fits.Header): Header to derive the spatial WCS from
         output_prefix (Path): Common prefix for the output file
         fdf_tag (str, optional): What the FDF products are named after. Defaults to "fdf".
+        header_cards (HeaderCards | None, optional): Run metadata to stamp, from ``rm_synthesis_header_cards``. Defaults to None.
 
     Returns:
         Path: The written map path
     """
     header = WCS(reference_header).celestial.to_header()
     header["BUNIT"] = ("", "CLEAN iterations")
+    header.update(header_cards or {})
     output_path = Path(f"{output_prefix}.{fdf_tag}.clean.niter.fits")
     # int32 rather than rm-lite's int64: max_iter is 1e5 by default, so half the
     # bytes carry every value this can hold
@@ -763,6 +803,7 @@ def write_rm_product_to_fits(
     stokes_i_weighting: str | None = None,
     stokes_i_weight_alpha: float | None = None,
     fdf_tag: str = "fdf",
+    header_cards: HeaderCards | None = None,
 ) -> list[Path]:
     """Write one computed product, named and united from its compute key.
 
@@ -783,6 +824,7 @@ def write_rm_product_to_fits(
         stokes_i_weighting (str | None, optional): How the weights followed the Stokes I division, recorded as ``SIWEIGHT``. Defaults to None.
         stokes_i_weight_alpha (float | None, optional): Spectral index of the weight template, recorded as ``SIWALPHA``. Defaults to None.
         fdf_tag (str, optional): What the FDF products are named after, "fdf" or "fdf_no_i" for the run without Stokes I. Defaults to "fdf".
+        header_cards (HeaderCards | None, optional): Run metadata stamped on every map, from ``rm_synthesis_header_cards``. Defaults to None.
 
     Returns:
         list[Path]: The paths written, empty for a key with no FITS output
@@ -801,6 +843,7 @@ def write_rm_product_to_fits(
         header = WCS(reference_header).celestial.to_header()
         header["BUNIT"] = (unit, comment)
         _stamp_stokes_i_weights(header, stokes_i_weighting, stokes_i_weight_alpha)
+        header.update(header_cards or {})
         return [
             _write_map(
                 data,
@@ -816,6 +859,7 @@ def write_rm_product_to_fits(
                 reference_header=reference_header,
                 output_prefix=output_prefix,
                 fdf_tag=fdf_tag,
+                header_cards=header_cards,
             )
         ]
 
@@ -826,6 +870,7 @@ def write_rm_product_to_fits(
             fit_function=fit_function,
         )
         _stamp_stokes_i_weights(header, stokes_i_weighting, stokes_i_weight_alpha)
+        header.update(header_cards or {})
         path = Path(f"{output_prefix}.{STOKES_I_MAP_SUFFIXES[key]}.fits")
         return [_write_map(data, header, path)]
 
@@ -848,6 +893,7 @@ def write_rm_product_to_fits(
                 coeff=(index, name),
             )
             _stamp_stokes_i_weights(header, stokes_i_weighting, stokes_i_weight_alpha)
+            header.update(header_cards or {})
             if is_error:
                 # Marginal, i.e. sqrt(diag(pcov)): it ignores the strong
                 # correlations between the terms, so it is not the error on the
@@ -1043,6 +1089,12 @@ def write_rm_products(
         k: v.astype(np.float32) for k, v in stokes_i_maps.items() if v is not None
     }
     compute_targets.update(stokes_i_maps)
+    # A per-pixel lambda^2_0 gives every pixel its own reference frequency, which
+    # no single REFFREQ card can hold, so it is written as a map of its own.
+    ref_freq_hz = synth_results.stokes_i_ref_freq_hz
+    if ref_freq_hz is not None and np.ndim(ref_freq_hz) != 0:
+        compute_targets["stokes_i_ref_freq"] = ref_freq_hz
+        ref_freq_hz = None
 
     # The fitted Stokes I model terms, (n_coeff, ny, nx) each -- n_coeff of the
     # maps above rather than anything cube-sized, since n_coeff is 3 or 4. Both
@@ -1077,6 +1129,7 @@ def write_rm_products(
     # Read before the compute, so each product can go straight to disk as it
     # lands rather than waiting on the batch.
     reference_header = fits.getheader(stokes_q_cube)
+    header_cards = rm_synthesis_header_cards(synth_results, rmsynth_options.lam_sq_0_m2)
 
     def write_product(key: str, data: Any) -> list[Path]:
         return write_rm_product_to_fits(
@@ -1084,12 +1137,13 @@ def write_rm_products(
             data=data,
             reference_header=reference_header,
             output_prefix=output_prefix,
-            ref_freq_hz=synth_results.stokes_i_ref_freq_hz,
+            ref_freq_hz=ref_freq_hz,
             fit_function=rmsynth_options.fit_function,
             coeff_names=synth_results.stokes_i_coeff_names,
             stokes_i_weighting=synth_results.stokes_i_weighting,
             stokes_i_weight_alpha=synth_results.stokes_i_weight_alpha,
             fdf_tag=fdf_tag,
+            header_cards=header_cards,
         )
 
     written = compute_rm_products(
