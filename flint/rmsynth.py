@@ -686,12 +686,7 @@ HeaderCards: TypeAlias = dict[str, tuple[Any, str]]
 def rm_synthesis_header_cards(
     synth_results: RMSynth3DResults, lam_sq_0_m2: float | str
 ) -> HeaderCards:
-    """The run's reference lambda^2, RMSF width and band, for every 2D map's header.
-
-    Without them a map cannot be read on its own: angles are at lambda^2_0, and
-    errors and complexity tests need the RMSF. A per-pixel lambda^2_0 has no one
-    value, so it is left out.
-    """
+    """The run's lambda^2_0 (unless per-pixel), RMSF width and band, so each map reads on its own."""
     lambda_sq_arr_m2 = synth_results.lambda_sq_arr_m2
     freq_arr_hz = np.sort(299792458.0 / np.sqrt(lambda_sq_arr_m2))
     cards: HeaderCards = {
@@ -717,10 +712,7 @@ def rm_synthesis_header_cards(
 
 
 def restoring_beam_cards(cube_header: fits.Header) -> HeaderCards:
-    """The cube's restoring beam, which the 2D maps share; none for a cube without one.
-
-    Blanked images carry a zero beam, which is not one.
-    """
+    """The cube's restoring beam for the 2D maps; none if it has none, or a blanked image's zero beam."""
     if not all(key in cube_header for key in ("BMAJ", "BMIN", "BPA")):
         return {}
     if not cube_header["BMAJ"] > 0:
@@ -1105,8 +1097,7 @@ def write_rm_products(
         k: v.astype(np.float32) for k, v in stokes_i_maps.items() if v is not None
     }
     compute_targets.update(stokes_i_maps)
-    # A per-pixel lambda^2_0 gives every pixel its own reference frequency, which
-    # no single REFFREQ card can hold, so it is written as a map of its own.
+    # A per-pixel lambda^2_0 gives a per-pixel reference frequency, which no REFFREQ card holds.
     ref_freq_hz = synth_results.stokes_i_ref_freq_hz
     if ref_freq_hz is not None and np.ndim(ref_freq_hz) != 0:
         compute_targets["stokes_i_ref_freq"] = ref_freq_hz

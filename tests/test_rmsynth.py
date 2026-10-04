@@ -33,6 +33,7 @@ from flint.rmsynth import (
     compute_rm_products,
     fdf_threshold_from_snr,
     needs_rmclean,
+    restoring_beam_cards,
     run_rmclean_3d,
     run_rmsynth_3d,
     write_rm_product_to_fits,
@@ -380,6 +381,11 @@ def test_a_cube_without_a_beam_gives_maps_without_one(tmp_path: Path) -> None:
         output_prefix=tmp_path / "test_field",
     )
     assert "BMAJ" not in fits.getheader(written[0])
+
+
+def test_a_blanked_cube_zero_beam_is_not_stamped() -> None:
+    header = fits.Header({"BMAJ": 0.0, "BMIN": 0.0, "BPA": 0.0})
+    assert restoring_beam_cards(header) == {}
 
 
 def test_a_per_pixel_reference_frequency_is_written_as_a_map(
