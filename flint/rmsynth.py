@@ -716,6 +716,22 @@ def rm_synthesis_header_cards(
     return cards
 
 
+def restoring_beam_cards(cube_header: fits.Header) -> HeaderCards:
+    """The cube's restoring beam, which the 2D maps share; none for a cube without one.
+
+    Blanked images carry a zero beam, which is not one.
+    """
+    if not all(key in cube_header for key in ("BMAJ", "BMIN", "BPA")):
+        return {}
+    if not cube_header["BMAJ"] > 0:
+        return {}
+    return {
+        "BMAJ": (float(cube_header["BMAJ"]), "Restoring beam major axis [deg]"),
+        "BMIN": (float(cube_header["BMIN"]), "Restoring beam minor axis [deg]"),
+        "BPA": (float(cube_header["BPA"]), "Restoring beam position angle [deg]"),
+    }
+
+
 def write_rmclean_niter_map_to_fits(
     niter_map: np.ndarray,
     reference_header: fits.Header,
@@ -1129,7 +1145,9 @@ def write_rm_products(
     # Read before the compute, so each product can go straight to disk as it
     # lands rather than waiting on the batch.
     reference_header = fits.getheader(stokes_q_cube)
-    header_cards = rm_synthesis_header_cards(synth_results, rmsynth_options.lam_sq_0_m2)
+    header_cards = rm_synthesis_header_cards(
+        synth_results, rmsynth_options.lam_sq_0_m2
+    ) | restoring_beam_cards(reference_header)
 
     def write_product(key: str, data: Any) -> list[Path]:
         return write_rm_product_to_fits(

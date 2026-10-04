@@ -334,8 +334,10 @@ def test_rmsynth_with_stokes_i_writes_fit_maps(
 def test_every_map_carries_the_run_metadata(
     tmp_path: Path, qu_cubes: tuple[Path, Path], lam_sq_0_m2: float | str
 ) -> None:
-    """A map is read on its own downstream, so it carries lambda^2_0, the RMSF and the band."""
+    """A map is read on its own downstream, so it carries lambda^2_0, the RMSF, the band and the beam."""
     stokes_q_cube, stokes_u_cube = qu_cubes
+    with fits.open(stokes_q_cube, mode="update") as hdul:
+        hdul[0].header.update({"BMAJ": 0.006, "BMIN": 0.005, "BPA": 30.0})
     output_paths = _synth_and_write(
         stokes_q_cube=stokes_q_cube,
         stokes_u_cube=stokes_u_cube,
@@ -356,6 +358,7 @@ def test_every_map_carries_the_run_metadata(
     for path in maps:
         header = fits.getheader(path)
         assert header["NCHAN"] == N_CHAN, path.name
+        assert (header["BMAJ"], header["BMIN"], header["BPA"]) == (0.006, 0.005, 30.0)
         assert header["FREQMIN"] == pytest.approx(freq_hz[0])
         assert header["FREQMAX"] == pytest.approx(freq_hz[-1])
         assert header["CHANWID"] == pytest.approx(freq_hz[1] - freq_hz[0], rel=1e-6)
@@ -367,6 +370,16 @@ def test_every_map_carries_the_run_metadata(
             assert "LAMSQ0" not in header
         else:
             assert header["LAMSQ0"] == pytest.approx(lam_sq_0_m2)
+
+
+def test_a_cube_without_a_beam_gives_maps_without_one(tmp_path: Path) -> None:
+    written = write_rm_product_to_fits(
+        key="peak.clean.peak_pi",
+        data=np.zeros((NY, NX)),
+        reference_header=fits.getheader(_make_i_cube(tmp_path)),
+        output_prefix=tmp_path / "test_field",
+    )
+    assert "BMAJ" not in fits.getheader(written[0])
 
 
 def test_a_per_pixel_reference_frequency_is_written_as_a_map(
