@@ -9,9 +9,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, TypeAlias
+from typing import Any
 
 from capn_crunch import (
+    BaseOptions,
     add_options_to_parser,
     create_options_from_parser,
 )
@@ -26,10 +27,14 @@ from flint.configuration import (
     get_selfcal_round_fitscube_options,
     load_and_copy_strategy,
 )
-from flint.imager.channel_division import ChannelDivision, channel_division_for_beams
+from flint.imager.channel_division import (
+    ChannelDivision,
+    apply_cube_division,
+    channel_division_for_beams,
+)
 from flint.imager.wsclean import WSCleanResult
 from flint.logging import logger
-from flint.ms import MS, MSSummary, find_mss
+from flint.ms import MS, MSsByBeam, MSSummary, find_mss
 from flint.naming import (
     CASDANameComponents,
     add_timestamp_to_path,
@@ -64,8 +69,6 @@ from flint.prefect.common.utils import (
 )
 from flint.summary import BeamSummary
 
-MSsByBeam: TypeAlias = tuple[tuple[MS, ...], ...]
-
 
 @dataclass
 class LoopFutures:
@@ -78,6 +81,22 @@ class LoopFutures:
     """Imaging results from wsclean imaging"""
     ms_summaries: list[MSSummary] | None = None
     """Results from a MS description"""
+
+
+class RACSContinuumResult(BaseOptions):
+    """Return value of ``process_racs_all_continuum``, handed in-memory to the
+    polarisation stage of the ``racs-all`` flow-of-flows rather than having
+    it rediscover measurement sets and paths by globbing the output
+    directory."""
+
+    mss_by_beam: tuple[tuple[MS, ...], ...]
+    """The final round's per-beam self-calibrated measurement sets. Structurally equivalent to ``flint.ms.MSsByBeam``"""
+    holography_path: Path | None
+    """Path to the holography FITS cube used when co-adding beams, if any"""
+    output_science_path: Path
+    """Directory the continuum imaging stage wrote its output products into"""
+    terminal_futures: list[PrefectFuture[Any]]
+    """Every future the continuum imaging stage produced, propagated so Prefect still detects any of their failures"""
 
 
 def _check_racs_all_options(racs_all_options: RACSAllOptions) -> None:
@@ -118,7 +137,6 @@ def _check_racs_all_options(racs_all_options: RACSAllOptions) -> None:
             raise ValueError(
                 "Unable to create linmos cubes without a yandasoft container"
             )
-
     # For the moment we make sure that this is provided. Can consider moving to mandatory argument in
     # the model definition
     assert (
@@ -269,31 +287,10 @@ def all_holography_available(
     return holo_output_path
 
 
-def _apply_cube_division(
-    update_wsclean_options: dict[Any, Any], cube_division: ChannelDivision
-) -> dict[Any, Any]:
-    """Replace the strategy channel division with a solved one. A division set
-    explicitly in the strategy wins, so a known good grid can be pinned."""
-    if update_wsclean_options.get("channel_division_frequencies") is not None:
-        logger.info(
-            "Strategy specifies channel_division_frequencies, not using the solved division"
-        )
-        return update_wsclean_options
-
-    logger.info(
-        f"Imaging with the solved channel division, {cube_division.channels_out=}"
-    )
-    return {
-        **update_wsclean_options,
-        "channels_out": cube_division.channels_out,
-        "channel_division_frequencies": cube_division.channel_division_frequencies,
-    }
-
-
 @flow
-def process_racs_all_field(
+def process_racs_all_continuum(
     racs_all_options: RACSAllOptions,
-) -> list[PrefectFuture[Any]]:
+) -> RACSContinuumResult:
     # returned futures are resolved by prefect to fail the flow on task failure
     terminal_futures: list[PrefectFuture[Any]] = []
 
@@ -359,6 +356,12 @@ def process_racs_all_field(
         racs_all_options=racs_all_options, output_science_path=output_science_path
     )
     if isinstance(holography_path, Path):
+        update_concat_holo_options = get_options_from_strategy(
+            strategy=strategy,
+            mode="concatholo",
+            round_info=0,
+            operation="selfcal",
+        )
         holography_path = task_concatenate_holography.submit(
             output_path=holography_path,
             holo_cubes=[
@@ -366,6 +369,7 @@ def process_racs_all_field(
                 racs_all_options.mid_holofile,
                 racs_all_options.high_holofile,
             ],
+            update_concat_holo_options=update_concat_holo_options,
         )
         terminal_futures.append(holography_path)
 
@@ -416,7 +420,7 @@ def process_racs_all_field(
                 operation="selfcal",
             )
             if cube_division is not None:
-                update_wsclean_options = _apply_cube_division(
+                update_wsclean_options = apply_cube_division(
                     update_wsclean_options=update_wsclean_options,
                     cube_division=cube_division,
                 )
@@ -509,7 +513,7 @@ def process_racs_all_field(
                     operation="selfcal",
                 )
                 if cube_division is not None:
-                    update_wsclean_options = _apply_cube_division(
+                    update_wsclean_options = apply_cube_division(
                         update_wsclean_options=update_wsclean_options,
                         cube_division=cube_division,
                     )
@@ -563,6 +567,8 @@ def process_racs_all_field(
                     aegean_outputs=aegean_outputs,
                     round=selfcal_round if selfcal_round > 0 else None,
                 )
+                terminal_futures.append(field_summary)
+
                 if selfcal_round in (0, racs_all_options.rounds):
                     val_results = validation_items(
                         field_summary=field_summary,
@@ -610,15 +616,32 @@ def process_racs_all_field(
                 )
                 terminal_futures.extend(linmos_cubes)
 
-    terminal_futures.append(field_summary)
+    resolved_holography_path = (
+        holography_path.result()
+        if isinstance(holography_path, PrefectFuture)
+        else holography_path
+    )
+    # Final round's per-beam self-calibrated MSs, resolved from futures so the
+    # racs-all flow-of-flows can hand them to the polarisation stage in-memory
+    # rather than having it rediscover MSs by globbing the output directory.
+    final_round_mss_by_beam: tuple[tuple[MS, ...], ...] = tuple(
+        tuple([ms.result() for ms in beam_result.mss])
+        for beam_result in imaging_results[racs_all_options.rounds]
+    )
 
-    return terminal_futures
+    return RACSContinuumResult(
+        mss_by_beam=final_round_mss_by_beam,
+        holography_path=resolved_holography_path,
+        output_science_path=output_science_path,
+        terminal_futures=terminal_futures,
+    )
 
 
-def setup_run_racs_all_field(
-    cluster_config: Path, racs_all_options: RACSAllOptions
+def setup_run_racs_all_continuum(
+    cluster_config: Path,
+    racs_all_options: RACSAllOptions,
 ) -> None:
-    """The main launch script for the RACS-All processing flow
+    """The main launch script for the RACS-All continuum imaging/self-cal flow
 
     Args:
         cluster_config (Path): Path to the dask configuration yaml file to define the cluster
@@ -629,7 +652,7 @@ def setup_run_racs_all_field(
 
     dask_task_runner = get_dask_runner(cluster=cluster_config)
 
-    process_racs_all_field.with_options(
+    process_racs_all_continuum.with_options(
         name=f"RACS All -- {low_sbid}", task_runner=dask_task_runner
     )(racs_all_options=racs_all_options)
 
@@ -668,8 +691,9 @@ def cli() -> None:
         parser_namespace=args, options_class=RACSAllOptions
     )
 
-    setup_run_racs_all_field(
-        cluster_config=args.cluster_config, racs_all_options=racs_all_options
+    setup_run_racs_all_continuum(
+        cluster_config=args.cluster_config,
+        racs_all_options=racs_all_options,
     )
 
 

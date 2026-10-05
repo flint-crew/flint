@@ -24,7 +24,7 @@ a partition gives a candidate; the least padded, most uniform one is returned.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from astropy import units as u
@@ -311,3 +311,24 @@ def channel_division_for_beams(
         channels_out=channels_out,
         size_tolerance=size_tolerance,
     )
+
+
+def apply_cube_division(
+    update_wsclean_options: dict[Any, Any], cube_division: ChannelDivision
+) -> dict[Any, Any]:
+    """Replace the strategy channel division with a solved one. A division set
+    explicitly in the strategy wins, so a known good grid can be pinned."""
+    if update_wsclean_options.get("channel_division_frequencies") is not None:
+        logger.info(
+            "Strategy specifies channel_division_frequencies, not using the solved division"
+        )
+        return update_wsclean_options
+
+    logger.info(
+        f"Imaging with the solved channel division, {cube_division.channels_out=}"
+    )
+    return {
+        **update_wsclean_options,
+        "channels_out": cube_division.channels_out,
+        "channel_division_frequencies": cube_division.channel_division_frequencies,
+    }
