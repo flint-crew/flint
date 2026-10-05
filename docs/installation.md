@@ -2,18 +2,23 @@
 
 The `flint` module itself is built in pure Python and can be installed using `pip`. We highly recommend using [uv](https://docs.astral.sh/uv/) for speedy installation.
 
+`flint` is split into a lightweight core and the full pipeline. A plain install gives the core only: `flint.naming`, `flint.options`, `flint.logging`, `flint.utils` and `flint.exceptions`. These depend on just `astropy`, `numpy`, `pydantic`, `pyyaml` and `capn-crunch`, so other packages can use them to find and name `flint` products without installing `prefect`, `dask` and the rest of the pipeline stack. To run the pipeline, install the `pipeline` extra.
+
 We publish releases on PyPI:
 
 ```bash
-# PyPI release
+# PyPI release, core modules only
 pip install askap-flint
+
+# PyPI release, including everything needed to run the pipeline
+pip install 'askap-flint[pipeline]'
 ```
 
 You can also install directly from the git repository:
 
 ```bash
 # Direct git install (latest push)
-pip install git+https://github.com/flint-crew/flint.git
+pip install 'askap-flint[pipeline] @ git+https://github.com/flint-crew/flint.git'
 ```
 
 Or, from a local clone:
@@ -21,7 +26,7 @@ Or, from a local clone:
 ```bash
 git clone https://github.com/flint-crew/flint.git
 cd flint
-pip install -e .
+pip install -e '.[pipeline]'
 ```
 
 ## Python support
@@ -110,7 +115,7 @@ We have split out the `pip` dependencies that rely on `python-casacore`. These
 can be installed by running from within thg `git clone` `flint` repository folder:
 
 ```bash
-pip install '.[casa]'
+pip install '.[pipeline,casa]'
 ```
 
 A helpful script below may be of use.
@@ -132,7 +137,7 @@ conda create -y  -n "${DIR}" python="${PYVERSION}" &&  \
         source /home/$(whoami)/.bashrc && \
         conda activate "${DIR}" && \
         conda install -y -c conda-forge boost casacore && \
-        PIP_NO_BINARY="python-casacore" pip install -e '.[casa]'
+        PIP_NO_BINARY="python-casacore" pip install -e '.[pipeline,casa]'
 ```
 
 This should set up an appropriate environment that is compatible with the

@@ -10,7 +10,7 @@ The distinction is important as it would allow the transition to a different wor
 Presently we are using a `python` module named `prefect` to designed and implement workflows within `flint`, but effort has been made
 towards keeping these two components separated should a new workflow manager been needed.
 
-Although logically separated, these components are packaged together. Simply installing `flint` installs all required tooling. Deploying
+Although logically separated, these components are packaged together. Installing `flint` with the `pipeline` extra (`pip install 'askap-flint[pipeline]'`) installs all required tooling. Deploying
 should therefore be straight forward and as simple as a `pip` command.
 
 (prefect)=

@@ -23,6 +23,6 @@ RUN conda clean --all --yes
 # Install flint
 COPY ../ /flint
 WORKDIR /flint
-RUN uv pip install -e .[casa] --compile-bytecode --system
+RUN uv pip install -e .[pipeline,casa] --compile-bytecode --system
 
 WORKDIR /root

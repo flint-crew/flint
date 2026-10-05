@@ -10,11 +10,11 @@ Do install the optional `flint` developer dependencies. These will help you iden
 
 Installing the developer dependencies should look something like this:
 
-`pip install '.[dev]`
+`pip install '.[pipeline,dev]'`
 
 or
 
-`pip install 'flint[dev]'
+`pip install 'askap-flint[pipeline,dev]'`
 
 ## Install and use `pre-commit`
 

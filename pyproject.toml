@@ -37,6 +37,23 @@ dependencies = [
     "astropy>=6.1.3", # fixing until units change in 6.1.4 addressed in radio-beam
     "numpy>=2.0.0",
     "pydantic>=2",
+    "capn-crunch>=1.1.0",
+    "pyyaml",
+]
+
+[tool.hatch]
+version.source = "vcs"
+build.hooks.vcs.version-file = "flint/_version.py"
+build.targets.wheel.packages = ["flint"]
+metadata.allow-direct-references = true
+
+[tool.uv]
+managed = true # let uv manage virtualenvs
+package = true # install package in editable mode
+
+
+[project.optional-dependencies]
+pipeline = [
     "scipy",
     "spython>=0.3.1",
     "matplotlib",
@@ -54,22 +71,8 @@ dependencies = [
     "astroquery>=0.4.8.dev0",
     "crystalball>=0.4.3",
     "jolly-roger>=0.10.1",
-    "capn-crunch>=1.1.0",
     "billiard",
 ]
-
-[tool.hatch]
-version.source = "vcs"
-build.hooks.vcs.version-file = "flint/_version.py"
-build.targets.wheel.packages = ["flint"]
-metadata.allow-direct-references = true
-
-[tool.uv]
-managed = true # let uv manage virtualenvs
-package = true # install package in editable mode
-
-
-[project.optional-dependencies]
 dev = [
     "mypy",
     "isort",
@@ -90,6 +93,9 @@ dev = [
 casa =[
     "python-casacore>=3.6.0",
     "fixms>=0.4.0"
+]
+all = [
+    "askap-flint[pipeline,dev,casa]",
 ]
 
 [project.scripts]

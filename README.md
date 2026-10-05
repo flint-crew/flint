@@ -42,10 +42,19 @@ The pre-packed module may be installed from PyPi:
 ```bash
 pip install askap-flint
 ```
+
+This installs only the lightweight core (e.g. `flint.naming`, `flint.options`,
+`flint.utils`), which is enough for other packages to find and name Flint's
+products. To run the pipeline, install the `pipeline` extra:
+
+```bash
+pip install 'askap-flint[pipeline]'
+```
+
 The full set of dev tooling can be installed via:
 
 ```bash
 git clone https://github.com/flint-crew/flint.git
 cd flint
-pip install '.[dev]'
+pip install '.[pipeline,dev]'
 ```
