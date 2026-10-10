@@ -12,8 +12,10 @@ from astropy.io import fits
 from flint.convol import (
     BeamShape,
     check_if_cube_fits,
+    convolve_images,
     get_cube_common_beam,
 )
+from flint.naming import Suffix
 from flint.utils import get_packaged_resource_path
 
 
@@ -45,6 +47,66 @@ def cube_fits(tmpdir) -> Path:
     shutil.unpack_archive(cubes_zip, cube_dir)
 
     return cube_dir
+
+
+def _write_flint_image(path: Path, bmaj_deg: float) -> Path:
+    """Write a small FITS image with a restoring beam in its header"""
+    header = fits.Header()
+    header["CTYPE1"], header["CTYPE2"] = "RA---SIN", "DEC--SIN"
+    header["CRVAL1"], header["CRVAL2"] = 0.0, -45.0
+    header["CRPIX1"], header["CRPIX2"] = 32.0, 32.0
+    header["CDELT1"], header["CDELT2"] = -2.0 / 3600, 2.0 / 3600
+    header["CUNIT1"], header["CUNIT2"] = "deg", "deg"
+    header["BUNIT"] = "Jy/beam"
+    header["BMAJ"], header["BMIN"], header["BPA"] = bmaj_deg, bmaj_deg, 0.0
+    fits.PrimaryHDU(data=np.ones((64, 64), dtype=np.float32), header=header).writeto(
+        path
+    )
+    return path
+
+
+@pytest.mark.parametrize("bmaj_deg", [0.0, 10.0 / 3600])
+def test_convolve_images_suffix_names(tmpdir, bmaj_deg: float) -> None:
+    """Convolved images are named by adding suffix fields to the flint name,
+    with any trailing components (e.g. the extension) preserved"""
+    image = _write_flint_image(
+        path=Path(tmpdir) / "SB1234.RACS_0000-00.beam00.round1.i.MFS.image.fits",
+        bmaj_deg=bmaj_deg,
+    )
+    beam_shape = BeamShape(bmaj_arcsec=20.0, bmin_arcsec=20.0, bpa_deg=0.0)
+
+    conv_images = convolve_images(image_paths=[image], beam_shape=beam_shape)
+    assert conv_images == [
+        Path(tmpdir) / "SB1234.RACS_0000-00.beam00.round1.i.conv.MFS.image.fits"
+    ]
+    assert conv_images[0].exists()
+
+    conv_images = convolve_images(
+        image_paths=[image],
+        beam_shape=beam_shape,
+        suffix_spec=Suffix(optimal=True, conv=True),
+    )
+    assert conv_images == [
+        Path(tmpdir) / "SB1234.RACS_0000-00.beam00.round1.i.optimal.conv.MFS.image.fits"
+    ]
+    assert conv_images[0].exists()
+    # Nothing left behind from the intermediate beamcon names
+    assert not (Path(tmpdir) / f"{image.stem}.conv.fits").exists()
+
+
+def test_convolve_images_undefined_beam_copies(tmpdir) -> None:
+    """An undefined beam shape copies images into place under the suffixed name"""
+    image = _write_flint_image(
+        path=Path(tmpdir) / "SB1234.RACS_0000-00.beam00.round1.i.MFS.image.fits",
+        bmaj_deg=10.0 / 3600,
+    )
+    beam_shape = BeamShape(bmaj_arcsec=np.nan, bmin_arcsec=np.nan, bpa_deg=np.nan)
+
+    conv_images = convolve_images(image_paths=[image], beam_shape=beam_shape)
+    assert conv_images == [
+        Path(tmpdir) / "SB1234.RACS_0000-00.beam00.round1.i.conv.MFS.image.fits"
+    ]
+    assert conv_images[0].exists()
 
 
 def test_check_if_cube_fits(cube_fits, image_fits):

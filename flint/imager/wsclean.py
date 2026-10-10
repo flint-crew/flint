@@ -263,19 +263,19 @@ def assert_common_pixel_grid(images: Collection[Path]) -> None:
 def combine_images_to_cube(
     images: list[Path],
     prefix: str,
-    mode: str,
+    suffix_spec: Suffix,
     fitscube_options: FitsCubeOptions,
     bounding_box: bool | BoundingBox | None = None,
 ) -> Path:
     """Combine wsclean subband channel images into a cube. Each collection attribute
     of the input `image_set` will be inspected. The MFS images will be ignored.
 
-    A output file name will be generated based on the  prefix and mode (e.g. `image`, `residual`, `psf`, `dirty`).
+    A output file name will be generated based on the prefix and suffix fields (e.g. `image`, `residual`, `psf`, `dirty`).
 
     Args:
         images (list[Path]): The images to combine into a cube
         prefix (str): The prefix of the images to combine
-        mode (str): The type of images to combine, e.g. `image`, `residual`, `psf`, `dirty`
+        suffix_spec (Suffix): The suffix fields describing the type of images to combine, e.g. `Suffix(image=True)`
         fitscube_options (FitsCubeOptions): Options to control the cube creation
         bounding_box (bool | BoundingBox | None, optional): Overrides ``fitscube_options.bounding_box``
         when given. Used to force a box shared with another cube (e.g. weights) rather than
@@ -288,7 +288,9 @@ def combine_images_to_cube(
 
     assert_common_pixel_grid(images=images)
 
-    output_cube_name = create_image_cube_name(image_prefix=Path(prefix), mode=mode)
+    output_cube_name = create_image_cube_name(
+        image_prefix=Path(prefix), suffix_spec=suffix_spec
+    )
 
     logger.info(f"Combining {len(images)} images. {images=}")
     freqs = combine_fits(
@@ -304,7 +306,11 @@ def combine_images_to_cube(
     # Write out the hdu to preserve the beam table constructed in fitscube
     logger.info(f"Writing {output_cube_name=}")
 
-    output_freqs_name = output_cube_name.with_suffix(".freqs_Hz.txt")
+    output_freqs_name = create_path_from_processed_name_components(
+        processed_name_components=output_cube_name,
+        parent_path=output_cube_name.parent,
+        ext=".freqs_Hz.txt",
+    )
     np.savetxt(output_freqs_name, freqs.to("Hz").value)
 
     if fitscube_options.remove_original_images:
@@ -506,14 +512,14 @@ def split_cube_into_planes(cube: Path) -> list[Path]:
     def _plane_path(channel: int) -> Path:
         # Only the flint name fields are retained, so a single cube per beam
         # should be split at a time to avoid clobbering planes
-        plane_base = create_path_from_processed_name_components(
+        return create_path_from_processed_name_components(
             processed_name_components=components.with_options(
                 channel_range=(channel, channel)
             ),
             parent_path=cube.parent,
             suffix_spec=components.suffix_spec - Suffix(cube=True),
+            ext=".fits",
         )
-        return Path(f"{plane_base}.fits")
 
     return [
         extract_plane_from_cube(
@@ -1185,7 +1191,7 @@ def combine_image_set_to_cube(
     """Combine wsclean subband channel images into a cube. Each collection attribute
     of the input `image_set` will be inspected. The MFS images will be ignored.
 
-    A output file name will be generated based on the  prefix and mode (e.g. `image`, `residual`, `psf`, `dirty`).
+    A output file name will be generated based on the prefix and mode (e.g. `image`, `residual`, `psf`, `dirty`).
 
     Args:
         image_set (ImageSet): Collection of wsclean image productds
@@ -1222,7 +1228,7 @@ def combine_image_set_to_cube(
             continue
 
         output_cube_name = create_image_cube_name(
-            image_prefix=Path(image_set.prefix), mode=mode
+            image_prefix=Path(image_set.prefix), suffix_spec=Suffix(**{mode: True})
         )
 
         logger.info(f"Combining {len(subband_images)} images. {subband_images=}")
@@ -1235,7 +1241,11 @@ def combine_image_set_to_cube(
         # Write out the hdu to preserve the beam table constructed in fitscube
         logger.info(f"Writing {output_cube_name=}")
 
-        output_freqs_name = Path(output_cube_name).with_suffix(".freqs_Hz.txt")
+        output_freqs_name = create_path_from_processed_name_components(
+            processed_name_components=output_cube_name,
+            parent_path=output_cube_name.parent,
+            ext=".freqs_Hz.txt",
+        )
         np.savetxt(output_freqs_name, freqs.to("Hz").value)
 
         if compress:

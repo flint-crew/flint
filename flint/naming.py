@@ -18,17 +18,6 @@ from flint.options import BaseOptions
 PathStr = TypeVar("PathStr", str, Path)
 
 
-def _append_suffixes(path: Path, additional_suffixes: str | None) -> Path:
-    """Append a dot separated set of suffixes onto an existing path"""
-    if not additional_suffixes:
-        return path
-
-    if not additional_suffixes.startswith("."):
-        additional_suffixes = f".{additional_suffixes}"
-
-    return Path(str(path) + additional_suffixes)
-
-
 def _is_set(value: Any) -> bool:
     """Whether a name component is populated, i.e. not None and not an unset flag"""
     return value is not None and value is not False
@@ -160,7 +149,6 @@ def create_largest_common_field_name(
 
 def create_name_from_common_fields(
     in_paths: tuple[Path, ...],
-    additional_suffixes: str | None = None,
     suffix_spec: Suffix | None = None,
 ) -> Path:
     """Attempt to craft a base name using the field elements that are in common.
@@ -172,15 +160,14 @@ def create_name_from_common_fields(
 
     >>> "59058/SB59058.RACS_1626-84.ch0287-0288.pirates.fits"
 
-    the ``pirates.fits`` would be ignored. Should these be needed they can be specified
-    by ``additional_suffixes``, or as a field on ``Suffix``.
+    the ``pirates.fits`` would be ignored. Should additional suffixes be needed they
+    are specified as fields on ``Suffix`` via ``suffix_spec``.
 
     All ``in_paths`` should be detected, otherwise an ValueError is raised
 
     Args:
         in_paths (Tuple[Path, ...]): Collection of input paths to consider
-        additional_suffixes (Optional[str], optional): Add an additional set of suffixes before returning. Defaults to None.
-        suffix_spec (Suffix | None, optional): If not None, update suffix field information with these. Defaults to None.
+        suffix_spec (Suffix | None, optional): If not None, these suffix fields are added to those common across ``in_paths``. Defaults to None.
 
     Raises:
         ValueError: Raised if any of the ``in_paths`` fail to conform to ``flint`` processed name format
@@ -198,21 +185,16 @@ def create_name_from_common_fields(
 
     keys_to_test = processed_components_dict[0].keys()
     logger.info(f"{keys_to_test=}")
-    # Extract the fields that are constant across all inputs and are not None
+    # Extract the fields that are constant across all inputs and are not None.
+    # The extension is excluded as the output is a base name.
     constant_fields = {
         key: processed_components_dict[0][key]
         for key in keys_to_test
-        if len(set([pcd[key] for pcd in processed_components_dict])) == 1
+        if key != "ext"
+        and len(set([pcd[key] for pcd in processed_components_dict])) == 1
         and _is_set(processed_components_dict[0][key])
     }
 
-    processed_name_components = ProcessedNameComponents(**constant_fields)
-
-    if suffix_spec:
-        logger.info(f"Adding {suffix_spec=}")
-        processed_name_components = processed_name_components.with_options(
-            **suffix_spec._asdict()
-        )
     # Handle the case where a mandatory field is not present. For field names
     # we pirates can handle something like this. Not going to for sbids.
     if "field" not in constant_fields:
@@ -228,74 +210,51 @@ def create_name_from_common_fields(
             f"Have extracted {field_substring=} as there was not a constant field present"
         )
 
-    name_path = create_path_from_processed_name_components(
-        processed_name_components=processed_name_components,
-        parent_path=parent,
-    )
+    processed_name_components = ProcessedNameComponents(**constant_fields)
     constant_field_keys = list(constant_fields.keys())
     logger.info(f"Identified {constant_field_keys=}")
 
-    return _append_suffixes(path=name_path, additional_suffixes=additional_suffixes)
+    if suffix_spec:
+        logger.info(f"Adding {suffix_spec=}")
+        processed_name_components = processed_name_components.with_options(
+            **merge_suffix_spec(
+                spec_1=processed_name_components, spec_2=suffix_spec, how="or"
+            )._asdict()
+        )
+
+    return create_path_from_processed_name_components(
+        processed_name_components=processed_name_components,
+        parent_path=parent,
+    )
 
 
-# TODO: Need to assess the mode argument, and define literals that are accepted
 def create_image_cube_name(
     image_prefix: Path,
-    mode: str | list[str] | None = None,
-    suffix: str | list[str] | None = None,
-    suffix_spec: Suffix | None = None,
+    suffix_spec: Suffix,
 ) -> Path:
     """Create a consistent naming scheme when combining images into cube images. Intended to
     be used when combining many subband images together into a single cube.
 
     The name returned will be:
-    >>> {image_prefix}.{mode}.{suffix}.cube.fits
+    >>> {image_prefix}.{suffix_spec}.cube.fits
 
-    Should ``mode`` or ``suffix`` be a list, they will be joined with '.' separators. Hence, no
-    '.' should be added.
-
-    This function will always output 'cube.fits' at the end of the returned file name.
+    The ``cube`` suffix is always set, and the returned name always has a ``.fits`` extension.
 
     Args:
         image_prefix (Path): The unique path of the name. Generally this is the common part among the input planes
-        mode (Optional[Union[str, List[str]]], optional): Additional mode/s to add to the file name. Defaults to None.
-        suffix (Optional[Union[str, List[str]]], optional): Additional suffix/s to add before the final 'cube.fits'. Defaults to None.
+        suffix_spec (Suffix): Suffix fields to include in the cube name
 
     Returns:
         Path: The final path and file name
     """
     image_prefix = Path(image_prefix)
 
-    # TODO: Remove the mode/suffix branch once flint.imager.wsclean callers are migrated
-    if suffix_spec is not None:
-        output_cube_name = create_path_from_processed_name_components(
-            processed_name_components=image_prefix.name,
-            parent_path=image_prefix.parent,
-            suffix_spec=suffix_spec.with_options(cube=True),
-        )
-        return Path(f"{output_cube_name}.fits")
-
-    output_components = [str(Path(image_prefix))]
-    if mode:
-        # TODO: Assess what modes are actually allowed. Suggestion is to
-        # make a class of some sort with specified and known markers that
-        # are opted into. Hate this "everything and anything"
-        (
-            output_components.append(mode)
-            if isinstance(mode, str)
-            else output_components.extend(mode)
-        )
-    if suffix:
-        # TODO: See above. Need a class of acceptable suffixes to use
-        (
-            output_components.append(suffix)
-            if isinstance(suffix, str)
-            else output_components.extend(suffix)
-        )
-
-    output_components.append("cube.fits")
-
-    return Path(".".join(output_components))
+    return create_path_from_processed_name_components(
+        processed_name_components=image_prefix.name,
+        parent_path=image_prefix.parent,
+        suffix_spec=suffix_spec.with_options(cube=True),
+        ext=".fits",
+    )
 
 
 def create_imaging_name_prefix(
@@ -308,7 +267,7 @@ def create_imaging_name_prefix(
     by some imager
 
     Args:
-        ms (Union[MS,Path]): The measurement set being considered
+        ms (Union[MS,Path]): The measurement set being considered. This should follow the flint processed name format.
         pol (Optional[str], optional): Whether a polarsation is being considered. Defaults to None.
         channel_range (Optional[Tuple[int,int]], optional): The channel range that is going to be imaged. Defaults to none.
         scan_range (Optional[Tuple[int,int]], optional): The scan range that is going to be imaged. Defaults to none.
@@ -316,88 +275,21 @@ def create_imaging_name_prefix(
     Returns:
         str: The constructed string name
     """
+    ms_components = processed_ms_format(in_name=ms_path)
+    if ms_components is None:
+        msg = f"{ms_path=} does not follow the flint processed name format"
+        raise NamingException(msg)
 
-    names = [ms_path.stem]
-    if pol is not None:
-        names.append(f"{pol.lower()}")
-    if channel_range is not None:
-        names.append(f"ch{channel_range[0]:04}-{channel_range[1]:04}")
-    if scan_range is not None:
-        names.append(f"scan{scan_range[0]:04}-{scan_range[1]:04}")
-
-    return ".".join(names)
-
-
-ResolutionModes = Literal["optimal", "fixed"]
-
-
-def get_beam_resolution_str(mode: ResolutionModes, marker: str | None = None) -> str:
-    """Map a beam resolution mode to an appropriate suffix. This
-    is located her in anticipation of other imaging modes.
-
-    Supported modes are: 'optimal', 'fixed', 'raw'
-
-    Args:
-        mode (Literal["fixed","optimal"]): The mode of image resolution to use.
-        marker (Optional[str], optional): Append the marker to the end of the returned mode string. If None mode string is returned. Defaults to None.
-
-    Raises:
-        ValueError: Raised when an unrecognised mode is supplied
-
-    Returns:
-        str: The appropriate string for mapped mode
-    """
-    # NOTE: Arguably this is a trash and needless function. Adding it
-    # in case other modes are ever needed or referenced. No idea whether
-    # it will ever been needed and could be removed in future.
-    supported_modes: dict[str, str] = dict(optimal="optimal", fixed="fixed", raw="raw")
-    if mode.lower() not in supported_modes.keys():
-        raise ValueError(
-            f"Received {mode=}, supported modes are {supported_modes.keys()}"
-        )
-
-    mode_str = supported_modes[mode.lower()]
-
-    return mode_str + marker if marker else mode_str
-
-
-def update_beam_resolution_field_in_path(
-    path: Path,
-    original_mode: ResolutionModes,
-    updated_mode: ResolutionModes,
-    marker: str | None = None,
-) -> Path:
-    """Transition the resolution indicator in a processed name (either ``optimal`` or ``fixed``)
-    to another state. For example:
-
-    >>> 'SB57516.RACS_0929-81.round4.i.optimal.round4.residual.linmos.fits'
-
-    to
-
-    >>> 'SB57516.RACS_0929-81.round4.i.fixed.round4.residual.linmos.fits'
-
-    See ``get_beam_resolution_str`` for addition information. Supported modes are
-    ``fixed`` and ``optimal``
-
-    Args:
-        path (Path): The path to inspect and update
-        original_mode (ResolutionModes): The original mode
-        updated_mode (ResolutionModes): The mode to move to
-        marker (str | None, optional): The marker to separate the field. Defaults to None.
-
-    Returns:
-        Path: Updated path
-    """
-    original_mode_str = get_beam_resolution_str(mode=original_mode, marker=marker)
-    updated_mode_str = get_beam_resolution_str(mode=updated_mode, marker=marker)
-
-    assert original_mode_str in str(path), f"{original_mode_str=} not in {path=}"
-    new_path = Path(str(path).replace(original_mode_str, updated_mode_str))
-    logger.info(
-        f"Updated beam resolution mode from {original_mode=} to {updated_mode=}"
+    name_path = create_path_from_processed_name_components(
+        processed_name_components=ms_components.with_options(
+            pol=pol.lower() if pol is not None else ms_components.pol,
+            channel_range=channel_range,
+            scan_range=scan_range,
+        ),
+        ext="",
     )
 
-    return new_path
+    return name_path.name
 
 
 def get_selfcal_ms_name(in_ms_path: Path, round: int = 1) -> Path:
@@ -568,12 +460,22 @@ class Suffix(BaseOptions):
     both parsing and generation. Adding a field here is enough for it to be
     recognised throughout ``naming``"""
 
+    noselfcal: bool = False
+    """Indicates that no self-calibration has been performed"""
     image: bool = False
     """Indicates whether the data product is an image"""
     residual: bool = False
     """Indicates whether the data product is a residual"""
+    dirty: bool = False
+    """Indicates whether the data product is a dirty image"""
+    model: bool = False
+    """Indicates whether the data product is a model"""
+    psf: bool = False
+    """Indicates whether the data product is a point spread function"""
     optimal: bool = False
     """Indicates that the image is at an optimal (often natural) resolution"""
+    fixed: bool = False
+    """Indicates that the image is at a fixed, user specified resolution"""
     conv: bool = False
     """Indicates data have been convolved to some specified resolution"""
     contsub: bool = False
@@ -717,6 +619,8 @@ class ProcessedNameComponents(Suffix):
     """The channel range encoded in a file name. Generally are zero-padded, and are two fields of the form ch1234-1235, where the upper bound is exclusive. Defaults to None."""
     scan_range: tuple[int, int] | None = None
     """The scane range encoded in a file name. Generally are zero-padded and are two fields of the form scan1234-1235, where the epper bound is exclusive. Defaults to None."""
+    ext: str | None = None
+    """Any unrecognised trailing components of a name, including the file extension, e.g. ``.MFS.image.fits``. Defaults to None."""
 
     @property
     def suffix_spec(self) -> Suffix:
@@ -784,6 +688,7 @@ def processed_ms_format(
         pol=groups["pol"],
         channel_range=channel_range,
         scan_range=scan_range,
+        ext=groups["ext"],
         **{field: bool(groups[field]) for field in Suffix.model_fields},
     )
 
@@ -792,6 +697,7 @@ def create_path_from_processed_name_components(
     processed_name_components: ProcessedNameComponents | Path | str,
     parent_path: Path | None = None,
     suffix_spec: Suffix | None = None,
+    ext: str | None = None,
 ) -> Path:
     """Given an input ProcessedNameComponents create the corresponding path
 
@@ -803,6 +709,7 @@ def create_path_from_processed_name_components(
         processed_name_components (ProcessedNameComponents | Path | str): The naming specification to create. If of type Path the existing name fields are used as a base.
         parent_path (Path | None, optional): The parent directory of the output path. Defaults to None.
         suffix_spec (Suffix | None, optional): Additional suffix field indicators to use. If provided they overwrite any described by ``processed_name_components``. Defaults to None.
+        ext (str | None, optional): The trailing extension of the name, e.g. ``.fits``. If provided it overwrites the ``ext`` of ``processed_name_components``. An empty string removes it. Defaults to None.
 
     Returns:
         Path: A directory with following the specification of the input ProcessedNameComponents
@@ -854,6 +761,9 @@ def create_path_from_processed_name_components(
 
     # Join then add the parent path
     name = ".".join(components)
+    ext = processed_name_components.ext if ext is None else ext
+    if ext:
+        name += ext
     out_path = Path(name)
 
     if parent_path:
@@ -1114,17 +1024,29 @@ def create_linmos_names(
     these are omitted.
 
     Args:
-        name_prefix (str | Path): The prefix of the filename that will be used to create the linmos and weight file names.
+        name_prefix (str | Path): The prefix of the filename that will be used to create the linmos and weight file names. This should follow the flint processed name format.
+        parset_output_path (Path | None, optional): Path of the output parset. If None it is derived from ``name_prefix``. Defaults to None.
 
     Returns:
         LinmosNames: Collection of expected filenames
     """
-    name_prefix = str(name_prefix) if isinstance(name_prefix, Path) else name_prefix
+    name_prefix = Path(name_prefix)
 
     logger.info(f"Linmos name prefix is: {name_prefix}")
+
+    def _linmos_name(suffix_spec: Suffix) -> Path:
+        name_components = processed_ms_format(in_name=name_prefix)
+        assert name_components is not None, f"{name_prefix=} is not a flint format name"
+        return create_path_from_processed_name_components(
+            processed_name_components=name_components,
+            parent_path=name_prefix.parent,
+            suffix_spec=name_components.suffix_spec + suffix_spec,
+            ext=".fits",
+        )
+
     return LinmosNames(
-        image_fits=Path(f"{name_prefix}.linmos.fits"),
-        weight_fits=Path(f"{name_prefix}.weight.fits"),
+        image_fits=_linmos_name(suffix_spec=Suffix(linmos=True)),
+        weight_fits=_linmos_name(suffix_spec=Suffix(weight=True)),
         parset_output_path=Path(f"{name_prefix}_parset.txt")
         if parset_output_path is None
         else parset_output_path,
@@ -1133,7 +1055,7 @@ def create_linmos_names(
 
 def create_linmos_base_path(
     input_images: list[Path],
-    additional_suffixes: str | None = None,
+    suffix_spec: Suffix | None = None,
 ) -> Path:
     """Create the base path of a ``yandasoft linmos`` given a set of input images.
     The default operation is to form the name from the common processed name fields
@@ -1144,7 +1066,7 @@ def create_linmos_base_path(
 
     Args:
         input_images (list[Path] | None, optional): If provided the common fields of the input images are used as basis of the path. Defaults to None.
-        additional_suffixes (str | None, optional): Any additional suffixes to append. Defaults to None.
+        suffix_spec (Suffix | None, optional): Any additional suffix fields to include. Defaults to None.
 
 
     Returns:
@@ -1155,9 +1077,8 @@ def create_linmos_base_path(
     logger.info(f"Combining images {input_images}")
     output_name = create_name_from_common_fields(in_paths=tuple(input_images))
     output_name = output_name - Suffix(linmos=True, weight=True)
-    output_name = _append_suffixes(
-        path=output_name, additional_suffixes=additional_suffixes
-    )
+    if suffix_spec is not None:
+        output_name = output_name + suffix_spec
     logger.info(f"Base output image name will be: {output_name}")
 
     return output_name.absolute()

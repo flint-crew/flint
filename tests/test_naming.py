@@ -29,7 +29,6 @@ from flint.naming import (
     extract_beam_from_name,
     extract_components_from_name,
     get_aocalibrate_output_path,
-    get_beam_resolution_str,
     get_fits_cube_from_paths,
     get_potato_output_base_path,
     get_sbid_from_path,
@@ -39,7 +38,6 @@ from flint.naming import (
     raw_ms_format,
     rename_linear_to_stokes,
     split_images,
-    update_beam_resolution_field_in_path,
 )
 from flint.options import MS
 
@@ -344,6 +342,15 @@ def test_create_imaging_name_prefix():
     name = create_imaging_name_prefix(ms_path=ms.path, scan_range=(234, 2345))
     assert name == "SB63789.EMU_1743-51.beam03.round4.scan0234-2345"
 
+    # Single digit beams are zero padded and unrecognised fields are dropped
+    name = create_imaging_name_prefix(
+        ms_path=Path("SB39400.RACS_0635-31.beam0.small.ms"), pol="i"
+    )
+    assert name == "SB39400.RACS_0635-31.beam00.i"
+
+    with pytest.raises(NamingException):
+        create_imaging_name_prefix(ms_path=Path("JackSparrow.ms"))
+
 
 def test_get_cube_fits_from_paths():
     """Identify the files that contain the cube field and are fits, including
@@ -377,7 +384,7 @@ def test_create_image_cube_name() -> None:
         image_prefix=Path(
             "/jack/sparrow/worst/pirate/flint_fitscube/57222/SB57222.RACS_1141-55.beam10.round3.i"
         ),
-        mode="image",
+        suffix_spec=Suffix(image=True),
     )
     assert isinstance(name, Path)
     assert name == Path(
@@ -386,7 +393,7 @@ def test_create_image_cube_name() -> None:
 
     name = create_image_cube_name(
         image_prefix=Path("./57222/SB57222.RACS_1141-55.beam10.round3.i"),
-        mode="residual",
+        suffix_spec=Suffix(residual=True),
     )
     assert isinstance(name, Path)
     assert name == Path(
@@ -395,30 +402,19 @@ def test_create_image_cube_name() -> None:
 
     name = create_image_cube_name(
         image_prefix=Path("./57222/SB57222.RACS_1141-55.beam10.round3.i"),
-        mode=["residual", "pirate", "imaging"],
+        suffix_spec=Suffix(residual=True, optimal=True, conv=True),
     )
     assert isinstance(name, Path)
     assert name == Path(
-        "./57222/SB57222.RACS_1141-55.beam10.round3.i.residual.pirate.imaging.cube.fits"
+        "./57222/SB57222.RACS_1141-55.beam10.round3.i.residual.optimal.conv.cube.fits"
     )
+
+    # The cube marker is not duplicated
     name = create_image_cube_name(
         image_prefix=Path("./57222/SB57222.RACS_1141-55.beam10.round3.i"),
-        mode=["residual", "pirate", "imaging"],
-        suffix="jackie",
+        suffix_spec=Suffix(psf=True, cube=True),
     )
-    assert isinstance(name, Path)
-    assert name == Path(
-        "./57222/SB57222.RACS_1141-55.beam10.round3.i.residual.pirate.imaging.jackie.cube.fits"
-    )
-    name = create_image_cube_name(
-        image_prefix=Path("./57222/SB57222.RACS_1141-55.beam10.round3.i"),
-        mode=["residual", "pirate", "imaging"],
-        suffix=["jackie", "boi"],
-    )
-    assert isinstance(name, Path)
-    assert name == Path(
-        "./57222/SB57222.RACS_1141-55.beam10.round3.i.residual.pirate.imaging.jackie.boi.cube.fits"
-    )
+    assert name == Path("./57222/SB57222.RACS_1141-55.beam10.round3.i.psf.cube.fits")
 
 
 def test_create_image_cube_name_using_suffix_spec() -> None:
@@ -445,44 +441,13 @@ def test_create_image_cube_name_using_suffix_spec() -> None:
     )
 
 
-def test_get_beam_resolution_str():
-    """Map the known / support modes of beam resolution in file names"""
-    assert "raw" == get_beam_resolution_str(mode="raw")
-    assert "optimal" == get_beam_resolution_str(mode="optimal")
-    assert "fixed" == get_beam_resolution_str(mode="fixed")
+def test_update_beam_resolution_with_suffix() -> None:
+    """Transition a path from the optimal to the fixed resolution suffix"""
 
-    assert "raw!" == get_beam_resolution_str(mode="raw", marker="!")
-    assert "optimal?" == get_beam_resolution_str(mode="optimal", marker="?")
-    assert "fixed." == get_beam_resolution_str(mode="fixed", marker=".")
+    example = Path("SB57516.RACS_0929-81.round4.i.residual.optimal.linmos.fits")
+    expected = Path("SB57516.RACS_0929-81.round4.i.residual.fixed.linmos.fits")
 
-    with pytest.raises(ValueError):
-        _ = get_beam_resolution_str("Jack")
-
-
-def test_update_beam_resolution_mode_in_path():
-    """Given a path that has a known beam resolution mode in it, update to another"""
-
-    example = Path("SB57516.RACS_0929-81.round4.i.optimal.round4.residual.linmos.fits")
-    expected = Path("SB57516.RACS_0929-81.round4.i.fixed.round4.residual.linmos.fits")
-
-    assert expected == update_beam_resolution_field_in_path(
-        path=example, original_mode="optimal", updated_mode="fixed"
-    )
-    assert expected == update_beam_resolution_field_in_path(
-        path=example, original_mode="optimal", updated_mode="fixed", marker="."
-    )
-    with pytest.raises(AssertionError):
-        update_beam_resolution_field_in_path(
-            path=example, original_mode="fixed", updated_mode="optimal"
-        )
-        assert expected == update_beam_resolution_field_in_path(
-            path=example, original_mode="optimal", updated_mode="fixed", marker="!"
-        )
-        update_beam_resolution_field_in_path(
-            path=Path("JackSparrowCaresNotForBeamResolutions"),
-            original_mode="optimal",
-            updated_mode="fixed",
-        )
+    assert expected == example - Suffix(optimal=True) + Suffix(fixed=True)
 
 
 def test_casda_ms_format_1934():
@@ -1013,13 +978,12 @@ def test_create_name_from_common_fields():
 
     assert common_names == expected_common_name
 
-    for additional_suffix in (".pirates.fits", "pirates.fits"):
-        common_names = create_name_from_common_fields(
-            in_paths=examples, additional_suffixes=additional_suffix
-        )
-        expected_common_name = Path("59058/SB59058.RACS_1626-84.linmos.pirates.fits")
+    common_names = create_name_from_common_fields(
+        in_paths=examples, suffix_spec=Suffix(optimal=True, cube=True)
+    )
+    expected_common_name = Path("59058/SB59058.RACS_1626-84.optimal.linmos.cube")
 
-        assert common_names == expected_common_name
+    assert common_names == expected_common_name
 
     examples.append("This/will/raise/a/valuerror")
 
@@ -1054,15 +1018,13 @@ def test_create_name_from_common_fields_2():
 
     assert common_names == expected_common_name
 
-    for additional_suffix in (".pirates.fits", "pirates.fits"):
-        common_names = create_name_from_common_fields(
-            in_paths=examples, additional_suffixes=additional_suffix
-        )
-        expected_common_name = Path(
-            "59058/SB59058.RACS_1626-84.round4.i.linmos.pirates.fits"
-        )
+    # Suffixes are added to, rather than replace, those in common
+    common_names = create_name_from_common_fields(
+        in_paths=examples, suffix_spec=Suffix(noselfcal=True)
+    )
+    expected_common_name = Path("59058/SB59058.RACS_1626-84.round4.i.noselfcal.linmos")
 
-        assert common_names == expected_common_name
+    assert common_names == expected_common_name
 
     examples.append("This/will/raise/a/valuerror")
 
@@ -1140,19 +1102,27 @@ def test_create_linmos_parset_base_path():
     expected = Path("59058/SB59058.RACS_1626-84.round4.i").absolute()
     assert expected == create_linmos_base_path(input_images=examples)
 
-    expected = Path("59058/SB59058.RACS_1626-84.round4.i.jack.sparrow").absolute()
+    expected = Path("59058/SB59058.RACS_1626-84.round4.i.residual.optimal").absolute()
     assert expected == create_linmos_base_path(
-        input_images=examples, additional_suffixes="jack.sparrow"
+        input_images=examples, suffix_spec=Suffix(residual=True, optimal=True)
     )
     new_paths = [Path("/Here/Be/Pirates") / p for p in examples]
     expected = Path("/Here/Be/Pirates/59058/SB59058.RACS_1626-84.round4.i").absolute()
     assert expected == create_linmos_base_path(input_images=new_paths)
 
     expected = Path(
-        "/Here/Be/Pirates/59058/SB59058.RACS_1626-84.round4.i.jack.sparrow"
+        "/Here/Be/Pirates/59058/SB59058.RACS_1626-84.round4.i.residual.optimal"
     ).absolute()
     assert expected == create_linmos_base_path(
-        input_images=new_paths, additional_suffixes="jack.sparrow"
+        input_images=new_paths, suffix_spec=Suffix(residual=True, optimal=True)
+    )
+
+    # Linmos and weight markers are removed before suffixes are added
+    expected = Path(
+        "/Here/Be/Pirates/59058/SB59058.RACS_1626-84.round4.i.optimal.linmos"
+    ).absolute()
+    assert expected == create_linmos_base_path(
+        input_images=new_paths, suffix_spec=Suffix(optimal=True, linmos=True)
     )
 
 

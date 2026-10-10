@@ -43,7 +43,7 @@ from flint.imager.wsclean import (
     transpose_and_sort_channel_images,
 )
 from flint.logging import logger
-from flint.naming import create_imaging_name_prefix
+from flint.naming import Suffix, create_imaging_name_prefix
 from flint.options import MS, FitsCubeOptions
 from flint.utils import get_packaged_resource_path
 
@@ -136,7 +136,7 @@ def test_cube_split_and_recombine_roundtrip(tmpdir) -> None:
     beam_cube = combine_images_to_cube(
         images=images,
         prefix=f"{tmp_path}/SB1234.RACS_0000-00.beam00.round1",
-        mode="image",
+        suffix_spec=Suffix(image=True),
         fitscube_options=FitsCubeOptions(
             invalidate_zeros=False, remove_original_images=False
         ),
@@ -152,7 +152,7 @@ def test_cube_split_and_recombine_roundtrip(tmpdir) -> None:
     field_cube = combine_images_to_cube(
         images=planes,
         prefix=f"{tmp_path}/SB1234.RACS_0000-00.round1",
-        mode="image",
+        suffix_spec=Suffix(image=True),
         fitscube_options=FitsCubeOptions(invalidate_zeros=False),
     )
     _assert_cube_matches_images(cube=field_cube, images=images)
@@ -173,7 +173,7 @@ def test_rotate_cube_is_idempotent(tmpdir) -> None:
     cube = combine_images_to_cube(
         images=images,
         prefix=f"{tmp_path}/SB1234.RACS_0000-00.beam00.round1",
-        mode="image",
+        suffix_spec=Suffix(image=True),
         fitscube_options=FitsCubeOptions(invalidate_zeros=False),
     )
 
@@ -224,7 +224,7 @@ def test_combine_images_to_cube_shape_mismatch(tmpdir) -> None:
         combine_images_to_cube(
             images=images,
             prefix=f"{tmp_path}/SB1234.RACS_0000-00.beam00.round1",
-            mode="image",
+            suffix_spec=Suffix(image=True),
             fitscube_options=FitsCubeOptions(),
         )
 
@@ -246,7 +246,7 @@ def test_combine_images_to_cube_bounding_box_trims(tmpdir) -> None:
     cube = combine_images_to_cube(
         images=images,
         prefix=f"{tmp_path}/SB1234.RACS_0000-00.beam00.round1",
-        mode="image",
+        suffix_spec=Suffix(image=True),
         fitscube_options=FitsCubeOptions(bounding_box=True),
     )
 
@@ -286,14 +286,14 @@ def test_combine_images_to_cube_bounding_box_override_forces_shared_grid(
     image_cube = combine_images_to_cube(
         images=narrow_border_images,
         prefix=f"{tmp_path}/SB1234.RACS_0000-00.beam00.round1",
-        mode="image",
+        suffix_spec=Suffix(image=True),
         fitscube_options=FitsCubeOptions(bounding_box=False),
         bounding_box=shared_box,
     )
     weight_cube = combine_images_to_cube(
         images=wide_border_images,
         prefix=f"{tmp_path}/SB1234.RACS_0000-00.beam00.round1",
-        mode="weight",
+        suffix_spec=Suffix(weight=True),
         fitscube_options=FitsCubeOptions(
             bounding_box=False, remove_original_images=False
         ),
@@ -303,8 +303,9 @@ def test_combine_images_to_cube_bounding_box_override_forces_shared_grid(
     # Left independent, the wide-border cube would trim to (8, 8), not (6, 6)
     independent_weight_cube = combine_images_to_cube(
         images=wide_border_images,
-        prefix=f"{tmp_path}/SB1234.RACS_0000-00.beam00.round1.independent",
-        mode="weight",
+        # A different round keeps this cube from overwriting the shared grid weight cube
+        prefix=f"{tmp_path}/SB1234.RACS_0000-00.beam00.round2",
+        suffix_spec=Suffix(weight=True),
         fitscube_options=FitsCubeOptions(bounding_box=True),
     )
 
@@ -338,7 +339,7 @@ def test_split_cube_into_planes(tmpdir) -> None:
     cube = combine_images_to_cube(
         images=files,
         prefix=f"{tmpdir}/SB56659.RACS_0940-04.beam17.round3",
-        mode="image",
+        suffix_spec=Suffix(image=True),
         fitscube_options=FitsCubeOptions(),
     )
 
@@ -690,11 +691,11 @@ def test_resolve_key_value_to_cli():
 def test_create_wsclean_name(ms_example) -> None:
     """Test the creation of a wsclean name argument"""
     name = create_imaging_name_prefix(ms_path=ms_example)
-    assert name == "SB39400.RACS_0635-31.beam0.small"
+    assert name == "SB39400.RACS_0635-31.beam00"
 
     for pol in ("i", "I"):
         name = create_imaging_name_prefix(ms_path=ms_example, pol=pol)
-        assert name == "SB39400.RACS_0635-31.beam0.small.i"
+        assert name == "SB39400.RACS_0635-31.beam00.i"
 
 
 def test_create_wsclean_name_argument(ms_example):
@@ -708,14 +709,14 @@ def test_create_wsclean_name_argument(ms_example):
 
     parent = str(Path(ms_example).parent)
     assert isinstance(name_argument_path, Path)
-    assert f"{parent}/SB39400.RACS_0635-31.beam0.small.i" == str(name_argument_path)
+    assert f"{parent}/SB39400.RACS_0635-31.beam00.i" == str(name_argument_path)
 
     wsclean_options_2 = WSCleanOptions(temp_dir="/jack/sparrow")
     name_argument_path = create_wsclean_name_argument(
         wsclean_options=wsclean_options_2, ms=ms
     )
 
-    assert "/jack/sparrow/SB39400.RACS_0635-31.beam0.small.i" == str(name_argument_path)
+    assert "/jack/sparrow/SB39400.RACS_0635-31.beam00.i" == str(name_argument_path)
 
 
 def test_create_wsclean_name_argument_with_list_mss(ms_example) -> None:
@@ -739,14 +740,14 @@ def test_create_wsclean_name_argument_with_list_mss(ms_example) -> None:
 
     parent = str(Path(ms_example).parent)
     assert isinstance(name_argument_path, Path)
-    assert f"{parent}/SB39400.RACS_0635-31.beam0.small.i" == str(name_argument_path)
+    assert f"{parent}/SB39400.RACS_0635-31.beam00.i" == str(name_argument_path)
 
     wsclean_options_2 = WSCleanOptions(temp_dir="/jack/sparrow")
     name_argument_path = create_wsclean_name_argument(
         wsclean_options=wsclean_options_2, ms=ms
     )
 
-    assert "/jack/sparrow/SB39400.RACS_0635-31.beam0.small.i" == str(name_argument_path)
+    assert "/jack/sparrow/SB39400.RACS_0635-31.beam00.i" == str(name_argument_path)
 
 
 def test_create_wsclean_command(ms_example):

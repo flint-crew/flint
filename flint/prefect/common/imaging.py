@@ -63,8 +63,8 @@ from flint.ms import (
 )
 from flint.naming import (
     FITSMaskNames,
+    Suffix,
     create_name_from_common_fields,
-    get_beam_resolution_str,
     get_fits_cube_from_paths,
 )
 from flint.options import FieldOptions, FitsCubeOptions, SubtractFieldOptions
@@ -572,7 +572,7 @@ def convolve_image_set(
     cutoff: float = 60,
     mode: str = "image",
     filter_str: str | None = None,
-    convol_suffix_str: str = "conv",
+    convol_suffix: Suffix | None = None,
     remove_original_images: bool = False,
 ) -> list[Path]:
     """Convolve images to a specified resolution
@@ -582,7 +582,7 @@ def convolve_image_set(
         beam_shape (BeamShape): The shape images will be convolved to
         cutoff (float, optional): Maximum major beam axis an image is allowed to have before it will not be convolved. Defaults to 60.
         filter_str (Optional[str], optional): This string must be contained in the image path for it to be convolved. Defaults to None.
-        convol_suffix_str (str, optional): The suffix added to the convolved images. Defaults to 'conv'.
+        convol_suffix (Suffix | None, optional): The suffix fields added to the convolved images. If None ``Suffix(conv=True)`` is used. Defaults to None.
         remove_original_images (bool, optional): If True remove the original image after they have been convolved. Defaults to False.
 
     Returns:
@@ -635,7 +635,7 @@ def convolve_image_set(
         image_paths=image_paths,
         beam_shape=beam_shape,
         cutoff=cutoff,
-        convol_suffix=convol_suffix_str,
+        suffix_spec=convol_suffix,
     )
 
     if remove_original_images:
@@ -655,7 +655,7 @@ def task_convolve_image(
     cutoff: float = 60,
     mode: str = "image",
     filter_str: str | None = None,
-    convol_suffix_str: str = "conv",
+    convol_suffix: Suffix | None = None,
     remove_original_images: bool = False,
 ) -> Collection[Path]:
     """Convolve images to a specified resolution
@@ -665,7 +665,7 @@ def task_convolve_image(
         beam_shape (BeamShape): The shape images will be convolved to
         cutoff (float, optional): Maximum major beam axis an image is allowed to have before it will not be convolved. Defaults to 60.
         filter_str (Optional[str], optional): This string must be contained in the image path for it to be convolved. Defaults to None.
-        convol_suffix_str (str, optional): The suffix added to the convolved images. Defaults to 'conv'.
+        convol_suffix (Suffix | None, optional): The suffix fields added to the convolved images. If None ``Suffix(conv=True)`` is used. Defaults to None.
         remove_original_images (bool, optional): If True remove the original image after they have been convolved. Defaults to False.
 
     Returns:
@@ -681,7 +681,7 @@ def task_convolve_image(
         cutoff=cutoff,
         mode=mode,
         filter_str=filter_str,
-        convol_suffix_str=convol_suffix_str,
+        convol_suffix=convol_suffix,
         remove_original_images=remove_original_images,
     )
 
@@ -692,7 +692,7 @@ def task_linmos_images(
     container: Path,
     linmos_options: LinmosOptions,
     field_summary: FieldSummary | None = None,
-    suffix_str: str | None = None,
+    linmos_suffix: Suffix | None = None,
     parset_output_path: str | None = None,
     holofile: Path | None = None,
 ) -> LinmosResult:
@@ -706,7 +706,7 @@ def task_linmos_images(
         container (Path): Path to a yandasoft singularity container
         linmos_options (LinmosOptions): Collection of linmos options
         field_summary (FieldSummary | None, optional): Description of the field, used to get the ``pol_axis`` of the field. Defaults to None.
-        suffix_str (str | None, optional): Additional suffix str to add when generating the output file names. Defaults to None.
+        linmos_suffix (Suffix | None, optional): Additional suffix fields to add when generating the output file names. Defaults to None.
         parset_output_path (str | None, optional): The output parameter set that will be generated. Defaults to None.
         holofile (Path | None, optional): Path to a holofile that will overwrite the one specified  in linmos options. Defaults to None.
 
@@ -724,7 +724,7 @@ def task_linmos_images(
 
     output_path = create_linmos_base_path(
         input_images=image_list,
-        additional_suffixes=suffix_str,
+        suffix_spec=linmos_suffix,
     )
 
     linmos_options = linmos_options.with_options(
@@ -748,11 +748,11 @@ def convolve_then_linmos(
     wsclean_results: Collection[WSCleanResult],
     beam_shape: BeamShape,
     field_options: FieldOptions | SubtractFieldOptions,
-    linmos_suffix_str: str | None,
+    linmos_suffix: Suffix | None,
     field_summary: FieldSummary | None = None,
     convol_mode: str = "image",
     convol_filter: str = ".MFS.",
-    convol_suffix_str: str = "conv",
+    convol_suffix: Suffix | None = None,
     trim_linmos_fits: bool = True,
     remove_original_images: bool = False,
     cleanup_linmos: bool = False,
@@ -765,11 +765,11 @@ def convolve_then_linmos(
         wsclean_results (Collection[WSCleanResult]): Collection of wsclean imaging results, with residual images described in the attached ``ImageSet``
         beam_shape (BeamShape): The beam shape that residual images will be convolved to
         field_options (FieldOptions): Options related to the processing of the field
-        linmos_suffix_str (str): The suffix string passed to the linmos parset name
+        linmos_suffix (Suffix | None): Additional suffix fields included in the linmos output names
         field_summary (Optional[FieldSummary], optional): The summary of the field, including (importantly) to orientation of the third-axis. Defaults to None.
         convol_mode (str, optional): The mode passed to the convol task to describe the images to extract. Support image or residual.  Defaults to image.
         convol_filter (str, optional): A text file applied when assessing images to co-add. Defaults to '.MFS.'.
-        convol_suffix_str (str, optional): The suffix added to the convolved images. Defaults to 'conv'.
+        convol_suffix (Suffix | None, optional): The suffix fields added to the convolved images. If None ``Suffix(conv=True)`` is used. Defaults to None.
         trim_linmos_fits (bool, optional): Attempt to trim the output linmos files of as much empty space as possible. Defaults to True.
         remove_original_images (bool, optional): If True remove the original image after they have been convolved. Defaults to False.
         cleanup_linmos (bool, optional): Clean up items created throughout linmos, including the per-channel weight text files for each input image. Defaults to False.
@@ -785,7 +785,7 @@ def convolve_then_linmos(
         cutoff=field_options.beam_cutoff,
         mode=convol_mode,
         filter_str=convol_filter,
-        convol_suffix_str=convol_suffix_str,
+        convol_suffix=convol_suffix,
         remove_original_images=remove_original_images,
     )
     assert field_options.yandasoft_container is not None
@@ -801,7 +801,7 @@ def convolve_then_linmos(
     parset = task_linmos_images.submit(
         image_list=flatten_items(items=conv_images),
         container=field_options.yandasoft_container,
-        suffix_str=linmos_suffix_str,
+        linmos_suffix=linmos_suffix,
         linmos_options=linmos_options,
         field_summary=field_summary,
         holofile=holofile,
@@ -816,11 +816,11 @@ def task_common_beam_convolve_linmos(
     field_options: SubtractFieldOptions,
     convol_mode: str,
     convol_filter: str | None = None,
-    convol_suffix_str: str | None = None,
+    convol_suffix: Suffix | None = None,
     remove_original_images: bool = False,
     trim_linmos_fits: bool = False,
     cleanup_linmos: bool = False,
-    linmos_suffix_str: str | None = None,
+    linmos_suffix: Suffix | None = None,
     field_summary: FieldSummary | None = None,
 ) -> LinmosResult:
     beam_shape = task_get_common_beam_from_results.fn(
@@ -836,7 +836,7 @@ def task_common_beam_convolve_linmos(
             cutoff=field_options.beam_cutoff,
             mode=convol_mode,
             filter_str=convol_filter,
-            convol_suffix_str=convol_suffix_str,
+            convol_suffix=convol_suffix,
             remove_original_images=remove_original_images,
         )
         for wsclean_result in wsclean_results
@@ -855,7 +855,7 @@ def task_common_beam_convolve_linmos(
     return task_linmos_images.fn(
         image_list=flatten_items(items=conv_images),
         container=field_options.yandasoft_container,
-        suffix_str=linmos_suffix_str,
+        linmos_suffix=linmos_suffix,
         linmos_options=linmos_options,
         field_summary=field_summary,
     )  # type: ignore
@@ -865,7 +865,7 @@ def create_convol_linmos_images(
     wsclean_results: Collection[WSCleanResult],
     field_options: FieldOptions,
     field_summary: FieldSummary | None = None,
-    additional_linmos_suffix_str: str | None = None,
+    additional_linmos_suffix: Suffix | None = None,
     holofile: Path | None = None,
 ) -> list[LinmosResult]:
     """Derive the appropriate set of beam shapes and then produce corresponding
@@ -875,7 +875,7 @@ def create_convol_linmos_images(
         wsclean_results (Collection[WSCleanResult]): Set of wsclean commands that have been executed
         field_options (FieldOptions): Set of field imaging options, containing details of the beam/s
         field_summary (Optional[FieldSummary], optional): Summary of the MSs, importantly containing their third-axis rotation. Defaults to None.
-        additional_linmos_suffix_str (Optional[str], optional): An additional string added to the end of the auto-generated linmos base name. Defaults to None.
+        additional_linmos_suffix (Suffix | None, optional): Additional suffix fields added to the auto-generated linmos base name. Defaults to None.
         holofile (Optional[Path], optional): The path to the holofile. If provided will override one presented by field_options. Defaults to None.
 
     Returns:
@@ -883,14 +883,11 @@ def create_convol_linmos_images(
     """
     parsets: list[LinmosResult] = []
 
-    beam_str: str = get_beam_resolution_str(mode="optimal")
-    linmos_suffixes: list[str] = [beam_str]
-    if additional_linmos_suffix_str:
-        linmos_suffixes.insert(0, additional_linmos_suffix_str)
-
     # set up the expected name formats
-    linmos_suffix_str = ".".join(linmos_suffixes)
-    convol_suffix_str = f"{beam_str}.conv"
+    linmos_suffix = Suffix(optimal=True)
+    if additional_linmos_suffix is not None:
+        linmos_suffix = linmos_suffix + additional_linmos_suffix
+    convol_suffix = Suffix(optimal=True, conv=True)
 
     beam_shape = task_get_common_beam_from_results.submit(
         wsclean_results=wsclean_results,
@@ -906,11 +903,11 @@ def create_convol_linmos_images(
                 wsclean_results=wsclean_results,
                 beam_shape=beam_shape,  # type: ignore
                 field_options=field_options,
-                linmos_suffix_str=f"{linmos_suffix_str}.residual",
+                linmos_suffix=linmos_suffix + Suffix(residual=True),
                 field_summary=field_summary,
                 convol_mode="residual",
                 convol_filter=".MFS.",
-                convol_suffix_str=convol_suffix_str,
+                convol_suffix=convol_suffix,
                 holofile=holofile,
             )
         )
@@ -919,11 +916,11 @@ def create_convol_linmos_images(
             wsclean_results=wsclean_results,
             beam_shape=beam_shape,  # type: ignore
             field_options=field_options,
-            linmos_suffix_str=linmos_suffix_str,
+            linmos_suffix=linmos_suffix,
             field_summary=field_summary,
             convol_mode="image",
             convol_filter=".MFS.",
-            convol_suffix_str=convol_suffix_str,
+            convol_suffix=convol_suffix,
             holofile=holofile,
         )
     )
@@ -944,12 +941,10 @@ def task_convolve_linmos_to_fixed_shape(
     Returns:
         LinmosResult: A smoothed version of the input linmos image
     """
-    from flint.naming import update_beam_resolution_field_in_path
-
     image_to_smooth = linmos_result.image_fits
 
-    output_image_path: Path = update_beam_resolution_field_in_path(
-        path=image_to_smooth, original_mode="optimal", updated_mode="fixed", marker="."
+    output_image_path: Path = (
+        image_to_smooth - Suffix(optimal=True) + Suffix(fixed=True)
     )
 
     assert field_options.fixed_beam_shape, (
@@ -967,7 +962,6 @@ def task_convolve_linmos_to_fixed_shape(
     smoothed_linmos_paths = convolve_images(
         image_paths=images_to_smooth,
         beam_shape=beam_shape,
-        convol_suffix="conv_to_rename",
         output_paths=[output_image_path],
     )
     assert len(smoothed_linmos_paths) == len(images_to_smooth) == 1, (
@@ -984,7 +978,7 @@ def linmos_channel_groups_to_cubes(
     fitscube_options: FitsCubeOptions,
     stokesi_channel_groups: Collection[Collection[Path]] | None = None,
     field_summary: FieldSummary | None = None,
-    suffix_str: str | None = None,
+    linmos_suffix: Suffix | None = None,
     holofile: Path | None = None,
 ) -> list[PrefectFuture[Path]]:
     """Co-add beam images one channel at a time, in parallel, then stack the
@@ -1002,7 +996,7 @@ def linmos_channel_groups_to_cubes(
         fitscube_options (FitsCubeOptions, optional): Options for controlling the FITS cube creation. Defaults to None.
         stokesi_channel_groups (Collection[Collection[Path]] | None, optional): For each channel, the Stokes I beam images used for the leakage correction. Defaults to None.
         field_summary (FieldSummary | None, optional): Description of the field, used to get the ``pol_axis``. Defaults to None.
-        suffix_str (str | None, optional): Additional suffix added to the linmos and cube names. Defaults to None.
+        linmos_suffix (Suffix | None, optional): Additional suffix fields added to the linmos and cube names. Defaults to None.
         holofile (Path | None, optional): Holography file overriding the one in ``linmos_options``. Defaults to None.
 
     Returns:
@@ -1022,7 +1016,7 @@ def linmos_channel_groups_to_cubes(
         linmos_result = task_linmos_images.submit(
             image_list=list(beam_images),
             container=container,
-            suffix_str=suffix_str,
+            linmos_suffix=linmos_suffix,
             linmos_options=linmos_options.with_options(
                 stokesi_images=list(stokesi_groups[channel_idx])
                 if stokesi_groups is not None
@@ -1049,17 +1043,20 @@ def linmos_channel_groups_to_cubes(
     # Stack the per-channel mosaics back into image and weight cubes,
     # removing the per-channel mosaics once cubed.
     cube_prefix = task_create_name_from_common_fields.submit(
-        in_paths=image_planes, additional_suffixes=suffix_str
+        in_paths=image_planes, suffix_spec=linmos_suffix
     )
     return [
         task_combine_images_to_cube.submit(
             images=planes,
             prefix=cube_prefix,
-            mode=mode,
+            suffix_spec=suffix_spec,
             fitscube_options=fitscube_options,
             bounding_box=bounding_box,
         )
-        for planes, mode in ((image_planes, "image"), (weight_planes, "weight"))
+        for planes, suffix_spec in (
+            (image_planes, Suffix(image=True)),
+            (weight_planes, Suffix(weight=True)),
+        )
     ]
 
 
@@ -1068,13 +1065,13 @@ def create_convolve_linmos_cubes(
     field_options: FieldOptions,
     fitscube_options: FitsCubeOptions,
     current_round: int | None = None,
-    additional_linmos_suffix_str: str | None = "cube",
+    additional_linmos_suffix: Suffix | None = None,
     holofile: Path | None = None,
 ) -> list[PrefectFuture[Path]]:
-    suffixes = [f"round{current_round}" if current_round is not None else "noselfcal"]
-    if additional_linmos_suffix_str:
-        suffixes.insert(0, additional_linmos_suffix_str)
-    linmos_suffix_str = ".".join(suffixes)
+    # The self-calibration round is carried by the image names themselves
+    linmos_suffix = Suffix(noselfcal=current_round is None, cube=True)
+    if additional_linmos_suffix is not None:
+        linmos_suffix = linmos_suffix + additional_linmos_suffix
 
     # linmos co-adds a cube channel-by-channel serially, so split the beam cubes
     # into planes and co-add each channel in parallel instead. Splitting before
@@ -1110,7 +1107,7 @@ def create_convolve_linmos_cubes(
             cleanup=True,
         ),
         fitscube_options=fitscube_options,
-        suffix_str=linmos_suffix_str,
+        linmos_suffix=linmos_suffix,
         holofile=holofile,
     )
 

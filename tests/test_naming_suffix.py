@@ -189,6 +189,38 @@ def test_every_suffix_field_round_trips(field: str) -> None:
     assert pcn.suffix_spec == Suffix(**{field: True})
 
 
+def test_ext_round_trips() -> None:
+    """Unrecognised trailing components are carried as the extension and
+    written back when a name is generated"""
+    name = "SB1234.Jack-Sparrow.beam00.round1.i.optimal.MFS.image.fits"
+    pcn = processed_ms_format(name)
+    assert pcn is not None
+    assert pcn.ext == ".MFS.image.fits"
+    assert pcn.optimal
+
+    assert create_path_from_processed_name_components(pcn) == Path(name)
+    assert create_path_from_processed_name_components(pcn, ext=".txt") == Path(
+        "SB1234.Jack-Sparrow.beam00.round1.i.optimal.txt"
+    )
+    assert create_path_from_processed_name_components(pcn, ext="") == Path(
+        "SB1234.Jack-Sparrow.beam00.round1.i.optimal"
+    )
+
+
+def test_suffix_operators_preserve_ext() -> None:
+    """Applying suffixes to a path inserts them before any trailing components"""
+    file_path = Path("/jack/SB1234.Jack-Sparrow.beam00.round1.i.MFS.image.fits")
+
+    conv_path = file_path + Suffix(optimal=True, conv=True)
+    assert conv_path == Path(
+        "/jack/SB1234.Jack-Sparrow.beam00.round1.i.optimal.conv.MFS.image.fits"
+    )
+    assert conv_path - Suffix(optimal=True) + Suffix(fixed=True) == Path(
+        "/jack/SB1234.Jack-Sparrow.beam00.round1.i.fixed.conv.MFS.image.fits"
+    )
+    assert conv_path - Suffix(optimal=True, conv=True) == file_path
+
+
 @pytest.mark.parametrize(
     "operation", [operator.add, operator.or_, operator.sub, operator.and_]
 )
