@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
+from enum import StrEnum
 from pathlib import Path
-from typing import Any, Literal, NamedTuple, TypeVar
+from typing import Any, NamedTuple, TypeVar
 
 from flint.exceptions import NamingException
 from flint.logging import logger
@@ -314,37 +315,40 @@ def create_imaging_name_prefix(
     return ".".join(names)
 
 
-ResolutionModes = Literal["optimal", "fixed"]
+class ResolutionModes(StrEnum):
+    """The resolution a product is at, as it appears in its file name"""
+
+    OPTIMAL = "optimal"
+    """A single beam solved over the images"""
+    FIXED = "fixed"
+    """A single beam the user asked for"""
+    RAW = "raw"
+    """No common resolution imposed"""
+    NATURAL = "natural"
+    """One beam per channel, so resolution follows frequency"""
+    TOTAL = "total"
+    """One beam covering the whole band"""
 
 
 def get_beam_resolution_str(mode: ResolutionModes, marker: str | None = None) -> str:
-    """Map a beam resolution mode to an appropriate suffix. This
-    is located her in anticipation of other imaging modes.
+    """The filename suffix marking a product at ``mode`` resolution.
 
-    Supported modes are: 'optimal', 'fixed', 'raw'
+    A ``ResolutionModes`` is already its own suffix, so this is only needed to
+    append a ``marker`` or to accept a mode that is still a loose string.
 
     Args:
-        mode (Literal["fixed","optimal"]): The mode of image resolution to use.
-        marker (Optional[str], optional): Append the marker to the end of the returned mode string. If None mode string is returned. Defaults to None.
+        mode (ResolutionModes): The resolution the product is at
+        marker (str | None, optional): Appended to the suffix when given. Defaults to None.
 
     Raises:
         ValueError: Raised when an unrecognised mode is supplied
 
     Returns:
-        str: The appropriate string for mapped mode
+        str: The suffix to use
     """
-    # NOTE: Arguably this is a trash and needless function. Adding it
-    # in case other modes are ever needed or referenced. No idea whether
-    # it will ever been needed and could be removed in future.
-    supported_modes: dict[str, str] = dict(optimal="optimal", fixed="fixed", raw="raw")
-    if mode.lower() not in supported_modes.keys():
-        raise ValueError(
-            f"Received {mode=}, supported modes are {supported_modes.keys()}"
-        )
+    resolution = ResolutionModes(str(mode).lower())
 
-    mode_str = supported_modes[mode.lower()]
-
-    return mode_str + marker if marker else mode_str
+    return f"{resolution}{marker}" if marker else str(resolution)
 
 
 def update_beam_resolution_field_in_path(

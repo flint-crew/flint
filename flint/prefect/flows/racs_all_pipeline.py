@@ -226,8 +226,12 @@ def process_racs_all(
     if pipeline_options.skip_polarisation:
         return terminal_results
 
+    # rm-synth needs cubes at one beam across the band. Made in the polarisation
+    # stage, while the co-added planes are already in hand, rather than by
+    # splitting the finished cubes back apart in the rm-synth stage.
     resolved_pol_field_options = pol_field_options.with_options(
-        holofile=continuum_result.holography_path
+        holofile=continuum_result.holography_path,
+        total_resolution_cubes=not pipeline_options.skip_rmsynth,
     )
 
     # Compression comes last: the rm-synth and spice stages both read the Stokes
@@ -267,15 +271,23 @@ def process_racs_all(
     rmsynth_convolved_cubes: list[Path] = []
     rmsynth_noise_cubes: list[Path] = []
     if not pipeline_options.skip_rmsynth:
+        # Already at one beam, so rm-synth uses them as they are rather than
+        # convolving. The natural cubes are the fallback, and it convolves those.
+        stokes_cubes = pol_result.total_stokes_cubes or pol_result.stokes_cubes
+        rms_cubes = (
+            pol_result.total_rms_cubes
+            if pol_result.total_stokes_cubes
+            else pol_result.rms_cubes
+        )
         # BANE RMS if the polarisation stage measured it, else the linmos
-        # weights. rm-synth supersedes both once it convolves to a common beam.
+        # weights, which describe the co-addition rather than the resolution.
         error_cubes: ErrorCubesForRMSynth = (
-            NoiseCubesForRMSynth.from_mapping(pol_result.rms_cubes)
-            if pol_result.rms_cubes
+            NoiseCubesForRMSynth.from_mapping(rms_cubes)
+            if rms_cubes
             else WeightCubesForRMSynth.from_mapping(pol_result.weight_cubes)
         )
         resolved_rmsynth_field_options = rmsynth_field_options.with_options(
-            stokes_cubes=CubesForRMSynth.from_mapping(pol_result.stokes_cubes),
+            stokes_cubes=CubesForRMSynth.from_mapping(stokes_cubes),
             error_cubes=error_cubes,
             output_path=rmsynth_field_options.output_path or output_root / "rmsynth",
         )
@@ -300,11 +312,17 @@ def process_racs_all(
         # cubes they came from; they share the pixel grid, so one set of boxes
         # covers both. Empty unless rm-synth actually had to convolve.
         resolved_spice_field_options = spice_field_options.with_options(
-            cubes=[*pol_result.stokes_cubes.values(), *rmsynth_convolved_cubes],
+            cubes=[
+                *pol_result.stokes_cubes.values(),
+                *pol_result.total_stokes_cubes.values(),
+                *rmsynth_convolved_cubes,
+            ],
             weight_cubes=[
                 *pol_result.weight_cubes.values(),
                 *pol_result.bkg_cubes.values(),
                 *pol_result.rms_cubes.values(),
+                *pol_result.total_bkg_cubes.values(),
+                *pol_result.total_rms_cubes.values(),
                 *rmsynth_noise_cubes,
             ],
             reference_image=resolved_reference_image,
@@ -331,6 +349,9 @@ def process_racs_all(
                 *pol_result.weight_cubes.values(),
                 *pol_result.bkg_cubes.values(),
                 *pol_result.rms_cubes.values(),
+                *pol_result.total_stokes_cubes.values(),
+                *pol_result.total_bkg_cubes.values(),
+                *pol_result.total_rms_cubes.values(),
                 *rmsynth_convolved_cubes,
                 *rmsynth_noise_cubes,
             )

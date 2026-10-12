@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import re
 import socket
+import time
 from argparse import ArgumentParser
 from collections.abc import Collection
 from glob import glob
@@ -34,9 +35,15 @@ from capn_crunch import (
 )
 from fitscube.bounding_box import BoundingBox
 from fitscube.combine_fits import combine_fits, compress_cube
-from fitscube.exceptions import TargetAxisMissingException
-from fitscube.extract import ExtractOptions, extract_plane_from_cube, find_target_axis
+from fitscube.exceptions import ShapeMismatchException, TargetAxisMissingException
+from fitscube.extract import (
+    ExtractPlanesOptions,
+    count_cube_planes,
+    extract_planes_from_cube,
+    find_target_axis,
+)
 
+from flint.convol import BeamShape
 from flint.exceptions import (
     AttemptRerunException,
     CleanDivergenceError,
@@ -95,9 +102,10 @@ class WSCleanOptions(BaseOptions):
     with `$` it is assumed to be a environment variable, it is will be looked up.
     Some basic attempts to determine if it is a path is made.
 
-    Should the `temp_dir` options be specified then all images will be
-    created in this location, and then moved over to the same parent directory
-    as the imaged MS. This is done by setting the wsclean `-name` argument.
+    Should `flint_hold_dir` (or, failing that, `temp_dir`) be specified then all
+    images will be created in this location, and then moved over to the same
+    parent directory as the imaged MS. This is done by setting the wsclean
+    `-name` argument.
 
     Options that start with `flint_` are ignored when generating the wsclean command
     and generally denote some other flint specific operation.
@@ -214,6 +222,8 @@ class WSCleanOptions(BaseOptions):
     """An additional trailing token appended to the constructed wsclean ``-name``, e.g. to disambiguate outputs from different pipelines imaging the same measurement set"""
     flint_save_mfs_products: bool = False
     """Save the MFS image, model and residual products (co-added and leakage-corrected the same way as the science image), rather than just the image"""
+    flint_hold_dir: str | Path | None = None
+    """Directory images are written to before being moved beside the MS. Takes precedence over ``temp_dir`` for this purpose"""
 
 
 class WSCleanResult(BaseOptions):
@@ -243,33 +253,13 @@ def image_set_from_result(wsclean_result: WSCleanResult) -> ImageSet | None:
     return wsclean_result.image_set
 
 
-def assert_common_pixel_grid(images: Collection[Path]) -> None:
-    """Ensure a set of images all share the same spatial pixel grid.
-
-    ``fitscube`` writes each plane into the cube at a fixed byte offset, so
-    planes of differing shape are silently interleaved rather than rejected.
-
-    Args:
-        images (Collection[Path]): The images that will be stacked into a cube
-
-    Raises:
-        ShapeMismatchError: If the images do not share a common NAXIS1/NAXIS2
-    """
-    shapes = {
-        (header["NAXIS1"], header["NAXIS2"])
-        for header in (fits.getheader(image) for image in images)
-    }
-    if len(shapes) > 1:
-        msg = f"Images to be cubed have differing pixel grids: {shapes=}"
-        raise ShapeMismatchError(msg)
-
-
 def combine_images_to_cube(
     images: list[Path],
     prefix: str,
     mode: str,
     fitscube_options: FitsCubeOptions,
     bounding_box: bool | BoundingBox | None = None,
+    beam_shape: BeamShape | None = None,
 ) -> Path:
     """Combine wsclean subband channel images into a cube. Each collection attribute
     of the input `image_set` will be inspected. The MFS images will be ignored.
@@ -284,6 +274,8 @@ def combine_images_to_cube(
         bounding_box (bool | BoundingBox | None, optional): Overrides ``fitscube_options.bounding_box``
         when given. Used to force a box shared with another cube (e.g. weights) rather than
         letting fitscube compute one for this cube alone. Defaults to None.
+        beam_shape (BeamShape | None, optional): The one beam every plane was convolved to. When given the
+        cube records it in its header and carries no beam table. Defaults to None.
 
     Returns:
         Path: The path to the created FITS cube
@@ -291,25 +283,35 @@ def combine_images_to_cube(
     logger.info("Combining subband images into fits cubes")
     logger.info(f"Running on {socket.gethostname()=}")
 
-    assert_common_pixel_grid(images=images)
-
     output_cube_name = create_image_cube_name(image_prefix=Path(prefix), mode=mode)
 
-    logger.info(f"Combining {len(images)} images. {images=}")
-    freqs = combine_fits(
-        file_list=images,
-        out_cube=output_cube_name,
-        max_workers=fitscube_options.max_workers,
-        invalidate_zeros=fitscube_options.invalidate_zeros,
-        bounding_box=fitscube_options.bounding_box
-        if bounding_box is None
-        else bounding_box,
-        create_blanks=fitscube_options.create_blanks,
+    logger.info(f"Combining {len(images)} images into {output_cube_name}")
+    logger.debug(f"{images=}")
+    start = time.perf_counter()
+    # fitscube checks the pixel grids itself, in parallel, before it writes
+    # anything, so there is no need to walk every header again first
+    try:
+        freqs = combine_fits(
+            file_list=images,
+            out_cube=output_cube_name,
+            max_workers=fitscube_options.max_workers,
+            invalidate_zeros=fitscube_options.invalidate_zeros,
+            bounding_box=fitscube_options.bounding_box
+            if bounding_box is None
+            else bounding_box,
+            create_blanks=fitscube_options.create_blanks,
+        )
+    except ShapeMismatchException as e:
+        msg = f"Images to be cubed have differing pixel grids: {e}"
+        raise ShapeMismatchError(msg) from e
+    logger.info(
+        f"Combined {len(images)} images into {output_cube_name.name} in "
+        f"{time.perf_counter() - start:.0f}s"
     )
-    rotate_cube(output_cube_name, inplace=fitscube_options.inplace)
 
-    # Write out the hdu to preserve the beam table constructed in fitscube
-    logger.info(f"Writing {output_cube_name=}")
+    rotate_cube(output_cube_name, inplace=fitscube_options.inplace)
+    if beam_shape is not None:
+        set_cube_beam(cube=output_cube_name, beam_shape=beam_shape)
 
     output_freqs_name = output_cube_name.with_suffix(".freqs_Hz.txt")
     np.savetxt(output_freqs_name, freqs.to("Hz").value)
@@ -318,8 +320,12 @@ def combine_images_to_cube(
         remove_files_folders(*images)
 
     if fitscube_options.compress:
+        start = time.perf_counter()
         output_cube_name = compress_cube(
             output_cube_name, method=fitscube_options.compress_method
+        )
+        logger.info(
+            f"Compressed to {output_cube_name.name} in {time.perf_counter() - start:.0f}s"
         )
 
     return output_cube_name
@@ -484,7 +490,9 @@ def transpose_and_sort_channel_images(
     return [list(channel_group) for channel_group in zip(*sorted_beams)]
 
 
-def split_cube_into_planes(cube: Path, output_path: Path | None = None) -> list[Path]:
+def split_cube_into_planes(
+    cube: Path, output_path: Path | None = None, num_workers: int = 4
+) -> list[Path]:
     """Extract each channel of a FITS cube into its own image, named following the
     flint processed name format so that the planes may be regrouped across beams
     by ``transpose_and_sort_channel_images``.
@@ -492,21 +500,22 @@ def split_cube_into_planes(cube: Path, output_path: Path | None = None) -> list[
     Args:
         cube (Path): The FITS cube to split apart
         output_path (Path | None, optional): Directory the planes are written into. Only the flint name fields are retained, so cubes that share them (e.g. an image cube and its weights) need separate directories. Defaults to alongside ``cube``.
+        num_workers (int, optional): Planes written at once. Defaults to 4.
 
     Returns:
         list[Path]: The per-channel images extracted from ``cube``
 
     Raises:
-        NotSupportedError: If ``cube`` is gzip-compressed. Splitting reopens
-            the cube once per channel, and astropy cannot memmap a gzip file,
-            so each reopen decompresses the entire cube into memory. Set
-            ``FitsCubeOptions.compress=False`` for cubes that get split.
+        NotSupportedError: If ``cube`` is gzip-compressed, as astropy cannot
+            memmap a compressed FITS file and would decompress the whole cube
+            into memory. Set ``FitsCubeOptions.compress=False`` for cubes that
+            get split.
     """
     if cube.suffix == ".gz":
         msg = (
             f"{cube=} is gzip-compressed and cannot be split into planes: "
-            "astropy cannot memmap a compressed FITS file, so each of the "
-            "per-channel reads would decompress the whole cube into memory. "
+            "astropy cannot memmap a compressed FITS file, so the per-channel "
+            "reads would decompress the whole cube into memory. "
             "Disable FitsCubeOptions.compress for cubes that will be split."
         )
         raise NotSupportedError(msg)
@@ -519,11 +528,6 @@ def split_cube_into_planes(cube: Path, output_path: Path | None = None) -> list[
     if output_path is not None:
         output_path.mkdir(parents=True, exist_ok=True)
 
-    with fits.open(cube, memmap=True, lazy_load_hdus=True) as open_fits:
-        header = open_fits[0].header
-    channels = int(header[f"NAXIS{find_target_axis(header=header).axis}"])
-    logger.info(f"Splitting {cube} into {channels} planes")
-
     def _plane_path(channel: int) -> Path:
         # Only the flint name fields are retained, so a single cube per beam
         # should be split at a time to avoid clobbering planes
@@ -535,15 +539,17 @@ def split_cube_into_planes(cube: Path, output_path: Path | None = None) -> list[
         )
         return Path(f"{plane_base}.fits")
 
-    return [
-        extract_plane_from_cube(
-            fits_cube=cube,
-            extract_options=ExtractOptions(
-                channel_index=channel, output_path=_plane_path(channel), overwrite=True
-            ),
-        )
-        for channel in range(channels)
-    ]
+    channels = count_cube_planes(header=fits.getheader(cube))
+    logger.info(f"Splitting {cube} into {channels} planes")
+
+    return extract_planes_from_cube(
+        cube,
+        ExtractPlanesOptions(
+            output_paths=[_plane_path(channel) for channel in range(channels)],
+            overwrite=True,
+            max_workers=num_workers,
+        ),
+    )
 
 
 def get_wsclean_output_source_list_path(
@@ -909,8 +915,8 @@ def create_wsclean_name_argument(
 ) -> Path:
     """Create the value that will be provided to wsclean -name argument. This has
     to be generated. Among things to consider is the desired output directory of imaging
-    files. This by default will be alongside the measurement set. If a `temp_dir`
-    has been specified then output files will be written here.
+    files. This by default will be alongside the measurement set, and is
+    overridden by `flint_hold_dir`, or failing that `temp_dir`.
 
     If the input ``ms`` is an instance of ``MSs`` then the first measurement
     set will be used to base the name from.
@@ -941,11 +947,15 @@ def create_wsclean_name_argument(
     )
 
     # Now resolve the directory part
-    name_dir: Path | str | None = name_ms.path.parent
-    temp_dir = wsclean_options_dict.get("temp_dir", None)
-    if temp_dir:
+    hold_dir = wsclean_options_dict.get("flint_hold_dir") or wsclean_options_dict.get(
+        "temp_dir"
+    )
+    name_dir: Path | str | None = (
         # attempt to resolve possible environment variables flexibly
-        name_dir = parse_environment_variables(variable=temp_dir)
+        parse_environment_variables(variable=str(hold_dir))
+        if hold_dir
+        else name_ms.path.parent
+    )
 
     assert name_dir is not None, f"{name_dir=} is None, which is bad"
 
@@ -1038,10 +1048,10 @@ def create_wsclean_cmd(
     For the most part these are one-to-one mappings to the wsclean CLI with the
     exceptions being:
     #. the `-name` argument will be generated and supplied to the CLI string and will default to the parent directory and name of the supplied measurement set
-    #. If `wsclean_options.temp_dir` is specified this directory is used in place of the measurement sets parent directory
+    #. If `wsclean_options.flint_hold_dir` or `wsclean_options.temp_dir` is specified this directory is used in place of the measurement sets parent directory
 
     If `container` is supplied to immediately execute this command then the
-    output wsclean image products will be moved from the `temp-dir` to the
+    output wsclean image products will be moved from the hold directory to the
     same directory as the measurement set.
 
     Args:
@@ -1076,7 +1086,8 @@ def create_wsclean_cmd(
         wsclean_options=wsclean_options, ms=example_ms
     )
     move_directory = example_ms.path.parent
-    hold_directory: Path | None = Path(name_argument_path).parent
+    hold_directory = Path(name_argument_path).parent
+    bind_dir_paths.append(hold_directory)
 
     unknowns: list[tuple[Any, Any]] = []
     logger.info("Creating wsclean command.")
@@ -1109,7 +1120,7 @@ def create_wsclean_cmd(
     bind_dir_paths += [ms.path.parent for ms in ms_list]
 
     # TODO: Currently there are two calls into the `parse_environment_variable`
-    # when processing the `-temp-dir` and `-name` options. When using the `FLINT_UUID`
+    # when processing the `-temp-dir`/`flint_hold_dir` and `-name` options. When using the `FLINT_UUID`
     # option two separate UUIDs are being used. This is a dirty hack to see if
     # things work. Captains and their ships need better.`
     for bind_dir_path in bind_dir_paths:
@@ -1133,6 +1144,57 @@ def create_wsclean_cmd(
         move_hold_directories=(move_directory, hold_directory),
         image_prefix_str=str(name_argument_path),
     )
+
+
+def set_cube_beam(cube: Path, beam_shape: BeamShape) -> Path:
+    """Write ``beam_shape`` into the cube's header and drop any beam table.
+
+    fitscube writes a table whenever the planes' beams differ, and the blank
+    planes of a cube convolved to one beam carry a zero beam that counts as a
+    difference. CARTA can not open the table that results.
+
+    Args:
+        cube (Path): The cube to update in place
+        beam_shape (BeamShape): The beam every populated plane is at
+
+    Returns:
+        Path: The updated cube
+    """
+    with fits.open(cube) as open_fits:
+        header = open_fits[0].header.copy()
+        file_info = open_fits.fileinfo(0)
+    assert file_info is not None, f"Can not locate the primary HDU of {cube}"
+    header_size = file_info["datLoc"] - file_info["hdrLoc"]
+    data_end = file_info["datLoc"] + file_info["datSpan"]
+
+    header.remove("CASAMBM", ignore_missing=True)
+    fitscube_comments = ("The PSF in each", "Full beam information", "The value '")
+    for idx in reversed(range(len(header))):
+        card = header.cards[idx]
+        if card.keyword == "COMMENT" and str(card.value).startswith(fitscube_comments):
+            del header[idx]
+    header["BMAJ"] = beam_shape.bmaj_arcsec / 3600
+    header["BMIN"] = beam_shape.bmin_arcsec / 3600
+    header["BPA"] = beam_shape.bpa_deg
+    while len(header.tostring()) < header_size:
+        header.append(fits.Card(), useblanks=False, bottom=True)
+
+    if len(header.tostring()) > header_size:
+        logger.info(f"New header outgrows the old in {cube.name}, rewriting the file")
+        with fits.open(cube, mode="update") as open_fits:
+            del open_fits[1:]
+            open_fits[0].header = header
+        return cube
+
+    # Only the header changes and the table sits after the data, so the cube's
+    # data is left where it is rather than rewriting the whole file
+    logger.info(f"Setting the beam of {cube.name} to {beam_shape}")
+    with cube.open("r+b") as file_handle:
+        file_handle.seek(file_info["hdrLoc"])
+        file_handle.write(header.tostring().encode("ascii"))
+        file_handle.truncate(data_end)
+
+    return cube
 
 
 def rotate_cube(output_cube_path: str | Path, inplace: bool = True) -> Path:
@@ -1497,11 +1559,12 @@ def wsclean_imager(
         logger.info("Updatting fitscube options with user-provided items. ")
         fitscube_options = fitscube_options.with_options(**update_fitscube_options)
 
-    if isinstance(wsclean_options.temp_dir, str):
-        logger.info(f"Resolving potential expansion for {wsclean_options.temp_dir=}")
-        temp_dir = parse_environment_variables(wsclean_options.temp_dir)
-        logger.info(f"Updating wsclean options with {temp_dir=}")
-        wsclean_options = wsclean_options.with_options(temp_dir=temp_dir)
+    for field in ("temp_dir", "flint_hold_dir"):
+        value = getattr(wsclean_options, field)
+        if isinstance(value, str):
+            resolved = parse_environment_variables(value)
+            logger.info(f"Resolved {field} to {resolved}")
+            wsclean_options = wsclean_options.with_options(**{field: resolved})
 
     assert ms_list[0].column is not None, (
         "A MS column needs to be elected for imaging. "

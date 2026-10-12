@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Literal, TypeAlias
@@ -30,6 +30,7 @@ os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 from rm_lite.tools_3d.rmclean import (  # noqa: E402
     RMClean3DResults,
+    faraday_maps,
     run_rmclean_from_synth,
 )
 from rm_lite.tools_3d.rmsynth import (  # noqa: E402
@@ -39,8 +40,8 @@ from rm_lite.tools_3d.rmsynth import (  # noqa: E402
 from rm_lite.utils.synthesis import (  # noqa: E402
     FaradayMoments,
     FaradayPeaks,
+    FDFUnits,
     calc_faraday_moments,
-    calc_faraday_peaks,
 )
 
 from flint.exceptions import NotSupportedError
@@ -71,10 +72,18 @@ MOMENT_MAPS = {
     "pa_lam_sq_0_error": ("pa_lam_sq_0_error", "deg", "1-sigma on pa_lam_sq_0"),
 }
 
+STOKES_I_MAP_SUFFIXES = {
+    "stokes_i_ref_flux": "stokesi.ref_flux",
+    "stokes_i_alpha": "stokesi.alpha",
+    "stokes_i_alpha_error": "stokesi.alpha_error",
+    "stokes_i_model_order": "stokesi.model_order",
+    "stokes_i_ref_freq": "stokesi.ref_freq",
+}
+
 PEAK_MAPS = {
-    "peak_pi": ("peak_pi", "Jy/beam", "peak polarised intensity"),
-    "peak_pi_debias": ("peak_pi_debias", "Jy/beam", "debiased peak"),
-    "peak_pi_error": ("peak_pi_error", "Jy/beam", "1-sigma on the peak"),
+    "peak_pi": ("peak_pi", "Jy/beam/RMSF", "peak polarised intensity"),
+    "peak_pi_debias": ("peak_pi_debias", "Jy/beam/RMSF", "debiased peak"),
+    "peak_pi_error": ("peak_pi_error", "Jy/beam/RMSF", "1-sigma on the peak"),
     "peak_rm_radm2": ("peak_rm", "rad/m2", "Faraday depth of the peak"),
     "peak_rm_error_radm2": ("peak_rm_error", "rad/m2", "1-sigma on the depth"),
     "peak_pa_deg": ("peak_pa", "deg", "polarisation angle at the peak"),
@@ -82,6 +91,23 @@ PEAK_MAPS = {
     "peak_pa0_deg": ("peak_pa0", "deg", "intrinsic polarisation angle"),
     "peak_pa0_error_deg": ("peak_pa0_error", "deg", "1-sigma on the intrinsic angle"),
 }
+
+
+def fdf_units_for(label: FDFLabel) -> FDFUnits:
+    """Amplitude units of an FDF product.
+
+    RM-synthesis output is per RMSF; the CLEAN component model is a list of
+    fluxes, so summing it must not divide by the RMSF area as well.
+    """
+    return "integrated" if label == "model" else "per_rmsf"
+
+
+def _write_map(data: np.ndarray, header: fits.Header, output_path: Path) -> Path:
+    """Write one float32 map, the last step of every writer here."""
+    fits.writeto(
+        output_path, np.asarray(data, dtype=np.float32), header, overwrite=True
+    )
+    return output_path
 
 
 def needs_rmclean(
@@ -120,6 +146,46 @@ def _check_cubes_memmappable(*cubes: Path | None) -> None:
         raise NotSupportedError(msg)
 
 
+def _warn_on_no_error_cubes(error_cubes: ErrorCubesForRMSynth | None) -> None:
+    """Warn that rm-lite is about to measure the noise off the cubes themselves.
+
+    Its fallback is one ``mad_std`` per channel plane, so every pixel is told
+    the whole field's noise. On a mosaic, whose edge is far noisier than its
+    middle, that makes an SNR-scaled CLEAN mask meaningless out there and
+    RM-CLEAN grinds on noise. Warned about rather than refused: it is the right
+    answer for a cube of uniform noise.
+    """
+    if error_cubes is not None:
+        return
+    logger.warning(
+        "No error or weight cubes given, so rm-lite will estimate one noise "
+        "per channel from the Q/U cubes and share it across the field. Pass "
+        "the BANE RMS or linmos weight cubes for anything with a noise "
+        "gradient -- on a mosaic the auto-mask is otherwise far too low at the "
+        "edges, and RM-CLEAN will clean noise there."
+    )
+
+
+def check_cubes_are_single_precision(*cubes: Path | None) -> None:
+    """rm-lite takes the FDF's precision from the cubes it is given, so a
+    double-precision cube doubles every Faraday-depth array it builds. Warned
+    about rather than refused: it is a memory cost, not an error."""
+    double = [
+        cube
+        for cube in cubes
+        # A zarr store was converted from a FITS cube already checked here.
+        if cube is not None
+        and cube.suffix != ".zarr"
+        and fits.getheader(cube).get("BITPIX") == -64
+    ]
+    if double:
+        logger.warning(
+            f"{double} are double precision, so the FDF, RMSF and CLEAN cubes "
+            "will be complex128 and take twice the memory. Write the cubes as "
+            "float32 unless the extra precision is actually wanted."
+        )
+
+
 def run_rmsynth_3d(
     stokes_cubes: CubesForRMSynth,
     rmsynth_options: RMSynthOptions,
@@ -141,6 +207,8 @@ def run_rmsynth_3d(
     _check_cubes_memmappable(
         *stokes_cubes.paths, *(error_cubes.paths if error_cubes else ())
     )
+    check_cubes_are_single_precision(*stokes_cubes.paths)
+    _warn_on_no_error_cubes(error_cubes)
     stokes_i_kwargs = (
         {
             "stokes_i_file": stokes_cubes.i_path,
@@ -148,6 +216,8 @@ def run_rmsynth_3d(
             "fit_order": rmsynth_options.fit_order,
             "fit_function": rmsynth_options.fit_function,
             "stokes_i_snr_cut": rmsynth_options.stokes_i_snr_cut,
+            "stokes_i_weighting": rmsynth_options.stokes_i_weighting,
+            "stokes_i_weight_alpha": rmsynth_options.stokes_i_weight_alpha,
             # Only consulted when no Stokes I error cube is given: rm-lite
             # refuses a stokes_i_snr_cut it has no error to measure against.
             "estimate_stokes_i_noise": rmsynth_options.estimate_stokes_i_noise,
@@ -173,8 +243,11 @@ def run_rmsynth_3d(
         weight_type=rmsynth_options.weight_type,
         robust=rmsynth_options.robust,
         per_pixel_rmsf=rmsynth_options.per_pixel_rmsf,
+        do_fit_rmsf=rmsynth_options.do_fit_rmsf,
+        rmsf_fitting_size=rmsynth_options.rmsf_fitting_size,
         nufft_nthreads=rmsynth_options.nufft_nthreads,
         target_chunk_mb=rmsynth_options.target_chunk_mb,
+        convert_to_zarr=rmsynth_options.convert_to_zarr,
         log_level=logging.INFO,
         **stokes_i_kwargs,
     )
@@ -228,37 +301,22 @@ def write_moment_maps_to_fits(
         list[Path]: One path per ``MOMENT_MAPS`` entry, plus the debiased set
         less ``mom0_debias`` if debiased_moments is given
     """
-    celestial = WCS(reference_header).celestial.to_header()
 
-    def _write(
-        moment_set: FaradayMoments,
-        maps: dict[str, tuple[str, str, str]],
-        suffix: str,
-    ) -> list[Path]:
-        written = []
-        for field, (name, unit, comment) in maps.items():
-            header = celestial.copy()
-            header["BUNIT"] = (unit, comment)
-            output_path = Path(f"{output_prefix}.fdf.{label}.{name}{suffix}.fits")
-            fits.writeto(
-                output_path,
-                np.asarray(getattr(moment_set, field), dtype=np.float32),
-                header,
-                overwrite=True,
+    def _write(moment_set: FaradayMoments, kind: str) -> list[Path]:
+        return [
+            path
+            for field in MOMENT_MAPS
+            for path in write_rm_product_to_fits(
+                key=f"{kind}.{label}.{field}",
+                data=getattr(moment_set, field),
+                reference_header=reference_header,
+                output_prefix=output_prefix,
             )
-            written.append(output_path)
-        return written
+        ]
 
-    output_paths = _write(moments, MOMENT_MAPS, suffix="")
+    output_paths = _write(moments, "moment")
     if debiased_moments is not None:
-        # a debiased FDF leaves mom0_debias unchanged, so writing it again under
-        # a second name would read as a second measurement
-        debiased_maps = {
-            field: entry
-            for field, entry in MOMENT_MAPS.items()
-            if field != "mom0_debias"
-        }
-        output_paths.extend(_write(debiased_moments, debiased_maps, suffix=".debiased"))
+        output_paths.extend(_write(debiased_moments, "debiased"))
 
     return output_paths
 
@@ -325,25 +383,18 @@ def write_stokes_i_fit_maps_to_fits(
     Returns:
         list[Path]: The written map paths, one per entry in ``stokes_i_maps``
     """
-    suffixes = {
-        "stokes_i_ref_flux": "stokesi.ref_flux",
-        "stokes_i_alpha": "stokesi.alpha",
-        "stokes_i_alpha_error": "stokesi.alpha_error",
-        "stokes_i_model_order": "stokesi.model_order",
-    }
-    header = _stokes_i_fit_header(
-        reference_header=reference_header,
-        ref_freq_hz=ref_freq_hz,
-        fit_function=fit_function,
-    )
-    output_paths = []
-    for key, data in stokes_i_maps.items():
-        output_path = Path(f"{output_prefix}.{suffixes[key]}.fits")
-        fits.writeto(
-            output_path, np.asarray(data, dtype=np.float32), header, overwrite=True
+    return [
+        path
+        for key, data in stokes_i_maps.items()
+        for path in write_rm_product_to_fits(
+            key=key,
+            data=data,
+            reference_header=reference_header,
+            output_prefix=output_prefix,
+            ref_freq_hz=ref_freq_hz,
+            fit_function=fit_function,
         )
-        output_paths.append(output_path)
-    return output_paths
+    ]
 
 
 def write_stokes_i_coeff_maps_to_fits(
@@ -427,7 +478,7 @@ def write_stokes_i_coeff_maps_to_fits(
     return output_paths
 
 
-def _snr_threshold(snr: float, fdf_error_noise: FDFThreshold) -> FDFThreshold:
+def fdf_threshold_from_snr(snr: float, fdf_error_noise: FDFThreshold) -> FDFThreshold:
     """An FDF amplitude cut ``snr`` times the theoretical noise, or None for no cut.
 
     Zero short-circuits rather than multiplying through: the noise is ``inf``
@@ -443,6 +494,7 @@ def _lazy_faraday_moments(
     fdf_cube: dask.array.Array,
     synth_results: RMSynth3DResults,
     threshold: FDFThreshold,
+    fdf_units: FDFUnits,
     debias: bool = False,
     debias_filter_size: int = 5,
 ) -> FaradayMoments:
@@ -462,6 +514,7 @@ def _lazy_faraday_moments(
         fdf_cube,
         phi_arr_radm2=synth_results.phi_arr_radm2,
         fwhm_rmsf_radm2=synth_results.fwhm_rmsf_radm2,
+        fdf_units=fdf_units,
         fdf_error=synth_results.theoretical_noise.fdf_error_noise,
         threshold=threshold,
         debias=debias,
@@ -497,7 +550,8 @@ def _describe_rm_workload(
     per_pixel_rmsf = synth_results.rmsf_cube is not None
     return (
         f"{len(compute_keys)} products over {n_y}x{n_x} pixels and {n_phi} "
-        f"Faraday depths, in {n_chunks} chunks; "
+        f"Faraday depths in {fdf_cube.dtype}, in {n_chunks} chunks of "
+        f"{fdf_cube.chunksize[1]}x{fdf_cube.chunksize[2]} pixels; "
         f"per-pixel RMSF {'on' if per_pixel_rmsf else 'off'}"
     )
 
@@ -533,11 +587,12 @@ def _seceded_if_on_a_worker() -> Iterator[None]:
         rejoin()
 
 
-def _compute_rm_products(
+def compute_rm_products(
     compute_targets: dict[str, Any],
     fuse_config: dict[str, Any],
     scheduler: Client | str,
     workload: str,
+    on_result: Callable[[str, Any], Any] | None = None,
 ) -> dict[str, Any]:
     """Compute every product in one shared pass, reporting each as it lands.
 
@@ -559,9 +614,15 @@ def _compute_rm_products(
         fuse_config (dict[str, Any]): Dask fusion settings the submission must be made under
         scheduler (Client | str): A distributed Client, or a local scheduler name
         workload (str): Description of the work, logged up front. See ``_describe_rm_workload``
+        on_result (Callable[[str, Any], Any] | None, optional): Called with each
+            key and its value as that value lands, and what it returns is kept
+            in place of the value. Pass a writer to keep one product in memory
+            rather than all of them: the maps are ``ny * nx`` each and there are
+            21 per label. Defaults to None, keeping the values themselves.
 
     Returns:
-        dict[str, Any]: The computed value for each key in ``compute_targets``
+        dict[str, Any]: Per key, the computed value, or whatever ``on_result``
+        returned for it
     """
     compute_keys = list(compute_targets.keys())
     start = time.time()
@@ -573,7 +634,12 @@ def _compute_rm_products(
                 *(compute_targets[key] for key in compute_keys), scheduler=scheduler
             )
         logger.info(f"Computed {len(compute_keys)} RM products in {_elapsed(start)}")
-        return dict(zip(compute_keys, computed_values))
+        # A local scheduler hands back every product at once, so there is
+        # nothing to stream; `on_result` still runs, for one code path downstream.
+        computed_locally = dict(zip(compute_keys, computed_values))
+        if on_result is None:
+            return computed_locally
+        return {key: on_result(key, value) for key, value in computed_locally.items()}
 
     logger.info(f"Computing RM products ({workload})")
     with dask.config.set(fuse_config):
@@ -590,13 +656,18 @@ def _compute_rm_products(
 
     computed: dict[str, Any] = {}
     with _seceded_if_on_a_worker():
-        for future in as_completed(list(future_to_keys)):
+        # Without loop=, as_completed uses the worker's loop, not this client's.
+        for future in as_completed(list(future_to_keys), loop=scheduler.loop):
             keys = future_to_keys[future]
             # `.result()` re-raises whatever the worker raised, so a failed
             # product still surfaces here rather than being dropped
             result = future.result()
             for key in keys:
-                computed[key] = result
+                computed[key] = result if on_result is None else on_result(key, result)
+            # The local copy is the only one this process holds, so letting it
+            # go here is what keeps the peak to one product rather than all of
+            # them. Pointless without `on_result`, which has already consumed it.
+            del result
             # Elapsed since submission, not this product's own runtime: they
             # share one graph, so "how far into the run are we" is the
             # answerable question
@@ -609,8 +680,56 @@ def _compute_rm_products(
     return computed
 
 
+HeaderCards: TypeAlias = dict[str, tuple[Any, str]]
+
+
+def rm_synthesis_header_cards(
+    synth_results: RMSynth3DResults, lam_sq_0_m2: float | str
+) -> HeaderCards:
+    """The run's lambda^2_0 (unless per-pixel), RMSF width and band, so each map reads on its own."""
+    lambda_sq_arr_m2 = synth_results.lambda_sq_arr_m2
+    freq_arr_hz = np.sort(299792458.0 / np.sqrt(lambda_sq_arr_m2))
+    cards: HeaderCards = {
+        "RMSFFWHM": (float(synth_results.fwhm_rmsf_radm2), "RMSF FWHM [rad/m2]"),
+        "MAXSCALE": (
+            float(np.pi / np.nanmin(lambda_sq_arr_m2)),
+            "Largest Faraday depth scale [rad/m2]",
+        ),
+        "FREQMIN": (float(freq_arr_hz[0]), "Lowest channel frequency [Hz]"),
+        "FREQMAX": (float(freq_arr_hz[-1]), "Highest channel frequency [Hz]"),
+        "NCHAN": (int(freq_arr_hz.size), "Channels in the RM-synthesis"),
+        "CHANWID": (
+            float(np.median(np.diff(freq_arr_hz))) if freq_arr_hz.size > 1 else 0.0,
+            "Median channel width [Hz]",
+        ),
+    }
+    if lam_sq_0_m2 != "per_pixel":
+        cards["LAMSQ0"] = (
+            float(synth_results.lam_sq_0_m2),
+            "Reference lambda^2 of the angles [m2]",
+        )
+    return cards
+
+
+def restoring_beam_cards(cube_header: fits.Header) -> HeaderCards:
+    """The cube's restoring beam for the 2D maps; none if it has none, or a blanked image's zero beam."""
+    if not all(key in cube_header for key in ("BMAJ", "BMIN", "BPA")):
+        return {}
+    if not cube_header["BMAJ"] > 0:
+        return {}
+    return {
+        "BMAJ": (float(cube_header["BMAJ"]), "Restoring beam major axis [deg]"),
+        "BMIN": (float(cube_header["BMIN"]), "Restoring beam minor axis [deg]"),
+        "BPA": (float(cube_header["BPA"]), "Restoring beam position angle [deg]"),
+    }
+
+
 def write_rmclean_niter_map_to_fits(
-    niter_map: np.ndarray, reference_header: fits.Header, output_prefix: Path
+    niter_map: np.ndarray,
+    reference_header: fits.Header,
+    output_prefix: Path,
+    fdf_tag: str = "fdf",
+    header_cards: HeaderCards | None = None,
 ) -> Path:
     """Write the per-pixel RM-CLEAN iteration count.
 
@@ -624,13 +743,16 @@ def write_rmclean_niter_map_to_fits(
         niter_map (np.ndarray): Computed (ny, nx) iteration count
         reference_header (fits.Header): Header to derive the spatial WCS from
         output_prefix (Path): Common prefix for the output file
+        fdf_tag (str, optional): What the FDF products are named after. Defaults to "fdf".
+        header_cards (HeaderCards | None, optional): Run metadata to stamp, from ``rm_synthesis_header_cards``. Defaults to None.
 
     Returns:
         Path: The written map path
     """
     header = WCS(reference_header).celestial.to_header()
     header["BUNIT"] = ("", "CLEAN iterations")
-    output_path = Path(f"{output_prefix}.fdf.clean.niter.fits")
+    header.update(header_cards or {})
+    output_path = Path(f"{output_prefix}.{fdf_tag}.clean.niter.fits")
     # int32 rather than rm-lite's int64: max_iter is 1e5 by default, so half the
     # bytes carry every value this can hold
     fits.writeto(
@@ -656,20 +778,145 @@ def write_peak_maps_to_fits(
     Returns:
         list[Path]: The written map paths, nine per FDF
     """
-    celestial = WCS(reference_header).celestial.to_header()
-    output_paths = []
-    for field, (suffix, unit, comment) in PEAK_MAPS.items():
-        header = celestial.copy()
-        header["BUNIT"] = (unit, comment)
-        output_path = Path(f"{output_prefix}.fdf.{label}.{suffix}.fits")
-        fits.writeto(
-            output_path,
-            np.asarray(getattr(peaks, field), dtype=np.float32),
-            header,
-            overwrite=True,
+    return [
+        path
+        for field in PEAK_MAPS
+        for path in write_rm_product_to_fits(
+            key=f"peak.{label}.{field}",
+            data=getattr(peaks, field),
+            reference_header=reference_header,
+            output_prefix=output_prefix,
         )
-        output_paths.append(output_path)
-    return output_paths
+    ]
+
+
+def _stamp_stokes_i_weights(
+    header: fits.Header, weighting: str | None, alpha: float | None
+) -> None:
+    """Record how the weights followed the Stokes I division, if they did."""
+    if weighting is not None:
+        header["SIWEIGHT"] = (weighting, "How the weights follow the Stokes I model")
+    if alpha is not None:
+        header["SIWALPHA"] = (float(alpha), "Spectral index of the weight template")
+
+
+def write_rm_product_to_fits(
+    key: str,
+    data: np.ndarray,
+    reference_header: fits.Header,
+    output_prefix: Path,
+    ref_freq_hz: float | None = None,
+    fit_function: str | None = None,
+    coeff_names: tuple[str, ...] | None = None,
+    stokes_i_weighting: str | None = None,
+    stokes_i_weight_alpha: float | None = None,
+    fdf_tag: str = "fdf",
+    header_cards: HeaderCards | None = None,
+) -> list[Path]:
+    """Write one computed product, named and united from its compute key.
+
+    ``write_rm_products`` computes its products as a batch and writes each one
+    as it lands, so this takes a single map rather than a set: holding the whole
+    set costs ``21 * ny * nx * 4`` bytes a label, which no chunk setting bounds.
+    The grouped writers above take the same maps when a caller already has them
+    all in hand.
+
+    Args:
+        key (str): Compute key, e.g. ``moment.clean.mom0`` or ``stokes_i_alpha``
+        data (np.ndarray): The computed map, (ny, nx), or (n_coeff, ny, nx) for the model terms
+        reference_header (fits.Header): Header to derive the spatial WCS from
+        output_prefix (Path): Common prefix for the output files
+        ref_freq_hz (float | None, optional): Frequency the Stokes I fit is referenced to. Defaults to None.
+        fit_function (str | None, optional): The Stokes I fit function. Defaults to None.
+        coeff_names (tuple[str, ...] | None, optional): Name of each plane of the model-term cube. Defaults to None.
+        stokes_i_weighting (str | None, optional): How the weights followed the Stokes I division, recorded as ``SIWEIGHT``. Defaults to None.
+        stokes_i_weight_alpha (float | None, optional): Spectral index of the weight template, recorded as ``SIWALPHA``. Defaults to None.
+        fdf_tag (str, optional): What the FDF products are named after, "fdf" or "fdf_no_i" for the run without Stokes I. Defaults to "fdf".
+        header_cards (HeaderCards | None, optional): Run metadata stamped on every map, from ``rm_synthesis_header_cards``. Defaults to None.
+
+    Returns:
+        list[Path]: The paths written, empty for a key with no FITS output
+    """
+    kind, _, rest = key.partition(".")
+
+    if kind in ("moment", "debiased", "peak"):
+        label, _, field = rest.partition(".")
+        maps = PEAK_MAPS if kind == "peak" else MOMENT_MAPS
+        # A debiased FDF leaves mom0_debias unchanged, so writing it again under
+        # a second name would read as a second measurement.
+        if kind == "debiased" and field == "mom0_debias":
+            return []
+        name, unit, comment = maps[field]
+        suffix = ".debiased" if kind == "debiased" else ""
+        header = WCS(reference_header).celestial.to_header()
+        header["BUNIT"] = (unit, comment)
+        _stamp_stokes_i_weights(header, stokes_i_weighting, stokes_i_weight_alpha)
+        header.update(header_cards or {})
+        return [
+            _write_map(
+                data,
+                header,
+                Path(f"{output_prefix}.{fdf_tag}.{label}.{name}{suffix}.fits"),
+            )
+        ]
+
+    if key == "rmclean_niter":
+        return [
+            write_rmclean_niter_map_to_fits(
+                niter_map=data,
+                reference_header=reference_header,
+                output_prefix=output_prefix,
+                fdf_tag=fdf_tag,
+                header_cards=header_cards,
+            )
+        ]
+
+    if key in STOKES_I_MAP_SUFFIXES:
+        header = _stokes_i_fit_header(
+            reference_header=reference_header,
+            ref_freq_hz=ref_freq_hz,
+            fit_function=fit_function,
+        )
+        _stamp_stokes_i_weights(header, stokes_i_weighting, stokes_i_weight_alpha)
+        header.update(header_cards or {})
+        path = Path(f"{output_prefix}.{STOKES_I_MAP_SUFFIXES[key]}.fits")
+        return [_write_map(data, header, path)]
+
+    if key in ("stokes_i_coeff", "stokes_i_coeff_error"):
+        # The plane names are what make the terms usable, so without them the
+        # maps are not worth writing.
+        if coeff_names is None:
+            logger.warning(
+                "rm-lite returned Stokes I model terms with no names for them, so "
+                "the per-term maps cannot be written."
+            )
+            return []
+        is_error = key.endswith("_error")
+        written = []
+        for index, name in enumerate(coeff_names):
+            header = _stokes_i_fit_header(
+                reference_header=reference_header,
+                ref_freq_hz=ref_freq_hz,
+                fit_function=fit_function,
+                coeff=(index, name),
+            )
+            _stamp_stokes_i_weights(header, stokes_i_weighting, stokes_i_weight_alpha)
+            header.update(header_cards or {})
+            if is_error:
+                # Marginal, i.e. sqrt(diag(pcov)): it ignores the strong
+                # correlations between the terms, so it is not the error on the
+                # model itself.
+                header.add_comment(
+                    "1-sigma marginal error; ignores inter-term correlation."
+                )
+            suffix = "_error" if is_error else ""
+            path = Path(f"{output_prefix}.stokesi.coeff.{name}{suffix}.fits")
+            written.append(_write_map(data[index], header, path))
+        return written
+
+    # The zarr cubes are written by `dask.array.store` as they compute, so the
+    # result carries nothing to write here.
+    return []
 
 
 def write_rm_products(
@@ -684,6 +931,7 @@ def write_rm_products(
     output_prefix: Path,
     moment_threshold_snr: float = 5.0,
     dask_client: Client | None = None,
+    fdf_tag: str = "fdf",
 ) -> list[Path]:
     """Batch-compute and write the requested RM-synthesis/RM-CLEAN output products.
 
@@ -699,6 +947,7 @@ def write_rm_products(
         moment_threshold_snr (float, optional): SNR cut applied before the moment maps. Defaults to 5.0.
         output_prefix (Path): Common prefix for the output files
         dask_client (Client | None, optional): A distributed Client (e.g. the one backing a Prefect ``DaskTaskRunner``) to compute across, rather than just the local worker. Defaults to None.
+        fdf_tag (str, optional): What the FDF products are named after, "fdf" or "fdf_no_i" for the run without Stokes I. Defaults to "fdf".
 
     Returns:
         list[Path]: Every FITS path written
@@ -719,7 +968,7 @@ def write_rm_products(
     # FDF cubes are only ever written to zarr, chunk-by-chunk with each worker
     # writing its own chunk. Gathering an (n_phi, ny, nx) cube into this process
     # to write it as FITS is tens of GB on a real mosaic.
-    zarr_store_path = Path(f"{output_prefix}.fdf.zarr") if cube_products else None
+    zarr_store_path = Path(f"{output_prefix}.{fdf_tag}.zarr") if cube_products else None
 
     # Blockwise fusion has to be off for both the `dask.array.store` below and
     # the `dask.compute` at the end of this function, or the FDF cubes cost an
@@ -777,25 +1026,37 @@ def write_rm_products(
     # (mom1/mom2 are then weighted by that noise and mean nothing). rm-lite
     # applies this same cut inside RM-CLEAN to its own moment maps, which flint
     # does not use, so it is rederived here from the shared theoretical noise.
-    moment_threshold = _snr_threshold(
+    moment_threshold = fdf_threshold_from_snr(
         moment_threshold_snr,
         synth_results.theoretical_noise.fdf_error_noise,
     )
-    for label in moment_products:
-        moments = _lazy_faraday_moments(
-            fdf_cube=fdf_sources[label],
-            synth_results=synth_results,
-            threshold=moment_threshold,
+    # All 21 maps in one task a chunk, rather than a chain per map. Debiased
+    # maps cannot join: `debias_fdf` needs neighbouring pixels.
+    fused_maps = {
+        label: faraday_maps(
+            fdf_sources[label],
+            phi_arr_radm2=synth_results.phi_arr_radm2,
+            fwhm_rmsf_radm2=synth_results.fwhm_rmsf_radm2,
+            fdf_units=fdf_units_for(label),
+            lam_sq_0_m2=synth_results.lam_sq_0_m2,
+            lambda_sq_arr_m2=synth_results.lambda_sq_arr_m2,
+            fdf_noise=synth_results.theoretical_noise.fdf_error_noise,
+            moment_threshold=moment_threshold,
         )
+        for label in dict.fromkeys((*moment_products, *peak_products))
+    }
+
+    for label in moment_products:
         for field in MOMENT_MAPS:
-            compute_targets[f"moment.{label}.{field}"] = getattr(moments, field).astype(
-                np.float32
-            )
+            compute_targets[f"moment.{label}.{field}"] = fused_maps[label][
+                field
+            ].astype(np.float32)
         if rmsynth_options.debias_moments:
             debiased = _lazy_faraday_moments(
                 fdf_cube=fdf_sources[label],
                 synth_results=synth_results,
                 threshold=None,
+                fdf_units=fdf_units_for(label),
                 debias=True,
                 debias_filter_size=rmsynth_options.debias_filter_size,
             )
@@ -816,16 +1077,8 @@ def write_rm_products(
     # single sample with no such floor, and ``peak_pi_error`` is written beside
     # it, so ``peak_pi / peak_pi_error`` is the SNR to select on afterwards.
     for label in peak_products:
-        peaks = calc_faraday_peaks(
-            fdf_sources[label],
-            phi_arr_radm2=synth_results.phi_arr_radm2,
-            fwhm_rmsf_radm2=synth_results.fwhm_rmsf_radm2,
-            fdf_error=synth_results.theoretical_noise.fdf_error_noise,
-            lam_sq_0_m2=synth_results.lam_sq_0_m2,
-            lambda_sq_arr_m2=synth_results.lambda_sq_arr_m2,
-        )
         for field in PEAK_MAPS:
-            compute_targets[f"peak.{label}.{field}"] = getattr(peaks, field).astype(
+            compute_targets[f"peak.{label}.{field}"] = fused_maps[label][field].astype(
                 np.float32
             )
 
@@ -844,6 +1097,11 @@ def write_rm_products(
         k: v.astype(np.float32) for k, v in stokes_i_maps.items() if v is not None
     }
     compute_targets.update(stokes_i_maps)
+    # A per-pixel lambda^2_0 gives a per-pixel reference frequency, which no REFFREQ card holds.
+    ref_freq_hz = synth_results.stokes_i_ref_freq_hz
+    if ref_freq_hz is not None and np.ndim(ref_freq_hz) != 0:
+        compute_targets["stokes_i_ref_freq"] = ref_freq_hz
+        ref_freq_hz = None
 
     # The fitted Stokes I model terms, (n_coeff, ny, nx) each -- n_coeff of the
     # maps above rather than anything cube-sized, since n_coeff is 3 or 4. Both
@@ -875,95 +1133,41 @@ def write_rm_products(
         if dask_client is not None
         else ("processes" if run_clean else "threads")
     )
-    computed = _compute_rm_products(
+    # Read before the compute, so each product can go straight to disk as it
+    # lands rather than waiting on the batch.
+    reference_header = fits.getheader(stokes_q_cube)
+    header_cards = rm_synthesis_header_cards(
+        synth_results, rmsynth_options.lam_sq_0_m2
+    ) | restoring_beam_cards(reference_header)
+
+    def write_product(key: str, data: Any) -> list[Path]:
+        return write_rm_product_to_fits(
+            key=key,
+            data=data,
+            reference_header=reference_header,
+            output_prefix=output_prefix,
+            ref_freq_hz=ref_freq_hz,
+            fit_function=rmsynth_options.fit_function,
+            coeff_names=synth_results.stokes_i_coeff_names,
+            stokes_i_weighting=synth_results.stokes_i_weighting,
+            stokes_i_weight_alpha=synth_results.stokes_i_weight_alpha,
+            fdf_tag=fdf_tag,
+            header_cards=header_cards,
+        )
+
+    written = compute_rm_products(
         compute_targets=compute_targets,
         fuse_config=fuse_config,
         scheduler=scheduler,
         workload=_describe_rm_workload(
             synth_results=synth_results, compute_keys=list(compute_targets)
         ),
+        on_result=write_product,
     )
-
-    reference_header = fits.getheader(stokes_q_cube)
 
     output_paths: list[Path] = []
     if zarr_store_path is not None:
         output_paths.append(zarr_store_path)
-    for label in moment_products:
-        output_paths.extend(
-            write_moment_maps_to_fits(
-                moments=FaradayMoments(
-                    **{
-                        field: computed[f"moment.{label}.{field}"]
-                        for field in MOMENT_MAPS
-                    }
-                ),
-                reference_header=reference_header,
-                output_prefix=output_prefix,
-                label=label,
-                debiased_moments=FaradayMoments(
-                    **{
-                        field: computed[f"debiased.{label}.{field}"]
-                        for field in MOMENT_MAPS
-                    }
-                )
-                if rmsynth_options.debias_moments
-                else None,
-            )
-        )
-
-    if "rmclean_niter" in computed:
-        output_paths.append(
-            write_rmclean_niter_map_to_fits(
-                niter_map=computed["rmclean_niter"],
-                reference_header=reference_header,
-                output_prefix=output_prefix,
-            )
-        )
-
-    for label in peak_products:
-        output_paths.extend(
-            write_peak_maps_to_fits(
-                peaks=FaradayPeaks(
-                    **{field: computed[f"peak.{label}.{field}"] for field in PEAK_MAPS}
-                ),
-                reference_header=reference_header,
-                output_prefix=output_prefix,
-                label=label,
-            )
-        )
-
-    if stokes_i_maps:
-        output_paths.extend(
-            write_stokes_i_fit_maps_to_fits(
-                stokes_i_maps={key: computed[key] for key in stokes_i_maps},
-                reference_header=reference_header,
-                output_prefix=output_prefix,
-                ref_freq_hz=synth_results.stokes_i_ref_freq_hz,
-                fit_function=rmsynth_options.fit_function,
-            )
-        )
-
-    if "stokes_i_coeff" in stokes_i_coeff_cubes:
-        # The plane names are what make the terms usable, so without them the
-        # maps are not worth writing -- but they arrive with the cube, so this
-        # would take an rm-lite change to reach.
-        if synth_results.stokes_i_coeff_names is None:
-            logger.warning(
-                "rm-lite returned Stokes I model terms with no names for them, so "
-                "the per-term maps cannot be written."
-            )
-        else:
-            output_paths.extend(
-                write_stokes_i_coeff_maps_to_fits(
-                    coeff_cube=computed["stokes_i_coeff"],
-                    coeff_names=synth_results.stokes_i_coeff_names,
-                    reference_header=reference_header,
-                    output_prefix=output_prefix,
-                    ref_freq_hz=synth_results.stokes_i_ref_freq_hz,
-                    fit_function=rmsynth_options.fit_function,
-                    coeff_error_cube=computed.get("stokes_i_coeff_error"),
-                )
-            )
-
+    for paths in written.values():
+        output_paths.extend(paths)
     return output_paths

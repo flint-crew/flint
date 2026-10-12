@@ -96,8 +96,8 @@ class SubtractFieldOptions(BaseOptions):
     """Path to the holography FITS cube that will be used when co-adding beams"""
     linmos_residuals: bool = False
     """Linmos the cleaning residuals together into a field image"""
-    beam_cutoff: float = 150
-    """Cutoff in arcseconds to use when calculating the common beam to convol to"""
+    cube_beam_cutoff: float = 150
+    """Cutoff in arcseconds to use when calculating the common beam each cube channel is convolved to"""
     pb_cutoff: float = 0.1
     """Primary beam attenuation cutoff to use during linmos"""
     stagger_delay_seconds: float | None = None
@@ -167,8 +167,10 @@ class FieldOptions(BaseOptions):
     """Path to the directory container the reference catalogues, used to generate validation plots"""
     linmos_residuals: bool = False
     """Linmos the cleaning residuals together into a field image"""
-    beam_cutoff: float = 150
-    """Cutoff in arcseconds to use when calculating the common beam to convol to"""
+    mfs_beam_cutoff: float = 150
+    """Cutoff in arcseconds to use when calculating the common beam the MFS images are convolved to"""
+    cube_beam_cutoff: float = 150
+    """Cutoff in arcseconds to use when calculating the common beam each cube channel is convolved to"""
     fixed_beam_shape: tuple[float, float, float] | None = None
     """Specify the final beamsize of linmos field images in (arcsec, arcsec, deg)"""
     pb_cutoff: float = 0.1
@@ -225,10 +227,14 @@ class PolFieldOptions(BaseOptions):
     """Path to the singularity CASA container"""
     holofile: Path | None = None
     """Path to the holography FITS cube that will be used when co-adding beams"""
-    beam_cutoff: float = 150
-    """Cutoff in arcseconds to use when calculating the common beam to convol to"""
+    mfs_beam_cutoff: float = 150
+    """Cutoff in arcseconds to use when calculating the common beam the MFS images are convolved to"""
+    cube_beam_cutoff: float = 150
+    """Cutoff in arcseconds to use when calculating the common beam each cube channel is convolved to"""
     fixed_beam_shape: tuple[float, float, float] | None = None
     """Specify the final beamsize of linmos field images in (arcsec, arcsec, deg)"""
+    total_resolution_cubes: bool = False
+    """Also write cubes at one beam covering the whole band, which RM synthesis needs"""
     pb_cutoff: float = 0.1
     """Primary beam attenuation cutoff to use during linmos"""
     bane_noise: bool = False
@@ -363,12 +369,18 @@ class RMSynthOptions(BaseOptions):
     """finufft OpenMP threads per dask chunk"""
     target_chunk_mb: float = 256
     """Target per-chunk memory footprint, in MB, when reading the Q/U cubes"""
+    convert_to_zarr: bool = False
+    """Convert each FITS cube to a zarr store beside it before reading"""
     fit_order: int = 2
     """Stokes I fractional-polarisation fit order; negative iterates orders and picks the best by AIC"""
     fit_function: Literal["log", "linear"] = "log"
     """Stokes I fit function: 'log' is a power law, 'linear' is a polynomial"""
     stokes_i_snr_cut: float | None = 5.0
-    """Below this frequency-averaged Stokes I SNR a pixel falls back to a flat model. None fits every pixel"""
+    """Below this frequency-averaged Stokes I SNR a pixel is not fitted, so it is blank in every Stokes I corrected product (see write_fdf_no_i). None fits every pixel"""
+    stokes_i_weighting: Literal["global", "per_pixel"] | None = "global"
+    """How the inverse-variance weights follow the Stokes I division. 'global' uses one field-wide power law, so every pixel shares one RMSF; 'per_pixel' uses each pixel's own model, for the most SNR but an RMSF that varies with spectral index; None keeps 1/sigma^2. Only used with a Stokes I cube and a noise-based weight_type"""
+    stokes_i_weight_alpha: float | Literal["auto"] = "auto"
+    """Spectral index of the field-wide power law, or 'auto' to fit it to the field's mean Stokes I. Pin it to give several fields one RMSF"""
     compute_model_error: bool = False
     """Monte-Carlo the Stokes I fit's per-pixel model error via n_error_samples resamples. Only used if a Stokes I cube is given"""
     n_error_samples: int = 1000
@@ -381,8 +393,14 @@ class RMSynthOptions(BaseOptions):
     """Reference lambda^2 the FDF is derotated to. 'auto' picks one value for the whole cube; 'per_pixel' gives each pixel its own, which also forces per_pixel_rmsf"""
     per_pixel_rmsf: bool = False
     """Compute the RMSF for each pixel"""
+    do_fit_rmsf: bool = False
+    """Take the RMSF FWHM from a Gaussian fit to the main lobe of the shared RMSF, rather than the analytic 3.8 / (lambda^2 range)"""
+    rmsf_fitting_size: float = 1.25
+    """Width of that fit's window in analytic FWHMs, cut at the main lobe's first minimum"""
     estimate_stokes_i_noise: bool = True
     """Derive the per-channel Stokes I error from the Stokes I cube when no Stokes I weight cube is given. A weight cube takes precedence"""
+    write_fdf_no_i: bool = False
+    """Also write every requested product without the Stokes I correction, named 'fdf_no_i' rather than 'fdf', so every pixel with Q/U data has a value. Shares the corrected run's lambda^2_0 unless lam_sq_0_m2 is 'per_pixel'. Only used with a Stokes I cube"""
 
 
 class RMCleanOptions(BaseOptions):
@@ -455,7 +473,7 @@ class RMSynthFieldOptions(BaseOptions):
     """Measure BANE cubes off the common-resolution cubes and take the FDF noise from the RMS. Parameters come from the strategy's ``fftbane`` mode. Supersedes ``error_cubes``, which describe the unconvolved inputs"""
     imaging_strategy: Path | None = None
     """Path to a FLINT imaging yaml file that contains the RMSynthOptions/RMCleanOptions settings to use"""
-    beam_cutoff: float | None = None
+    cube_beam_cutoff: float | None = None
     """Cutoff in arcseconds to use when bringing the input cubes to a common beam. Channels coarser than this are blanked instead of dragging every channel out to their resolution. Defaults to no cutoff"""
     cube_products: list[Literal["dirty", "clean", "model"]] = []
     """Which Faraday dispersion function (FDF) cubes to write as FITS. Nothing by default, as these cubes can be large."""
@@ -541,8 +559,10 @@ class RACSAllOptions(BaseOptions):
     """Path to the directory container the reference catalogues, used to generate validation plots"""
     linmos_residuals: bool = False
     """Linmos the cleaning residuals together into a field image"""
-    beam_cutoff: float = 150
-    """Cutoff in arcseconds to use when calculating the common beam to convol to"""
+    mfs_beam_cutoff: float = 150
+    """Cutoff in arcseconds to use when calculating the common beam the MFS images are convolved to"""
+    cube_beam_cutoff: float = 150
+    """Cutoff in arcseconds to use when calculating the common beam each cube channel is convolved to"""
     pb_cutoff: float = 0.1
     """Primary beam attenuation cutoff to use during linmos"""
     use_beam_masks: bool = False

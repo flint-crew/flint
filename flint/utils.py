@@ -15,7 +15,7 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 from socket import gethostname
-from typing import Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import astropy.units as u
 import numpy as np
@@ -23,9 +23,11 @@ from astropy.coordinates import SkyCoord
 from astropy.io import fits
 from astropy.wcs import WCS
 
-from flint.convol import BeamShape
 from flint.exceptions import TimeLimitException
 from flint.logging import logger
+
+if TYPE_CHECKING:
+    from flint.convol import BeamShape
 
 # TODO: This Captain is aware that there is a common fits getheader between
 # a couple of functions that interact with tasks. Perhaps a common FITS properties
@@ -373,6 +375,8 @@ def get_beam_shape(fits_path: Path) -> BeamShape | None:
     Returns:
         Optional[BeamShape]: Shape of the beam stored in the FITS image. None is returned if the beam is not found.
     """
+
+    from flint.convol import BeamShape  # pipeline dependencies; keeps utils core-only
 
     header = fits.getheader(filename=fits_path)
 

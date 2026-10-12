@@ -20,11 +20,13 @@ from flint.coadd.linmos import (
     _get_holography_linmos_options,
     _get_image_weight_plane,
     _linmos_cleanup,
+    blank_zero_pixels,
     create_bound_box,
+    generate_linmos_parameter_set,
     generate_weights_list_and_files,
     trim_fits_image,
 )
-from flint.naming import create_linmos_base_path
+from flint.naming import create_linmos_base_path, create_linmos_names
 
 
 def get_lots_of_names_2() -> list[Path]:
@@ -237,6 +239,48 @@ def test_linmos_holo_options(tmpdir):
         )
 
 
+def test_blank_zero_pixels_leaves_the_pixel_grid_alone(tmp_path):
+    """A cube is built with trimming off, and still needs linmos' padding blanked.
+
+    Blanking used to ride along with ``trim_fits_image``, so turning trimming off
+    to keep every channel on one pixel grid left the 0.0 padding in place, where
+    the convolution to a common beam smeared it into the data.
+    """
+    out_fits = tmp_path / "example.fits"
+    create_fits_image(out_fits, set_to_nan=False)
+
+    blank_zero_pixels(out_fits)
+
+    header = fits.getheader(out_fits)
+    data = fits.getdata(out_fits)
+    # Untrimmed: same grid, same reference pixel, so every channel still lines up.
+    assert data.shape == (1000, 1000)
+    assert header["CRPIX1"] == 10
+    assert header["CRPIX2"] == 20
+    assert np.sum(data == 0.0) == 0
+    # Only the padding went; the real pixels are untouched.
+    assert np.all(data[10:600, 20:500] == 1)
+    assert np.isnan(data).sum() == 1000 * 1000 - 590 * 480
+
+
+def test_blank_zero_pixels_on_a_cube(tmp_path):
+    """Per-channel padding is blanked on its own plane, not across the cube."""
+    out_fits = tmp_path / "cube.fits"
+    data = np.ones((4, 10, 10))
+    # One channel is wholly blank, another is padded around a valid island.
+    data[1] = 0.0
+    data[2, 3:7, 3:7] = 0.0
+    fits.writeto(out_fits, data=data, header=fits.header.Header({"CRPIX1": 5}))
+
+    blank_zero_pixels(out_fits)
+
+    blanked = fits.getdata(out_fits)
+    assert blanked.shape == (4, 10, 10)  # type: ignore
+    assert np.isnan(blanked[1]).all()  # type: ignore
+    assert np.isnan(blanked[2, 3:7, 3:7]).all()  # type: ignore
+    assert np.all(blanked[0] == 1) and np.all(blanked[3] == 1)  # type: ignore
+
+
 def test_trim_fits_while_blanking(tmp_path):
     """Ensure that fits files can be trimmed appropriately based on row/columns with valid pixels.
     This will require pixels with values of 0.0 to be naned"""
@@ -418,3 +462,30 @@ def test_bounding_box_with_mask():
     assert bb.xmax == 600  # the maximum is exclusive, i.e. slice ready
     assert bb.ymin == 20
     assert bb.ymax == 500  # the maximum is exclusive, i.e. slice ready
+
+
+@pytest.mark.parametrize(
+    ("linmos_options", "expected"),
+    [(LinmosOptions(), "cubic"), (LinmosOptions(regrid_method="linear"), "linear")],
+)
+def test_linmos_parset_sets_the_regrid_method(tmp_path, linmos_options, expected):
+    """linmos' own default is linear, which suppresses the peak of a source."""
+    images = []
+    for beam in range(2):
+        image = tmp_path / f"SB1234.RACS_1200-45.beam{beam:02d}.round4.i.fits"
+        create_fits_image(image, image_size=(64, 64), set_to_nan=False)
+        images.append(image)
+
+    summary = generate_linmos_parameter_set(
+        images=images,
+        linmos_names=create_linmos_names(name_prefix=str(tmp_path / "field")),
+        linmos_options=linmos_options,
+        weight_list="[weight0,weight1]",
+    )
+
+    parset = summary.parset_path.read_text()
+    method = [
+        line for line in parset.splitlines() if line.startswith("linmos.regrid.method")
+    ]
+    assert len(method) == 1
+    assert method[0].split("=")[1].strip() == expected

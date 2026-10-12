@@ -28,11 +28,15 @@ from flint.rmsynth import (
     PEAK_MAPS,
     FDFLabel,
     RMSynth3DResults,
-    _compute_rm_products,
-    _snr_threshold,
+    _warn_on_no_error_cubes,
+    check_cubes_are_single_precision,
+    compute_rm_products,
+    fdf_threshold_from_snr,
     needs_rmclean,
+    restoring_beam_cards,
     run_rmclean_3d,
     run_rmsynth_3d,
+    write_rm_product_to_fits,
     write_rm_products,
     write_stokes_i_coeff_maps_to_fits,
 )
@@ -327,6 +331,89 @@ def test_rmsynth_with_stokes_i_writes_fit_maps(
     assert 700e6 < header["REFFREQ"] < 1300e6
 
 
+@pytest.mark.parametrize("lam_sq_0_m2", [0.1, "per_pixel"])
+def test_every_map_carries_the_run_metadata(
+    tmp_path: Path, qu_cubes: tuple[Path, Path], lam_sq_0_m2: float | str
+) -> None:
+    """A map is read on its own downstream, so it carries lambda^2_0, the RMSF, the band and the beam."""
+    stokes_q_cube, stokes_u_cube = qu_cubes
+    with fits.open(stokes_q_cube, mode="update") as hdul:
+        hdul[0].header.update({"BMAJ": 0.006, "BMIN": 0.005, "BPA": 30.0})
+    output_paths = _synth_and_write(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        stokes_i_cube=_make_i_cube(tmp_path),
+        rmsynth_options=RMSynthOptions(lam_sq_0_m2=lam_sq_0_m2),
+        rmclean_options=RMCleanOptions(),
+        cube_products=[],
+        moment_products=["clean"],
+        peak_products=["clean"],
+        output_prefix=tmp_path / "test_field",
+        stokes_i_weight_cube=_make_i_weight_cube(tmp_path),
+    )
+    freq_hz = np.linspace(700e6, 1300e6, N_CHAN)
+    lambda_sq_range_m2 = np.ptp((299792458.0 / freq_hz) ** 2)
+    maps = [path for path in output_paths if path.suffix == ".fits"]
+    assert any(".niter." in path.name for path in maps)
+    assert any(".stokesi.coeff." in path.name for path in maps)
+    for path in maps:
+        header = fits.getheader(path)
+        assert header["NCHAN"] == N_CHAN, path.name
+        assert (header["BMAJ"], header["BMIN"], header["BPA"]) == (0.006, 0.005, 30.0)
+        assert header["FREQMIN"] == pytest.approx(freq_hz[0])
+        assert header["FREQMAX"] == pytest.approx(freq_hz[-1])
+        assert header["CHANWID"] == pytest.approx(freq_hz[1] - freq_hz[0], rel=1e-6)
+        assert header["RMSFFWHM"] == pytest.approx(3.8 / lambda_sq_range_m2)
+        assert header["MAXSCALE"] == pytest.approx(
+            np.pi * (freq_hz[-1] / 299792458.0) ** 2
+        )
+        if lam_sq_0_m2 == "per_pixel":
+            assert "LAMSQ0" not in header
+        else:
+            assert header["LAMSQ0"] == pytest.approx(lam_sq_0_m2)
+
+
+def test_a_cube_without_a_beam_gives_maps_without_one(tmp_path: Path) -> None:
+    written = write_rm_product_to_fits(
+        key="peak.clean.peak_pi",
+        data=np.zeros((NY, NX)),
+        reference_header=fits.getheader(_make_i_cube(tmp_path)),
+        output_prefix=tmp_path / "test_field",
+    )
+    assert "BMAJ" not in fits.getheader(written[0])
+
+
+def test_a_blanked_cube_zero_beam_is_not_stamped() -> None:
+    header = fits.Header({"BMAJ": 0.0, "BMIN": 0.0, "BPA": 0.0})
+    assert restoring_beam_cards(header) == {}
+
+
+def test_a_per_pixel_reference_frequency_is_written_as_a_map(
+    tmp_path: Path, qu_cubes: tuple[Path, Path]
+) -> None:
+    """With a per-pixel lambda^2_0 the Stokes I terms are each pixel's own, so their
+    reference frequency is a map rather than a REFFREQ card."""
+    stokes_q_cube, stokes_u_cube = qu_cubes
+    output_prefix = tmp_path / "test_field"
+    output_paths = _synth_and_write(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        stokes_i_cube=_make_i_cube(tmp_path),
+        rmsynth_options=RMSynthOptions(lam_sq_0_m2="per_pixel"),
+        rmclean_options=RMCleanOptions(),
+        cube_products=[],
+        moment_products=["dirty"],
+        output_prefix=output_prefix,
+        stokes_i_weight_cube=_make_i_weight_cube(tmp_path),
+    )
+    ref_freq_path = Path(f"{output_prefix}.stokesi.ref_freq.fits")
+    assert ref_freq_path in output_paths
+    ref_freq_hz = fits.getdata(ref_freq_path)
+    assert ref_freq_hz.shape == (NY, NX)
+    assert np.all((700e6 < ref_freq_hz) & (ref_freq_hz < 1300e6))
+    assert "REFFREQ" not in fits.getheader(Path(f"{output_prefix}.stokesi.alpha.fits"))
+
+
 @pytest.mark.parametrize(
     ("fit_function", "expected_names"),
     [("log", ("flux", "alpha", "beta")), ("linear", ("c0", "c1", "c2"))],
@@ -378,6 +465,233 @@ def test_rmsynth_writes_a_named_map_per_stokes_i_model_term(
             fits.getdata(Path(f"{output_prefix}.stokesi.coeff.alpha.fits")),
             equal_nan=True,
         )
+
+
+def test_compute_rm_products_keeps_what_the_writer_returns() -> None:
+    """Given a writer, the batch comes back holding paths, not the maps.
+
+    That is what bounds the memory: there are 21 maps a label at `ny * nx` each,
+    and a wide mosaic cannot hold them all at once waiting for the last one.
+    """
+    import dask.array as dask_array
+
+    targets = {
+        "first": dask_array.arange(4, chunks=2) * 2.0,
+        "second": dask_array.arange(4, chunks=2) + 1.0,
+    }
+    seen = {}
+
+    def writer(key: str, value: object) -> list[Path]:
+        seen[key] = np.asarray(value).tolist()
+        return [Path(f"{key}.fits")]
+
+    computed = compute_rm_products(
+        compute_targets=targets,
+        fuse_config={},
+        scheduler="synchronous",
+        workload="test",
+        on_result=writer,
+    )
+
+    assert seen == {"first": [0.0, 2.0, 4.0, 6.0], "second": [1.0, 2.0, 3.0, 4.0]}
+    assert computed == {"first": [Path("first.fits")], "second": [Path("second.fits")]}
+
+
+@pytest.mark.parametrize(
+    ("key", "expected"),
+    [
+        ("moment.clean.mom0", "{prefix}.fdf.clean.mom0.fits"),
+        ("debiased.clean.mom0", "{prefix}.fdf.clean.mom0.debiased.fits"),
+        ("peak.dirty.peak_pi", "{prefix}.fdf.dirty.peak_pi.fits"),
+        ("peak.dirty.peak_rm_radm2", "{prefix}.fdf.dirty.peak_rm.fits"),
+        ("stokes_i_alpha", "{prefix}.stokesi.alpha.fits"),
+    ],
+)
+def test_write_rm_product_names_each_product(
+    tmp_path: Path, key: str, expected: str
+) -> None:
+    """Every compute key resolves to the file the grouped writers would give it."""
+    reference_header = fits.getheader(_make_i_cube(tmp_path))
+    output_prefix = tmp_path / "test_field"
+
+    written = write_rm_product_to_fits(
+        key=key,
+        data=np.zeros((NY, NX)),
+        reference_header=reference_header,
+        output_prefix=output_prefix,
+    )
+
+    assert written == [Path(expected.format(prefix=output_prefix))]
+    assert written[0].exists()
+
+
+@pytest.mark.parametrize(
+    ("key", "expected"),
+    [
+        ("moment.clean.mom0", "{prefix}.fdf_no_i.clean.mom0.fits"),
+        ("peak.dirty.peak_pi", "{prefix}.fdf_no_i.dirty.peak_pi.fits"),
+        ("rmclean_niter", "{prefix}.fdf_no_i.clean.niter.fits"),
+    ],
+)
+def test_write_rm_product_names_the_fdf_after_its_tag(
+    tmp_path: Path, key: str, expected: str
+) -> None:
+    """The run without Stokes I writes the same products under its own name."""
+    output_prefix = tmp_path / "test_field"
+    written = write_rm_product_to_fits(
+        key=key,
+        data=np.zeros((NY, NX)),
+        reference_header=fits.getheader(_make_i_cube(tmp_path)),
+        output_prefix=output_prefix,
+        fdf_tag="fdf_no_i",
+    )
+    assert written == [Path(expected.format(prefix=output_prefix))]
+
+
+def test_fdf_no_i_covers_the_pixels_the_stokes_i_correction_blanks(
+    tmp_path: Path, qu_cubes: tuple[Path, Path]
+) -> None:
+    """Corrected maps are blank where Stokes I is too faint to fit; fdf_no_i is not."""
+    stokes_q_cube, stokes_u_cube = qu_cubes
+    stokes_i_cube = _make_i_cube(tmp_path)
+    with fits.open(stokes_i_cube, mode="update") as hdul:
+        hdul[0].data[:, 0, :] *= 1e-4
+    rmsynth_options = RMSynthOptions()
+    corrected = _run_rmsynth_3d(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        rmsynth_options=rmsynth_options,
+        stokes_i_cube=stokes_i_cube,
+    )
+    no_i_options = rmsynth_options.with_options(lam_sq_0_m2=corrected.lam_sq_0_m2)
+    no_i = _run_rmsynth_3d(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        rmsynth_options=no_i_options,
+    )
+    output_prefix = tmp_path / "field"
+    for synth_results, options, fdf_tag in (
+        (corrected, rmsynth_options, "fdf"),
+        (no_i, no_i_options, "fdf_no_i"),
+    ):
+        write_rm_products(
+            synth_results=synth_results,
+            clean_results=None,
+            stokes_q_cube=stokes_q_cube,
+            rmsynth_options=options,
+            rmclean_options=RMCleanOptions(),
+            cube_products=[],
+            moment_products=[],
+            peak_products=["dirty"],
+            output_prefix=output_prefix,
+            fdf_tag=fdf_tag,
+        )
+
+    corrected_pi = fits.getdata(Path(f"{output_prefix}.fdf.dirty.peak_pi.fits"))
+    no_i_pi = fits.getdata(Path(f"{output_prefix}.fdf_no_i.dirty.peak_pi.fits"))
+    assert np.isnan(corrected_pi[0]).all()
+    assert np.isfinite(corrected_pi[1:]).all()
+    assert np.isfinite(no_i_pi).all()
+    assert no_i.lam_sq_0_m2 == corrected.lam_sq_0_m2
+
+
+def test_fdf_no_i_reuses_the_corrected_runs_zarr_stores(
+    tmp_path: Path, qu_cubes: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The run without Stokes I reads the stores the corrected run wrote, and
+    gives the FDF it would have given from the FITS cubes."""
+    import rm_lite.tools_3d.rmsynth as rmsynth_3d_mod
+
+    from flint.prefect.flows.rmsynth_pipeline import _zarr_store_or_cube
+
+    stokes_q_cube, stokes_u_cube = qu_cubes
+    freq_hz = np.linspace(700e6, 1300e6, N_CHAN)
+    weights = {
+        s: _make_weight_cube(tmp_path, (N_CHAN, NY, NX), freq_hz, 1e-3, f"stokes{s}")
+        for s in "qu"
+    }
+    options = RMSynthOptions(convert_to_zarr=True)
+    _run_rmsynth_3d(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        rmsynth_options=options,
+        stokes_i_cube=_make_i_cube(tmp_path),
+        stokes_q_weight_cube=weights["q"],
+        stokes_u_weight_cube=weights["u"],
+    )
+
+    converted: list[Path] = []
+    convert = rmsynth_3d_mod.fits_cube_to_zarr
+
+    def counting(fits_file, *args, **kwargs):
+        converted.append(Path(fits_file))
+        return convert(fits_file, *args, **kwargs)
+
+    monkeypatch.setattr(rmsynth_3d_mod, "fits_cube_to_zarr", counting)
+    from_stores = _run_rmsynth_3d(
+        stokes_q_cube=_zarr_store_or_cube(stokes_q_cube),
+        stokes_u_cube=_zarr_store_or_cube(stokes_u_cube),
+        rmsynth_options=options,
+        stokes_q_weight_cube=_zarr_store_or_cube(weights["q"]),
+        stokes_u_weight_cube=_zarr_store_or_cube(weights["u"]),
+    )
+    assert converted == []
+
+    from_fits = _run_rmsynth_3d(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        rmsynth_options=RMSynthOptions(),
+        stokes_q_weight_cube=weights["q"],
+        stokes_u_weight_cube=weights["u"],
+    )
+    np.testing.assert_allclose(
+        from_stores.fdf_dirty_cube.compute(), from_fits.fdf_dirty_cube.compute()
+    )
+
+
+def test_single_precision_check_skips_zarr_stores(tmp_path: Path) -> None:
+    """A store has no FITS header to read; its cube was checked when converted."""
+    store = tmp_path / "cube.zarr"
+    store.mkdir()
+    check_cubes_are_single_precision(store)
+
+
+@pytest.mark.parametrize("key", ["peak.dirty.peak_pi", "stokes_i_ref_flux"])
+def test_write_rm_product_records_the_stokes_i_weights(
+    tmp_path: Path, key: str
+) -> None:
+    """A PI or Stokes I map says how the weights followed the Stokes I model."""
+    reference_header = fits.getheader(_make_i_cube(tmp_path))
+
+    (written,) = write_rm_product_to_fits(
+        key=key,
+        data=np.zeros((NY, NX)),
+        reference_header=reference_header,
+        output_prefix=tmp_path / "test_field",
+        stokes_i_weighting="global",
+        stokes_i_weight_alpha=-0.8,
+    )
+
+    header = fits.getheader(written)
+    assert header["SIWEIGHT"] == "global"
+    assert header["SIWALPHA"] == -0.8
+
+
+def test_debiased_mom0_debias_is_not_written_twice(tmp_path: Path) -> None:
+    """Debiasing leaves mom0_debias alone, so a second copy under a second name
+    would read as a second measurement."""
+    reference_header = fits.getheader(_make_i_cube(tmp_path))
+
+    assert (
+        write_rm_product_to_fits(
+            key="debiased.clean.mom0_debias",
+            data=np.zeros((NY, NX)),
+            reference_header=reference_header,
+            output_prefix=tmp_path / "test_field",
+        )
+        == []
+    )
+    assert not list(tmp_path.glob("*.debiased.fits"))
 
 
 def test_stokes_i_coeff_maps_without_an_error_cube(tmp_path: Path) -> None:
@@ -684,6 +998,48 @@ def test_rmsynth_no_products_is_noop(
     )
 
 
+def test_rmsynth_warns_about_double_precision_cubes(tmp_path, caplog) -> None:
+    """rm-lite takes the FDF's precision from the cubes, so a float64 cube
+    silently doubles every Faraday-depth array it builds."""
+    stokes_q_cube, stokes_u_cube = _make_qu_cubes(tmp_path)
+
+    with caplog.at_level("WARNING"):
+        check_cubes_are_single_precision(stokes_q_cube, stokes_u_cube)
+    assert "double precision" not in caplog.text
+
+    doubled = tmp_path / "q_f8.fits"
+    with fits.open(stokes_q_cube) as hdul:
+        fits.PrimaryHDU(hdul[0].data.astype(np.float64), header=hdul[0].header).writeto(
+            doubled
+        )
+
+    with caplog.at_level("WARNING"):
+        check_cubes_are_single_precision(doubled, stokes_u_cube)
+    assert "double precision" in caplog.text
+
+
+def test_rmsynth_warns_when_it_has_no_error_cubes(tmp_path, caplog) -> None:
+    """Without them rm-lite shares one per-channel noise across the whole field,
+    which makes an SNR-scaled CLEAN mask meaningless at a mosaic's edge."""
+    q_path, u_path = _make_qu_cubes(tmp_path)
+    cubes = CubesForRMSynth(q_path=q_path, u_path=u_path)
+
+    with caplog.at_level("WARNING"):
+        _warn_on_no_error_cubes(None)
+    assert "No error or weight cubes given" in caplog.text
+
+    caplog.clear()
+    with caplog.at_level("WARNING"):
+        _warn_on_no_error_cubes(NoiseCubesForRMSynth(q_path=q_path, u_path=u_path))
+    assert "No error or weight cubes given" not in caplog.text
+
+    # And the warning really is on the path rm-synthesis takes.
+    caplog.clear()
+    with caplog.at_level("WARNING"):
+        run_rmsynth_3d(stokes_cubes=cubes, rmsynth_options=RMSynthOptions())
+    assert "No error or weight cubes given" in caplog.text
+
+
 def test_rmsynth_rejects_compressed_cubes(tmp_path: Path) -> None:
     """A gzipped cube cannot be memmapped, so rm-lite's per-block reopens would
     each inflate the whole cube into memory."""
@@ -780,7 +1136,13 @@ def test_rmsynth_options_reach_rm_lite(
     monkeypatch.setattr(rmsynth_mod, "rmsynth_3d_from_fits", _capture)
 
     stokes_q_cube, stokes_u_cube = qu_cubes
-    rmsynth_options = RMSynthOptions(per_pixel_rmsf=True, estimate_stokes_i_noise=False)
+    rmsynth_options = RMSynthOptions(
+        per_pixel_rmsf=True,
+        estimate_stokes_i_noise=False,
+        convert_to_zarr=True,
+        do_fit_rmsf=True,
+        rmsf_fitting_size=1.5,
+    )
     with pytest.raises(NotSupportedError, match="stop before synthesising"):
         _run_rmsynth_3d(
             stokes_q_cube=stokes_q_cube,
@@ -789,8 +1151,11 @@ def test_rmsynth_options_reach_rm_lite(
             rmsynth_options=rmsynth_options,
         )
 
-    assert captured["per_pixel_rmsf"] is True
-    assert captured["estimate_stokes_i_noise"] is False
+    # Applied by flint after rm-lite returns, so they have nothing to forward.
+    flint_side = {"debias_moments", "debias_filter_size", "write_fdf_no_i"}
+    for field in set(type(rmsynth_options).model_fields) - flint_side:
+        assert field in captured, f"{field} never reaches rm-lite"
+        assert captured[field] == getattr(rmsynth_options, field)
 
 
 def _within_cutoff(blank_outside: float) -> np.ndarray:
@@ -1144,9 +1509,9 @@ def test_peaks_are_never_cut_even_where_a_pixel_has_no_weight(
     linmos blanked, ``0 * inf`` is NaN, and every comparison against NaN is
     False -- so the cut meant to pass everything would instead blank the map."""
     assert not hasattr(RMSynthFieldOptions(), "peak_threshold_snr")
-    assert _snr_threshold(0.0, np.float64(np.inf)) is None
-    assert _snr_threshold(0.0, np.array([1e-5, np.inf])) is None
-    assert _snr_threshold(5.0, np.float64(2.0)) == 10.0
+    assert fdf_threshold_from_snr(0.0, np.float64(np.inf)) is None
+    assert fdf_threshold_from_snr(0.0, np.array([1e-5, np.inf])) is None
+    assert fdf_threshold_from_snr(5.0, np.float64(2.0)) == 10.0
 
     stokes_q_cube, stokes_u_cube = qu_cubes
     output_prefix = tmp_path / "default_cut"
@@ -1266,12 +1631,13 @@ def test_multiscale_rmclean_is_refused_rather_than_ignored(tmp_path: Path) -> No
 
 
 def test_stokes_i_fit_on_noise_stays_finite(tmp_path: Path) -> None:
-    """With the SNR cut working, a noise-only cube must come back with no
-    polarised flux and nothing infinite.
+    """With the SNR cut working, a noise-only cube must come back blank, with
+    nothing infinite.
 
     A power law fitted to a noise spectrum is unconstrained and can dip to
     ~1e-10 mid-band; Q/U divided by that is an infinite FDF and an infinite
-    mom0. The cut is what stops those pixels being fitted at all.
+    mom0. The cut is what stops those pixels being fitted at all, and with no
+    Stokes I model they have no corrected FDF.
     """
     q_cube, u_cube, i_cube, i_weight_cube = _make_noise_only_cubes(tmp_path)
     output_prefix = tmp_path / "noise_field"
@@ -1290,9 +1656,7 @@ def test_stokes_i_fit_on_noise_stays_finite(tmp_path: Path) -> None:
 
     for label in ("dirty", "clean"):
         mom0 = fits.getdata(Path(f"{output_prefix}.fdf.{label}.mom0.fits"))
-        assert np.isfinite(mom0).all(), f"{label} mom0 has non-finite pixels"
-        # Nothing clears the moment threshold, so there is no polarised flux
-        assert np.allclose(mom0, 0.0), f"{label} mom0 found flux in pure noise"
+        assert np.isnan(mom0).all(), f"{label} mom0 has a pixel the cut let through"
 
 
 @pytest.mark.parametrize(
@@ -1403,7 +1767,7 @@ def test_rmclean_runs_once_per_chunk_on_a_distributed_client(
     """The same once-per-chunk guarantee as the threaded test, on the path a real
     pipeline run takes.
 
-    ``_compute_rm_products`` submits to a distributed Client as futures so it can
+    ``compute_rm_products`` submits to a distributed Client as futures so it can
     report each product as it lands. Submitting them one at a time instead would
     rebuild the shared synthesis/RM-CLEAN graph per product -- invisible in the
     output, just N times the runtime of the slowest stage. The threaded test
@@ -1486,7 +1850,7 @@ def test_products_sharing_a_dask_key_are_all_returned() -> None:
     )
     try:
         with Client(cluster) as client:
-            computed = _compute_rm_products(
+            computed = compute_rm_products(
                 compute_targets=targets,
                 fuse_config={},
                 scheduler=client,
@@ -1518,10 +1882,10 @@ def test_computing_from_inside_a_worker_does_not_deadlock() -> None:
     import dask
     from distributed import Client, LocalCluster, get_client
 
-    from flint.rmsynth import _compute_rm_products
+    from flint.rmsynth import compute_rm_products
 
     def compute_on_the_worker() -> dict[str, object]:
-        return _compute_rm_products(
+        return compute_rm_products(
             compute_targets={"only": dask.delayed(int)(7)},
             fuse_config={},
             scheduler=get_client(),
@@ -1544,6 +1908,78 @@ def test_computing_from_inside_a_worker_does_not_deadlock() -> None:
         cluster.close()
 
 
+def test_futures_are_drained_on_the_owning_clients_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``as_completed`` must be told which event loop to wait on.
+
+    Its ``loop`` defaults to ``default_client().loop``, and the client that owns
+    these futures is deliberately not the default one: ``task_write_rm_products``
+    asks for it with ``set_as_default=False``, which also keeps it out of
+    ``_current_client``. On a worker the default is then the worker's *own*
+    client, whose loop is the worker's, while ``.result()`` waits on this
+    client's private loop.
+
+    An ``asyncio.Event`` binds to the first loop that blocks on it, so the two
+    loops coexist quietly for as long as every drained future is already
+    finished -- waiting on a set event returns without ever asking which loop it
+    belongs to. The first future dask has to genuinely re-wait blows up instead:
+    ``Client._gather`` clears the event when it reschedules a key whose data went
+    missing, and the next wait raises ``is bound to a different event loop``,
+    losing a whole run over what should have been a retry.
+
+    Reproducing that needs a key to go missing mid-drain, so the loop this asks
+    for is asserted directly. Two live clients are what makes the assertion mean
+    anything: with only the owning one the default resolves back to it and the
+    wrong loop is the right loop by accident.
+    """
+    import dask
+    from distributed import Client, LocalCluster
+
+    from flint import rmsynth as rmsynth_module
+
+    loops: list[object] = []
+    real_as_completed = rmsynth_module.as_completed
+
+    def recording_as_completed(futures, **kwargs):  # type: ignore[no-untyped-def]
+        loops.append(kwargs.get("loop"))
+        return real_as_completed(futures, **kwargs)
+
+    monkeypatch.setattr(rmsynth_module, "as_completed", recording_as_completed)
+
+    cluster = LocalCluster(
+        n_workers=1,
+        threads_per_worker=1,
+        processes=False,
+        dashboard_address=None,
+        silence_logs=logging.ERROR,
+    )
+    try:
+        # The default is handed the cluster, so it shares its loop -- the worker's
+        # own client does the same with `loop=worker.loop`. The owning one
+        # connects by address with no loop, as `get_dask_client` does, and gets
+        # its own loop thread. That split is the whole bug.
+        with (
+            Client(cluster) as default_client,
+            Client(cluster.scheduler_address, set_as_default=False) as owning_client,
+        ):
+            assert owning_client.loop is not default_client.loop, (
+                "a second Client must get its own loop for this to test anything"
+            )
+            computed = compute_rm_products(
+                compute_targets={"only": dask.delayed(int)(3)},
+                fuse_config={},
+                scheduler=owning_client,
+                workload="1 product (test)",
+            )
+            assert computed == {"only": 3}
+            assert loops == [owning_client.loop], (
+                "the futures must be drained on the loop `.result()` waits on"
+            )
+    finally:
+        cluster.close()
+
+
 def test_a_failed_product_is_raised_not_dropped(tmp_path: Path) -> None:
     """Draining futures as they complete must not swallow one that failed.
 
@@ -1554,7 +1990,7 @@ def test_a_failed_product_is_raised_not_dropped(tmp_path: Path) -> None:
     import dask
     from distributed import Client, LocalCluster
 
-    from flint.rmsynth import _compute_rm_products
+    from flint.rmsynth import compute_rm_products
 
     def explode() -> None:
         msg = "this product could not be computed"
@@ -1570,7 +2006,7 @@ def test_a_failed_product_is_raised_not_dropped(tmp_path: Path) -> None:
     try:
         with Client(cluster) as client:
             with pytest.raises(ValueError, match="could not be computed"):
-                _compute_rm_products(
+                compute_rm_products(
                     compute_targets={
                         "fine": dask.delayed(int)(1),
                         "broken": dask.delayed(explode)(),
@@ -1723,3 +2159,130 @@ def test_a_weight_cube_is_not_inverted_but_a_noise_cube_is(
                     error_cubes=error_cubes,
                 )
         assert captured["noise_files_are_weight"] is expected, error_cubes
+
+
+@pytest.mark.parametrize("per_pixel_noise", [False, True])
+def test_fused_faraday_maps_match_the_per_map_path(per_pixel_noise: bool) -> None:
+    """``faraday_maps`` must give exactly what a map-at-a-time derivation gives.
+
+    The products are built from the fused call, so a divergence here would
+    silently change every moment and peak map flint writes.
+    """
+    from rm_lite.tools_3d.rmclean import faraday_maps
+    from rm_lite.utils.synthesis import (
+        FaradayMoments,
+        FaradayPeaks,
+        calc_faraday_moments,
+        calc_faraday_peaks,
+    )
+
+    n_phi, ny, nx, rows = 401, 24, 32, 4
+    rng = np.random.default_rng(0)
+    phi_arr_radm2 = np.linspace(-2000, 2000, n_phi)
+    lambda_sq_arr_m2 = np.linspace(0.03, 0.08, 125)
+    values = (
+        rng.normal(size=(n_phi, ny, nx)) + 1j * rng.normal(size=(n_phi, ny, nx))
+    ).astype(np.complex64)
+    values[:, 0, 0] = np.nan  # a blank pixel, as a mosaic edge has
+    fdf_cube = da.from_array(values, chunks=(n_phi, rows, nx))
+
+    if per_pixel_noise:
+        noise = da.from_array(rng.random((ny, nx)) * 1e-2, chunks=(rows, nx))
+        threshold = noise * 5
+    else:
+        noise, threshold = 1e-2, 5e-2
+    lam_sq_0_m2 = 0.05
+
+    moments = calc_faraday_moments(
+        fdf_cube,
+        phi_arr_radm2=phi_arr_radm2,
+        fwhm_rmsf_radm2=50.0,
+        fdf_units="per_rmsf",
+        fdf_error=noise,
+        threshold=threshold,
+    )
+    peaks = calc_faraday_peaks(
+        fdf_cube,
+        phi_arr_radm2=phi_arr_radm2,
+        fwhm_rmsf_radm2=50.0,
+        fdf_error=noise,
+        lam_sq_0_m2=lam_sq_0_m2,
+        lambda_sq_arr_m2=lambda_sq_arr_m2,
+    )
+    fused = faraday_maps(
+        fdf_cube,
+        phi_arr_radm2=phi_arr_radm2,
+        fwhm_rmsf_radm2=50.0,
+        fdf_units="per_rmsf",
+        lam_sq_0_m2=lam_sq_0_m2,
+        lambda_sq_arr_m2=lambda_sq_arr_m2,
+        fdf_noise=noise,
+        moment_threshold=threshold,
+    )
+
+    for source, fields in (
+        (moments, FaradayMoments._fields),
+        (peaks, FaradayPeaks._fields),
+    ):
+        for field in fields:
+            expected = np.asarray(da.asarray(getattr(source, field)).compute())
+            np.testing.assert_array_equal(
+                np.asarray(fused[field].compute()), expected, err_msg=field
+            )
+
+
+def test_model_moments_are_on_the_flux_scale(
+    tmp_path: Path, qu_cubes: tuple[Path, Path]
+) -> None:
+    """The CLEAN model is a list of fluxes, not per-RMSF amplitudes.
+
+    Reading it as per-RMSF divides mom0 by the RMSF area a second time. Every
+    pixel of the fixture holds the same Faraday-simple source, so the cleaned
+    flux has to land on the peak's scale.
+    """
+    stokes_q_cube, stokes_u_cube = qu_cubes
+    output_prefix = tmp_path / "test_field"
+
+    _synth_and_write(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        rmsynth_options=RMSynthOptions(),
+        rmclean_options=RMCleanOptions(),
+        cube_products=[],
+        moment_products=["model"],
+        peak_products=["clean"],
+        output_prefix=output_prefix,
+    )
+
+    model_mom0 = fits.getdata(Path(f"{output_prefix}.fdf.model.mom0.fits"))
+    clean_peak = fits.getdata(Path(f"{output_prefix}.fdf.clean.peak_pi.fits"))
+
+    assert np.median(model_mom0) == pytest.approx(np.median(clean_peak), rel=0.25)
+
+
+def test_peak_maps_are_written_per_rmsf(
+    tmp_path: Path, qu_cubes: tuple[Path, Path]
+) -> None:
+    # mom0 has the RMSF area divided out and the peak has not, so the two
+    # cannot both be written as plain Jy/beam.
+    stokes_q_cube, stokes_u_cube = qu_cubes
+    output_prefix = tmp_path / "test_field"
+
+    _synth_and_write(
+        stokes_q_cube=stokes_q_cube,
+        stokes_u_cube=stokes_u_cube,
+        rmsynth_options=RMSynthOptions(),
+        rmclean_options=RMCleanOptions(),
+        cube_products=[],
+        moment_products=["clean"],
+        peak_products=["clean"],
+        output_prefix=output_prefix,
+    )
+
+    for name, unit, _ in PEAK_MAPS.values():
+        header = fits.getheader(Path(f"{output_prefix}.fdf.clean.{name}.fits"))
+        assert header["BUNIT"] == unit, name
+    peak_header = fits.getheader(Path(f"{output_prefix}.fdf.clean.peak_pi.fits"))
+    mom0_header = fits.getheader(Path(f"{output_prefix}.fdf.clean.mom0.fits"))
+    assert peak_header["BUNIT"] == "Jy/beam/RMSF"
+    assert mom0_header["BUNIT"] == "Jy/beam"

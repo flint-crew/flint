@@ -7,12 +7,15 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+import astropy.units as u
 import numpy as np
 import pytest
 from astropy.io import fits
 from fitscube.bounding_box import get_common_bounding_box
 from fitscube.extract import find_target_axis
+from radio_beam import Beams
 
+from flint.convol import BeamShape
 from flint.exceptions import (
     AttemptRerunException,
     CleanDivergenceError,
@@ -37,6 +40,7 @@ from flint.imager.wsclean import (
     merge_image_sets,
     rename_wsclean_prefix_in_image_set,
     rotate_cube,
+    set_cube_beam,
     split_and_get_image_set,
     split_cube_into_planes,
     split_image_set,
@@ -49,11 +53,16 @@ from flint.utils import get_packaged_resource_path
 
 
 def _write_channel_image(
-    path: Path, channel: int, shape: tuple[int, int], nan_border: int = 0
+    path: Path,
+    channel: int,
+    shape: tuple[int, int],
+    nan_border: int = 0,
+    bmaj: float = 0.01,
 ) -> Path:
     """A wsclean-like single channel image, with each pixel uniquely valued so
     that any scrambling of the data is detectable. A ``nan_border`` pixels wide
-    border of NaNs may be added to exercise bounding-box trimming."""
+    border of NaNs may be added to exercise bounding-box trimming. Vary ``bmaj``
+    across channels to have the cube carry a beam table."""
     ny, nx = shape
     data = (
         channel * 1000.0
@@ -68,7 +77,7 @@ def _write_channel_image(
     header = fits.Header(
         {
             "BUNIT": "JY/BEAM",
-            "BMAJ": 0.01,
+            "BMAJ": bmaj,
             "BMIN": 0.01,
             "BPA": 0.0,
             "CTYPE1": "RA---SIN",
@@ -354,6 +363,132 @@ def test_split_cube_into_planes(tmpdir) -> None:
 
     with pytest.raises(NamingException):
         split_cube_into_planes(cube=Path(shutil.copy(cube, Path(tmpdir) / "bad.fits")))
+
+
+def _write_varying_beam_cube(tmp_path: Path, channels: int) -> Path:
+    """A cube whose channels each have their own beam, so it carries a beam table"""
+    images = [
+        _write_channel_image(
+            tmp_path / f"SB1234.RACS_0000-00.beam00.round1-{channel:04d}-image.fits",
+            channel=channel,
+            shape=(6, 6),
+            bmaj=0.01 + channel * 1e-4,
+        )
+        for channel in range(channels)
+    ]
+    return combine_images_to_cube(
+        images=images,
+        prefix=f"{tmp_path}/SB1234.RACS_0000-00.beam00.round1",
+        mode="image",
+        fitscube_options=FitsCubeOptions(
+            invalidate_zeros=False, remove_original_images=False
+        ),
+    )
+
+
+def test_split_cube_into_planes_carries_channel_beams(tmp_path) -> None:
+    """A plane takes its own channel's beam out of the cube's beam table, and
+    stops claiming to carry a table of its own"""
+    channels = 5
+    cube = _write_varying_beam_cube(tmp_path=tmp_path, channels=channels)
+
+    with fits.open(cube) as open_fits:
+        assert open_fits[0].header["CASAMBM"], "Cube should carry a beam table"
+        beams = Beams.from_fits_bintable(open_fits["BEAMS"])
+
+    planes = split_cube_into_planes(cube=cube, output_path=tmp_path / "planes")
+
+    assert len(planes) == channels
+    for channel, plane in enumerate(planes):
+        header = fits.getheader(plane)
+        assert "CASAMBM" not in header
+        assert header["BMAJ"] == pytest.approx(beams[channel].major.to(u.deg).value)
+        assert header["BMIN"] == pytest.approx(beams[channel].minor.to(u.deg).value)
+        assert header["BPA"] == pytest.approx(beams[channel].pa.to(u.deg).value)
+
+
+def test_combine_images_to_cube_single_beam_drops_beam_table(tmp_path) -> None:
+    """A cube convolved to one beam keeps it in the header, even with a blanked
+    plane whose zero beam would otherwise have fitscube write a table"""
+    images = [
+        _write_channel_image(
+            tmp_path / f"SB1234.RACS_0000-00.beam00.round1-{channel:04d}-image.fits",
+            channel=channel,
+            shape=(6, 6),
+        )
+        for channel in range(4)
+    ]
+    with fits.open(images[2], mode="update") as open_fits:
+        for key in ("BMAJ", "BMIN", "BPA"):
+            open_fits[0].header[key] = 0.0
+
+    beam_shape = BeamShape(bmaj_arcsec=40.0, bmin_arcsec=30.0, bpa_deg=10.0)
+    cube = combine_images_to_cube(
+        images=images,
+        prefix=f"{tmp_path}/SB1234.RACS_0000-00.beam00.round1",
+        mode="image",
+        fitscube_options=FitsCubeOptions(
+            invalidate_zeros=False, remove_original_images=False
+        ),
+        beam_shape=beam_shape,
+    )
+
+    with fits.open(cube) as open_fits:
+        open_fits.verify("exception")
+        assert len(open_fits) == 1
+        header = open_fits[0].header
+        data = open_fits[0].data
+    assert "CASAMBM" not in header
+    assert not any("beam" in str(comment) for comment in header["COMMENT"])
+    assert header["BMAJ"] == pytest.approx(40.0 / 3600)
+    assert header["BMIN"] == pytest.approx(30.0 / 3600)
+    assert header["BPA"] == pytest.approx(10.0)
+    for channel in (0, 1, 3):
+        assert np.array_equal(
+            data[channel].squeeze(), fits.getdata(images[channel]).squeeze()
+        )
+    assert np.all(np.isnan(data[2]))
+
+
+def test_set_cube_beam_rewrites_when_header_grows(tmp_path) -> None:
+    """A header with no room for the beam keys still gets them, and the table goes"""
+    data = np.arange(16, dtype=np.float32).reshape(4, 4)
+    primary = fits.PrimaryHDU(data=data)
+    primary.header["CASAMBM"] = True
+    # Fill the header's only block, so adding BMAJ/BMIN/BPA needs another
+    while len(primary.header.tostring()) == 2880:
+        primary.header.add_history("padding")
+    primary.header.remove("HISTORY")
+    beam_table = fits.BinTableHDU.from_columns(
+        [fits.Column(name="BMAJ", format="E", array=[1.0])], name="BEAMS"
+    )
+    cube = tmp_path / "cube.fits"
+    fits.HDUList([primary, beam_table]).writeto(cube)
+
+    set_cube_beam(cube=cube, beam_shape=BeamShape(20.0, 10.0, 5.0))
+
+    with fits.open(cube) as open_fits:
+        assert len(open_fits) == 1
+        assert "CASAMBM" not in open_fits[0].header
+        assert open_fits[0].header["BMAJ"] == pytest.approx(20.0 / 3600)
+        assert np.array_equal(open_fits[0].data, data)
+
+
+def test_split_cube_into_planes_threaded_matches_serial(tmp_path) -> None:
+    """Spreading the plane writes over threads must not change what is written"""
+    cube = _write_varying_beam_cube(tmp_path=tmp_path, channels=5)
+
+    serial = split_cube_into_planes(
+        cube=cube, output_path=tmp_path / "serial", num_workers=1
+    )
+    threaded = split_cube_into_planes(
+        cube=cube, output_path=tmp_path / "threaded", num_workers=4
+    )
+
+    assert [plane.name for plane in serial] == [plane.name for plane in threaded]
+    for one, many in zip(serial, threaded):
+        assert np.array_equal(fits.getdata(one), fits.getdata(many))
+        assert fits.getheader(one).tostring() == fits.getheader(many).tostring()
 
 
 def test_transpose_and_sort_channel_images() -> None:
@@ -815,6 +950,29 @@ def test_create_wsclean_name_argument(ms_example):
     )
 
 
+def test_create_wsclean_name_argument_hold_dir(ms_example) -> None:
+    """flint_hold_dir sets the -name directory, and takes precedence over temp_dir"""
+
+    ms = MS.cast(ms=Path(ms_example))
+    name = "SB39400.RACS_0635-31.beam0.small.i"
+
+    wsclean_options = WSCleanOptions(flint_hold_dir="/jack/sparrow")
+    name_argument_path = create_wsclean_name_argument(
+        wsclean_options=wsclean_options, ms=ms
+    )
+
+    assert f"/jack/sparrow/{name}" == str(name_argument_path)
+
+    wsclean_options_2 = WSCleanOptions(
+        flint_hold_dir="/jack/sparrow", temp_dir="/davey/jones"
+    )
+    name_argument_path = create_wsclean_name_argument(
+        wsclean_options=wsclean_options_2, ms=ms
+    )
+
+    assert f"/jack/sparrow/{name}" == str(name_argument_path)
+
+
 def test_create_wsclean_name_argument_with_list_mss(ms_example) -> None:
     """Ensure that the generated name argument behaves as expected.
     This uses list of MS to create the base name."""
@@ -867,6 +1025,23 @@ def test_create_wsclean_command_excludes_flint_save_mfs_products(ms_example):
     assert isinstance(command, WSCleanResult)
     assert "flint" not in command.cmd
     assert "mfs" not in command.cmd.lower()
+
+
+def test_create_wsclean_command_hold_dir(ms_example, tmpdir) -> None:
+    """flint_hold_dir drives -name only, and leaves -temp-dir alone"""
+    hold_dir = Path(tmpdir) / "hold"
+    temp_dir = Path(tmpdir) / "temp"
+    wsclean_options = WSCleanOptions(flint_hold_dir=hold_dir, temp_dir=temp_dir)
+
+    command = create_wsclean_cmd(
+        ms_list=MS.cast(ms_example), wsclean_options=wsclean_options
+    )
+
+    assert "flint" not in command.cmd
+    assert f"-temp-dir {temp_dir}" in command.cmd
+    assert f"-name {hold_dir}/" in command.cmd
+    assert hold_dir in command.bind_dirs
+    assert command.move_hold_directories == (Path(ms_example).parent, hold_dir)
 
 
 def test_create_wsclean_command_with_list_ms(ms_example) -> None:
