@@ -439,40 +439,65 @@ def spice_fits(
 
     overall = _merge_bound_boxes(bounding_boxes=pixel_boxes)
 
-    with fits.open(fits_path) as hdul:
-        header = hdul[0].header.copy()
-        image_shape = tuple(hdul[0].data.shape[-2:])
-        data = np.array(
-            hdul[0].data[..., overall.xmin : overall.xmax, overall.ymin : overall.ymax]
-        )
-        extra_hdus = [hdu.copy() for hdu in hdul[1:]]
-
-    if image_shape != overall.original_shape:
-        raise ValueError(
-            f"{fits_path} has plane shape {image_shape}, but the boxes were built "
-            f"against {overall.original_shape}"
-        )
-
-    mask = keep_mask_from_boxes(bounding_boxes=pixel_boxes, image_shape=image_shape)
-    mask_cropped = mask[overall.xmin : overall.xmax, overall.ymin : overall.ymax]
-    data[..., ~mask_cropped] = np.nan
-
-    header["CRPIX1"] -= overall.ymin
-    header["CRPIX2"] -= overall.xmin
-    header.add_history(
-        f"flint.spice: masked outside {len(pixel_boxes)} island boxes and cropped "
-        f"{image_shape} -> {data.shape[-2:]}"
-    )
-
     spiced_path = fits_path
     if output_path is not None:
         output_path.mkdir(parents=True, exist_ok=True)
         spiced_path = output_path / fits_path.name
+    # Never write over the file being read, and leave only a scratch file behind
+    # should the worker die mid-write
+    partial_path = spiced_path.with_name(f"{spiced_path.name}.spicing")
 
-    logger.info(f"Spicing {fits_path}: {image_shape} -> {data.shape[-2:]}")
-    fits.HDUList([fits.PrimaryHDU(data=data, header=header), *extra_hdus]).writeto(
-        spiced_path, overwrite=True
-    )
+    # Cubes can be far larger than memory, so copy them over a plane at a time.
+    # Sections are plain file reads, where a memmap's pages count towards a
+    # worker's memory
+    with fits.open(fits_path, memmap=False) as hdul:
+        header = hdul[0].header.copy()
+        if "BSCALE" in header or "BZERO" in header:
+            raise ValueError(f"{fits_path} has scaled data, which is not supported")
+
+        shape = hdul[0].shape
+        image_shape = tuple(shape[-2:])
+        if image_shape != overall.original_shape:
+            raise ValueError(
+                f"{fits_path} has plane shape {image_shape}, but the boxes were "
+                f"built against {overall.original_shape}"
+            )
+
+        mask = keep_mask_from_boxes(bounding_boxes=pixel_boxes, image_shape=image_shape)
+        mask_cropped = mask[overall.xmin : overall.xmax, overall.ymin : overall.ymax]
+        cropped_shape = mask_cropped.shape
+
+        header["NAXIS1"] = cropped_shape[1]
+        header["NAXIS2"] = cropped_shape[0]
+        header["CRPIX1"] -= overall.ymin
+        header["CRPIX2"] -= overall.xmin
+        header.add_history(
+            f"flint.spice: masked outside {len(pixel_boxes)} island boxes and "
+            f"cropped {image_shape} -> {cropped_shape}"
+        )
+        # Three spare 2880-byte blocks, so later keywords fit without moving the data
+        for _ in range(108):
+            header.append(end=True)
+
+        logger.info(f"Spicing {fits_path}: {image_shape} -> {cropped_shape}")
+        # StreamingHDU appends to an existing file, such as one left by a dead worker
+        partial_path.unlink(missing_ok=True)
+        with fits.StreamingHDU(partial_path, header) as streaming_hdu:
+            for index in np.ndindex(shape[:-2]):
+                plane = hdul[0].section[
+                    (
+                        *index,
+                        slice(overall.xmin, overall.xmax),
+                        slice(overall.ymin, overall.ymax),
+                    )
+                ]
+                plane[~mask_cropped] = np.nan
+                streaming_hdu.write(plane)
+
+        for hdu in hdul[1:]:
+            fits.append(partial_path, hdu.data, hdu.header)
+
+    partial_path.replace(spiced_path)
     if spiced_path != fits_path:
         logger.info(f"Removing the unspiced {fits_path}")
         fits_path.unlink()

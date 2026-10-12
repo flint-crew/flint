@@ -15,7 +15,7 @@ from astropy.wcs import WCS
 from astropy.wcs.utils import skycoord_to_pixel
 from radio_beam import Beam
 
-from flint.coadd.linmos import BoundingBox
+from flint.coadd.linmos import BoundingBox, _merge_bound_boxes
 from flint.convol import BeamShape
 from flint.options import SpiceOptions
 from flint.spice import (
@@ -621,3 +621,72 @@ def test_spice_fits_rejects_boxes_built_against_another_shape(tmp_path: Path):
     pixel_boxes = shared_pixel_boxes(fits_paths=[reference], sky_boxes=_sky_boxes(wcs))
     with pytest.raises(ValueError, match="boxes were built against"):
         spice_fits(fits_path=smaller, pixel_boxes=pixel_boxes)
+
+
+def test_spice_fits_keeps_every_plane_in_place(tmp_path: Path):
+    """Planes are copied one at a time, so each must land back at its own index"""
+    wcs = _make_wcs()
+    fits_path = tmp_path / "cube.fits"
+    shape = (4, 2, NY, NX)
+    _write_test_fits(fits_path, wcs, shape)
+    original = fits.getdata(fits_path)
+
+    pixel_boxes = shared_pixel_boxes(fits_paths=[fits_path], sky_boxes=_sky_boxes(wcs))
+    spice_fits(fits_path=fits_path, pixel_boxes=pixel_boxes)
+
+    overall = _merge_bound_boxes(bounding_boxes=pixel_boxes)
+    mask = keep_mask_from_boxes(bounding_boxes=pixel_boxes, image_shape=(NY, NX))
+    expected = original[..., overall.xmin : overall.xmax, overall.ymin : overall.ymax]
+    expected = np.where(
+        mask[overall.xmin : overall.xmax, overall.ymin : overall.ymax], expected, np.nan
+    )
+    assert np.array_equal(fits.getdata(fits_path), expected, equal_nan=True)
+
+
+def test_spice_fits_header_has_room_to_grow(tmp_path: Path):
+    """Keywords added afterwards fill the spare header space rather than moving the data"""
+    wcs = _make_wcs()
+    fits_path = tmp_path / "cube.fits"
+    _write_test_fits(fits_path, wcs, (3, 1, NY, NX), extra_hdu=True)
+
+    spice_fits(
+        fits_path=fits_path,
+        pixel_boxes=shared_pixel_boxes(
+            fits_paths=[fits_path], sky_boxes=_sky_boxes(wcs)
+        ),
+    )
+
+    with fits.open(fits_path) as hdul:
+        cards = list(hdul[0].header.cards)
+        data_offset = hdul.fileinfo(0)["datLoc"]
+        data = hdul[0].data.copy()
+    assert all(card.is_blank for card in cards[-108:])
+
+    with fits.open(fits_path, mode="update") as hdul:
+        for number in range(100):
+            hdul[0].header[f"EXTRA{number}"] = number
+
+    with fits.open(fits_path) as hdul:
+        assert hdul.fileinfo(0)["datLoc"] == data_offset
+        assert hdul[0].header["EXTRA99"] == 99
+        assert np.array_equal(hdul[0].data, data, equal_nan=True)
+        assert hdul[1].name == "BEAMS"
+
+
+def test_spice_fits_overwrites_a_partial_file_left_by_a_dead_worker(tmp_path: Path):
+    wcs = _make_wcs()
+    fits_path = tmp_path / "cube.fits"
+    _write_test_fits(fits_path, wcs, (2, 1, NY, NX))
+    (tmp_path / "cube.fits.spicing").write_bytes(b"half written")
+
+    spice_fits(
+        fits_path=fits_path,
+        pixel_boxes=shared_pixel_boxes(
+            fits_paths=[fits_path], sky_boxes=_sky_boxes(wcs)
+        ),
+    )
+
+    with fits.open(fits_path) as hdul:
+        assert len(hdul) == 1
+        assert hdul[0].data.shape[:2] == (2, 1)
+    assert not (tmp_path / "cube.fits.spicing").exists()
