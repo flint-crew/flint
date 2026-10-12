@@ -6,6 +6,7 @@ downsampling factor and ``box`` a kernel size.
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -27,6 +28,10 @@ from flint.convol import header_beam_is_usable
 from flint.logging import logger
 from flint.naming import create_aegean_names
 from flint.options import FFTBANEOptions
+
+# numba's workqueue threading layer aborts if two threads run parallel kernels
+# at once. Global so every thread shares the one lock.
+PARALLEL_KERNEL_LOCK = threading.Lock()
 
 
 class BANEMaps(NamedTuple):
@@ -320,7 +325,8 @@ def local_seed(
     small part of a box is clipped as a source, and a loud region filling most
     of one is measured as noise.
     """
-    median, sigma = box_stats(image, nan_mask, step, box)
+    with PARALLEL_KERNEL_LOCK:
+        median, sigma = box_stats(image, nan_mask, step, box)
 
     unmeasured = ~np.isfinite(sigma)
     if unmeasured.all():
@@ -329,10 +335,11 @@ def local_seed(
         _, nearest = ndimage.distance_transform_edt(unmeasured, return_indices=True)
         median, sigma = median[tuple(nearest)], sigma[tuple(nearest)]
 
-    background, rms = (
-        bilinear_upsample(grid, step // 2, step, image.shape)
-        for grid in (median, sigma)
-    )
+    with PARALLEL_KERNEL_LOCK:
+        background, rms = [
+            bilinear_upsample(grid, step // 2, step, image.shape)
+            for grid in (median, sigma)
+        ]
     return background, rms
 
 
@@ -393,10 +400,11 @@ def bane_round(
     np.nan_to_num(smooth_rms, nan=0.0, copy=False)
 
     if step_size_pix > 0:
-        smooth_background, smooth_rms = (
-            bilinear_upsample(grid, step_size_pix, step_size_pix, image.shape)
-            for grid in (smooth_background, smooth_rms)
-        )
+        with PARALLEL_KERNEL_LOCK:
+            smooth_background, smooth_rms = [
+                bilinear_upsample(grid, step_size_pix, step_size_pix, image.shape)
+                for grid in (smooth_background, smooth_rms)
+            ]
 
     return smooth_background, smooth_rms
 

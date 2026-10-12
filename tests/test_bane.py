@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import tracemalloc
 import warnings
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -539,3 +540,23 @@ def test_the_step_back_up_matches_scipy() -> None:
                 mode="nearest",
             )
             assert np.allclose(func(grid, start, step, shape), expected, atol=1e-5)
+
+
+def test_planes_can_be_measured_from_several_threads_at_once() -> None:
+    """A threaded task runner measures planes side by side. numba's workqueue
+    threading layer aborts the process if the parallel kernels overlap."""
+    images = [_sky(seed=seed) for seed in range(4)]
+    expected = [robust_bane(image=image, header=_header()) for image in images]
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        results = list(
+            executor.map(
+                lambda image: robust_bane(image=image, header=_header()), images
+            )
+        )
+
+    for (background, rms), (expected_background, expected_rms) in zip(
+        results, expected
+    ):
+        assert np.array_equal(background, expected_background, equal_nan=True)
+        assert np.array_equal(rms, expected_rms, equal_nan=True)
