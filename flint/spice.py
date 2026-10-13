@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+from typing import NamedTuple
 
 import astropy.units as u
 import numpy as np
@@ -409,6 +410,73 @@ def shared_pixel_boxes(
     return pixel_boxes
 
 
+class SpiceCubeSetupInfo(NamedTuple):
+    """Information about a cube that will be spiced after sanity checks
+    have been performed."""
+
+    fits_path: Path
+    """Path to the cube"""
+    cube_shape: tuple[int, ...]
+    """Shape of the cube in numpy order"""
+    image_shape: tuple[int, int]
+    """Shape of a single plane of the cube"""
+
+
+def sanity_check_for_spicing(
+    fits_path: Path, hdul: fits.HDUList, overall: BoundingBox
+) -> SpiceCubeSetupInfo:
+    """Checks to ensure the provided cube can be spiced.
+
+    Args:
+        fits_path (Path): Path to the fits cube used for logging
+        hdul (fits.HDUList): The open fits cube handler
+        overall (BoundingBox): The overall bounding box of the spicing
+
+    Raises:
+        ValueError: Primary HDU holds no image
+        ValueError: Integer pixel type in the cube
+        ValueError: If an extra image extension is present in the fits file
+
+
+    Returns:
+        SpiceCubeSetupInfo: Information about the cube setup
+    """
+    # A dataless primary (NAXIS=0, BITPIX=8) would otherwise trip the integer check
+    if hdul[0].header["NAXIS"] < 2:
+        msg = (
+            f"{fits_path} primary HDU holds no image (NAXIS={hdul[0].header['NAXIS']})"
+        )
+        raise ValueError(msg)
+    if hdul[0].header["BITPIX"] > 0:
+        raise ValueError(
+            f"{fits_path} has integer data (BITPIX={hdul[0].header['BITPIX']}), which "
+            "cannot hold the NaN mask"
+        )
+
+    # Every image in the file is read unscaled, and copying an extension
+    # image below would drop its BSCALE/BZERO, so only tables may follow
+    extension_images = [hdu.name for hdu in hdul[1:] if hdu.is_image]
+    if extension_images:
+        raise ValueError(
+            f"{fits_path} has image extensions {extension_images}, but only "
+            "the primary image is supported"
+        )
+
+    shape = hdul[0].shape
+    image_shape = tuple(shape[-2:])
+    if image_shape != overall.original_shape:
+        raise ValueError(
+            f"{fits_path} has plane shape {image_shape}, but the boxes were "
+            f"built against {overall.original_shape}"
+        )
+
+    return SpiceCubeSetupInfo(
+        fits_path=fits_path,
+        cube_shape=shape,
+        image_shape=image_shape,
+    )
+
+
 def spice_fits(
     fits_path: Path, pixel_boxes: list[BoundingBox], output_path: Path | None = None
 ) -> Path:
@@ -452,30 +520,14 @@ def spice_fits(
     # worker's memory. The stored values are copied unscaled, so the header's
     # BSCALE/BZERO (if any) still describe them, and NaN stays NaN under any scaling
     with fits.open(fits_path, memmap=False, do_not_scale_image_data=True) as hdul:
+        setup_info = sanity_check_for_spicing(
+            fits_path=fits_path, hdul=hdul, overall=overall
+        )
         header = hdul[0].header.copy()
-        if header["BITPIX"] > 0:
-            raise ValueError(
-                f"{fits_path} has integer data (BITPIX={header['BITPIX']}), which "
-                "cannot hold the NaN mask"
-            )
-        # Every image in the file is read unscaled, and copying an extension
-        # image below would drop its BSCALE/BZERO, so only tables may follow
-        extension_images = [hdu.name for hdu in hdul[1:] if hdu.is_image]
-        if extension_images:
-            raise ValueError(
-                f"{fits_path} has image extensions {extension_images}, but only "
-                "the primary image is supported"
-            )
 
-        shape = hdul[0].shape
-        image_shape = tuple(shape[-2:])
-        if image_shape != overall.original_shape:
-            raise ValueError(
-                f"{fits_path} has plane shape {image_shape}, but the boxes were "
-                f"built against {overall.original_shape}"
-            )
-
-        mask = keep_mask_from_boxes(bounding_boxes=pixel_boxes, image_shape=image_shape)
+        mask = keep_mask_from_boxes(
+            bounding_boxes=pixel_boxes, image_shape=setup_info.image_shape
+        )
         mask_cropped = mask[overall.xmin : overall.xmax, overall.ymin : overall.ymax]
         cropped_shape = mask_cropped.shape
 
@@ -485,17 +537,17 @@ def spice_fits(
         header["CRPIX2"] -= overall.xmin
         header.add_history(
             f"flint.spice: masked outside {len(pixel_boxes)} island boxes and "
-            f"cropped {image_shape} -> {cropped_shape}"
+            f"cropped {setup_info.image_shape} -> {cropped_shape}"
         )
         # Three spare 2880-byte blocks, so later keywords fit without moving the data
         for _ in range(108):
             header.append(end=True)
 
-        logger.info(f"Spicing {fits_path}: {image_shape} -> {cropped_shape}")
+        logger.info(f"Spicing {fits_path}: {setup_info.image_shape} -> {cropped_shape}")
         # StreamingHDU appends to an existing file, such as one left by a dead worker
         partial_path.unlink(missing_ok=True)
         with fits.StreamingHDU(partial_path, header) as streaming_hdu:
-            for index in np.ndindex(shape[:-2]):
+            for index in np.ndindex(setup_info.cube_shape[:-2]):
                 plane = hdul[0].section[
                     (
                         *index,
