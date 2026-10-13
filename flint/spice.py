@@ -449,11 +449,23 @@ def spice_fits(
 
     # Cubes can be far larger than memory, so copy them over a plane at a time.
     # Sections are plain file reads, where a memmap's pages count towards a
-    # worker's memory
-    with fits.open(fits_path, memmap=False) as hdul:
+    # worker's memory. The stored values are copied unscaled, so the header's
+    # BSCALE/BZERO (if any) still describe them, and NaN stays NaN under any scaling
+    with fits.open(fits_path, memmap=False, do_not_scale_image_data=True) as hdul:
         header = hdul[0].header.copy()
-        if "BSCALE" in header or "BZERO" in header:
-            raise ValueError(f"{fits_path} has scaled data, which is not supported")
+        if header["BITPIX"] > 0:
+            raise ValueError(
+                f"{fits_path} has integer data (BITPIX={header['BITPIX']}), which "
+                "cannot hold the NaN mask"
+            )
+        # Every image in the file is read unscaled, and copying an extension
+        # image below would drop its BSCALE/BZERO, so only tables may follow
+        extension_images = [hdu.name for hdu in hdul[1:] if hdu.is_image]
+        if extension_images:
+            raise ValueError(
+                f"{fits_path} has image extensions {extension_images}, but only "
+                "the primary image is supported"
+            )
 
         shape = hdul[0].shape
         image_shape = tuple(shape[-2:])

@@ -690,3 +690,58 @@ def test_spice_fits_overwrites_a_partial_file_left_by_a_dead_worker(tmp_path: Pa
         assert len(hdul) == 1
         assert hdul[0].data.shape[:2] == (2, 1)
     assert not (tmp_path / "cube.fits.spicing").exists()
+
+
+@pytest.mark.parametrize("bscale, bzero", [(1.0, 0.0), (2.0, 5.0)])
+def test_spice_fits_round_trips_scaled_float_data(
+    tmp_path: Path, bscale: float, bzero: float
+):
+    """Stored values are copied unscaled under the original BSCALE/BZERO, so
+    the scaling is applied once on read and never twice"""
+    wcs = _make_wcs()
+    fits_path = tmp_path / "cube.fits"
+    _write_test_fits(fits_path, wcs, (2, 1, NY, NX))
+    # Header-only edits, so the stored values are left as they were
+    fits.setval(fits_path, "BSCALE", value=bscale)
+    fits.setval(fits_path, "BZERO", value=bzero)
+    original = fits.getdata(fits_path)
+
+    pixel_boxes = shared_pixel_boxes(fits_paths=[fits_path], sky_boxes=_sky_boxes(wcs))
+    spice_fits(fits_path=fits_path, pixel_boxes=pixel_boxes)
+
+    overall = _merge_bound_boxes(bounding_boxes=pixel_boxes)
+    mask = keep_mask_from_boxes(bounding_boxes=pixel_boxes, image_shape=(NY, NX))
+    expected = original[..., overall.xmin : overall.xmax, overall.ymin : overall.ymax]
+    expected = np.where(
+        mask[overall.xmin : overall.xmax, overall.ymin : overall.ymax], expected, np.nan
+    )
+    # Read apart, as astropy strips BSCALE/BZERO from a loaded HDU's header
+    # once it has scaled the data
+    header = fits.getheader(fits_path)
+    assert header["BSCALE"] == bscale
+    assert header["BZERO"] == bzero
+    assert np.array_equal(fits.getdata(fits_path), expected, equal_nan=True)
+
+
+def test_spice_fits_rejects_extension_images(tmp_path: Path):
+    wcs = _make_wcs()
+    fits_path = tmp_path / "cube.fits"
+    _write_test_fits(fits_path, wcs, (NY, NX), extra_hdu=True)
+    fits.append(fits_path, np.zeros((NY, NX), dtype=np.float32))
+
+    pixel_boxes = shared_pixel_boxes(fits_paths=[fits_path], sky_boxes=_sky_boxes(wcs))
+    with pytest.raises(ValueError, match="image extensions"):
+        spice_fits(fits_path=fits_path, pixel_boxes=pixel_boxes)
+    assert not (tmp_path / "cube.fits.spicing").exists()
+
+
+def test_spice_fits_rejects_integer_data(tmp_path: Path):
+    wcs = _make_wcs()
+    fits_path = tmp_path / "cube.fits"
+    fits.PrimaryHDU(
+        data=np.zeros((NY, NX), dtype=np.int16), header=wcs.to_header()
+    ).writeto(fits_path)
+
+    pixel_boxes = shared_pixel_boxes(fits_paths=[fits_path], sky_boxes=_sky_boxes(wcs))
+    with pytest.raises(ValueError, match="integer data"):
+        spice_fits(fits_path=fits_path, pixel_boxes=pixel_boxes)
