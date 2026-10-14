@@ -20,9 +20,11 @@ from flint.coadd.linmos import (
     _get_holography_linmos_options,
     _get_image_weight_plane,
     _linmos_cleanup,
+    blank_zero_pixels,
     create_bound_box,
     generate_linmos_parameter_set,
     generate_weights_list_and_files,
+    linmos_images,
     trim_fits_image,
 )
 from flint.naming import create_linmos_base_path, create_linmos_names
@@ -60,20 +62,24 @@ def test_create_name_to_linmos_options():
 
 def test_get_image_weight_plane():
     """The extraction of weights per plane"""
-    data = np.arange(100).reshape((10, 10))
+    mean = 0
+    rms = 2
+    weight = 1.0 / (rms**2)
+    data = np.random.default_rng(42).normal(loc=mean, scale=rms, size=(100, 100))
 
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError):
         _get_image_weight_plane(image_data=data, mode="noexists")  # type: ignore
 
+    # Sampling noise on the estimated rms, so compare to a few percent
     assert np.isclose(
-        0.0016,
+        weight,
         _get_image_weight_plane(image_data=data, mode="mad", stride=1),
-        atol=0.0001,
+        rtol=0.05,
     )
     assert np.isclose(
-        0.00120012,
+        weight,
         _get_image_weight_plane(image_data=data, mode="std", stride=1),
-        atol=0.0001,
+        rtol=0.05,
     )
 
     data = np.arange(100).reshape((10, 10)) * np.nan
@@ -232,6 +238,97 @@ def test_linmos_holo_options(tmpdir):
                 Path("doesnotexist.fits"),
             ],
         )
+
+
+def test_blank_zero_pixels_leaves_the_pixel_grid_alone(tmp_path):
+    """A cube is built with trimming off, and still needs linmos' padding blanked.
+
+    Blanking used to ride along with ``trim_fits_image``, so turning trimming off
+    to keep every channel on one pixel grid left the 0.0 padding in place, where
+    the convolution to a common beam smeared it into the data.
+    """
+    out_fits = tmp_path / "example.fits"
+    create_fits_image(out_fits, set_to_nan=False)
+
+    blank_zero_pixels(out_fits)
+
+    header = fits.getheader(out_fits)
+    data = fits.getdata(out_fits)
+    # Untrimmed: same grid, same reference pixel, so every channel still lines up.
+    assert data.shape == (1000, 1000)
+    assert header["CRPIX1"] == 10
+    assert header["CRPIX2"] == 20
+    assert np.sum(data == 0.0) == 0
+    # Only the padding went; the real pixels are untouched.
+    assert np.all(data[10:600, 20:500] == 1)
+    assert np.isnan(data).sum() == 1000 * 1000 - 590 * 480
+
+
+def test_blank_zero_pixels_on_a_cube(tmp_path):
+    """Per-channel padding is blanked on its own plane, not across the cube."""
+    out_fits = tmp_path / "cube.fits"
+    data = np.ones((4, 10, 10))
+    # One channel is wholly blank, another is padded around a valid island.
+    data[1] = 0.0
+    data[2, 3:7, 3:7] = 0.0
+    fits.writeto(out_fits, data=data, header=fits.header.Header({"CRPIX1": 5}))
+
+    blank_zero_pixels(out_fits)
+
+    blanked = fits.getdata(out_fits)
+    assert blanked.shape == (4, 10, 10)  # type: ignore
+    assert np.isnan(blanked[1]).all()  # type: ignore
+    assert np.isnan(blanked[2, 3:7, 3:7]).all()  # type: ignore
+    assert np.all(blanked[0] == 1) and np.all(blanked[3] == 1)  # type: ignore
+
+
+@pytest.mark.parametrize("trim", [True, False])
+def test_linmos_images_blanks_its_padding_once(tmp_path, monkeypatch, trim):
+    """linmos pads the mosaic with 0.0, which is blanked whether or not the mosaic
+    is then trimmed. Trimming blanks as part of finding the box, so the mosaic
+    is only read and rewritten for blanking alone when it is not trimmed."""
+    container = tmp_path / "yandasoft.sif"
+    container.touch()
+    linmos_options = LinmosOptions(
+        base_output_name=tmp_path / "linmos_field", trim_linmos_fits=trim
+    )
+    linmos_names = create_linmos_names(name_prefix=linmos_options.base_output_name)
+    padded = np.zeros((40, 40), dtype=np.float32)
+    padded[10:30, 5:25] = 1.0
+
+    header = fits.Header({"CRPIX1": 10, "CRPIX2": 20})
+
+    def fake_run_singularity_command(**kwargs) -> None:
+        fits.writeto(linmos_names.image_fits, padded, header=header)
+        fits.writeto(linmos_names.weight_fits, padded, header=header)
+
+    monkeypatch.setattr(
+        "flint.coadd.linmos.generate_linmos_parameter_set",
+        lambda **kwargs: LinmosParsetSummary(
+            parset_path=tmp_path / "linmos.parset", image_paths=()
+        ),
+    )
+    monkeypatch.setattr(
+        "flint.coadd.linmos.run_singularity_command", fake_run_singularity_command
+    )
+    blanked: list[Path] = []
+    monkeypatch.setattr(
+        "flint.coadd.linmos.blank_zero_pixels",
+        lambda image_path: blanked.append(image_path) or blank_zero_pixels(image_path),
+    )
+
+    result = linmos_images(
+        images=[tmp_path / "beam00.fits"],
+        linmos_options=linmos_options,
+        container=container,
+    )
+
+    image = fits.getdata(result.image_fits)
+    assert np.sum(image == 0.0) == 0
+    assert np.all(image[np.isfinite(image)] == 1.0)
+    assert image.shape == ((20, 20) if trim else (40, 40))
+    assert fits.getdata(result.weight_fits).shape == image.shape
+    assert len(blanked) == (0 if trim else 1)
 
 
 def test_trim_fits_while_blanking(tmp_path):

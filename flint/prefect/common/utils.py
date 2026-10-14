@@ -44,11 +44,16 @@ task_flag_antenna_from_casda_bandpass_table = task(
 def task_concatenate_holography(
     output_path: Path,
     holo_cubes: list[Path],
+    update_concat_holo_options: dict[str, Any] | None = None,
 ) -> Path:
     logger.info("Attempting to concatenate holography cubes")
     concat_holo_options = ConcatHoloOptions(
         output_path=output_path, holo_cubes=holo_cubes, max_workers=8
     )
+    if update_concat_holo_options:
+        concat_holo_options = concat_holo_options.with_options(
+            **update_concat_holo_options
+        )
 
     return concatenate_holography(concat_holo_options=concat_holo_options)
 
