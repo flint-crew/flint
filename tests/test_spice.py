@@ -23,6 +23,7 @@ from flint.spice import (
     check_cubes_share_shape,
     island_sky_boxes,
     keep_mask_from_boxes,
+    setup_spice_header,
     shared_pixel_boxes,
     spice_fits,
 )
@@ -745,3 +746,23 @@ def test_spice_fits_rejects_integer_data(tmp_path: Path):
     pixel_boxes = shared_pixel_boxes(fits_paths=[fits_path], sky_boxes=_sky_boxes(wcs))
     with pytest.raises(ValueError, match="integer data"):
         spice_fits(fits_path=fits_path, pixel_boxes=pixel_boxes)
+
+
+def test_setup_spice_header_shifts_the_grid_and_leaves_the_input_alone():
+    header = fits.PrimaryHDU(
+        data=np.zeros((NY, NX), dtype=np.float32), header=_make_wcs().to_header()
+    ).header
+    original = header.copy()
+    overall = BoundingBox(xmin=10, xmax=50, ymin=20, ymax=90, original_shape=(NY, NX))
+
+    spiced = setup_spice_header(
+        header=header, overall=overall, history_message="spiced for a test"
+    )
+
+    assert (spiced["NAXIS2"], spiced["NAXIS1"]) == (40, 70)
+    # A pixel at numpy (row=15, col=25) moves to (15 - xmin, 25 - ymin)
+    sky = WCS(original).pixel_to_world(25, 15)
+    assert np.allclose(WCS(spiced).world_to_pixel(sky), (25 - 20, 15 - 10))
+    assert "spiced for a test" in str(spiced["HISTORY"])
+    assert all(card.is_blank for card in spiced.cards[-108:])
+    assert header == original

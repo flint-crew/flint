@@ -477,6 +477,40 @@ def sanity_check_for_spicing(
     )
 
 
+def setup_spice_header(
+    header: fits.Header,
+    overall: BoundingBox,
+    history_message: str,
+    no_of_empty_blocks: int = 3,
+) -> fits.Header:
+    """Header for the spiced cube: cropped to ``overall``, with the reference
+    pixel shifted to match and spare room for later keywords
+
+    Args:
+        header (fits.Header): Header of the cube being spiced. It is not modified
+        overall (BoundingBox): The union of the island boxes being cropped to
+        history_message (str): A message to add to the header's history
+        no_of_empty_blocks (int, optional): Number of spare 2880-byte header blocks (36 cards each) to reserve. Defaults to 3.
+
+    Returns:
+        fits.Header: The header for the spiced cube
+    """
+    header = header.copy()
+    # BoundingBox.x* is numpy axis -2 (FITS NAXIS2/Dec); .y* is axis -1 (NAXIS1/RA)
+    header["NAXIS1"] = overall.ymax - overall.ymin
+    header["NAXIS2"] = overall.xmax - overall.xmin
+    header["CRPIX1"] -= overall.ymin
+    header["CRPIX2"] -= overall.xmin
+    header.add_history(history_message)
+
+    # insert empty blocks of 36 cards, so later keywords fit without
+    # moving the data
+    for _ in range(no_of_empty_blocks * 36):
+        header.append(end=True)
+
+    return header
+
+
 def spice_fits(
     fits_path: Path, pixel_boxes: list[BoundingBox], output_path: Path | None = None
 ) -> Path:
@@ -523,7 +557,6 @@ def spice_fits(
         setup_info = sanity_check_for_spicing(
             fits_path=fits_path, hdul=hdul, overall=overall
         )
-        header = hdul[0].header.copy()
 
         mask = keep_mask_from_boxes(
             bounding_boxes=pixel_boxes, image_shape=setup_info.image_shape
@@ -531,17 +564,14 @@ def spice_fits(
         mask_cropped = mask[overall.xmin : overall.xmax, overall.ymin : overall.ymax]
         cropped_shape = mask_cropped.shape
 
-        header["NAXIS1"] = cropped_shape[1]
-        header["NAXIS2"] = cropped_shape[0]
-        header["CRPIX1"] -= overall.ymin
-        header["CRPIX2"] -= overall.xmin
-        header.add_history(
-            f"flint.spice: masked outside {len(pixel_boxes)} island boxes and "
-            f"cropped {setup_info.image_shape} -> {cropped_shape}"
+        header = setup_spice_header(
+            header=hdul[0].header,
+            overall=overall,
+            history_message=(
+                f"flint.spice: masked outside {len(pixel_boxes)} island boxes and "
+                f"cropped {setup_info.image_shape} -> {cropped_shape}"
+            ),
         )
-        # Three spare 2880-byte blocks, so later keywords fit without moving the data
-        for _ in range(108):
-            header.append(end=True)
 
         logger.info(f"Spicing {fits_path}: {setup_info.image_shape} -> {cropped_shape}")
         # StreamingHDU appends to an existing file, such as one left by a dead worker
