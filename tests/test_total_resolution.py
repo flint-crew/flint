@@ -5,7 +5,9 @@ RM-synthesis needs of its inputs.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -14,6 +16,7 @@ from prefect import flow
 from prefect.logging import disable_run_logger
 from prefect.testing.utilities import prefect_test_harness
 
+from flint.coadd.linmos import LinmosOptions
 from flint.convol import (
     BeamShape,
     convolve_plane_to_beam,
@@ -22,10 +25,11 @@ from flint.convol import (
 )
 from flint.imager.wsclean import combine_images_to_cube, split_cube_into_planes
 from flint.naming import ResolutionModes
-from flint.options import FitsCubeOptions
+from flint.options import FFTBANEOptions, FitsCubeOptions
 from flint.prefect.common.imaging import (
     _resolution_suffix,
     convolve_channel_groups_to_natural_resolution,
+    linmos_channel_groups_to_cubes,
     total_beam_from_channel_groups,
 )
 
@@ -73,7 +77,9 @@ def _naturally_then_totally(
         return _run()
 
 
-def _cube_from_planes(planes: list[Path], prefix: Path) -> Path:
+def _cube_from_planes(
+    planes: list[Path], prefix: Path, beam_shape: BeamShape | None = None
+) -> Path:
     return combine_images_to_cube(
         images=planes,
         prefix=str(prefix),
@@ -85,6 +91,7 @@ def _cube_from_planes(planes: list[Path], prefix: Path) -> Path:
             compress=False,
             remove_original_images=False,
         ),
+        beam_shape=beam_shape,
     )
 
 
@@ -165,9 +172,84 @@ def test_a_channel_beyond_the_cutoff_is_blanked_not_convolved(tmp_path: Path) ->
     assert cubes_share_common_beam(cube_paths=[cube], cutoff=20.0)
 
 
+def test_a_band_entirely_beyond_the_cutoff_fails_clearly(tmp_path: Path) -> None:
+    """With every channel beyond the cutoff there is no total beam to solve. The
+    total cube has to say so, rather than fail on astropy refusing a NaN header
+    value"""
+    planes, total_beam = _planes_at_total_resolution(
+        tmp_path, [40.0, 50.0], cutoff=20.0
+    )
+    assert not np.isfinite(total_beam.bmaj_arcsec)
+
+    with pytest.raises(ValueError, match="not finite"):
+        _cube_from_planes(
+            planes=planes,
+            prefix=tmp_path / f"{STEM}.q.total",
+            beam_shape=total_beam,
+        )
+
+
 def test_resolution_suffix_labels_both_sets() -> None:
     """Each cube says which resolution it is at, rather than one of them being
     the unlabelled default"""
     assert _resolution_suffix("pol", ResolutionModes.NATURAL) == "pol.natural"
     assert _resolution_suffix("pol", ResolutionModes.TOTAL) == "pol.total"
     assert _resolution_suffix(None, ResolutionModes.TOTAL) == "total"
+
+
+@dataclass(eq=False)
+class _Submitted:
+    """Stands in for the future of one faked ``.submit``, compared by identity"""
+
+    task: str
+    args: tuple[Any, ...] = ()
+    kwargs: dict[str, Any] = field(default_factory=dict)
+
+
+def test_image_cubes_wait_for_every_reader_of_their_planes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An image cube deletes the planes it stacks, so it may not be built until
+    every other task reading those planes - the total convolution and BANE - has
+    finished with them"""
+    submitted: list[_Submitted] = []
+    for name in (
+        "task_linmos_images",
+        "task_getattr",
+        "task_bane_fits_image",
+        "task_convolve_plane_to_beam",
+        "task_create_name_from_common_fields",
+        "task_combine_images_to_cube",
+    ):
+
+        def fake_submit(*args: Any, _name: str = name, **kwargs: Any) -> _Submitted:
+            future = _Submitted(task=_name, args=args, kwargs=kwargs)
+            submitted.append(future)
+            return future
+
+        monkeypatch.setattr(f"flint.prefect.common.imaging.{name}.submit", fake_submit)
+
+    cubes = linmos_channel_groups_to_cubes(
+        channel_groups=[[Path("ch0.beam00.fits")], [Path("ch1.beam00.fits")]],
+        container=Path("yandasoft.sif"),
+        linmos_options=LinmosOptions(),
+        fitscube_options=FitsCubeOptions(bounding_box=False),
+        fft_bane_options=FFTBANEOptions(),
+        total_beam_shape=BeamShape(bmaj_arcsec=20.0, bmin_arcsec=20.0, bpa_deg=0.0),
+    )
+
+    total_planes = {s for s in submitted if s.task == "task_convolve_plane_to_beam"}
+    bane = [s for s in submitted if s.task == "task_bane_fits_image"]
+    natural_bane = {s for s in bane if s.kwargs["image"] not in total_planes}
+    total_bane = {s for s in bane if s.kwargs["image"] in total_planes}
+    assert len(total_planes) == len(natural_bane) == len(total_bane) == 2
+
+    assert set(cubes.image.kwargs["wait_for"]) == natural_bane | total_planes
+    assert (
+        cubes.total_image is not None
+        and set(cubes.total_image.kwargs["wait_for"]) == total_bane
+    )
+    # The other cubes are the only readers of their own planes
+    for cube in (cubes.weight, cubes.bkg, cubes.rms, cubes.total_bkg, cubes.total_rms):
+        assert cube is not None
+        assert cube.kwargs["wait_for"] is None

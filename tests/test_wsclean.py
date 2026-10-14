@@ -13,6 +13,7 @@ import pytest
 from astropy.io import fits
 from fitscube.bounding_box import get_common_bounding_box
 from fitscube.extract import find_target_axis
+from pydantic import ValidationError
 from radio_beam import Beams
 
 from flint.convol import BeamShape
@@ -789,6 +790,22 @@ def test_rename_wsclean_title_project_field_collision(project: str):
         f"SB56289.RACS_1041+18.project-{project}.beam15.round1.i.ch0000-0001.image.fits"
     )
     assert _rename_wsclean_title(name_str=ex) == out_ex
+
+
+@pytest.mark.parametrize("suffix", ["racs_all", "pol-v2", "v2.1"])
+def test_flint_name_suffix_must_parse_back(suffix: str):
+    """The suffix is written into names as `.project-<suffix>.`, which the name
+    parser only reads back when it is letters and digits. Anything else would
+    silently cost every field after it, so it is refused up front."""
+    with pytest.raises(ValidationError):
+        WSCleanOptions(flint_name_suffix=suffix)
+    with pytest.raises(ValidationError):
+        WSCleanOptions().with_options(flint_name_suffix=suffix)
+
+
+def test_flint_name_suffix_accepts_letters_and_digits():
+    assert WSCleanOptions(flint_name_suffix="pol2").flint_name_suffix == "pol2"
+    assert WSCleanOptions().flint_name_suffix is None
 
 
 def test_rename_wsclean_title_qu_joint_pol():

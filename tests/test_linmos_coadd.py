@@ -24,6 +24,7 @@ from flint.coadd.linmos import (
     create_bound_box,
     generate_linmos_parameter_set,
     generate_weights_list_and_files,
+    linmos_images,
     trim_fits_image,
 )
 from flint.naming import create_linmos_base_path, create_linmos_names
@@ -279,6 +280,55 @@ def test_blank_zero_pixels_on_a_cube(tmp_path):
     assert np.isnan(blanked[1]).all()  # type: ignore
     assert np.isnan(blanked[2, 3:7, 3:7]).all()  # type: ignore
     assert np.all(blanked[0] == 1) and np.all(blanked[3] == 1)  # type: ignore
+
+
+@pytest.mark.parametrize("trim", [True, False])
+def test_linmos_images_blanks_its_padding_once(tmp_path, monkeypatch, trim):
+    """linmos pads the mosaic with 0.0, which is blanked whether or not the mosaic
+    is then trimmed. Trimming blanks as part of finding the box, so the mosaic
+    is only read and rewritten for blanking alone when it is not trimmed."""
+    container = tmp_path / "yandasoft.sif"
+    container.touch()
+    linmos_options = LinmosOptions(
+        base_output_name=tmp_path / "linmos_field", trim_linmos_fits=trim
+    )
+    linmos_names = create_linmos_names(name_prefix=linmos_options.base_output_name)
+    padded = np.zeros((40, 40), dtype=np.float32)
+    padded[10:30, 5:25] = 1.0
+
+    header = fits.Header({"CRPIX1": 10, "CRPIX2": 20})
+
+    def fake_run_singularity_command(**kwargs) -> None:
+        fits.writeto(linmos_names.image_fits, padded, header=header)
+        fits.writeto(linmos_names.weight_fits, padded, header=header)
+
+    monkeypatch.setattr(
+        "flint.coadd.linmos.generate_linmos_parameter_set",
+        lambda **kwargs: LinmosParsetSummary(
+            parset_path=tmp_path / "linmos.parset", image_paths=()
+        ),
+    )
+    monkeypatch.setattr(
+        "flint.coadd.linmos.run_singularity_command", fake_run_singularity_command
+    )
+    blanked: list[Path] = []
+    monkeypatch.setattr(
+        "flint.coadd.linmos.blank_zero_pixels",
+        lambda image_path: blanked.append(image_path) or blank_zero_pixels(image_path),
+    )
+
+    result = linmos_images(
+        images=[tmp_path / "beam00.fits"],
+        linmos_options=linmos_options,
+        container=container,
+    )
+
+    image = fits.getdata(result.image_fits)
+    assert np.sum(image == 0.0) == 0
+    assert np.all(image[np.isfinite(image)] == 1.0)
+    assert image.shape == ((20, 20) if trim else (40, 40))
+    assert fits.getdata(result.weight_fits).shape == image.shape
+    assert len(blanked) == (0 if trim else 1)
 
 
 def test_trim_fits_while_blanking(tmp_path):

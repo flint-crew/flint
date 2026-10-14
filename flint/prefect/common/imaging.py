@@ -17,7 +17,7 @@ from prefect import Task, unmapped
 from prefect.artifacts import create_table_artifact
 from prefect.futures import PrefectFuture
 
-from flint.bane import FFTBANEOptions, bane_fits_image
+from flint.bane import BANEMaps, FFTBANEOptions, bane_fits_image
 from flint.calibrate.aocalibrate import (
     ApplySolutions,
     CalibrateCommand,
@@ -1074,6 +1074,9 @@ def linmos_channel_groups_to_cubes(
     total_planes: list[PrefectFuture[Path]] = []
     total_bkg_planes: list[PrefectFuture[Path]] = []
     total_rms_planes: list[PrefectFuture[Path]] = []
+    # BANE reads the planes the image cubes go on to delete
+    bane_results: list[PrefectFuture[BANEMaps]] = []
+    total_bane_results: list[PrefectFuture[BANEMaps]] = []
     for channel_idx, beam_images in enumerate(channel_groups):
         linmos_result = task_linmos_images.submit(
             image_list=list(beam_images),
@@ -1101,6 +1104,7 @@ def linmos_channel_groups_to_cubes(
             bane_maps = task_bane_fits_image.submit(
                 image=image_plane, fft_bane_options=fft_bane_options
             )
+            bane_results.append(bane_maps)
             bkg_planes.append(task_getattr.submit(bane_maps, "bkg_image"))
             rms_planes.append(task_getattr.submit(bane_maps, "rms_image"))
 
@@ -1117,6 +1121,7 @@ def linmos_channel_groups_to_cubes(
                 total_bane_maps = task_bane_fits_image.submit(
                     image=total_plane, fft_bane_options=fft_bane_options
                 )
+                total_bane_results.append(total_bane_maps)
                 total_bkg_planes.append(
                     task_getattr.submit(total_bane_maps, "bkg_image")
                 )
@@ -1147,8 +1152,11 @@ def linmos_channel_groups_to_cubes(
             fitscube_options=fitscube_options,
             bounding_box=bounding_box,
             # ``remove_original_images`` has the image cube delete the planes the
-            # total convolution reads, so it may not run until that has finished
-            wait_for=(total_planes or None) if mode == "image" else None,
+            # total convolution and BANE read, so it may not run until they have
+            # finished
+            wait_for=([*total_planes, *bane_results] or None)
+            if mode == "image"
+            else None,
         )
         for planes, mode in (
             (image_planes, "image"),
@@ -1174,6 +1182,8 @@ def linmos_channel_groups_to_cubes(
             fitscube_options=fitscube_options,
             bounding_box=bounding_box,
             beam_shape=total_beam_shape,
+            # As above, the total image cube deletes the planes BANE reads
+            wait_for=(total_bane_results or None) if mode == "image" else None,
         )
         for planes, mode in (
             (total_planes, "image"),

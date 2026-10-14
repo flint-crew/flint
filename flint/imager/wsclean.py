@@ -42,6 +42,7 @@ from fitscube.extract import (
     extract_planes_from_cube,
     find_target_axis,
 )
+from pydantic import Field
 
 from flint.convol import BeamShape
 from flint.exceptions import (
@@ -218,8 +219,8 @@ class WSCleanOptions(BaseOptions):
     # Options below here are not added to wsclean command
     flint_no_log_wsclean_output: bool = False
     """If True do not log the wsclean output"""
-    flint_name_suffix: str | None = None
-    """An additional trailing token appended to the constructed wsclean ``-name``, e.g. to disambiguate outputs from different pipelines imaging the same measurement set"""
+    flint_name_suffix: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9]+$")
+    """An additional trailing token appended to the constructed wsclean ``-name``, e.g. to disambiguate outputs from different pipelines imaging the same measurement set. Letters and digits only, as that is all the name parser reads back from the ``project`` field"""
     flint_save_mfs_products: bool = False
     """Save the MFS image, model and residual products (co-added and leakage-corrected the same way as the science image), rather than just the image"""
     flint_hold_dir: str | Path | None = None
@@ -1157,9 +1158,22 @@ def set_cube_beam(cube: Path, beam_shape: BeamShape) -> Path:
         cube (Path): The cube to update in place
         beam_shape (BeamShape): The beam every populated plane is at
 
+    Raises:
+        ValueError: ``beam_shape`` is not finite, as when no image had a beam to solve one from
+
     Returns:
         Path: The updated cube
     """
+    beam_values = (beam_shape.bmaj_arcsec, beam_shape.bmin_arcsec, beam_shape.bpa_deg)
+    if not np.all(np.isfinite(beam_values)):
+        msg = (
+            f"Can not set the beam of {cube.name} to {beam_shape}, as it is not "
+            "finite. A common beam is NaN when no image had a usable beam to solve "
+            "it from, e.g. every channel is beyond the beam cutoff. Raise the "
+            "cutoff or set a fixed beam shape."
+        )
+        raise ValueError(msg)
+
     with fits.open(cube) as open_fits:
         header = open_fits[0].header.copy()
         file_info = open_fits.fileinfo(0)

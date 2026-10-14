@@ -11,7 +11,6 @@ from typing import Any
 
 from capn_crunch import add_options_to_parser, create_options_from_parser
 from configargparse import ArgumentParser
-from fitscube.combine_fits import compress_cube
 from prefect import flow
 
 from flint.configuration import (
@@ -19,12 +18,10 @@ from flint.configuration import (
     get_options_from_strategy,
     load_strategy_yaml,
 )
-from flint.logging import logger
 from flint.naming import get_sbid_from_path
 from flint.options import (
     CubesForRMSynth,
     ErrorCubesForRMSynth,
-    FitsCubeOptions,
     NoiseCubesForRMSynth,
     PolFieldOptions,
     RACSAllOptions,
@@ -234,20 +231,9 @@ def process_racs_all(
         total_resolution_cubes=not pipeline_options.skip_rmsynth,
     )
 
-    # Compression comes last: the rm-synth and spice stages both read the Stokes
-    # cubes chunk-by-chunk, and astropy cannot memmap a gzip file, so each read
-    # would decompress the whole cube into memory. Spice compresses whatever it
-    # trims, so the pol cubes are only compressed below when spice is skipped.
-    pol_fitscube_options = FitsCubeOptions().with_options(
-        **get_options_from_strategy(
-            strategy=load_strategy_yaml(input_yaml=racs_all_options.imaging_strategy)
-            if racs_all_options.imaging_strategy is not None
-            else None,
-            operation="polarisation",
-            mode="fitscube",
-        )
-    )
-    defer_compression = not (
+    # rm-synth and spice read the cubes afterwards (and spice compresses them itself),
+    # so the polarisation flow only compresses when neither runs
+    later_stage_reads_cubes = not (
         pipeline_options.skip_rmsynth and pipeline_options.skip_spice
     )
 
@@ -261,7 +247,7 @@ def process_racs_all(
         flint_ms_directory=continuum_result.output_science_path,
         pol_field_options=resolved_pol_field_options,
         mss_by_beam=continuum_result.mss_by_beam,
-        compress_cubes=False if defer_compression else None,
+        compress_cubes=False if later_stage_reads_cubes else None,
     )
     terminal_results.extend(pol_result.terminal_futures)
 
@@ -334,28 +320,6 @@ def process_racs_all(
             name="RACS All -- spice compression",
         )(spice_field_options=resolved_spice_field_options)
         terminal_results.extend(spice_results)
-    elif defer_compression and pol_fitscube_options.compress:
-        logger.info(
-            "Compressing the polarisation cubes, now that rm-synth has read them"
-        )
-        terminal_results.extend(
-            compress_cube(
-                cube,
-                method=pol_fitscube_options.compress_method,
-                max_workers=pol_fitscube_options.max_workers,
-            )
-            for cube in (
-                *pol_result.stokes_cubes.values(),
-                *pol_result.weight_cubes.values(),
-                *pol_result.bkg_cubes.values(),
-                *pol_result.rms_cubes.values(),
-                *pol_result.total_stokes_cubes.values(),
-                *pol_result.total_bkg_cubes.values(),
-                *pol_result.total_rms_cubes.values(),
-                *rmsynth_convolved_cubes,
-                *rmsynth_noise_cubes,
-            )
-        )
 
     return terminal_results
 

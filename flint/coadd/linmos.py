@@ -751,18 +751,19 @@ def linmos_images(
         weight_fits=linmos_names.weight_fits.absolute(),
     )
 
-    # Before anything convolves or measures a noise off it: a cube is built with
-    # trimming off, so this cannot be left to `trim_fits_image`. The weights are
-    # left alone, since they are never convolved and a zero weight is a real one.
-    blank_zero_pixels(image_path=linmos_names.image_fits)
-
-    # Trim the fits image to remove empty pixels
+    # The 0.0 padding is blanked before anything convolves or measures a noise
+    # off it. `trim_fits_image` blanks as it finds the box to trim to, but a cube
+    # is built with trimming off, so its planes are blanked on their own. The
+    # untrimmed weights are left alone, since they are never convolved and a
+    # zero weight is a real one.
     if linmos_options.trim_linmos_fits:
         image_trim_results = trim_fits_image(image_path=linmos_names.image_fits)
         trim_fits_image(
             image_path=linmos_names.weight_fits,
             bounding_box=image_trim_results.bounding_box,
         )
+    else:
+        blank_zero_pixels(image_path=linmos_names.image_fits)
 
     if linmos_options.cleanup:
         _linmos_cleanup(linmos_parset_summary=linmos_parset_summary)
