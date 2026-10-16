@@ -133,15 +133,18 @@ def needs_rmclean(
 
 def _check_cubes_memmappable(*cubes: Path | None) -> None:
     """rm-lite reads each spatial block by reopening the cube with ``memmap=True``.
-    astropy cannot memmap a gzip file, so every block read decompresses the whole
-    cube into memory. Compress after RM-synthesis, not before."""
-    compressed = [cube for cube in cubes if cube is not None and cube.suffix == ".gz"]
+    astropy cannot memmap a compressed (.gz or .fz) file, so every block read
+    decompresses the whole cube into memory. Compress after RM-synthesis, not before."""
+    compressed = [
+        cube for cube in cubes if cube is not None and cube.suffix in (".gz", ".fz")
+    ]
     if compressed:
         msg = (
-            f"{compressed} are gzip-compressed and cannot be used for RM-synthesis: "
+            f"{compressed} are compressed and cannot be used for RM-synthesis: "
             "astropy cannot memmap a compressed FITS file, so each of the chunked "
             "reads would decompress the entire cube into memory. Run RM-synthesis "
-            "on the uncompressed cubes."
+            "on the uncompressed cubes, or decompress them first with "
+            "`fitscube decompress`."
         )
         raise NotSupportedError(msg)
 

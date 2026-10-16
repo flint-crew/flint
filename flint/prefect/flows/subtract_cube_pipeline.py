@@ -265,7 +265,10 @@ def task_combine_all_linmos_images(
 
     if fits_cube_options.compress:
         output_cube_path = compress_cube(
-            output_cube_path, method=fits_cube_options.compress_method
+            output_cube_path,
+            method=fits_cube_options.compress_method,
+            max_workers=fits_cube_options.max_workers,
+            quantize_level=fits_cube_options.compress_quantize_level,
         )
 
     return Path(output_cube_path)

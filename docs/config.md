@@ -81,11 +81,31 @@ used throughout.
 
 #### `compress`
 
-`FitsCubeOptions.compress` gzip-compresses a finished cube. Compression is
-only safe for a cube that is never reopened later in the pipeline: `astropy`
-cannot memmap a gzip file, so reading one back decompresses the whole cube
-into memory, and `split_cube_into_planes` refuses to run on a compressed cube
-for exactly this reason (see `flint.imager.wsclean.split_cube_into_planes`).
+`FitsCubeOptions.compress` compresses a finished cube, in the way set by
+`compress_method`:
+
+- `gzip` / `pgzip` gzip the whole file to `.fits.gz`.
+- `tile-gzip` (lossless) and `tile-rice` (lossy, `compress_quantize_level` steps
+  per noise sigma) write a tile-compressed `.fits.fz`, the format CFITSIO's
+  `fpack` writes. Single channels can be read without decompressing the whole
+  cube, and `tile-rice` is several times smaller than gzip on noise-dominated
+  cubes.
+
+The SPICE stage always compresses, with `SpiceOptions.compress_method`
+(default `tile-gzip`). Under `tile-rice` the weight and background cubes are
+still compressed losslessly, since quantizing smooth cubes makes them bigger.
+
+Compression is only safe for a cube that is never reopened later in the
+pipeline: `astropy` cannot memmap a compressed file (`.gz` or `.fz`), so the
+memmapped reads flint and rm-lite use would decompress the whole cube into
+memory. `split_cube_into_planes` and RM-synthesis refuse compressed cubes for
+exactly this reason (see `flint.imager.wsclean.split_cube_into_planes`).
+
+How to read, decompress and handle compressed cubes, and the pitfalls of
+quantizing more than once, are covered in
+[fitscube's README](https://github.com/AlecThomson/fitscube#working-with-compressed-cubes).
+In short: read `.fits.fz` cubes with `hdul[1].section[...]` rather than `.data`,
+decompress with `fitscube decompress`, and quantize at most once.
 
 In the self-cal flows, each round reassigns the `wsclean_results` variable to
 that round's own output, so only the **final** round's per-beam cube survives

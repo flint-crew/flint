@@ -452,10 +452,12 @@ class SpiceOptions(BaseOptions):
     """Column name for the per-source PSF minor axis, paired with catalogue_psf_maj_col"""
     catalogue_psf_pa_col: str | None = None
     """Column name for the per-source PSF position angle, paired with catalogue_psf_maj_col"""
-    compress_method: Literal["gzip", "pgzip"] = "pgzip"
-    """Compression backend for the mandatory gzip of every spiced cube."""
+    compress_method: Literal["gzip", "pgzip", "tile-gzip", "tile-rice"] = "tile-gzip"
+    """How every spiced cube is compressed. 'tile-gzip' (lossless) and 'tile-rice' (lossy) write tile-compressed .fits.fz cubes, 'gzip'/'pgzip' gzip whole files. Weight and background cubes are never quantized: under 'tile-rice' they use 'tile-gzip'. See fitscube's README on working with compressed cubes"""
+    compress_quantize_level: float = 4.0
+    """Quantization steps per noise sigma for 'tile-rice'. Higher keeps more precision and compresses less"""
     compress_max_workers: int | None = None
-    """Thread count handed to the compression backend"""
+    """Thread count handed to the compression"""
 
 
 class RMSynthFieldOptions(BaseOptions):
@@ -734,9 +736,11 @@ class FitsCubeOptions(BaseOptions):
     invalidate_zeros: bool = True
     """Set pixels whose values are exactly 0.0 to not-a-number (nan)"""
     compress: bool = False
-    """Gzip-compress the output cube once written"""
-    compress_method: Literal["gzip", "pgzip"] = "pgzip"
-    """The compression backend to use when ``compress`` is set"""
+    """Compress the output cube once written"""
+    compress_method: Literal["gzip", "pgzip", "tile-gzip", "tile-rice"] = "pgzip"
+    """How to compress when ``compress`` is set. 'gzip'/'pgzip' write .fits.gz, 'tile-gzip' (lossless) and 'tile-rice' (lossy) write tile-compressed .fits.fz"""
+    compress_quantize_level: float = 4.0
+    """Quantization steps per noise sigma for 'tile-rice'"""
     remove_original_images: bool = True
     """Remove the images that go into forming the fitscube"""
     inplace: bool = True

@@ -597,3 +597,15 @@ def spice_fits(
         fits_path.unlink()
 
     return spiced_path
+
+
+def compress_methods(
+    compress_method: str, cube_count: int, weight_cube_count: int
+) -> list[str]:
+    """Compression method for each image cube, then each weight cube.
+
+    Weight and background cubes are smooth, so quantizing them ('tile-rice') makes
+    them bigger rather than smaller; they get lossless 'tile-gzip' instead.
+    """
+    weight_method = "tile-gzip" if compress_method == "tile-rice" else compress_method
+    return [compress_method] * cube_count + [weight_method] * weight_cube_count
