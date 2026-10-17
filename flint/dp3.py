@@ -4,60 +4,135 @@ from __future__ import annotations
 
 from argparse import ArgumentParser
 from pathlib import Path
+from typing import Annotated, Literal, Self, TypeAlias
 
 from capn_crunch import add_options_to_parser, create_options_from_parser
+from pydantic import (
+    Field,
+    FilePath,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 from flint.logging import logger
+from flint.ms import check_column_in_ms
 from flint.options import MS, BaseOptions
 from flint.utils import get_packaged_resource_path
+
+DDECalMode: TypeAlias = Literal[
+    "scalar",
+    "scalarphase",
+    "scalaramplitude",
+    "diagonal",
+    "diagonalphase",
+    "diagonalamplitude",
+    "fulljones",
+    "tec",
+    "tec+delay",
+    "tec+phase",
+    "tec+phase+delay",
+    "rotation",
+    "rotation+diagonal",
+    "faradayrotation",
+    "leakage",
+    "leakageamplitude",
+]
+GainCalType: TypeAlias = Literal[
+    "scalar",
+    "scalarphase",
+    "scalaramplitude",
+    "diagonal",
+    "diagonalphase",
+    "diagonalamplitude",
+    "fulljones",
+    "tec",
+    "tec+phase",
+]
+CorrelationType: TypeAlias = Literal["auto", "cross"]
+Interpolation: TypeAlias = Literal["nearest", "linear"]
+# Characters that would break DP3's list syntax are not allowed
+ParsetWord: TypeAlias = Annotated[str, StringConstraints(pattern=r"^[^\s,\[\]=]+$")]
+ChannelRange: TypeAlias = Annotated[str, StringConstraints(pattern=r"^\d+(\.\.\d+)?$")]
 
 
 class DP3PreFlaggerOptions(BaseOptions):
     """Options for the DP3 preflagger step. Unset selections are not used."""
 
-    corrtype: str | None = None
-    """Flag only 'auto' or 'cross' correlations"""
-    blmin: float | None = None
+    corrtype: CorrelationType | None = None
+    """Flag only auto or cross correlations"""
+    blmin: float | None = Field(default=None, ge=0)
     """Flag baselines shorter than this length in metres"""
-    blmax: float | None = None
+    blmax: float | None = Field(default=None, ge=0)
     """Flag baselines longer than this length in metres"""
-    uvmmin: float | None = None
+    uvmmin: float | None = Field(default=None, ge=0)
     """Flag data with a UV distance below this in metres"""
-    uvmmax: float | None = None
+    uvmmax: float | None = Field(default=None, ge=0)
     """Flag data with a UV distance above this in metres"""
-    chan: list[str] | None = None
-    """Channels to flag, e.g. ['0..7', '280..287']"""
-    amplmin: float | None = None
+    chan: list[ChannelRange] | None = None
+    """Channels or inclusive channel ranges to flag, e.g. ['0..7', '287']"""
+    amplmin: float | None = Field(default=None, ge=0)
     """Flag data with an amplitude below this"""
-    amplmax: float | None = None
+    amplmax: float | None = Field(default=None, ge=0)
     """Flag data with an amplitude above this"""
+
+    @field_validator("chan")
+    @classmethod
+    def check_channel_ranges(cls, chan: list[str] | None) -> list[str] | None:
+        """Channel ranges must not run backwards."""
+        for channels in chan or []:
+            start, _, end = channels.partition("..")
+            if end and int(start) > int(end):
+                raise ValueError(f"Channel range {channels} runs backwards")
+        return chan
+
+    @model_validator(mode="after")
+    def check_limits(self) -> Self:
+        """Each lower limit must be below its upper limit."""
+        for low, high in (
+            ("blmin", "blmax"),
+            ("uvmmin", "uvmmax"),
+            ("amplmin", "amplmax"),
+        ):
+            low_value, high_value = getattr(self, low), getattr(self, high)
+            if None not in (low_value, high_value) and low_value >= high_value:
+                raise ValueError(f"{low}={low_value} must be below {high}={high_value}")
+        return self
 
 
 class DP3AOFlaggerOptions(BaseOptions):
     """Options for the DP3 aoflagger step"""
 
-    strategy: Path | None = None
-    """The aoflagger strategy file. The packaged ASKAP strategy is used if unset."""
-    memoryperc: int | None = None
+    strategy: FilePath | None = None
+    """The aoflagger .lua strategy file. The packaged ASKAP strategy is used if unset."""
+    memoryperc: int | None = Field(default=None, gt=0, le=100)
     """Percentage of system memory aoflagger may use"""
-    timewindow: int | None = None
+    timewindow: int | None = Field(default=None, ge=1)
     """Number of time slots flagged together"""
+
+    @field_validator("strategy")
+    @classmethod
+    def check_strategy_is_lua(cls, strategy: Path | None) -> Path | None:
+        """Strategies are lua scripts."""
+        if strategy is not None and strategy.suffix != ".lua":
+            raise ValueError(f"Strategy {strategy} is not a .lua file")
+        return strategy
 
 
 class DP3DDECalOptions(BaseOptions):
     """Options for the DP3 ddecal step"""
 
-    mode: str = "scalarphase"
-    """What to solve for, e.g. 'scalarphase', 'diagonal' or 'fulljones'"""
-    solint: int = 1
+    mode: DDECalMode = "scalarphase"
+    """What to solve for"""
+    solint: int = Field(default=1, ge=0)
     """Number of time slots per solution. 0 uses the whole observation."""
-    nchan: int = 0
+    nchan: int = Field(default=0, ge=0)
     """Number of channels per solution. 0 uses the whole band."""
-    maxiter: int | None = None
+    maxiter: int | None = Field(default=None, ge=1)
     """Maximum number of solver iterations"""
-    tolerance: float | None = None
+    tolerance: float | None = Field(default=None, gt=0)
     """Convergence tolerance of the solver"""
-    uvlambdamin: float | None = None
+    uvlambdamin: float | None = Field(default=None, ge=0)
     """Ignore baselines shorter than this many wavelengths"""
     propagatesolutions: bool | None = None
     """Start each solution interval from the previous solutions"""
@@ -66,17 +141,17 @@ class DP3DDECalOptions(BaseOptions):
 class DP3GainCalOptions(BaseOptions):
     """Options for the DP3 gaincal step"""
 
-    caltype: str = "scalarphase"
-    """What to solve for, e.g. 'scalarphase', 'diagonal' or 'fulljones'"""
-    solint: int = 1
+    caltype: GainCalType = "scalarphase"
+    """What to solve for"""
+    solint: int = Field(default=1, ge=0)
     """Number of time slots per solution. 0 uses the whole observation."""
-    nchan: int = 0
+    nchan: int = Field(default=0, ge=0)
     """Number of channels per solution. 0 uses the whole band."""
-    maxiter: int | None = None
+    maxiter: int | None = Field(default=None, ge=1)
     """Maximum number of solver iterations"""
-    tolerance: float | None = None
+    tolerance: float | None = Field(default=None, gt=0)
     """Convergence tolerance of the solver"""
-    uvlambdamin: float | None = None
+    uvlambdamin: float | None = Field(default=None, ge=0)
     """Ignore baselines shorter than this many wavelengths"""
     propagatesolutions: bool | None = None
     """Start each solution interval from the previous solutions"""
@@ -85,12 +160,12 @@ class DP3GainCalOptions(BaseOptions):
 class DP3ApplyCalOptions(BaseOptions):
     """Options for the DP3 applycal step"""
 
-    correction: list[str] = ["phase000"]
+    correction: list[ParsetWord] = Field(default=["phase000"], min_length=1)
     """Soltabs to apply in turn, e.g. ['phase000'] or ['rotationmeasure000']"""
-    solset: str | None = None
+    solset: ParsetWord | None = None
     """The solset holding the soltabs. DP3 picks one if unset."""
-    interpolation: str | None = None
-    """How solutions are interpolated, 'nearest' or 'linear'"""
+    interpolation: Interpolation | None = None
+    """How solutions are interpolated in time and frequency"""
     updateweights: bool | None = None
     """Update the weights along with the data"""
     invert: bool | None = None
@@ -145,10 +220,18 @@ def run_dp3(parset: dict[str, str]) -> None:
     first_step.finish()
 
 
+def check_columns(ms: MS, *columns: str | None) -> None:
+    """Raise if any of the given columns is missing from the measurement set."""
+    for column in columns:
+        if column and not check_column_in_ms(ms, column=column):
+            raise ValueError(f"Column {column} not found in {ms.path}")
+
+
 def get_model_column(ms: MS) -> str:
     """The model column of a measurement set, which calibration needs."""
     if ms.model_column is None:
         raise ValueError(f"No model column set for {ms.path}")
+    check_columns(ms, ms.column, ms.model_column)
 
     return ms.model_column
 
@@ -167,6 +250,8 @@ def dp3_flag(
                 package="flint.data.aoflagger", filename="ASKAP.lua"
             )
         )
+
+    check_columns(ms, ms.column)
 
     steps = ["aoflagger"]
     parset = options_to_parset("aoflagger", aoflagger_options)
@@ -233,6 +318,9 @@ def dp3_applycal(
     """Apply the solutions in an h5parm, writing the corrected data to ``output_column``."""
     ms = MS.cast(ms)
     options = options or DP3ApplyCalOptions()
+    if not h5parm.exists():
+        raise FileNotFoundError(f"Solutions {h5parm} not found")
+    check_columns(ms, ms.column)
 
     # Each soltab gets its own sub-step so several can be applied in one pass
     corrections = [f"c{i}" for i in range(len(options.correction))]

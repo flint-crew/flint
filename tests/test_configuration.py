@@ -691,3 +691,8 @@ def test_dp3_options_from_strategy():
     strategy["defaults"]["dp3ddecal"]["not_a_dp3_key"] = 1
     with pytest.raises(ValueError):
         verify_configuration(input_strategy=strategy)
+
+    del strategy["defaults"]["dp3ddecal"]["not_a_dp3_key"]
+    strategy["selfcal"][1]["dp3ddecal"]["mode"] = "scalarphse"
+    with pytest.raises(ValueError):
+        verify_configuration(input_strategy=strategy)

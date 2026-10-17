@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 from casacore.tables import makecoldesc, table
+from pydantic import ValidationError
 
 from flint.dp3 import (
     DP3AOFlaggerOptions,
@@ -89,19 +90,21 @@ def test_create_dp3_parset():
     assert "msin.datacolumn" not in create_dp3_parset(MS(path=Path("some.ms")), ["a"])
 
 
-def test_applycal_parset(monkeypatch):
+def test_applycal_parset(monkeypatch, tmp_path):
     parsets = []
     monkeypatch.setattr("flint.dp3.run_dp3", parsets.append)
+    h5parm = tmp_path / "sol.h5"
+    h5parm.touch()
 
     ms = dp3_applycal(
         MS(path=Path("some.ms")),
-        h5parm=Path("sol.h5"),
+        h5parm=h5parm,
         options=DP3ApplyCalOptions(correction=["amplitude000", "phase000"]),
     )
 
     assert ms.column == "CORRECTED_DATA"
     parset = parsets[0]
-    assert parset["applycal.parmdb"] == "sol.h5"
+    assert parset["applycal.parmdb"] == str(h5parm)
     assert parset["applycal.steps"] == "[c0,c1]"
     assert parset["applycal.c0.correction"] == "amplitude000"
     assert parset["applycal.c1.correction"] == "phase000"
@@ -111,6 +114,59 @@ def test_applycal_parset(monkeypatch):
 def test_calibration_needs_model_column():
     with pytest.raises(ValueError, match="No model column"):
         dp3_ddecal(MS(path=Path("some.ms")))
+
+
+@pytest.mark.parametrize(
+    "options_class, kwargs",
+    [
+        (DP3DDECalOptions, {"mode": "scalarphse"}),
+        (DP3DDECalOptions, {"solint": -1}),
+        (DP3DDECalOptions, {"maxiter": 0}),
+        (DP3DDECalOptions, {"tolerance": 0}),
+        (DP3GainCalOptions, {"caltype": "rotation"}),
+        (DP3GainCalOptions, {"nchan": -1}),
+        (DP3PreFlaggerOptions, {"corrtype": "both"}),
+        (DP3PreFlaggerOptions, {"blmin": -1.0}),
+        (DP3PreFlaggerOptions, {"blmin": 10.0, "blmax": 5.0}),
+        (DP3PreFlaggerOptions, {"uvmmin": 10.0, "uvmmax": 10.0}),
+        (DP3PreFlaggerOptions, {"chan": ["7..0"]}),
+        (DP3PreFlaggerOptions, {"chan": ["a"]}),
+        (DP3PreFlaggerOptions, {"chan": ["0, 1"]}),
+        (DP3AOFlaggerOptions, {"strategy": Path("missing.lua")}),
+        (DP3AOFlaggerOptions, {"memoryperc": 0}),
+        (DP3AOFlaggerOptions, {"timewindow": 0}),
+        (DP3ApplyCalOptions, {"correction": []}),
+        (DP3ApplyCalOptions, {"correction": ["phase000,amplitude000"]}),
+        (DP3ApplyCalOptions, {"solset": "sol 000"}),
+        (DP3ApplyCalOptions, {"interpolation": "cubic"}),
+    ],
+)
+def test_invalid_options(options_class, kwargs):
+    with pytest.raises(ValidationError):
+        options_class(**kwargs)
+
+
+def test_strategy_must_be_lua(tmp_path):
+    strategy = tmp_path / "strategy.txt"
+    strategy.touch()
+    with pytest.raises(ValidationError, match="lua"):
+        DP3AOFlaggerOptions(strategy=strategy)
+
+
+def test_valid_options():
+    DP3PreFlaggerOptions(corrtype="cross", blmin=1.0, blmax=2.0, chan=["0..7", "287"])
+    DP3DDECalOptions(mode="tec+phase+delay", solint=0, maxiter=50, tolerance=1e-4)
+    DP3GainCalOptions(caltype="fulljones")
+    DP3ApplyCalOptions(correction=["rotationmeasure000"], interpolation="linear")
+
+
+def test_missing_inputs(corrupted_ms, tmp_path):
+    with pytest.raises(ValueError, match="NOT_A_COLUMN"):
+        dp3_ddecal(corrupted_ms.with_options(model_column="NOT_A_COLUMN"))
+    with pytest.raises(ValueError, match="NOT_A_COLUMN"):
+        dp3_flag(corrupted_ms.with_options(column="NOT_A_COLUMN"))
+    with pytest.raises(FileNotFoundError):
+        dp3_applycal(corrupted_ms, tmp_path / "missing.h5")
 
 
 def test_dp3_flag(corrupted_ms):
