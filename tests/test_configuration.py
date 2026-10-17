@@ -172,6 +172,19 @@ def test_verify_options_with_class_operations(package_strategy_operations):
         verify_configuration(input_strategy=strategy)
 
 
+def test_verify_rejects_a_name_suffix_names_can_not_carry(
+    package_strategy_operations,
+):
+    """A suffix the name parser can not read back is caught when the strategy is
+    loaded, rather than surfacing as missing name fields deep into a run"""
+    strategy = package_strategy_operations
+    verify_configuration(input_strategy=strategy)
+
+    strategy["stokesv"]["wsclean"]["flint_name_suffix"] = "racs_all"
+    with pytest.raises(ValueError):
+        verify_configuration(input_strategy=strategy)
+
+
 def test_verify_getoptions_with_class_operations(package_strategy_operations):
     """Check whether the get options interface works with the operations
     section of the strategy file"""
@@ -619,6 +632,24 @@ def test_polarisation_fitscube_sibling_mode(package_strategy_polarisation) -> No
     )
     assert fitscube_options["compress"]
     assert fitscube_options["compress_method"] == "gzip"
+
+
+def test_polarisation_spice_sibling_mode(package_strategy_polarisation) -> None:
+    """spice, like fitscube, sits directly under the polarisation operation
+    as a sibling of the total/linear/circular polarisation types."""
+    strategy = package_strategy_polarisation
+    strategy["polarisation"]["spice"] = {
+        "n_beamwidths": 2.0,
+    }
+
+    verify_configuration(input_strategy=strategy)
+
+    spice_options = get_options_from_strategy(
+        strategy=strategy,
+        operation="polarisation",
+        mode="spice",
+    )
+    assert spice_options["n_beamwidths"] == 2.0
 
 
 def test_verify_polarisation_catches_bad_override(
