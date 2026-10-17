@@ -26,7 +26,11 @@ from flint.prefect.common.spice import (
 )
 from flint.prefect.common.utils import task_archive_sbid, task_getattr
 from flint.source_finding.aegean import run_bane_and_aegean
-from flint.spice import check_cubes_share_shape, shared_pixel_boxes
+from flint.spice import (
+    check_cubes_share_shape,
+    compress_methods,
+    shared_pixel_boxes,
+)
 
 task_run_bane_and_aegean = task(run_bane_and_aegean)
 
@@ -109,8 +113,13 @@ def process_spice_compression(spice_field_options: SpiceFieldOptions) -> list[Pa
 
     compressed_cubes = task_compress_cube.map(
         out_cube=spiced_paths,
-        method=unmapped(spice_options.compress_method),
+        method=compress_methods(
+            compress_method=spice_options.compress_method,
+            cube_count=len(spice_field_options.cubes),
+            weight_cube_count=len(spice_field_options.weight_cubes),
+        ),
         max_workers=unmapped(spice_options.compress_max_workers),
+        quantize_level=unmapped(spice_options.compress_quantize_level),
     )
 
     written_paths = compressed_cubes.result()

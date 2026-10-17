@@ -53,7 +53,7 @@ dependencies = [
     "reproject",
     "pandas",
     "ConfigArgParse>=1.7",
-    "fitscube[pgzip]>=2.8",
+    "fitscube[pgzip]>=2.10",
     "astroquery>=0.4.8.dev0",
     "crystalball>=0.4.3",
     "jolly-roger>=0.10.1",

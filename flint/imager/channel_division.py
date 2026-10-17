@@ -30,6 +30,7 @@ import numpy as np
 from astropy import units as u
 from capn_crunch import BaseOptions
 from fitscube.combine_fits import even_spacing
+from fitscube.exceptions import IrregularSpacingException
 
 from flint.exceptions import ChannelDivisionError
 from flint.logging import logger
@@ -137,11 +138,17 @@ def _partition(
 
 def _describe(
     bins: list[tuple[int, int]], frequencies: np.ndarray, channel_width: float
-) -> ChannelDivision:
-    """Build the division and the cube fitscube will make from it."""
+) -> ChannelDivision | None:
+    """Build the division and the cube fitscube will make from it, or None if
+    fitscube cannot place the images on one grid."""
     centres = np.array([(frequencies[a] + frequencies[b]) / 2 for a, b in bins])
     if len(centres) > 1:
-        new_specs, missing = even_spacing(centres * u.Hz)
+        try:
+            new_specs, missing = even_spacing(centres * u.Hz)
+        except IrregularSpacingException:
+            # Only when the common step is far finer than every gap, so the cube
+            # would be padded well past MAX_PADDING_FACTOR anyway
+            return None
         n_planes, n_blank = len(new_specs), int(np.sum(missing))
         cdelt3 = float(np.diff(new_specs.to(u.Hz).value)[0])
     else:
@@ -231,14 +238,13 @@ def solve_channel_division(
         }
         for phase in sorted(phases):
             bins = _partition(indices, sizes, t, phase)
-            if bins is not None:
-                candidates.append(
-                    _describe(
-                        bins=bins,
-                        frequencies=frequencies,
-                        channel_width=channel_width,
-                    )
-                )
+            if bins is None:
+                continue
+            division = _describe(
+                bins=bins, frequencies=frequencies, channel_width=channel_width
+            )
+            if division is not None:
+                candidates.append(division)
 
     if not candidates:
         msg = (

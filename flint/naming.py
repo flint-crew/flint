@@ -49,7 +49,7 @@ def get_fits_cube_from_paths(paths: list[Path]) -> list[Path]:
     Returns:
         List[Path]: Set of paths matching the search criteria
     """
-    cube_expression = re.compile(r"\.cube\..*fits(\.gz)?$")
+    cube_expression = re.compile(r"\.cube\..*fits(\.gz|\.fz)?$")
 
     cube_files = [path for path in paths if bool(cube_expression.search(str(path)))]
 
