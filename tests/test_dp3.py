@@ -226,3 +226,16 @@ def test_cli_parser():
     args = get_parser().parse_args(["ddecal", "some.ms", "--mode", "diagonal"])
     assert args.task == "ddecal"
     assert args.mode == "diagonal"
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["ddecal", "some.ms", "--mode", "scalarphse"],
+        ["gaincal", "some.ms", "--caltype", "rotation"],
+        ["applycal", "some.ms", "sol.h5", "--interpolation", "cubic"],
+    ],
+)
+def test_cli_rejects_unknown_choices(argv):
+    with pytest.raises(SystemExit):
+        get_parser().parse_args(argv)

@@ -225,7 +225,7 @@ requires-dist = [
     { name = "astropy", specifier = ">=6.1.3" },
     { name = "astroquery", specifier = ">=0.4.8.dev0" },
     { name = "billiard" },
-    { name = "capn-crunch", specifier = ">=1.1.0" },
+    { name = "capn-crunch", specifier = ">=1.2.0" },
     { name = "configargparse", specifier = ">=1.7" },
     { name = "crystalball", specifier = ">=0.4.3" },
     { name = "dask" },
@@ -522,14 +522,14 @@ wheels = [
 
 [[package]]
 name = "capn-crunch"
-version = "1.1.0"
+version = "1.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/59/7d/4a9110e41c89c27b5d700cac115bb59a8a7f667832eca55af4f3be00c9b8/capn_crunch-1.1.0.tar.gz", hash = "sha256:5eb9cb6b8c7e5710c51c27b87aa5efdd87732b80fc9e2e73b962c991cc85381c", size = 46161, upload-time = "2026-03-15T10:38:56.277Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/82/85/5d36ba90c30ebbb2f1e73bb9bc049b51a74ddc347f01e4e325ba04ab7153/capn_crunch-1.2.0.tar.gz", hash = "sha256:ae43292a5299dda492338115d69e11cf3bbdbbe7949987c5ce485039c14fb0af", size = 47898, upload-time = "2026-10-17T10:16:16.876Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d9/04/565191902dcc8dba5b05625e8086095282ec3a9a583eac7364514e3f3827/capn_crunch-1.1.0-py3-none-any.whl", hash = "sha256:6cd4dbe8c1737dabcfafd1636598c54c020dbaa0c18af45ffd2150e24220f5bf", size = 5684, upload-time = "2026-03-15T10:38:54.942Z" },
+    { url = "https://files.pythonhosted.org/packages/e4/00/dd80a7b7a8c43751ff45af777fd80277b79df6e240d4715bacd383c86977/capn_crunch-1.2.0-py3-none-any.whl", hash = "sha256:d25b424101f9bdb873482537612a140d58b084fdd191185e70d5968499b664a3", size = 6400, upload-time = "2026-10-17T10:16:15.663Z" },
 ]
 
 [[package]]
