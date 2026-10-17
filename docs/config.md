@@ -51,6 +51,7 @@ A 'mode' refers to a set of options for a given tool. As of version 0.2, the fol
 - `aegean` : This corresponds to `flint.source_finding.aegean.AegeanOptions`
 - `potatopeel`: This corresponds to `flint.peel.potato.PotatoPeelOptions`
 - `fitscube`: This correspond to `flint.options.FitsCubeOptions`
+- `dp3preflagger`, `dp3aoflagger`, `dp3ddecal`, `dp3gaincal`, `dp3applycal`: These correspond to the options classes in `flint.dp3` (see [DP3](dp3.md))
 
 To see all the available options you can run `flint_{mode} -h` on the command-line.
 All attributes available in the corresponding `Options` class listed above may be

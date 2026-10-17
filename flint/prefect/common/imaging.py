@@ -36,6 +36,13 @@ from flint.convol import (
     convolve_plane_to_beam,
     get_common_beam,
 )
+from flint.dp3 import (
+    dp3_applycal,
+    dp3_ddecal,
+    dp3_flag,
+    dp3_gaincal,
+    dp3_solve_apply,
+)
 from flint.flagging import flag_ms_aoflagger
 from flint.imager.wsclean import (
     ImageSet,
@@ -115,6 +122,11 @@ task_remove_files_folders = task(remove_files_folders)
 task_get_common_bounding_box = task(get_common_bounding_box)
 task_split_cube_into_planes = task(split_cube_into_planes)
 task_bane_fits_image = task(bane_fits_image)
+task_dp3_flag = task(dp3_flag)
+task_dp3_ddecal = task(dp3_ddecal)
+task_dp3_gaincal = task(dp3_gaincal)
+task_dp3_applycal = task(dp3_applycal)
+task_dp3_solve_apply = task(dp3_solve_apply)
 
 # Tasks below are extracting componented from earlier stages, or are
 # otherwise doing something important
@@ -179,6 +191,7 @@ def task_flag_ms_aoflagger(ms: FlagMS, container: Path | None) -> FlagMS:
     # Pirate believes the type ignore below is due to the decorated function and type alias
     extracted_ms = MS.cast(ms=ms)  # type: ignore
 
+    # TODO: Flag with DP3 (dp3_flag) when no aoflagger container is given
     if container is None:
         logger.warning("AOFlagger {container=}, so skipping the flagging")
         return ms

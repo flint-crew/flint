@@ -22,6 +22,7 @@ from flint.ms import (
     find_mss,
     get_phase_dir_from_ms,
     get_times_from_ms,
+    preprocess_askap_ms,
     remove_columns_from_ms,
     rename_ms_and_columns_for_selfcal,
     standardise_ms_to_list_ms,
@@ -319,6 +320,15 @@ def test_rename_ms_and_columns_for_selfcal(ms_example, tmpdir):
 
     assert new_ms.path == target
     assert "DATA" in new_colnames
+
+
+def test_preprocess_askap_ms_skip_rotation(ms_example):
+    """Skipping the rotation without transforming the MS returns the MS"""
+    ms = preprocess_askap_ms(ms=ms_example, skip_rotation=True)
+
+    assert ms.path == ms_example
+    assert ms.column == "DATA"
+    assert "INSTRUMENT_DATA" not in _get_columns(ms_path=ms.path)
 
 
 def test_phase_dir(ms_example):

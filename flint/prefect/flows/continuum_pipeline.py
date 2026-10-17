@@ -245,10 +245,9 @@ def process_science_fields(
             container=field_options.calibrate_container,
         )
 
-        if field_options.flagger_container is not None:
-            flagged_mss = task_flag_ms_aoflagger.map(
-                ms=apply_solutions_cmds, container=field_options.flagger_container
-            )
+        flagged_mss = task_flag_ms_aoflagger.map(
+            ms=apply_solutions_cmds, container=field_options.flagger_container
+        )
         column_rename_mss = task_rename_column_in_ms.map(
             ms=flagged_mss,
             original_column_name=unmapped("DATA"),
@@ -423,6 +422,7 @@ def process_science_fields(
                 round_info=current_round,
                 operation="selfcal",
             )
+            # TODO: Offer DP3 (task_dp3_solve_apply) as a container-free self-calibration backend
             cal_mss = task_gaincal_applycal_ms.map(
                 ms=wsclean_results,
                 selfcal_round=current_round,
@@ -523,7 +523,7 @@ def process_science_fields(
             archive_wait_for.extend(wsclean_results)
 
             # Do source finding on the last round of self-cal'ed images
-            if round == field_options.rounds and run_aegean:
+            if current_round == field_options.rounds and run_aegean:
                 archive_wait_for.extend(
                     task_run_bane_and_aegean.map(
                         image=wsclean_results,

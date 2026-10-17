@@ -8,6 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from flint.configuration import (
+    FORMAT_VERSION,
     Strategy,
     TukeyTractorOptions,
     _create_mode_mapping_defaults,
@@ -667,5 +668,26 @@ def test_verify_polarisation_catches_bad_override(
 
     strategy["polarisation"]["linear"]["wsclean"].pop("ThisDoesNotExist")
     strategy["polarisation"]["ThisIsNotAPolarisationOrMode"] = {}
+    with pytest.raises(ValueError):
+        verify_configuration(input_strategy=strategy)
+
+
+def test_dp3_options_from_strategy():
+    """DP3 modes are verified and looked up per self-calibration round"""
+    strategy = Strategy(
+        {
+            "version": FORMAT_VERSION,
+            "defaults": {"dp3ddecal": {"solint": 6}, "dp3applycal": {}},
+            "selfcal": {1: {"dp3ddecal": {"mode": "diagonal"}}},
+        }
+    )
+    assert verify_configuration(input_strategy=strategy)
+
+    ddecal = get_options_from_strategy(
+        strategy=strategy, mode="dp3ddecal", round_info=1, operation="selfcal"
+    )
+    assert ddecal == {"solint": 6, "mode": "diagonal"}
+
+    strategy["defaults"]["dp3ddecal"]["not_a_dp3_key"] = 1
     with pytest.raises(ValueError):
         verify_configuration(input_strategy=strategy)
