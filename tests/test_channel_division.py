@@ -14,8 +14,10 @@ import numpy as np
 import pytest
 from astropy import units as u
 from fitscube.combine_fits import even_spacing
+from fitscube.exceptions import IrregularSpacingException
 
 from flint.exceptions import ChannelDivisionError
+from flint.imager import channel_division
 from flint.imager.channel_division import (
     ChannelDivision,
     channel_grid_indices,
@@ -65,7 +67,11 @@ def mock_wsclean_division(
 
 @pytest.fixture
 def channels() -> np.ndarray:
-    """The Part 4 reference channel list: 720 x 1MHz channels over a 1000MHz span."""
+    """The RACS-all channel list: 720 x 1MHz channels over a 1000MHz span.
+
+    RACS-low3 799.5-1087.5 MHz, RACS-mid 1295.5-1439.5 MHz (the RFI-free upper
+    half of its band) and RACS-high 1511.5-1799.5 MHz.
+    """
     return np.concatenate(
         [
             799990740.7 + 1e6 * np.arange(288),
@@ -102,6 +108,55 @@ def test_mock_default_division_regression(channels: np.ndarray) -> None:
     n_planes, n_blank, cdelt3 = cube_shape(centres)
     assert (n_planes, n_blank) == (986, 938)
     assert cdelt3 == pytest.approx(1e6)
+
+
+def test_default_divisions_grid(channels: np.ndarray) -> None:
+    """Every wsclean default division makes a cube, padded or not. fitscube 2.10
+    refused most of these."""
+    for channels_out in range(2, 145):
+        try:
+            centres = mock_wsclean_division(
+                channels=channels, channels_out=channels_out
+            )
+        except ValueError:
+            continue
+        new_specs, missing = even_spacing(centres * u.Hz)
+        assert np.sum(~missing) == len(centres), channels_out
+
+
+@pytest.mark.parametrize(
+    ("target_width", "expect"),
+    [(16e6, (43, 59, 17e6)), (20e6, (41, 57, 17.5e6))],
+)
+def test_solve_wide_regressions(
+    channels: np.ndarray, target_width: float, expect: tuple[int, int, float]
+) -> None:
+    """These crashed the solve under fitscube 2.10."""
+    division = solve_channel_division(frequencies=channels, target_width=target_width)
+
+    assert (division.channels_out, division.n_planes) == expect[:2]
+    assert division.cdelt3 == pytest.approx(expect[2])
+
+
+def test_solve_skips_divisions_fitscube_refuses(
+    channels: np.ndarray, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One refused candidate must not end the whole solve."""
+    real_even_spacing = channel_division.even_spacing
+    calls = 0
+
+    def refuse_first(specs: u.Quantity) -> tuple[u.Quantity, np.ndarray]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise IrregularSpacingException("refused")
+        return real_even_spacing(specs)
+
+    monkeypatch.setattr(channel_division, "even_spacing", refuse_first)
+    division = solve_channel_division(frequencies=channels, target_width=8e6)
+
+    assert calls > 1
+    assert division.channels_out == 90
 
 
 def test_solve_8mhz_regression(channels: np.ndarray) -> None:
