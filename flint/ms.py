@@ -12,7 +12,6 @@ from __future__ import annotations
 import shutil
 from argparse import ArgumentParser
 from contextlib import contextmanager
-from curses.ascii import controlnames
 from os import PathLike
 from pathlib import Path
 from typing import TypeAlias, cast
@@ -838,7 +837,6 @@ def preprocess_askap_ms(
 
     if skip_rotation:
         # TODO: Should we copy the DATA to INSTRUMENT_DATA?
-        ms = MS.cast(corrected_ms_path)
         logger.info("Skipping the rotation of the visibilities. ")
         ms = ms.with_options(column=data_column)
         logger.info(f"Returning {ms=}.")
@@ -989,7 +987,7 @@ def rename_ms_and_columns_for_selfcal(
             tab.renamecol(oldname=corrected_data, newname=data)
         elif (
             corrected_data in colnames
-            and data not in controlnames
+            and data not in colnames
             and corrected_data != data
         ):
             logger.info(f"Renaming {corrected_data=} to {data=}")

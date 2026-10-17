@@ -57,7 +57,7 @@ dependencies = [
     "astroquery>=0.4.8.dev0",
     "crystalball>=0.4.3",
     "jolly-roger>=0.10.1",
-    "capn-crunch>=1.1.0",
+    "capn-crunch>=1.2.0",
     "billiard",
 ]
 
@@ -97,8 +97,11 @@ casa =[
 rmsynth = [
     "rm-lite==2026.9.14",
 ]
+dp3 = [
+    "dp3>=6.6.0",
+]
 all = [
-    "askap-flint[dev,casa,rmsynth]",
+    "askap-flint[dev,casa,rmsynth,dp3]",
 ]
 
 [project.scripts]
@@ -112,6 +115,7 @@ flint_containers = "flint.containers:cli"
 flint_ms = "flint.ms:cli"
 flint_wsclean = "flint.imager.wsclean:cli"
 flint_gaincal = "flint.selfcal.casa:cli"
+flint_dp3 = "flint.dp3:cli"
 flint_convol = "flint.convol:cli"
 flint_yandalinmos = "flint.coadd.linmos:cli"
 flint_config = "flint.configuration:cli"
@@ -244,6 +248,9 @@ FIELDs = "FIELDs"
 FoV = "FoV"
 outweight= "outweight"
 calid = "calid"
+
+[tool.typos.default.extend-words]
+parm = "parm"
 
 [tool.codespell]
 skip = "*.lock"

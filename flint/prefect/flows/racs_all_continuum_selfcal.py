@@ -477,6 +477,7 @@ def process_racs_all_continuum(
                     round_info=current_round,
                     operation="selfcal",
                 )
+                # TODO: Offer DP3 (task_dp3_solve_apply) as a container-free self-calibration backend
                 cal_mss = task_gaincal_applycal_ms.map(
                     ms=beam_imaging_results.mss,
                     selfcal_round=current_round,
