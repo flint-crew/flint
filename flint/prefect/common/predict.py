@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from flint.exceptions import NoFieldSourceError
 from flint.logging import logger
 from flint.ms import MS
 from flint.options import AddModelSubtractFieldOptions
@@ -117,6 +118,9 @@ def task_create_sky_model(
         holofile (Path | None, optional): Measured holography cube to sample the primary-beam
             response from. If None, falls back to an idealized Gaussian primary beam. Defaults to None.
 
+    Raises:
+        NoFieldSourceError: Raised if no catalogue sources are left to model the field
+
     Returns:
         SkyModel: The derived sky model
     """
@@ -131,8 +135,11 @@ def task_create_sky_model(
     skymodel = create_sky_model(
         ms_path=ms.path, sky_model_options=sky_model_options, holofile=holofile
     )
-    assert skymodel is not None, (
-        f"No sky-model sources survived the flux/radial cuts for {ms.path}"
-    )
+    if skymodel is None:
+        raise NoFieldSourceError(
+            f"No sky-model sources survived the flux and radial cuts for {ms.path}. "
+            "Lowering flux_cutoff, raising fwhm_scale_cutoff, or turning on "
+            "holography_taper in the skymodel strategy options may help."
+        )
 
     return skymodel

@@ -141,6 +141,11 @@ def _check_racs_all_options(racs_all_options: RACSAllOptions) -> None:
                 "Unable to create linmos cubes without a yandasoft container"
             )
     if racs_all_options.run_skymodel_calibration:
+        # The catalogues themselves are verified by the reference_catalogue_directory check above
+        if racs_all_options.reference_catalogue_directory is None:
+            raise ValueError(
+                "reference_catalogue_directory needs to be set if run_skymodel_calibration is True"
+            )
         if racs_all_options.calibrate_container is None:
             raise ValueError(
                 "calibrate_container needs to be set if run_skymodel_calibration is True"
@@ -264,7 +269,6 @@ def all_holography_available(
     racs_all_options: RACSAllOptions,
     output_science_path: Path,
 ) -> Path | None:
-
     if any(
         not isinstance(holo, Path)
         for holo in (
@@ -434,9 +438,11 @@ def process_racs_all_continuum(
                         round_info=0,
                         operation="selfcal",
                     )
+                    assert racs_all_options.reference_catalogue_directory is not None, (
+                        "reference_catalogue_directory is required by _check_racs_all_options"
+                    )
                     sky_model_options = SkyModelOptions(
-                        reference_catalogue_directory=racs_all_options.reference_catalogue_directory
-                        or Path("."),
+                        reference_catalogue_directory=racs_all_options.reference_catalogue_directory,
                         write_calibrate_model=True,
                     ).with_options(**sky_model_update_options)
 

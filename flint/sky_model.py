@@ -17,9 +17,20 @@ from scipy.optimize import curve_fit
 
 from flint.catalogue import KNOWN_REFERENCE_CATALOGUES, Catalogue
 from flint.coadd.linmos import compute_pb_rotation_alpha
+from flint.exceptions import UnusableBeamError
 from flint.logging import logger
-from flint.misc.holo import sample_beam_attenuation
-from flint.ms import get_freqs_from_ms, get_phase_dir_from_ms, get_pol_axis_as_rad
+from flint.misc.holo import (
+    BeamResponse,
+    load_beam_response,
+    outside_planes,
+    sample_beam_response,
+)
+from flint.ms import (
+    get_beam_from_ms,
+    get_freqs_from_ms,
+    get_phase_dir_from_ms,
+    get_pol_axis_as_rad,
+)
 from flint.naming import extract_beam_from_name
 from flint.utils import get_packaged_resource_path
 
@@ -49,6 +60,10 @@ class SkyModelOptions(BaseOptions):
     """Should the model for calibrate be created. The output will have .calibrate.txt suffix appended to the MS path."""
     write_ds9_region: bool = False
     """Should a DS9 region file be created. The output will have .ds9.reg suffix appended to the MS path."""
+    holography_taper: bool = False
+    """Keep sources beyond the edge of the holography cube, continuing the beam past the edge as a Gaussian fall-off from the edge value. Off drops them, as linmos does."""
+    rotate_pa_to_phase_centre: bool = False
+    """Measure position angles in the calibrate model from north at the phase centre, as addmodel expects, instead of from north at each source"""
     catalogue_path: Path | None = None
     """Path to a user-supplied catalogue file. If set, takes precedence over reference_catalogue_directory/reference_name. Column names/units below are never guessed."""
     catalogue_freq: float | None = None
@@ -512,7 +527,7 @@ def load_catalogue(
     cata_tab = Table.read(cata_path)
     logger.info(f"Loaded table, found {len(cata_tab)} sources. ")
 
-    return _fill_default_sed_columns(
+    return fill_default_sed_columns(
         catalogue=cata,
         table=cata_tab,
         assumed_alpha=assumed_alpha,
@@ -520,7 +535,7 @@ def load_catalogue(
     )
 
 
-def _fill_default_sed_columns(
+def fill_default_sed_columns(
     catalogue: Catalogue, table: Table, assumed_alpha: float, assumed_beta: float
 ) -> tuple[Catalogue, Table]:
     """Add default spectral-index/curvature columns to `table` for whichever
@@ -551,7 +566,7 @@ def _fill_default_sed_columns(
     return Catalogue(**cols), table
 
 
-def _deconvolve_catalogue_shapes(
+def deconvolve_catalogue_shapes(
     table: Table,
     maj_col: str,
     min_col: str,
@@ -702,7 +717,7 @@ def load_user_catalogue(sky_model_options: SkyModelOptions) -> tuple[Catalogue, 
             table[psf_maj_col].unit = shape_unit
             table[psf_min_col].unit = shape_unit
             table[psf_pa_col].unit = u.deg
-            _deconvolve_catalogue_shapes(
+            deconvolve_catalogue_shapes(
                 table=table,
                 maj_col=maj_col,
                 min_col=min_col,
@@ -738,7 +753,7 @@ def load_user_catalogue(sky_model_options: SkyModelOptions) -> tuple[Catalogue, 
         vizier_id=None,
     )
 
-    return _fill_default_sed_columns(
+    return fill_default_sed_columns(
         catalogue=catalogue,
         table=table,
         assumed_alpha=sky_model_options.assumed_alpha,
@@ -805,11 +820,24 @@ def preprocess_catalogue(
         logger.debug(f"Updating Table column {orig} to {new}.")
         new_cata_tab[orig].name = new
 
+    # Catalogues such as NVSS leave the PA blank when both axes are only upper
+    # limits. Those sources are unresolved, so make them points for every
+    # model writer; addmodel would otherwise predict NaN for every visibility.
+    # The mask is read here because the unit conversion below drops it.
+    pa = new_cata_tab["pa"]
+    no_pa = np.ma.getmaskarray(pa) | ~np.isfinite(np.ma.getdata(pa))
+
     # Put the columns into expected units
     for key, unit_str in NORM_COLS.items():
         new_cata_tab[key] = new_cata_tab[key].to(u.Unit(unit_str))
 
-    return QTable(new_cata_tab)
+    qtable = QTable(new_cata_tab)
+    logger.info(f"{np.sum(no_pa)} sources have no position angle, modelled as points")
+    qtable["maj"][no_pa] = 0.0 * u.arcsecond
+    qtable["min"][no_pa] = 0.0 * u.arcsecond
+    qtable["pa"][no_pa] = 0.0 * u.deg
+
+    return qtable
 
 
 def make_ds9_region(out_path: Path, sources: list[Row]) -> Path:
@@ -905,12 +933,44 @@ def make_hyperdrive_model(out_path: Path, sources: list[tuple[Row, CurvedPL]]) -
     return out_path
 
 
-def make_calibrate_model(out_path: Path, sources: list[tuple[Row, CurvedPL]]) -> Path:
+def phase_centre_pa_offset(phase_centre: SkyCoord, position: SkyCoord) -> u.Quantity:
+    """Angle from north at the phase centre to north at `position`, measured east in the phase centre's tangent plane.
+
+    Adding it to a position angle measured from north at the source gives the
+    angle from north at the phase centre, which is what addmodel expects.
+
+    Args:
+        phase_centre (SkyCoord): The phase centre of the measurement set
+        position (SkyCoord): Position of the source
+
+    Returns:
+        u.Quantity: The angle between the two norths
+    """
+    dec0 = phase_centre.dec.rad
+    dec = position.dec.rad
+    dra = position.ra.rad - phase_centre.ra.rad
+    return (
+        np.arctan2(
+            -np.sin(dec) * np.sin(dra),
+            np.cos(dec) * np.cos(dec0) + np.sin(dec) * np.sin(dec0) * np.cos(dra),
+        )
+        * u.rad
+    )
+
+
+def make_calibrate_model(
+    out_path: Path,
+    sources: list[tuple[Row, CurvedPL]],
+    phase_centre: SkyCoord | None = None,
+) -> Path:
     """Create a sky-model file that is compatible with the AO Calibrate software
+
+    Components under 1 arcsec on both axes are written as point sources.
 
     Args:
         out_path (Path): Output path of the model file
         sources (List[Tuple[Row,CurvedPL]]): The sources and their (apparent) SED to write
+        phase_centre (SkyCoord | None, optional): If set, position angles are measured from north at this phase centre instead of at each source. See `phase_centre_pa_offset`. Defaults to None.
 
     Returns:
         Path: Output path of the model file
@@ -946,6 +1006,11 @@ def make_calibrate_model(out_path: Path, sources: list[tuple[Row, CurvedPL]]) ->
                     f"true,{ref_nu},,,\n"
                 )
             else:
+                pa = src_row["pa"]
+                if phase_centre is not None:
+                    pa = pa + phase_centre_pa_offset(
+                        phase_centre=phase_centre, position=pos
+                    )
                 out_file.write(
                     f"{src_row['name']},"
                     f"GAUSSIAN,"
@@ -955,8 +1020,8 @@ def make_calibrate_model(out_path: Path, sources: list[tuple[Row, CurvedPL]]) ->
                     f"[{src_cpl.alpha},{src_cpl.beta}],"
                     f"true,{ref_nu},"
                     f"{src_row['maj'].to(u.arcsecond).value},"
-                    f"{src_row['maj'].to(u.arcsecond).value},"
-                    f"{src_row['pa'].to(u.deg).value},\n"
+                    f"{src_row['min'].to(u.arcsecond).value},"
+                    f"{pa.to(u.deg).value},\n"
                 )
 
     return out_path
@@ -996,6 +1061,30 @@ def get_sky_model_output_paths(ms_path: Path) -> SkyModelOutputPaths:
     )
 
 
+def get_beam_number(ms_path: Path) -> int:
+    """Beam number of a measurement set, from its name or, failing that, its FEED1 column.
+
+    Args:
+        ms_path (Path): The measurement set to inspect
+
+    Raises:
+        AssertionError: Raised if the name has no beam number and FEED1 holds more than one beam
+
+    Returns:
+        int: The beam number
+    """
+    try:
+        return extract_beam_from_name(name=ms_path)
+    except ValueError:
+        beam = int(get_beam_from_ms(ms=ms_path))
+        logger.warning(
+            f"BEAM NUMBER NOT IN NAME: {ms_path.name} does not follow the flint "
+            f"naming convention, so using beam {beam} from its FEED1 column. "
+            "Check this is the beam the holography should be read for."
+        )
+        return beam
+
+
 def create_sky_model(
     ms_path: Path, sky_model_options: SkyModelOptions, holofile: Path | None = None
 ) -> SkyModel | None:
@@ -1015,13 +1104,19 @@ def create_sky_model(
 
     assert ms_path.exists(), f"Measurement set {ms_path} does not exist. "
 
-    beam = extract_beam_from_name(name=ms_path) if holofile is not None else None
+    beam_response: BeamResponse | None = None
+    if holofile is not None:
+        beam = get_beam_number(ms_path=ms_path)
+        try:
+            beam_response = load_beam_response(holofile=holofile, beam=beam)
+        except UnusableBeamError as error:
+            logger.warning(f"{error}, so using a Gaussian primary beam for {ms_path}")
     # Fields can be rotated on the sky relative to the holography; alpha is the
     # same differential rotation flint uses for linmos's ASKAP_PB.alpha option.
     alpha = (
         compute_pb_rotation_alpha(pol_axis=get_pol_axis_as_rad(ms=ms_path))
-        if holofile is not None
-        else None
+        if beam_response is not None
+        else 0.0
     )
 
     direction = get_phase_dir_from_ms(ms=ms_path)
@@ -1033,6 +1128,16 @@ def create_sky_model(
     logger.info(
         f"Frequency range: {freqs[0] / 1000.0:.3f} MHz - {freqs[-1] / 1000.0:.3f} MHz (centre = {np.mean(freqs / 1000.0):.3f} MHz)"
     )
+
+    if beam_response is not None:
+        outside = outside_planes(response=beam_response, freqs=freqs)
+        if np.any(outside):
+            low, high = beam_response.freqs_hz[[0, -1]] / 1e6
+            logger.warning(
+                f"{np.sum(outside)} of {len(freqs)} channels of {ms_path.name} lie "
+                f"outside the usable holography planes ({low:.1f}-{high:.1f} MHz), "
+                "so use the beam of the nearest plane"
+            )
 
     # This is used to estimate a frequency-dependent search radius
     pb = generate_gaussian_pb(freqs=freqs, aperture=12.0 * u.m, offset=0 * u.rad)
@@ -1083,15 +1188,19 @@ def create_sky_model(
 
         # Get the primary beam response, preferring the measured holography
         # beam over the idealized Gaussian when available
-        if holofile is not None:
-            assert beam is not None, "Expected beam to be resolved, received None. "
-            atten = sample_beam_attenuation(
-                holofile=holofile,
-                beam=beam,
+        if beam_response is not None:
+            atten = sample_beam_response(
+                response=beam_response,
+                beam_centre=direction,
                 position=src_pos,
                 freqs=freqs,
                 alpha=alpha,
+                taper=sky_model_options.holography_taper,
             )
+            # Off the measured beam or in a null, where linmos gives no weight
+            # and the power-law fit below would take the log of zero
+            if np.any(atten <= 0):
+                continue
         else:
             atten = generate_gaussian_pb(
                 freqs=freqs, aperture=12.0 * u.m, offset=src_sep
@@ -1139,7 +1248,11 @@ def create_sky_model(
         ),
         calibrate_model=(
             make_calibrate_model(
-                out_path=sky_model_output_paths.calibrate_path, sources=accepted_rows
+                out_path=sky_model_output_paths.calibrate_path,
+                sources=accepted_rows,
+                phase_centre=(
+                    direction if sky_model_options.rotate_pa_to_phase_centre else None
+                ),
             )
             if sky_model_options.write_calibrate_model
             else None
@@ -1163,6 +1276,12 @@ def get_parser():
     parser.add_argument(
         "ms", type=Path, help="Path to the measurement set to create the sky-model for"
     )
+    parser.add_argument(
+        "--holofile",
+        type=Path,
+        default=None,
+        help="Holography cube to take the primary beam from. If unset, a Gaussian beam is used",
+    )
 
     parser = add_options_to_parser(parser=parser, options_class=SkyModelOptions)
 
@@ -1182,7 +1301,9 @@ def cli() -> None:
         parser_namespace=args, options_class=SkyModelOptions
     )
 
-    create_sky_model(ms_path=args.ms, sky_model_options=sky_model_options)
+    create_sky_model(
+        ms_path=args.ms, sky_model_options=sky_model_options, holofile=args.holofile
+    )
 
 
 if __name__ == "__main__":

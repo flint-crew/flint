@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+import flint.prefect.flows.racs_all_continuum_selfcal as racs_all_flow
 from flint.ms import MS, find_mss
 from flint.naming import CASDANameComponents, extract_components_from_name
 from flint.options import RACSAllOptions
@@ -32,26 +33,43 @@ def base_racs_all_options(tmp_path) -> RACSAllOptions:
     )
 
 
-def test_check_racs_all_options_skymodel_requires_containers(
-    base_racs_all_options,
+def test_check_racs_all_options_skymodel_requirements(
+    base_racs_all_options, tmp_path, monkeypatch
 ) -> None:
-    """run_skymodel_calibration requires both calibrate_container and casa_container"""
+    """run_skymodel_calibration requires a verified reference catalogue directory,
+    and both calibrate_container and casa_container"""
+    catalogues_valid: list[bool] = []
+    monkeypatch.setattr(
+        racs_all_flow,
+        "verify_reference_catalogues",
+        lambda reference_directory: catalogues_valid[-1],
+    )
     _check_racs_all_options(racs_all_options=base_racs_all_options)
 
-    racs_all_options = base_racs_all_options.with_options(run_skymodel_calibration=True)
-    with pytest.raises(ValueError):
+    container = base_racs_all_options.wsclean_container
+    racs_all_options = base_racs_all_options.with_options(
+        run_skymodel_calibration=True,
+        calibrate_container=container,
+        casa_container=container,
+    )
+    with pytest.raises(ValueError, match="reference_catalogue_directory"):
         _check_racs_all_options(racs_all_options=racs_all_options)
 
     racs_all_options = racs_all_options.with_options(
-        calibrate_container=base_racs_all_options.wsclean_container
+        reference_catalogue_directory=tmp_path
     )
-    with pytest.raises(ValueError):
+    catalogues_valid.append(False)
+    with pytest.raises(ValueError, match="reference_catalogue_directory"):
         _check_racs_all_options(racs_all_options=racs_all_options)
 
-    racs_all_options = racs_all_options.with_options(
-        casa_container=base_racs_all_options.wsclean_container
-    )
+    catalogues_valid.append(True)
     _check_racs_all_options(racs_all_options=racs_all_options)
+
+    for missing in ("calibrate_container", "casa_container"):
+        with pytest.raises(ValueError, match=missing):
+            _check_racs_all_options(
+                racs_all_options=racs_all_options.with_options(**{missing: None})
+            )
 
 
 def test_check_create_output_science_path(tmpdir, monkeypatch) -> None:

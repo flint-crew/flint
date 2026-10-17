@@ -475,7 +475,7 @@ def compute_pb_rotation_alpha(pol_axis: float) -> float:
 
     Used both to build linmos's `ASKAP_PB.alpha` option (`_get_alpha_linmos_option`)
     and to directly sample a holography cube's response for a rotated field
-    (`flint.misc.holo.sample_beam_attenuation`).
+    (`flint.misc.holo.sample_beam_response`).
 
     Args:
         pol_axis (float): The prescribed polarisation axis value described in a MS, in radians.

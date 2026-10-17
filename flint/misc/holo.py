@@ -7,20 +7,22 @@ from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from socket import gethostname
+from typing import NamedTuple
 
 import billiard
 import numpy as np
+from astropy import constants as const
 from astropy import units as u
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
 from astropy.wcs import WCS
-from astropy.wcs.utils import skycoord_to_pixel
 from capn_crunch import BaseOptions, add_options_to_parser, create_options_from_parser
 from numpy.typing import NDArray
 from reproject import reproject_interp
 from reproject.mosaicking import find_optimal_celestial_wcs
 from scipy.ndimage import map_coordinates
 
+from flint.exceptions import UnusableBeamError
 from flint.logging import logger
 
 
@@ -70,89 +72,165 @@ def celestial_wcs_from_header(header: fits.Header) -> WCS:
     return WCS(header).celestial
 
 
-def _rotate_position_about_tangent_point(
-    position: SkyCoord, wcs: WCS, alpha: float
-) -> SkyCoord:
-    """Rotate `position` about `wcs`'s tangent point (CRVAL) by `-alpha`.
+class BeamResponse(NamedTuple):
+    """One beam's response from a holography cube, normalised to 1 at the beam centre"""
 
-    linmos's `ASKAP_PB` primary beam is only ever given a single scalar
-    `alpha` (see `flint.coadd.linmos.compute_pb_rotation_alpha`) -- no
-    separate pointing-centre parset option -- so the cube's own tangent
-    point must already be registered to this field's nominal boresight, and
-    the whole beam footprint (all beams, as a rigid pattern) rotates about
-    that same point when the field's actual third-axis orientation departs
-    from the nominal holography orientation. This undoes that rotation for
-    `position` so it lands back where it would be in the cube's own
-    (un-rotated) frame.
-    """
-    tangent_point = SkyCoord(wcs.wcs.crval[0] * u.deg, wcs.wcs.crval[1] * u.deg)
-    position_icrs = SkyCoord(ra=position.icrs.ra, dec=position.icrs.dec)
-    dra, ddec = tangent_point.spherical_offsets_to(position_icrs)
-    cos_a, sin_a = np.cos(-alpha), np.sin(-alpha)
-    dra_rot = dra * cos_a - ddec * sin_a
-    ddec_rot = dra * sin_a + ddec * cos_a
-    return tangent_point.spherical_offsets_by(dra_rot, ddec_rot)
+    freqs_hz: NDArray[np.floating]
+    """Frequency of each usable plane"""
+    planes: NDArray[np.floating]
+    """Response on each usable plane, shaped (freq, y, x)"""
+    pixel_scale_rad: tuple[float, float]
+    """Signed pixel size along x and y, in radians (CDELT1, CDELT2)"""
+    centre_pixel: tuple[float, float]
+    """Zero-based (x, y) pixel of the beam centre"""
 
 
-def sample_beam_attenuation(
-    holofile: Path,
-    beam: int,
-    position: SkyCoord,
-    freqs: u.Quantity,
-    stokes: int = 0,
-    alpha: float | None = None,
+def _sample_planes(
+    planes: NDArray[np.floating], x: float, y: float
 ) -> NDArray[np.floating]:
-    """Sample the measured ASKAP holography primary-beam response for a
-    single beam and sky position: bilinearly interpolated at the sky
-    position, then linearly interpolated in frequency onto `freqs`.
+    """Bilinearly interpolate every plane at one pixel position, giving 0 off the grid."""
+    nfreq = planes.shape[0]
+    coords = np.array([np.arange(nfreq), np.full(nfreq, y), np.full(nfreq, x)])
+    return map_coordinates(planes, coords, order=1, mode="constant", cval=0.0)
+
+
+def _direction_cosines(centre: SkyCoord, position: SkyCoord) -> tuple[float, float]:
+    """Offset of `position` from `centre` as direction cosines (l to the east, m to the north)."""
+    ra0, dec0 = centre.icrs.ra.rad, centre.icrs.dec.rad
+    ra, dec = position.icrs.ra.rad, position.icrs.dec.rad
+    east = np.cos(dec) * np.sin(ra - ra0)
+    north = np.sin(dec) * np.cos(dec0) - np.cos(dec) * np.sin(dec0) * np.cos(ra - ra0)
+    return float(east), float(north)
+
+
+def _exit_scale(response: BeamResponse, dx: float, dy: float) -> float:
+    """Fraction of the pixel offset (dx, dy) from the beam centre that stays a pixel inside the cube."""
+    ny, nx = response.planes.shape[1:]
+    x0, y0 = response.centre_pixel
+    room_x = nx - 2 - x0 if dx > 0 else x0 - 1
+    room_y = ny - 2 - y0 if dy > 0 else y0 - 1
+    return min(
+        room_x / abs(dx) if dx else np.inf,
+        room_y / abs(dy) if dy else np.inf,
+    )
+
+
+def load_beam_response(holofile: Path, beam: int, stokes: int = 0) -> BeamResponse:
+    """Read one beam's response from a holography cube, normalised to 1 at the beam centre.
+
+    As in linmos, the spatial axes are offsets about the beam centre: only CRPIX
+    and CDELT are used, never CRVAL. NaNs count as no response, and planes with
+    no response at the beam centre (such as flagged channels) are dropped. The
+    usable planes are returned in increasing frequency.
 
     Args:
-        holofile (Path): Holography IQUV cube, axes (beam, stokes, freq, dec, ra)
-        beam (int): ASKAP beam number (0-indexed) to sample
-        position (SkyCoord): Sky position to sample the beam response at
-        freqs (u.Quantity): Frequencies to interpolate the cube's own frequency grid onto
-        stokes (int, optional): Stokes index to sample. Defaults to 0 (Stokes I)
-        alpha (float | None, optional): Differential rotation, in radians, between
-            the field's third-axis orientation and the frame the holography cube
-            was measured in (see `flint.coadd.linmos.compute_pb_rotation_alpha`,
-            the same value used to set linmos's `ASKAP_PB.alpha`). If set,
-            `position` is de-rotated about the cube's own tangent point before
-            sampling. Defaults to None (no rotation applied).
+        holofile (Path): Holography cube with axes (beam, stokes, freq, dec, ra)
+        beam (int): ASKAP beam number (0-indexed) to read
+        stokes (int, optional): Stokes index to read. Defaults to 0 (Stokes I).
 
     Raises:
-        ValueError: Raised if `position` falls outside the holography cube
+        ValueError: Raised if the beam centre (CRPIX) is within a pixel of the cube's edge
+        UnusableBeamError: Raised if the beam has no usable planes
 
     Returns:
-        NDArray[np.floating]: Attenuation at each of `freqs`
+        BeamResponse: The beam's normalised response on its usable planes
     """
     with fits.open(holofile, memmap=True) as hdul:
         header = hdul[0].header
-        wcs = celestial_wcs_from_header(header)
+        planes = np.nan_to_num(np.asarray(hdul[0].data[beam, stokes], dtype=float))
 
-        if alpha is not None:
-            position = _rotate_position_about_tangent_point(
-                position=position, wcs=wcs, alpha=alpha
-            )
-
-        x, y = skycoord_to_pixel(position, wcs=wcs, origin=0)
-
-        cube_freqs = get_freq_axis(header=header)
-        cube_slice = np.asarray(hdul[0].data[beam, stokes], dtype=float)
-
-        nfreq = len(cube_freqs)
-        coords = np.array(
-            [np.arange(nfreq), np.full(nfreq, float(y)), np.full(nfreq, float(x))]
-        )
-        # mode="constant" with a NaN fill turns "position outside the cube"
-        # into NaNs in the interpolated spectrum, checked for below
-        spectrum = map_coordinates(
-            cube_slice, coords, order=1, mode="constant", cval=np.nan
+    ny, nx = planes.shape[1:]
+    x0, y0 = header["CRPIX1"] - 1, header["CRPIX2"] - 1
+    if min(x0, nx - 1 - x0, y0, ny - 1 - y0) < 2:
+        raise ValueError(
+            f"The beam centre (CRPIX) of {holofile} is at pixel ({x0 + 1}, {y0 + 1}) "
+            f"of a {nx}x{ny} grid, within a pixel of its edge. ASKAP holography "
+            "cubes are centred on the beam."
         )
 
-    if np.any(np.isnan(spectrum)):
-        raise ValueError(f"{position=} falls outside the holography cube {holofile}")
+    centre = _sample_planes(planes, x0, y0)
+    usable = centre > 0
+    if not np.any(usable):
+        raise UnusableBeamError(f"Beam {beam} of {holofile} has no usable response")
+    logger.info(f"Using {np.sum(usable)} of {len(usable)} planes of beam {beam}")
 
-    return np.interp(freqs.to(u.Hz).value, cube_freqs, spectrum)
+    freqs_hz = get_freq_axis(header=header)[usable]
+    order = np.argsort(freqs_hz)
+
+    return BeamResponse(
+        freqs_hz=freqs_hz[order],
+        planes=(planes[usable] / centre[usable, None, None])[order],
+        pixel_scale_rad=(
+            float(np.radians(header["CDELT1"])),
+            float(np.radians(header["CDELT2"])),
+        ),
+        centre_pixel=(float(x0), float(y0)),
+    )
+
+
+def outside_planes(response: BeamResponse, freqs: u.Quantity) -> NDArray[np.bool_]:
+    """Which `freqs` lie more than half a plane beyond the usable planes, and so take the nearest plane's beam."""
+    freqs_hz = freqs.to(u.Hz).value
+    plane_freqs = response.freqs_hz
+    half_plane = np.min(np.diff(plane_freqs)) / 2 if len(plane_freqs) > 1 else 0.0
+    return (freqs_hz < plane_freqs[0] - half_plane) | (
+        freqs_hz > plane_freqs[-1] + half_plane
+    )
+
+
+def sample_beam_response(
+    response: BeamResponse,
+    beam_centre: SkyCoord,
+    position: SkyCoord,
+    freqs: u.Quantity,
+    alpha: float = 0.0,
+    taper: bool = False,
+) -> NDArray[np.floating]:
+    """Sample a beam's response at a sky position the same way linmos does.
+
+    The offset of `position` from `beam_centre` is rotated by `alpha` before it
+    is looked up, as linmos does with `ASKAP_PB.alpha`. Positions off the cube
+    give 0 unless `taper` is set. With `taper` set, a position off the cube
+    takes the value where the line from the beam centre through it leaves the
+    cube (a pixel inside the edge), falling off past there like a Gaussian beam.
+
+    Args:
+        response (BeamResponse): The beam to sample, from `load_beam_response`
+        beam_centre (SkyCoord): Direction of the beam centre, normally the MS phase centre
+        position (SkyCoord): Sky position to sample at
+        freqs (u.Quantity): Frequencies to interpolate the response onto
+        alpha (float, optional): Rotation in radians, from
+            `flint.coadd.linmos.compute_pb_rotation_alpha`. Defaults to 0.0.
+        taper (bool, optional): Continue the response past the edge of the cube. Defaults to False.
+
+    Returns:
+        NDArray[np.floating]: Response at each of `freqs`
+    """
+    east, north = _direction_cosines(centre=beam_centre, position=position)
+    x = east * np.cos(alpha) - north * np.sin(alpha)
+    y = east * np.sin(alpha) + north * np.cos(alpha)
+
+    dx, dy = x / response.pixel_scale_rad[0], y / response.pixel_scale_rad[1]
+    scale = _exit_scale(response=response, dx=dx, dy=dy)
+    beyond_edge = taper and scale < 1
+    if beyond_edge:
+        dx, dy = dx * scale, dy * scale
+
+    spectrum = _sample_planes(
+        response.planes, dx + response.centre_pixel[0], dy + response.centre_pixel[1]
+    )
+    atten = np.interp(freqs.to(u.Hz).value, response.freqs_hz, spectrum)
+
+    if beyond_edge:
+        # How much a Gaussian beam of FWHM lambda/D, for a 12 m dish, falls
+        # between where the line leaves the cube and the position
+        radius = np.hypot(x, y)
+        fwhm = (const.c / freqs / (12.0 * u.m)).decompose().value
+        offset, edge = np.arcsin(radius), np.arcsin(radius * scale)
+        falloff = np.exp(-4 * np.log(2) * (offset**2 - edge**2) / fwhm**2)
+        atten = np.clip(atten, 0.0, None) * falloff
+
+    return atten
 
 
 def create_fits_info(cube_path: Path, hdu_index: int = 0) -> FITSCubeInfo:
@@ -359,7 +437,6 @@ def reproject_wrapper(
     output_projection: fits.Header,
     shape_out: tuple[int, int],
 ) -> ReprojectWorker:
-
     in_cube_arr = fits.getdata(reproject_worker.in_cube_path, memmap=True)
 
     plane = in_cube_arr[

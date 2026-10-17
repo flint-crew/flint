@@ -10,13 +10,12 @@ import pytest
 from astropy import units as u
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
-from astropy.wcs.utils import pixel_to_skycoord
 
+from flint.exceptions import UnusableBeamError
 from flint.misc.holo import (
     FinalFITSCubeInfo,
     FITSCubeInfo,
     FrequencyGrid,
-    celestial_wcs_from_header,
     construct_frequency_grid,
     construct_spatial_output_wcs,
     create_fits_info,
@@ -24,9 +23,12 @@ from flint.misc.holo import (
     get_freq_axis,
     get_parser,
     load_and_sort_cubes,
+    load_beam_response,
     map_frequencies_to_channels,
-    sample_beam_attenuation,
+    outside_planes,
+    sample_beam_response,
 )
+from flint.sky_model import generate_gaussian_pb
 from flint.utils import get_packaged_resource_path
 
 
@@ -177,149 +179,264 @@ def test_get_parser() -> None:
     _ = get_parser()
 
 
-def _make_holo_cube(path: Path) -> Path:
-    """A small synthetic 5D (beam, stokes, freq, dec, ra) holography cube,
-    with beam 1's Stokes I response peaking at the reference pixel and
-    decreasing linearly with frequency."""
-    nbeam, nstokes, nfreq, ny, nx = 2, 2, 4, 5, 5
-    data = np.zeros((nbeam, nstokes, nfreq, ny, nx), dtype=np.float32)
-    for chan in range(nfreq):
-        data[1, 0, chan, 2, 2] = 1.0 - 0.1 * chan
+# Mirrors a real ASKAP holography cube: a grid of offsets about each beam centre,
+# with CRVAL at (0, 0) rather than at any field on the sky
+HOLO_PIXEL_DEG = 0.0345
+HOLO_FREQS_HZ = np.array([900e6, 901e6, 902e6])
+FIELD_CENTRE = SkyCoord(ra=157.70551 * u.deg, dec=18.25744 * u.deg)
 
-    # Mirrors the keys/ordering of a real ASKAP holography cube header
+
+def _write_holo_cube(path: Path, data: np.ndarray, name: str = "holo.fits") -> Path:
+    """Write a (beam, stokes, freq, dec, ra) cube with a real holography header"""
+    nbeam, nstokes, nfreq, ny, nx = data.shape
     header = fits.Header()
-    header["SIMPLE"] = True
-    header["BITPIX"] = -32
-    header["NAXIS"] = 5
-    header["NAXIS1"] = nx
-    header["NAXIS2"] = ny
-    header["NAXIS3"] = nfreq
-    header["NAXIS4"] = nstokes
-    header["NAXIS5"] = nbeam
-    header["EXTEND"] = True
     header["CTYPE1"] = "RA---SIN"
-    header["CRVAL1"] = 180.0
-    header["CDELT1"] = -0.01
-    header["CRPIX1"] = 3.0
+    header["CRVAL1"] = 0.0
+    header["CDELT1"] = -HOLO_PIXEL_DEG
+    header["CRPIX1"] = (nx + 1) / 2
     header["CTYPE2"] = "DEC--SIN"
-    header["CRVAL2"] = -30.0
-    header["CDELT2"] = 0.01
-    header["CRPIX2"] = 3.0
+    header["CRVAL2"] = 0.0
+    header["CDELT2"] = HOLO_PIXEL_DEG
+    header["CRPIX2"] = (ny + 1) / 2
     header["CTYPE3"] = "FREQ"
-    header["CRVAL3"] = 900e6
+    header["CRVAL3"] = HOLO_FREQS_HZ[0]
     header["CDELT3"] = 1e6
     header["CRPIX3"] = 1.0
     header["CTYPE4"] = "STOKES"
-    header["CRPIX4"] = 1.0
-    header["CDELT4"] = 1.0
     header["CRVAL4"] = 1.0
+    header["CDELT4"] = 1.0
+    header["CRPIX4"] = 1.0
     header["CTYPE5"] = "BEAM"
     header["CRVAL5"] = 0.0
     header["CDELT5"] = 1.0
     header["CRPIX5"] = 1.0
-    header["EQUINOX"] = 2000.0
-    header["RADESYS"] = "FK5"
-    header["LONPOLE"] = 180.0
-    header["LATPOLE"] = 0.0
-    header["SPECSYS"] = "TOPOCENT"
 
-    cube_path = path / "holo.fits"
-    fits.PrimaryHDU(data=data, header=header).writeto(cube_path)
+    cube_path = path / name
+    fits.PrimaryHDU(data=data.astype(np.float32), header=header).writeto(cube_path)
     return cube_path
 
 
-def test_sample_beam_attenuation(tmp_path) -> None:
-    """Interpolate a holography cube's own frequency grid onto arbitrary freqs"""
-    holofile = _make_holo_cube(tmp_path)
-    position = SkyCoord(ra=180.0 * u.deg, dec=-30.0 * u.deg)
-    freqs = np.array([900e6, 901e6, 902e6, 903e6]) * u.Hz
+def _make_holo_cube(path: Path) -> Path:
+    """A 101x101 pixel cube with three beams.
 
-    atten = sample_beam_attenuation(
-        holofile=holofile, beam=1, position=position, freqs=freqs
+    Beam 0 is all zeros. Beam 1 is a Gaussian peaking at 2 on the beam centre,
+    with a bright marker 0.5 deg west of centre. Beam 2 is 1 within 1 deg of
+    the centre and -0.1 beyond.
+    """
+    npix = 101
+    data = np.zeros((3, 1, len(HOLO_FREQS_HZ), npix, npix))
+
+    offsets = (np.arange(npix) - npix // 2) * HOLO_PIXEL_DEG
+    xx, yy = np.meshgrid(offsets, offsets)
+    radius_deg = np.hypot(xx, yy)
+
+    data[1, 0] = 2.0 * np.exp(-4 * np.log(2) * (radius_deg / 1.5) ** 2)
+    # West is +x, as CDELT1 is negative; 0.5 deg is 14.5 pixels
+    data[1, 0, :, 48:53, 62:68] = 5.0
+    data[2, 0] = np.where(radius_deg < 1.0, 1.0, -0.1)
+
+    return _write_holo_cube(path=path, data=data)
+
+
+def _offset_position(pa_deg: float, direction_cosine: float) -> SkyCoord:
+    """A position offset from the field centre by a direction cosine radius"""
+    return FIELD_CENTRE.directional_offset_by(
+        pa_deg * u.deg, np.arcsin(direction_cosine) * u.rad
     )
 
-    # bilinear, so a tiny sub-pixel offset from the WCS solve is expected
-    np.testing.assert_allclose(atten, [1.0, 0.9, 0.8, 0.7], atol=1e-2)
+
+def test_load_beam_response_normalises_to_beam_centre(tmp_path) -> None:
+    """Every plane reads 1 at the beam centre"""
+    response = load_beam_response(holofile=_make_holo_cube(tmp_path), beam=1)
+
+    np.testing.assert_allclose(response.planes[:, 50, 50], 1.0)
+    np.testing.assert_allclose(response.freqs_hz, HOLO_FREQS_HZ)
+    assert response.centre_pixel == (50.0, 50.0)
 
 
-def test_sample_beam_attenuation_outside_cube_raises(tmp_path) -> None:
-    """A position well outside the cube's small footprint should raise"""
+def test_load_beam_response_drops_nan_planes(tmp_path) -> None:
+    """All-NaN planes, as in flagged holography channels, are dropped"""
+    data = fits.getdata(_make_holo_cube(tmp_path))
+    data[1, 0, 0] = np.nan
+    holofile = _write_holo_cube(path=tmp_path, data=data, name="edited.fits")
+
+    response = load_beam_response(holofile=holofile, beam=1)
+
+    np.testing.assert_allclose(response.freqs_hz, HOLO_FREQS_HZ[1:])
+
+
+def test_load_beam_response_unusable_beam_raises(tmp_path) -> None:
+    """A beam that is all zero or all NaN has nothing to sample"""
     holofile = _make_holo_cube(tmp_path)
-    position = SkyCoord(ra=180.0 * u.deg, dec=10.0 * u.deg)
-    freqs = np.array([900e6]) * u.Hz
+    with pytest.raises(UnusableBeamError):
+        load_beam_response(holofile=holofile, beam=0)
 
-    with pytest.raises(ValueError):
-        sample_beam_attenuation(
-            holofile=holofile, beam=1, position=position, freqs=freqs
+    data = fits.getdata(holofile)
+    data[0] = np.nan
+    holofile = _write_holo_cube(path=tmp_path, data=data, name="edited.fits")
+    with pytest.raises(UnusableBeamError):
+        load_beam_response(holofile=holofile, beam=0)
+
+
+@pytest.mark.parametrize("crpix1", [1.0, 2.0, 101.0])
+def test_load_beam_response_beam_centre_at_edge_raises(tmp_path, crpix1) -> None:
+    """A beam centre within a pixel of the cube's edge leaves no room for the edge circle"""
+    holofile = _make_holo_cube(tmp_path)
+    fits.setval(holofile, "CRPIX1", value=crpix1)
+
+    with pytest.raises(ValueError, match="within a pixel of its edge"):
+        load_beam_response(holofile=holofile, beam=1)
+
+
+def test_load_beam_response_sorts_descending_frequencies(tmp_path) -> None:
+    """A cube stored with decreasing frequency comes back in increasing frequency"""
+    data = np.ones((1, 1, 3, 11, 11))
+    for plane in range(3):
+        data[0, 0, plane, 5, 7] = plane + 1
+    holofile = _write_holo_cube(path=tmp_path, data=data)
+    fits.setval(holofile, "CRVAL3", value=HOLO_FREQS_HZ[-1])
+    fits.setval(holofile, "CDELT3", value=-1e6)
+
+    response = load_beam_response(holofile=holofile, beam=0)
+
+    np.testing.assert_allclose(response.freqs_hz, HOLO_FREQS_HZ)
+    np.testing.assert_allclose(response.planes[:, 5, 7], [3.0, 2.0, 1.0])
+
+
+def test_outside_planes(tmp_path) -> None:
+    """Only frequencies more than half a plane beyond the usable planes count as outside"""
+    response = load_beam_response(holofile=_make_holo_cube(tmp_path), beam=1)
+    freqs = np.array([899.4e6, 900e6, 902.4e6, 903e6]) * u.Hz
+
+    outside = outside_planes(response=response, freqs=freqs)
+
+    np.testing.assert_array_equal(outside, [True, False, False, True])
+
+
+def test_sample_beam_response_field_away_from_cube_origin(tmp_path) -> None:
+    """A field far from the cube's CRVAL of (0, 0) is sampled about its own centre"""
+    response = load_beam_response(holofile=_make_holo_cube(tmp_path), beam=1)
+    freqs = HOLO_FREQS_HZ * u.Hz
+
+    at_centre = sample_beam_response(
+        response=response, beam_centre=FIELD_CENTRE, position=FIELD_CENTRE, freqs=freqs
+    )
+    np.testing.assert_allclose(at_centre, 1.0)
+
+    offset = sample_beam_response(
+        response=response,
+        beam_centre=FIELD_CENTRE,
+        position=FIELD_CENTRE.directional_offset_by(180 * u.deg, 0.75 * u.deg),
+        freqs=freqs,
+    )
+    np.testing.assert_allclose(offset, 0.5, atol=0.01)
+
+
+def test_sample_beam_response_rotation_matches_linmos(tmp_path) -> None:
+    """linmos looks up x = l cos(alpha) - m sin(alpha), y = l sin(alpha) + m cos(alpha),
+    so at alpha = 90 deg a source north of the beam centre reads the marker to the west"""
+    response = load_beam_response(holofile=_make_holo_cube(tmp_path), beam=1)
+    freqs = HOLO_FREQS_HZ * u.Hz
+    north = FIELD_CENTRE.directional_offset_by(0 * u.deg, 0.5 * u.deg)
+
+    def sample(alpha: float) -> np.ndarray:
+        return sample_beam_response(
+            response=response,
+            beam_centre=FIELD_CENTRE,
+            position=north,
+            freqs=freqs,
+            alpha=alpha,
         )
 
-
-def _make_offset_holo_cube(path: Path) -> Path:
-    """Single-beam cube with its bright pixel offset one pixel along RA from
-    the tangent point (rather than sitting on it), so a rotation of the query
-    position is actually detectable."""
-    nbeam, nstokes, nfreq, ny, nx = 1, 1, 1, 5, 5
-    data = np.zeros((nbeam, nstokes, nfreq, ny, nx), dtype=np.float32)
-    data[0, 0, 0, 2, 3] = 1.0  # one pixel from the tangent point (2, 2), along RA
-
-    header = fits.Header()
-    header["SIMPLE"] = True
-    header["BITPIX"] = -32
-    header["NAXIS"] = 5
-    header["NAXIS1"] = nx
-    header["NAXIS2"] = ny
-    header["NAXIS3"] = nfreq
-    header["NAXIS4"] = nstokes
-    header["NAXIS5"] = nbeam
-    header["EXTEND"] = True
-    header["CTYPE1"] = "RA---SIN"
-    header["CRVAL1"] = 180.0
-    header["CDELT1"] = -0.01
-    header["CRPIX1"] = 3.0
-    header["CTYPE2"] = "DEC--SIN"
-    header["CRVAL2"] = -30.0
-    header["CDELT2"] = 0.01
-    header["CRPIX2"] = 3.0
-    header["CTYPE3"] = "FREQ"
-    header["CRVAL3"] = 900e6
-    header["CDELT3"] = 1e6
-    header["CRPIX3"] = 1.0
-    header["CTYPE4"] = "STOKES"
-    header["CRPIX4"] = 1.0
-    header["CDELT4"] = 1.0
-    header["CRVAL4"] = 1.0
-    header["CTYPE5"] = "BEAM"
-    header["CRVAL5"] = 0.0
-    header["CDELT5"] = 1.0
-    header["CRPIX5"] = 1.0
-    header["EQUINOX"] = 2000.0
-    header["RADESYS"] = "FK5"
-    header["LONPOLE"] = 180.0
-    header["LATPOLE"] = 0.0
-    header["SPECSYS"] = "TOPOCENT"
-
-    cube_path = path / "holo_offset.fits"
-    fits.PrimaryHDU(data=data, header=header).writeto(cube_path)
-    return cube_path
+    np.testing.assert_allclose(sample(np.pi / 2), 2.5)
+    assert np.all(sample(0.0) < 1.0)
+    assert np.all(sample(-np.pi / 2) < 1.0)
 
 
-def test_sample_beam_attenuation_alpha_rotates_position(tmp_path) -> None:
-    """A field rotated relative to the holography needs its query position
-    de-rotated about the cube's tangent point before sampling (mirrors the
-    rotation linmos applies via ASKAP_PB.alpha) -- a 90 degree differential
-    rotation should move the sampled response away from the source's own
-    (un-rotated) bright pixel"""
-    holofile = _make_offset_holo_cube(tmp_path)
-    wcs = celestial_wcs_from_header(fits.getheader(holofile))
-    position = pixel_to_skycoord(3, 2, wcs=wcs, origin=0)
-    freqs = np.array([900e6]) * u.Hz
+def test_sample_beam_response_off_cube_is_zero(tmp_path) -> None:
+    """Without the taper, positions off the cube give no response, as in linmos"""
+    response = load_beam_response(holofile=_make_holo_cube(tmp_path), beam=1)
 
-    atten_no_rotation = sample_beam_attenuation(
-        holofile=holofile, beam=0, position=position, freqs=freqs, alpha=0.0
+    atten = sample_beam_response(
+        response=response,
+        beam_centre=FIELD_CENTRE,
+        position=FIELD_CENTRE.directional_offset_by(30 * u.deg, 3 * u.deg),
+        freqs=HOLO_FREQS_HZ * u.Hz,
     )
-    assert np.isclose(atten_no_rotation[0], 1.0, atol=1e-2)
 
-    atten_rotated = sample_beam_attenuation(
-        holofile=holofile, beam=0, position=position, freqs=freqs, alpha=np.pi / 2
+    np.testing.assert_array_equal(atten, 0.0)
+
+
+@pytest.mark.parametrize("pa_deg, exit_pixels", [(90, 49.0), (45, 49.0 * np.sqrt(2))])
+def test_sample_beam_response_taper(tmp_path, pa_deg, exit_pixels) -> None:
+    """The taper takes over where the line through the source leaves the cube,
+    a pixel inside its edge: continuous there, and falling off as a Gaussian beyond"""
+    response = load_beam_response(holofile=_make_holo_cube(tmp_path), beam=1)
+    freqs = HOLO_FREQS_HZ * u.Hz
+    edge = exit_pixels * np.radians(HOLO_PIXEL_DEG)
+
+    def sample(direction_cosine: float, taper: bool = True) -> np.ndarray:
+        return sample_beam_response(
+            response=response,
+            beam_centre=FIELD_CENTRE,
+            position=_offset_position(pa_deg=pa_deg, direction_cosine=direction_cosine),
+            freqs=freqs,
+            taper=taper,
+        )
+
+    inside, outside = sample(edge * (1 - 1e-6)), sample(edge * (1 + 1e-6))
+    np.testing.assert_allclose(inside, outside, rtol=1e-3)
+    assert np.all(inside > 0)
+
+    far = 2 * edge
+    falloff = (
+        (
+            generate_gaussian_pb(
+                freqs=freqs, aperture=12 * u.m, offset=np.arcsin(far) * u.rad
+            ).atten
+            / generate_gaussian_pb(
+                freqs=freqs, aperture=12 * u.m, offset=np.arcsin(edge) * u.rad
+            ).atten
+        )
+        .decompose()
+        .value
     )
-    assert atten_rotated[0] < 0.1
+    np.testing.assert_allclose(sample(far), outside * falloff, rtol=1e-3)
+    np.testing.assert_array_equal(sample(far, taper=False), 0.0)
+
+
+def test_sample_beam_response_taper_keeps_cube_corners(tmp_path) -> None:
+    """With the taper on, the measured beam is still used everywhere inside the
+    cube, including the corners beyond the largest circle that fits in it"""
+    response = load_beam_response(holofile=_make_holo_cube(tmp_path), beam=1)
+    position = _offset_position(
+        pa_deg=45, direction_cosine=60 * np.radians(HOLO_PIXEL_DEG)
+    )
+
+    def sample(taper: bool) -> np.ndarray:
+        return sample_beam_response(
+            response=response,
+            beam_centre=FIELD_CENTRE,
+            position=position,
+            freqs=HOLO_FREQS_HZ * u.Hz,
+            taper=taper,
+        )
+
+    measured = sample(taper=False)
+    assert np.all(measured > 0)
+    np.testing.assert_allclose(sample(taper=True), measured)
+
+
+def test_sample_beam_response_taper_negative_edge(tmp_path) -> None:
+    """A response at or below zero where the line leaves the cube tapers to zero"""
+    response = load_beam_response(holofile=_make_holo_cube(tmp_path), beam=2)
+
+    atten = sample_beam_response(
+        response=response,
+        beam_centre=FIELD_CENTRE,
+        position=_offset_position(pa_deg=45, direction_cosine=0.1),
+        freqs=HOLO_FREQS_HZ * u.Hz,
+        taper=True,
+    )
+
+    np.testing.assert_array_equal(atten, 0.0)

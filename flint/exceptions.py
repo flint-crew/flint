@@ -75,3 +75,11 @@ class TarArchiveError(FlintException):
 
 class ShapeMismatchError(FlintException):
     """Raised when images that should share a pixel grid do not"""
+
+
+class NoFieldSourceError(FlintException):
+    """Raised when no catalogue sources are left to model a field"""
+
+
+class UnusableBeamError(FlintException):
+    """Raised when a holography cube has no usable response for a beam"""
