@@ -30,6 +30,7 @@ from flint.options import (
 )
 from flint.peel.potato import PotatoPeelOptions
 from flint.selfcal.casa import GainCalOptions
+from flint.sky_model import SkyModelOptions
 from flint.source_finding.aegean import AegeanOptions, BANEOptions
 
 # TODO: It feels like that the standard of this strategy file should
@@ -54,6 +55,7 @@ MODE_OPTIONS_MAPPING = {
     "potatopeel": PotatoPeelOptions,
     "fitscube": FitsCubeOptions,
     "tukeytractor": TukeyTractorOptions,
+    "skymodel": SkyModelOptions,
     "rmsynth": RMSynthOptions,
     "rmclean": RMCleanOptions,
     # "bane" is the containerised aegean BANE; this is the FFT one in flint.bane

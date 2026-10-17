@@ -42,6 +42,7 @@ from flint.naming import (
     get_sbid_from_path,
 )
 from flint.options import (
+    AddModelSubtractFieldOptions,
     FitsCubeOptions,
     RACSAllOptions,
     dump_field_options_to_yaml,
@@ -60,6 +61,7 @@ from flint.prefect.common.imaging import (
     validation_items,
 )
 from flint.prefect.common.ms import task_describe_ms
+from flint.prefect.common.predict import task_addmodel_to_ms, task_create_sky_model
 from flint.prefect.common.utils import (
     task_concatenate_holography,
     task_create_beam_summary,
@@ -67,6 +69,7 @@ from flint.prefect.common.utils import (
     task_update_field_summary,
     task_update_with_options,
 )
+from flint.sky_model import SkyModelOptions
 from flint.summary import BeamSummary
 
 
@@ -137,6 +140,21 @@ def _check_racs_all_options(racs_all_options: RACSAllOptions) -> None:
             raise ValueError(
                 "Unable to create linmos cubes without a yandasoft container"
             )
+    if racs_all_options.run_skymodel_calibration:
+        # The catalogues themselves are verified by the reference_catalogue_directory check above
+        if racs_all_options.reference_catalogue_directory is None:
+            raise ValueError(
+                "reference_catalogue_directory needs to be set if run_skymodel_calibration is True"
+            )
+        if racs_all_options.calibrate_container is None:
+            raise ValueError(
+                "calibrate_container needs to be set if run_skymodel_calibration is True"
+            )
+        if racs_all_options.casa_container is None:
+            raise ValueError(
+                "casa_container needs to be set if run_skymodel_calibration is True"
+            )
+
     # For the moment we make sure that this is provided. Can consider moving to mandatory argument in
     # the model definition
     assert (
@@ -251,7 +269,6 @@ def all_holography_available(
     racs_all_options: RACSAllOptions,
     output_science_path: Path,
 ) -> Path | None:
-
     if any(
         not isinstance(holo, Path)
         for holo in (
@@ -412,6 +429,56 @@ def process_racs_all_continuum(
                     update_wsclean_options=unmapped(potato_wsclean_init),
                     update_potato_peel_options=unmapped(potato_peel_options),
                 )
+
+            if racs_all_options.run_skymodel_calibration:
+                with tags("skymodel-cal"):
+                    sky_model_update_options = get_options_from_strategy(
+                        strategy=strategy,
+                        mode="skymodel",
+                        round_info=0,
+                        operation="selfcal",
+                    )
+                    assert racs_all_options.reference_catalogue_directory is not None, (
+                        "reference_catalogue_directory is required by _check_racs_all_options"
+                    )
+                    sky_model_options = SkyModelOptions(
+                        reference_catalogue_directory=racs_all_options.reference_catalogue_directory,
+                        write_calibrate_model=True,
+                    ).with_options(**sky_model_update_options)
+
+                    # science_mss (and therefore preprocess_science_mss) is always
+                    # ordered (low, mid, high), per match_beams_across_bands
+                    holofiles = [
+                        racs_all_options.low_holofile,
+                        racs_all_options.mid_holofile,
+                        racs_all_options.high_holofile,
+                    ]
+                    skymodel = task_create_sky_model.map(
+                        ms=preprocess_science_mss,
+                        sky_model_options=unmapped(sky_model_options),
+                        holofile=holofiles,
+                    )
+                    addmodel_subtract_field_options = AddModelSubtractFieldOptions(
+                        wsclean_pol_mode=["i"],
+                        calibrate_container=racs_all_options.calibrate_container,
+                    )
+                    preprocess_science_mss = task_addmodel_to_ms.map(
+                        ms=preprocess_science_mss,
+                        addmodel_subtract_options=unmapped(
+                            addmodel_subtract_field_options
+                        ),
+                        skymodel=skymodel,
+                    )
+                    preprocess_science_mss = task_gaincal_applycal_ms.map(
+                        ms=preprocess_science_mss,
+                        selfcal_round=0,
+                        archive_input_ms=racs_all_options.zip_ms,
+                        skip_selfcal=False,
+                        rename_ms=racs_all_options.rename_ms,
+                        archive_cal_table=True,
+                        casa_container=racs_all_options.casa_container,
+                        update_gain_cal_options=unmapped({"calmode": "p"}),
+                    )
 
             update_wsclean_options = get_options_from_strategy(
                 strategy=strategy,
