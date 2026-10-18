@@ -163,6 +163,18 @@ def _check_racs_all_options(racs_all_options: RACSAllOptions) -> None:
     ), "Missing wsclean container path"
 
 
+def get_skymodel_gaincal_options(strategy: Strategy | None) -> dict[str, Any]:
+    """Gaincal options for the sky-model calibration round: the strategy's round 0, always phase-only."""
+    options = get_options_from_strategy(
+        strategy=strategy, mode="gaincal", round_info=0, operation="selfcal"
+    )
+    if options.get("calmode", "p") != "p":
+        logger.warning(
+            f"Ignoring calmode={options['calmode']!r} for the sky-model calibration round, which is phase-only"
+        )
+    return {**options, "calmode": "p"}
+
+
 def _check_create_output_science_path(
     science_path: Path, output_path: Path | None = None, check_exists: bool = True
 ) -> Path:
@@ -477,7 +489,9 @@ def process_racs_all_continuum(
                         rename_ms=racs_all_options.rename_ms,
                         archive_cal_table=True,
                         casa_container=racs_all_options.casa_container,
-                        update_gain_cal_options=unmapped({"calmode": "p"}),
+                        update_gain_cal_options=unmapped(
+                            get_skymodel_gaincal_options(strategy=strategy)
+                        ),
                     )
 
             update_wsclean_options = get_options_from_strategy(

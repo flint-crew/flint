@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
 
 import flint.prefect.flows.racs_all_continuum_selfcal as racs_all_flow
+from flint.configuration import Strategy
 from flint.ms import MS, find_mss
 from flint.naming import CASDANameComponents, extract_components_from_name
 from flint.options import RACSAllOptions
@@ -14,8 +16,53 @@ from flint.prefect.flows.racs_all_continuum_selfcal import (
     _check_create_output_science_path,
     _check_racs_all_options,
     _ensure_all_casda_format,
+    get_skymodel_gaincal_options,
     match_beams_across_bands,
 )
+
+
+def test_get_skymodel_gaincal_options_without_settings() -> None:
+    """With no gaincal settings the sky-model round is a default phase-only gaincal"""
+    assert get_skymodel_gaincal_options(strategy=None) == {"calmode": "p"}
+
+    strategy = Strategy({"defaults": {}, "selfcal": {0: {"wsclean": {}}}})
+    assert get_skymodel_gaincal_options(strategy=strategy) == {"calmode": "p"}
+
+
+def test_get_skymodel_gaincal_options_from_strategy() -> None:
+    """defaults.gaincal applies, overridden by selfcal round 0, and later rounds are ignored"""
+    strategy = Strategy(
+        {
+            "defaults": {"gaincal": {"solint": "60s", "minsnr": 0.0}},
+            "selfcal": {
+                0: {"gaincal": {"solint": "30s", "uvrange": ">300m"}},
+                1: {"gaincal": {"solint": "10s"}},
+            },
+        }
+    )
+
+    assert get_skymodel_gaincal_options(strategy=strategy) == {
+        "solint": "30s",
+        "minsnr": 0.0,
+        "uvrange": ">300m",
+        "calmode": "p",
+    }
+
+
+def test_get_skymodel_gaincal_options_stays_phase_only(caplog) -> None:
+    """A calmode other than phase-only is ignored, with a warning"""
+    strategy = Strategy(
+        {
+            "defaults": {"gaincal": {"calmode": "p"}},
+            "selfcal": {0: {"gaincal": {"calmode": "ap", "solint": "120s"}}},
+        }
+    )
+
+    with caplog.at_level(logging.WARNING):
+        options = get_skymodel_gaincal_options(strategy=strategy)
+
+    assert options == {"calmode": "p", "solint": "120s"}
+    assert "Ignoring calmode='ap'" in caplog.text
 
 
 @pytest.fixture

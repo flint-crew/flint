@@ -1197,8 +1197,8 @@ def create_sky_model(
                 alpha=alpha,
                 taper=sky_model_options.holography_taper,
             )
-            # Off the measured beam or in a null, where linmos gives no weight
-            # and the power-law fit below would take the log of zero
+            # Off the measured beam, or near a null where the response drops to zero or
+            # below in some channels; the curved power-law fit below can't follow either
             if np.any(atten <= 0):
                 continue
         else:
