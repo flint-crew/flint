@@ -133,9 +133,10 @@ flint_flow_rmsynth_pipeline = "flint.prefect.flows.rmsynth_pipeline:cli"
 flint_flow_spice_compression_pipeline = "flint.prefect.flows.spice_compression_pipeline:cli"
 flint_flow_racs_all_pipeline = "flint.prefect.flows.racs_all_pipeline:cli"
 
-# [tool.mypy]
+[tool.mypy]
+python_version = "3.11"
+
 # files = ["flint", "tests"]
-# python_version = "3.11"
 # warn_unused_configs = true
 # strict = true
 # enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
