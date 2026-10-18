@@ -114,12 +114,7 @@ def test_default_divisions_grid(channels: np.ndarray) -> None:
     """Every wsclean default division makes a cube, padded or not. fitscube 2.10
     refused most of these."""
     for channels_out in range(2, 145):
-        try:
-            centres = mock_wsclean_division(
-                channels=channels, channels_out=channels_out
-            )
-        except ValueError:
-            continue
+        centres = mock_wsclean_division(channels=channels, channels_out=channels_out)
         new_specs, missing = even_spacing(centres * u.Hz)
         assert np.sum(~missing) == len(centres), channels_out
 
