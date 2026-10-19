@@ -244,7 +244,13 @@ def _replace_name_field(path: Path, old: str, new: str) -> Path:
 
 
 def write_stokes_i(xx_path: Path, yy_path: Path, i_path: Path) -> Path:
-    """Write the Stokes I image (XX + YY) / 2 of a pair of XX and YY images.
+    """Write the Stokes I image (XX + YY) / 2 of a pair of XX and YY images. The
+    XX header is used, with its STOKES axis set to I.
+
+    Args:
+        xx_path (Path): The XX image
+        yy_path (Path): The YY image, on the same pixel grid as ``xx_path``
+        i_path (Path): Where the Stokes I image is written. Overwritten if it exists.
 
     Raises:
         ValueError: The XX and YY images have different restoring beams

@@ -191,7 +191,15 @@ class WSCleanOptions(BaseOptions):
 
     @model_validator(mode="after")
     def check_pol(self) -> WSCleanOptions:
-        """The polarisations can be imaged, and no source list is asked of XX and YY imaging"""
+        """Check that the polarisations can be imaged, and that no source list is
+        asked of XX and YY imaging.
+
+        Raises:
+            ValueError: ``pol`` is not supported, or ``save_source_list`` is set with ``pol='xx,yy'``
+
+        Returns:
+            WSCleanOptions: These options, unchanged
+        """
         try:
             pols = _make_pols(pol_str=self.pol)
         except NotSupportedError as e:
@@ -308,7 +316,14 @@ class WSCleanOutput(NamedTuple):
 
 
 def wsclean_output_pattern(prefix: str | Path) -> re.Pattern[str]:
-    """The pattern matching the name of every image wsclean writes for a ``-name`` of ``prefix``"""
+    """The pattern matching the name of every image wsclean writes for a ``-name`` of ``prefix``.
+
+    Args:
+        prefix (str | Path): The ``-name`` given to wsclean. Only its final component is matched.
+
+    Returns:
+        re.Pattern[str]: The pattern, with groups ``interval``, ``channel``, ``mfs``, ``pol``, ``image_type`` and ``primary_beam``
+    """
     return re.compile(
         rf"^{re.escape(Path(prefix).name)}"
         r"(?:-t(?P<interval>\d{4}))?"
@@ -320,7 +335,15 @@ def wsclean_output_pattern(prefix: str | Path) -> re.Pattern[str]:
 
 
 def parse_wsclean_output(path: Path, prefix: str | Path) -> WSCleanOutput | None:
-    """Break the name of an image wsclean wrote into its fields, or None if it is not one"""
+    """Break the name of an image wsclean wrote into its fields.
+
+    Args:
+        path (Path): The file to examine
+        prefix (str | Path): The ``-name`` given to wsclean
+
+    Returns:
+        WSCleanOutput | None: The fields of the name, or None if ``path`` is not an image wsclean wrote for ``prefix``
+    """
     match = wsclean_output_pattern(prefix=prefix).match(path.name)
     if match is None:
         return None
@@ -345,7 +368,20 @@ def wsclean_output_path(
     interval: int | None = None,
     primary_beam: bool = False,
 ) -> Path:
-    """The name wsclean gives an image, the inverse of ``parse_wsclean_output``"""
+    """The name wsclean gives an image, the inverse of ``parse_wsclean_output``.
+
+    Args:
+        prefix (str | Path): The ``-name`` given to wsclean
+        image_type (str): One of image, dirty, model, residual or psf
+        channel (int | None, optional): Output channel index. None when a single channel is imaged. Defaults to None.
+        mfs (bool, optional): Name the multi-frequency synthesis image, in place of a channel. Defaults to False.
+        pol (str | None, optional): wsclean's polarisation token, e.g. ``XX``. None when a single polarisation is imaged. Defaults to None.
+        interval (int | None, optional): Interval index, only present with ``-intervals-out``. Defaults to None.
+        primary_beam (bool, optional): Name the primary beam corrected image. Defaults to False.
+
+    Returns:
+        Path: The image's path, in the directory of ``prefix``
+    """
     fields = [str(prefix)]
     if interval is not None:
         fields.append(f"t{interval:04d}")
@@ -368,8 +404,19 @@ def expected_wsclean_outputs(
     pols: tuple[str, ...] | None,
     image_types: Collection[str] = ("image",),
 ) -> list[Path]:
-    """The images wsclean writes for each of ``image_types``, where ``pols`` is None
-    when a single polarisation is imaged. The PSF is shared by every polarisation."""
+    """The images wsclean writes for each of ``image_types``. Every channel is
+    listed, followed by the MFS image when more than one channel is imaged. The
+    PSF is shared by every polarisation, so it carries none.
+
+    Args:
+        prefix (str | Path): The ``-name`` given to wsclean
+        channels_out (int): Number of output channels imaged
+        pols (tuple[str, ...] | None): wsclean's polarisation tokens, e.g. ``("Q", "U")``. None when a single polarisation is imaged.
+        image_types (Collection[str], optional): The types of image to list. Defaults to ("image",).
+
+    Returns:
+        list[Path]: The images, by type, then polarisation, then channel
+    """
     channels: list[dict[str, Any]] = [{}]
     if channels_out > 1:
         channels = [{"channel": channel} for channel in range(channels_out)]
@@ -390,8 +437,15 @@ def expected_wsclean_outputs(
 
 
 def find_wsclean_outputs(prefix: str | Path) -> list[WSCleanOutput]:
-    """Find the images wsclean wrote for a ``-name`` of ``prefix``, ordered by
-    type, polarisation and channel with the MFS image last"""
+    """Find the images wsclean wrote for a ``-name`` of ``prefix``. Other files
+    sharing the prefix, such as the source list, are ignored.
+
+    Args:
+        prefix (str | Path): The ``-name`` given to wsclean, in the directory the images are now in
+
+    Returns:
+        list[WSCleanOutput]: The images, ordered by type, polarisation and channel, with the MFS image last
+    """
     prefix = Path(prefix)
     candidates = prefix.parent.glob(f"{glob.escape(prefix.name)}-*.fits")
     outputs = [
@@ -424,6 +478,12 @@ def verify_wsclean_outputs(
 
     Only the ``image`` type is checked, as cleaning up deletes the others.
 
+    Args:
+        outputs (list[WSCleanOutput]): The images found, see ``find_wsclean_outputs``
+        prefix (str | Path): The ``-name`` given to wsclean
+        channels_out (int): Number of output channels imaged
+        pols (tuple[str, ...] | None): wsclean's polarisation tokens, e.g. ``("Q", "U")``. None when a single polarisation is imaged.
+
     Raises:
         FileNotFoundError: Some expected images are missing
     """
@@ -450,8 +510,16 @@ def flint_output_path(
     Channel and interval indices become flint's ``ch<lo>-<hi>`` and
     ``scan<lo>-<hi>`` ranges, whose upper bound is exclusive.
 
+    Args:
+        output (WSCleanOutput): The image to name
+        prefix (str | Path): The ``-name`` given to wsclean
+        pol_token (str): The field of ``prefix`` naming every polarisation imaged, see ``pol_name_token``
+
     Raises:
         NamingException: ``pol_token`` is not a field of ``prefix``
+
+    Returns:
+        Path: The flint name, in the directory of ``output``
     """
     fields = Path(prefix).name.split(".")
     if output.pol is not None:
@@ -477,7 +545,12 @@ def remove_wsclean_outputs(
     outputs: list[WSCleanOutput],
     image_types: Collection[str] = ("dirty", "psf", "model", "residual"),
 ) -> list[Path]:
-    """Delete the channel images of ``image_types``, keeping every MFS image
+    """Delete the channel images of ``image_types``, keeping every MFS image.
+    A failed deletion is logged rather than raised.
+
+    Args:
+        outputs (list[WSCleanOutput]): The images wsclean wrote, see ``find_wsclean_outputs``
+        image_types (Collection[str], optional): The types of image to delete. Defaults to ("dirty", "psf", "model", "residual").
 
     Returns:
         list[Path]: The images deleted

@@ -272,7 +272,14 @@ def create_image_cube_name(
 
 
 def pol_name_token(pol: str) -> str:
-    """The field naming the polarisations imaged, as it appears in file names, e.g. ``xx,yy`` is ``xxyy``"""
+    """The field naming the polarisations imaged, as it appears in file names.
+
+    Args:
+        pol (str): The wsclean ``-pol`` value, e.g. ``i``, ``QU`` or ``xx,yy``
+
+    Returns:
+        str: The field, lower case and without commas, e.g. ``xxyy`` for ``xx,yy``
+    """
     return pol.lower().replace(",", "")
 
 
