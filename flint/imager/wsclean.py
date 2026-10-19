@@ -300,7 +300,7 @@ def get_wsclean_output_source_list_path(
 
 
 class WSCleanOutput(NamedTuple):
-    """An image wsclean wrote, broken into the fields of its name"""
+    """An image wsclean writes, with the fields of its name"""
 
     path: Path
     """Where the image is"""
@@ -312,54 +312,6 @@ class WSCleanOutput(NamedTuple):
     """Whether this is the multi-frequency synthesis image over all channels"""
     pol: str | None = None
     """wsclean's polarisation token, e.g. ``XX`` or ``Q``. None when a single polarisation is imaged"""
-    interval: int | None = None
-    """Interval index, only present with ``-intervals-out``"""
-    primary_beam: bool = False
-    """Whether this is a primary beam corrected image"""
-
-
-def wsclean_output_pattern(prefix: str | Path) -> re.Pattern[str]:
-    """The pattern matching the name of every image wsclean writes for a ``-name`` of ``prefix``.
-
-    Args:
-        prefix (str | Path): The ``-name`` given to wsclean. Only its final component is matched.
-
-    Returns:
-        re.Pattern[str]: The pattern, with groups ``interval``, ``channel``, ``mfs``, ``pol``, ``image_type`` and ``primary_beam``
-    """
-    return re.compile(
-        rf"^{re.escape(Path(prefix).name)}"
-        r"(?:-t(?P<interval>\d{4}))?"
-        r"(?:-(?:(?P<channel>\d{4})|(?P<mfs>MFS)))?"
-        r"(?:-(?P<pol>(?:XX|XY|YX|YY|RR|RL|LR|LL|I|Q|U|V)i?))?"
-        r"-(?P<image_type>image|dirty|model|residual|psf)"
-        r"(?P<primary_beam>-pb)?\.fits$"
-    )
-
-
-def parse_wsclean_output(path: Path, prefix: str | Path) -> WSCleanOutput | None:
-    """Break the name of an image wsclean wrote into its fields.
-
-    Args:
-        path (Path): The file to examine
-        prefix (str | Path): The ``-name`` given to wsclean
-
-    Returns:
-        WSCleanOutput | None: The fields of the name, or None if ``path`` is not an image wsclean wrote for ``prefix``
-    """
-    match = wsclean_output_pattern(prefix=prefix).match(path.name)
-    if match is None:
-        return None
-
-    return WSCleanOutput(
-        path=path,
-        image_type=match["image_type"],
-        channel=int(match["channel"]) if match["channel"] else None,
-        mfs=match["mfs"] is not None,
-        pol=match["pol"],
-        interval=int(match["interval"]) if match["interval"] else None,
-        primary_beam=match["primary_beam"] is not None,
-    )
 
 
 def wsclean_output_path(
@@ -368,10 +320,8 @@ def wsclean_output_path(
     channel: int | None = None,
     mfs: bool = False,
     pol: str | None = None,
-    interval: int | None = None,
-    primary_beam: bool = False,
 ) -> Path:
-    """The name wsclean gives an image, the inverse of ``parse_wsclean_output``.
+    """The name wsclean gives an image, ``<prefix>[-<channel>|-MFS][-<pol>]-<type>.fits``.
 
     Args:
         prefix (str | Path): The ``-name`` given to wsclean
@@ -379,15 +329,11 @@ def wsclean_output_path(
         channel (int | None, optional): Output channel index. None when a single channel is imaged. Defaults to None.
         mfs (bool, optional): Name the multi-frequency synthesis image, in place of a channel. Defaults to False.
         pol (str | None, optional): wsclean's polarisation token, e.g. ``XX``. None when a single polarisation is imaged. Defaults to None.
-        interval (int | None, optional): Interval index, only present with ``-intervals-out``. Defaults to None.
-        primary_beam (bool, optional): Name the primary beam corrected image. Defaults to False.
 
     Returns:
         Path: The image's path, in the directory of ``prefix``
     """
     fields = [str(prefix)]
-    if interval is not None:
-        fields.append(f"t{interval:04d}")
     if mfs:
         fields.append("MFS")
     elif channel is not None:
@@ -395,8 +341,6 @@ def wsclean_output_path(
     if pol is not None:
         fields.append(pol)
     fields.append(image_type)
-    if primary_beam:
-        fields.append("pb")
 
     return Path("-".join(fields) + ".fits")
 
@@ -406,7 +350,7 @@ def expected_wsclean_outputs(
     channels_out: int,
     pols: tuple[str, ...] | None,
     image_types: Collection[str] = ("image",),
-) -> list[Path]:
+) -> list[WSCleanOutput]:
     """The images wsclean writes for each of ``image_types``. Every channel is
     listed, followed by the MFS image when more than one channel is imaged. The
     PSF is shared by every polarisation, so it carries none.
@@ -418,25 +362,23 @@ def expected_wsclean_outputs(
         image_types (Collection[str], optional): The types of image to list. Defaults to ("image",).
 
     Returns:
-        list[Path]: The images, by type, then polarisation, then channel
+        list[WSCleanOutput]: The images, by type, then polarisation, then channel
     """
     channels: list[dict[str, Any]] = [{}]
     if channels_out > 1:
         channels = [{"channel": channel} for channel in range(channels_out)]
         channels.append({"mfs": True})
 
-    paths: list[Path] = []
+    outputs: list[WSCleanOutput] = []
     for image_type in image_types:
         image_pols = (None,) if pols is None or image_type == "psf" else pols
-        paths += [
-            wsclean_output_path(
-                prefix=prefix, image_type=image_type, pol=pol, **channel
-            )
-            for pol in image_pols
-            for channel in channels
-        ]
+        for pol in image_pols:
+            for channel in channels:
+                fields = {"image_type": image_type, "pol": pol, **channel}
+                path = wsclean_output_path(prefix=prefix, **fields)
+                outputs.append(WSCleanOutput(path=path, **fields))
 
-    return paths
+    return outputs
 
 
 def find_wsclean_outputs(
@@ -455,18 +397,13 @@ def find_wsclean_outputs(
     Returns:
         list[WSCleanOutput]: The images that exist, by type, then polarisation, then channel, with the MFS image last
     """
-    paths = expected_wsclean_outputs(
+    outputs = expected_wsclean_outputs(
         prefix=prefix,
         channels_out=channels_out,
         pols=pols,
         image_types=("image", "dirty", "model", "residual", "psf"),
     )
-    outputs = [
-        parse_wsclean_output(path=path, prefix=prefix)
-        for path in paths
-        if path.exists()
-    ]
-    return [output for output in outputs if output is not None]
+    return [output for output in outputs if output.path.exists()]
 
 
 def clear_wsclean_outputs(
@@ -507,11 +444,11 @@ def verify_wsclean_outputs(
     """
     found = {output.path.name for output in outputs}
     missing = [
-        path.name
-        for path in expected_wsclean_outputs(
+        expected.path.name
+        for expected in expected_wsclean_outputs(
             prefix=prefix, channels_out=channels_out, pols=pols
         )
-        if path.name not in found
+        if expected.path.name not in found
     ]
     if missing:
         msg = f"wsclean did not write {len(missing)} expected images: {missing}"
@@ -525,8 +462,8 @@ def flint_output_path(
 
     When wsclean tagged the image with a polarisation it replaces ``pol_token``,
     the field of ``prefix`` naming every polarisation imaged (e.g. ``qu``).
-    Channel and interval indices become flint's ``ch<lo>-<hi>`` and
-    ``scan<lo>-<hi>`` ranges, whose upper bound is exclusive.
+    A channel index becomes flint's ``ch<lo>-<hi>`` range, whose upper bound is
+    exclusive.
 
     Args:
         output (WSCleanOutput): The image to name
@@ -549,11 +486,7 @@ def flint_output_path(
         fields.append("MFS")
     elif output.channel is not None:
         fields.append(f"ch{output.channel:04d}-{output.channel + 1:04d}")
-    if output.interval is not None:
-        fields.append(f"scan{output.interval:04d}-{output.interval + 1:04d}")
     fields.append(output.image_type)
-    if output.primary_beam:
-        fields.append("pb")
 
     return output.path.parent / (".".join(fields) + ".fits")
 
@@ -911,11 +844,7 @@ def collect_wsclean_outputs(
     )
 
     image_types = ("image", "residual", *(extra_output_types or ()))
-    collected = [
-        output
-        for output in outputs
-        if not output.primary_beam and output.image_type in image_types
-    ]
+    collected = [output for output in outputs if output.image_type in image_types]
     pol_token = pol_name_token(pol=options.pol)
     images: dict[str, list[Path]] = {image_type: [] for image_type in image_types}
     renamed: dict[WSCleanOutput, Path] = {}

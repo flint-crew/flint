@@ -225,14 +225,14 @@ def _wsclean_image_set(prefix: str, pols: tuple[str, ...] | None = None) -> Imag
         prefix=prefix,
         **{
             image_type: [
-                path
-                for path in expected_wsclean_outputs(
+                output.path
+                for output in expected_wsclean_outputs(
                     prefix=prefix,
                     channels_out=4,
                     pols=pols,
                     image_types=(image_type,),
                 )
-                if "-MFS-" not in path.name
+                if not output.mfs
             ]
             for image_type in ("image", "dirty", "model", "residual", "psf")
         },

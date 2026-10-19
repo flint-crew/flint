@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import re
-from itertools import product
 from pathlib import Path
 from typing import Any
 
@@ -35,7 +34,6 @@ from flint.imager.wsclean import (
     get_parser,
     get_wsclean_output_source_list_path,
     parse_pols,
-    parse_wsclean_output,
     remove_wsclean_outputs,
     run_wsclean_imager,
     verify_wsclean_outputs,
@@ -91,101 +89,56 @@ def set_env():
     os.environ["LOCALDIR"] = "Pirates/be/here"
 
 
-PREFIXES = (
-    "SB56289.RACS_1041+18.beam00.round1.i",
-    "SB57516.RACS_0929-81.beam35.round4.i.ch0287-0288",
-    "SB57516.RACS_0929-81.beam35.round4.i.scan0001-0002",
-    "SB56289.RACS_1041+18.project-image.beam15.round1.qu",
-    "/a/path/to/SB39400.RACS_0635-31.beam33.xxyy",
-)
+def _output(prefix: str | Path, **fields: Any) -> WSCleanOutput:
+    """The image wsclean writes under ``prefix`` with these fields"""
+    return WSCleanOutput(path=wsclean_output_path(prefix=prefix, **fields), **fields)
 
 
-@pytest.mark.parametrize("prefix", PREFIXES)
-def test_wsclean_output_round_trip(prefix: str):
-    """Every name the builder makes parses back into the fields it was made from"""
-    for (channel, mfs), pol, interval, image_type, primary_beam in product(
-        ((None, False), (3, False), (None, True)),
-        (None, "I", "Q", "XX", "XYi"),
-        (None, 7),
-        ("image", "dirty", "model", "residual", "psf"),
-        (False, True),
-    ):
-        fields: dict[str, Any] = {
-            "image_type": image_type,
-            "channel": channel,
-            "mfs": mfs,
-            "pol": pol,
-            "interval": interval,
-            "primary_beam": primary_beam,
-        }
-        path = wsclean_output_path(prefix=prefix, **fields)
-        assert path.parent == Path(prefix).parent
-        assert parse_wsclean_output(path=path, prefix=prefix) == WSCleanOutput(
-            path=path, **fields
-        )
-
-
-def test_parse_wsclean_output_ignores_other_files():
-    """Files that are not wsclean images of this prefix are not parsed"""
-    prefix = "SB56289.RACS_1041+18.beam00.round1.i"
-    for name in (
-        f"{prefix}-sources.txt",
-        f"{prefix}-beam-0.fits",
-        f"{prefix}-0000-image.sub.fits",
-        f"{prefix}.ch0000-0010-image.fits",
-        f"{prefix}i-image.fits",
-        f"{prefix}-000-image.fits",
-        f"{prefix}.MFS.image.fits",
-    ):
-        assert parse_wsclean_output(path=Path(name), prefix=prefix) is None
-
-
-def test_parse_wsclean_output_interval_before_channel():
-    """wsclean writes the interval ahead of the channel, as t plus four digits"""
-    prefix = "SB56289.RACS_1041+18.beam00.round1.i"
-    output = parse_wsclean_output(
-        path=Path(f"{prefix}-t0005-0002-image.fits"), prefix=prefix
-    )
-    assert output is not None
-    assert output.interval == 5
-    assert output.channel == 2
+def _expected_paths(**kwargs: Any) -> list[Path]:
+    """The paths of ``expected_wsclean_outputs``"""
+    return [output.path for output in expected_wsclean_outputs(**kwargs)]
 
 
 @pytest.mark.parametrize(
-    "prefix, wsclean_suffix, pol_token, flint_suffix",
+    "prefix, fields, pol_token, flint_suffix",
     [
-        ("SB39400.RACS_0635-31.beam33.poli", "-MFS-image", "i", ".MFS.image"),
+        (
+            "SB39400.RACS_0635-31.beam33.poli",
+            {"image_type": "image", "mfs": True},
+            "i",
+            ".MFS.image",
+        ),
         (
             "SB57516.RACS_0929-81.beam35.round4.i.ch0287-0288",
-            "-image",
+            {"image_type": "image"},
             "i",
             ".image",
         ),
-        ("SB57988.RACS_1415-46.beam34.round4.v", "-MFS-model", "v", ".MFS.model"),
+        (
+            "SB57988.RACS_1415-46.beam34.round4.v",
+            {"image_type": "model", "mfs": True},
+            "v",
+            ".MFS.model",
+        ),
         (
             "SB56289.RACS_1041+18.beam00.round1.i",
-            "-0000-image",
+            {"image_type": "image", "channel": 0},
             "i",
             ".ch0000-0001.image",
         ),
         (
             "SB56289.RACS_1041+18.beam00.round1.i",
-            "-t0005-0000-image",
+            {"image_type": "psf", "channel": 2},
             "i",
-            ".ch0000-0001.scan0005-0006.image",
+            ".ch0002-0003.psf",
         ),
-        ("SB56289.RACS_1041+18.beam00.round1.i", "-0002-psf", "i", ".ch0002-0003.psf"),
-        ("SB56289.RACS_1041+18.beam00.round1.i", "-MFS-image-pb", "i", ".MFS.image.pb"),
     ],
 )
 def test_flint_output_path_single_pol(
-    prefix: str, wsclean_suffix: str, pol_token: str, flint_suffix: str
+    prefix: str, fields: dict[str, Any], pol_token: str, flint_suffix: str
 ):
     """A single polarisation keeps the prefix as it is, and gains dot separated fields"""
-    output = parse_wsclean_output(
-        path=Path(f"/scratch/{prefix}{wsclean_suffix}.fits"), prefix=prefix
-    )
-    assert output is not None
+    output = _output(prefix=f"/scratch/{prefix}", **fields)
     assert flint_output_path(output=output, prefix=prefix, pol_token=pol_token) == Path(
         f"/scratch/{prefix}{flint_suffix}.fits"
     )
@@ -206,15 +159,12 @@ def test_flint_output_path_joint_pol(token: str, wsclean_pol: str, flint_pol: st
     """The image's own polarisation replaces the field naming every polarisation imaged"""
     base = "SB56289.RACS_1041+18.beam15.round1"
     prefix = f"{base}.{token}"
-    for wsclean_suffix, flint_suffix in (
-        (f"-0000-{wsclean_pol}-image", ".ch0000-0001.image"),
-        (f"-MFS-{wsclean_pol}-residual", ".MFS.residual"),
-        (f"-{wsclean_pol}-image", ".image"),
+    for fields, flint_suffix in (
+        ({"image_type": "image", "channel": 0}, ".ch0000-0001.image"),
+        ({"image_type": "residual", "mfs": True}, ".MFS.residual"),
+        ({"image_type": "image"}, ".image"),
     ):
-        output = parse_wsclean_output(
-            path=Path(f"{prefix}{wsclean_suffix}.fits"), prefix=prefix
-        )
-        assert output is not None
+        output = _output(prefix=prefix, pol=wsclean_pol, **fields)
         assert flint_output_path(output=output, prefix=prefix, pol_token=token) == Path(
             f"{base}.{flint_pol}{flint_suffix}.fits"
         )
@@ -223,10 +173,7 @@ def test_flint_output_path_joint_pol(token: str, wsclean_pol: str, flint_pol: st
 def test_flint_output_path_joint_pol_with_channel_range():
     """The polarisation field is found even when a channel range follows it"""
     prefix = "SB56289.RACS_1041+18.beam15.round1.qu.ch0010-0020"
-    output = parse_wsclean_output(
-        path=Path(f"{prefix}-0001-U-image.fits"), prefix=prefix
-    )
-    assert output is not None
+    output = _output(prefix=prefix, image_type="image", channel=1, pol="U")
     assert flint_output_path(output=output, prefix=prefix, pol_token="qu") == Path(
         "SB56289.RACS_1041+18.beam15.round1.u.ch0010-0020.ch0001-0002.image.fits"
     )
@@ -235,8 +182,7 @@ def test_flint_output_path_joint_pol_with_channel_range():
 def test_flint_output_path_joint_pol_psf():
     """The PSF is shared by every polarisation, so keeps the joint field"""
     prefix = "SB56289.RACS_1041+18.beam15.round1.qu"
-    output = parse_wsclean_output(path=Path(f"{prefix}-0001-psf.fits"), prefix=prefix)
-    assert output is not None
+    output = _output(prefix=prefix, image_type="psf", channel=1)
     assert flint_output_path(output=output, prefix=prefix, pol_token="qu") == Path(
         f"{prefix}.ch0001-0002.psf.fits"
     )
@@ -244,10 +190,7 @@ def test_flint_output_path_joint_pol_psf():
 
 def test_flint_output_path_missing_pol_token():
     prefix = "SB56289.RACS_1041+18.beam15.round1.i"
-    output = parse_wsclean_output(
-        path=Path(f"{prefix}-0001-Q-image.fits"), prefix=prefix
-    )
-    assert output is not None
+    output = _output(prefix=prefix, image_type="image", channel=1, pol="Q")
     with pytest.raises(NamingException):
         flint_output_path(output=output, prefix=prefix, pol_token="qu")
 
@@ -259,24 +202,31 @@ def test_flint_output_path_missing_pol_token():
 def test_flint_output_path_project_field_collision(project: str):
     """A project name matching a wsclean token is part of the prefix, so is left alone"""
     prefix = f"SB56289.RACS_1041+18.project-{project}.beam15.round1.i"
-    output = parse_wsclean_output(path=Path(f"{prefix}-0000-image.fits"), prefix=prefix)
-    assert output is not None
+    output = _output(prefix=prefix, image_type="image", channel=0)
     assert flint_output_path(output=output, prefix=prefix, pol_token="i") == Path(
         f"{prefix}.ch0000-0001.image.fits"
     )
 
 
 def test_expected_wsclean_outputs_with_pols():
-    paths = expected_wsclean_outputs(
+    outputs = expected_wsclean_outputs(
         prefix="JackSparrow", channels_out=4, pols=("I", "Q"), image_types=("image",)
     )
+    assert outputs[0] == WSCleanOutput(
+        path=Path("JackSparrow-0000-I-image.fits"),
+        image_type="image",
+        channel=0,
+        pol="I",
+    )
+    assert outputs[4].mfs and outputs[4].channel is None
+    paths = [output.path for output in outputs]
     assert len(paths) == 10
     assert paths[0] == Path("JackSparrow-0000-I-image.fits")
     assert paths[4] == Path("JackSparrow-MFS-I-image.fits")
     assert paths[5] == Path("JackSparrow-0000-Q-image.fits")
     assert paths[9] == Path("JackSparrow-MFS-Q-image.fits")
 
-    psfs = expected_wsclean_outputs(
+    psfs = _expected_paths(
         prefix="JackSparrow", channels_out=4, pols=("I", "Q"), image_types=("psf",)
     )
     assert psfs == [Path(f"JackSparrow-{c:04d}-psf.fits") for c in range(4)] + [
@@ -286,7 +236,7 @@ def test_expected_wsclean_outputs_with_pols():
 
 def test_expected_wsclean_outputs_single_channel():
     """Imaging one channel adds no channel field, and there is no MFS image"""
-    paths = expected_wsclean_outputs(
+    paths = _expected_paths(
         prefix="JackSparrow", channels_out=1, pols=None, image_types=("image", "psf")
     )
     assert paths == [Path("JackSparrow-image.fits"), Path("JackSparrow-psf.fits")]
@@ -303,7 +253,7 @@ def test_find_wsclean_outputs(tmp_path: Path):
     Images a run with other settings would write are ignored."""
     prefix = tmp_path / "SB56289.RACS_1041+18.beam15.round1.qu"
     expected = _touch_wsclean_outputs(
-        expected_wsclean_outputs(
+        _expected_paths(
             prefix=prefix,
             channels_out=3,
             pols=("Q", "U"),
@@ -336,7 +286,7 @@ def test_find_wsclean_outputs(tmp_path: Path):
 def test_verify_wsclean_outputs(tmp_path: Path):
     prefix = tmp_path / "SB56289.RACS_1041+18.beam15.round1.qu"
     paths = _touch_wsclean_outputs(
-        expected_wsclean_outputs(prefix=prefix, channels_out=3, pols=("Q", "U"))
+        _expected_paths(prefix=prefix, channels_out=3, pols=("Q", "U"))
     )
     verify_wsclean_outputs(
         outputs=find_wsclean_outputs(prefix=prefix, channels_out=3, pols=("Q", "U")),
@@ -361,7 +311,7 @@ def test_clear_wsclean_outputs(tmp_path: Path):
     """Every image this run writes is cleared if it exists, and nothing else"""
     prefix = tmp_path / "SB56289.RACS_1041+18.beam15.round1.i"
     earlier = _touch_wsclean_outputs(
-        expected_wsclean_outputs(
+        _expected_paths(
             prefix=prefix,
             channels_out=2,
             pols=None,
@@ -387,7 +337,7 @@ def test_remove_wsclean_outputs(tmp_path: Path):
     """Channel images of the named types go, MFS images and the science images stay"""
     prefix = tmp_path / "SB56289.RACS_1041+18.beam15.round1.i"
     _touch_wsclean_outputs(
-        expected_wsclean_outputs(
+        _expected_paths(
             prefix=prefix,
             channels_out=2,
             pols=None,
