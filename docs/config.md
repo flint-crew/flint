@@ -99,7 +99,7 @@ Compression is only safe for a cube that is never reopened later in the
 pipeline: `astropy` cannot memmap a compressed file (`.gz` or `.fz`), so the
 memmapped reads flint and rm-lite use would decompress the whole cube into
 memory. `split_cube_into_planes` and RM-synthesis refuse compressed cubes for
-exactly this reason (see `flint.imager.wsclean.split_cube_into_planes`).
+exactly this reason (see `flint.cube.split_cube_into_planes`).
 
 How to read, decompress and handle compressed cubes, and the pitfalls of
 quantizing more than once, are covered in

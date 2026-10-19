@@ -21,10 +21,8 @@ from flint.imager.channel_division import (
     apply_cube_division,
     channel_division_for_beams,
 )
-from flint.imager.wsclean import (
-    ImageSet,
-    WSCleanResult,
-)
+from flint.imager.wsclean import WSCleanResult
+from flint.imageset import ImageSet
 from flint.logging import logger
 from flint.ms import MSsByBeam, find_mss
 from flint.naming import (

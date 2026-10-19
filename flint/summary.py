@@ -23,7 +23,8 @@ from astropy.utils.iers import conf
 from capn_crunch import BaseOptions
 
 from flint.coadd.linmos import LinmosResult
-from flint.imager.wsclean import ImageSet, WSCleanResult
+from flint.imager.wsclean import WSCleanResult
+from flint.imageset import ImageSet
 from flint.logging import logger
 from flint.ms import (
     MS,

@@ -7,7 +7,7 @@ import pytest
 from astropy.coordinates import EarthLocation, Latitude, Longitude
 from astropy.time import Time
 
-from flint.imager.wsclean import ImageSet
+from flint.imageset import ImageSet
 from flint.ms import (
     MSSummary,
     describe_ms,
