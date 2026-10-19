@@ -16,7 +16,6 @@ with a ``.``.
 
 from __future__ import annotations
 
-import glob
 import re
 from argparse import ArgumentParser
 from collections.abc import Collection
@@ -437,36 +436,51 @@ def expected_wsclean_outputs(
     return paths
 
 
-def find_wsclean_outputs(prefix: str | Path) -> list[WSCleanOutput]:
-    """Find the images wsclean wrote for a ``-name`` of ``prefix``. Other files
-    sharing the prefix, such as the source list, are ignored.
+def find_wsclean_outputs(
+    prefix: str | Path,
+    channels_out: int,
+    pols: tuple[str, ...] | None,
+) -> list[WSCleanOutput]:
+    """Find the images this run of wsclean writes that exist under ``prefix``. Only
+    their exact names are checked, so files from a run with other settings are ignored.
 
     Args:
-        prefix (str | Path): The ``-name`` given to wsclean, in the directory the images are now in
+        prefix (str | Path): The ``-name`` given to wsclean, in the directory the images are in
+        channels_out (int): Number of output channels imaged
+        pols (tuple[str, ...] | None): wsclean's polarisation tokens, e.g. ``("Q", "U")``. None when a single polarisation is imaged.
 
     Returns:
-        list[WSCleanOutput]: The images, ordered by type, polarisation and channel, with the MFS image last
+        list[WSCleanOutput]: The images that exist, by type, then polarisation, then channel, with the MFS image last
     """
-    prefix = Path(prefix)
-    candidates = prefix.parent.glob(f"{glob.escape(prefix.name)}-*.fits")
-    outputs = [
-        output
-        for output in (
-            parse_wsclean_output(path=path, prefix=prefix) for path in candidates
-        )
-        if output is not None
-    ]
-
-    return sorted(
-        outputs,
-        key=lambda output: (
-            output.image_type,
-            output.pol or "",
-            output.interval or 0,
-            output.mfs,
-            output.channel or 0,
-        ),
+    paths = expected_wsclean_outputs(
+        prefix=prefix,
+        channels_out=channels_out,
+        pols=pols,
+        image_types=("image", "dirty", "model", "residual", "psf"),
     )
+    outputs = [
+        parse_wsclean_output(path=path, prefix=prefix)
+        for path in paths
+        if path.exists()
+    ]
+    return [output for output in outputs if output is not None]
+
+
+def clear_wsclean_outputs(
+    prefix: str | Path, channels_out: int, pols: tuple[str, ...] | None
+) -> list[Path]:
+    """Delete any image this run of wsclean writes that already exists under ``prefix``.
+
+    Args:
+        prefix (str | Path): The ``-name`` given to wsclean, in the directory to clear
+        channels_out (int): Number of output channels imaged
+        pols (tuple[str, ...] | None): wsclean's polarisation tokens, e.g. ``("Q", "U")``. None when a single polarisation is imaged.
+
+    Returns:
+        list[Path]: The images deleted
+    """
+    outputs = find_wsclean_outputs(prefix=prefix, channels_out=channels_out, pols=pols)
+    return remove_files_folders(*(output.path for output in outputs))
 
 
 def verify_wsclean_outputs(
@@ -886,7 +900,9 @@ def collect_wsclean_outputs(
     options = wsclean_result.options
     pols = _make_pols(pol_str=options.pol)
 
-    outputs = find_wsclean_outputs(prefix=prefix)
+    outputs = find_wsclean_outputs(
+        prefix=prefix, channels_out=options.channels_out, pols=pols
+    )
     verify_wsclean_outputs(
         outputs=outputs, prefix=prefix, channels_out=options.channels_out, pols=pols
     )
@@ -991,6 +1007,20 @@ def run_wsclean_imager(
         )
         logger.warning(f"Setting prefix to {prefix}. Likely this is not correct. ")
 
+    channels_out = wsclean_result.options.channels_out
+    pols = _make_pols(pol_str=wsclean_result.options.pol)
+
+    # Clear what an earlier attempt left under this name, so every image found
+    # after the run is from it. A task rerun after a dask worker death meets its
+    # own partial outputs, so they are removed rather than refused.
+    output_directories = {Path(prefix).parent}
+    if move_hold_directories:
+        output_directories.add(Path(move_hold_directories[0]))
+    for directory in output_directories:
+        clear_wsclean_outputs(
+            prefix=directory / Path(prefix).name, channels_out=channels_out, pols=pols
+        )
+
     if move_hold_directories:
         with hold_then_move_into(
             move_directory=move_hold_directories[0],
@@ -1006,7 +1036,9 @@ def run_wsclean_imager(
             )
             if wsclean_cleanup:
                 rm_files = remove_wsclean_outputs(
-                    outputs=find_wsclean_outputs(prefix=prefix)
+                    outputs=find_wsclean_outputs(
+                        prefix=prefix, channels_out=channels_out, pols=pols
+                    )
                 )
                 logger.info(f"Removed {len(rm_files)} files")
                 # No need to attempt to clean up again once files have been moved
@@ -1032,7 +1064,11 @@ def run_wsclean_imager(
 
     if wsclean_cleanup:
         logger.info("Will clean up files created by wsclean. ")
-        remove_wsclean_outputs(outputs=find_wsclean_outputs(prefix=prefix))
+        remove_wsclean_outputs(
+            outputs=find_wsclean_outputs(
+                prefix=prefix, channels_out=channels_out, pols=pols
+            )
+        )
 
     image_set = collect_wsclean_outputs(
         wsclean_result=wsclean_result,

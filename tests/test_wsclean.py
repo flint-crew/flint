@@ -26,6 +26,7 @@ from flint.imager.wsclean import (
     _make_pols,
     _resolve_wsclean_key_value_to_cli_str,
     _wsclean_output_callback,
+    clear_wsclean_outputs,
     collect_wsclean_outputs,
     create_wsclean_cmd,
     create_wsclean_name_argument,
@@ -36,6 +37,7 @@ from flint.imager.wsclean import (
     get_wsclean_output_source_list_path,
     parse_wsclean_output,
     remove_wsclean_outputs,
+    run_wsclean_imager,
     verify_wsclean_outputs,
     wsclean_output_path,
 )
@@ -297,7 +299,8 @@ def _touch_wsclean_outputs(paths: list[Path]) -> list[Path]:
 
 
 def test_find_wsclean_outputs(tmp_path: Path):
-    """Only this prefix's images come back, ordered by channel with MFS last"""
+    """Only this run's exact names come back, ordered by channel with MFS last.
+    Images a run with other settings would write are ignored."""
     prefix = tmp_path / "SB56289.RACS_1041+18.beam15.round1.qu"
     expected = _touch_wsclean_outputs(
         expected_wsclean_outputs(
@@ -311,11 +314,13 @@ def test_find_wsclean_outputs(tmp_path: Path):
         [
             Path(f"{prefix}-sources.txt"),
             Path(f"{prefix}.ch0000-0010-0000-Q-image.fits"),
+            Path(f"{prefix}-0003-Q-image.fits"),
+            Path(f"{prefix}-MFS-V-image.fits"),
             tmp_path / "SB56289.RACS_1041+18.beam15.round1.i-0000-image.fits",
         ]
     )
 
-    outputs = find_wsclean_outputs(prefix=prefix)
+    outputs = find_wsclean_outputs(prefix=prefix, channels_out=3, pols=("Q", "U"))
     assert sorted(output.path for output in outputs) == sorted(expected)
 
     q_images = [
@@ -334,7 +339,7 @@ def test_verify_wsclean_outputs(tmp_path: Path):
         expected_wsclean_outputs(prefix=prefix, channels_out=3, pols=("Q", "U"))
     )
     verify_wsclean_outputs(
-        outputs=find_wsclean_outputs(prefix=prefix),
+        outputs=find_wsclean_outputs(prefix=prefix, channels_out=3, pols=("Q", "U")),
         prefix=prefix,
         channels_out=3,
         pols=("Q", "U"),
@@ -343,11 +348,39 @@ def test_verify_wsclean_outputs(tmp_path: Path):
     paths[1].unlink()
     with pytest.raises(FileNotFoundError, match=re.escape(paths[1].name)):
         verify_wsclean_outputs(
-            outputs=find_wsclean_outputs(prefix=prefix),
+            outputs=find_wsclean_outputs(
+                prefix=prefix, channels_out=3, pols=("Q", "U")
+            ),
             prefix=prefix,
             channels_out=3,
             pols=("Q", "U"),
         )
+
+
+def test_clear_wsclean_outputs(tmp_path: Path):
+    """Every image this run writes is cleared if it exists, and nothing else"""
+    prefix = tmp_path / "SB56289.RACS_1041+18.beam15.round1.i"
+    earlier = _touch_wsclean_outputs(
+        expected_wsclean_outputs(
+            prefix=prefix,
+            channels_out=2,
+            pols=None,
+            image_types=("image", "dirty", "model", "residual", "psf"),
+        )
+    )
+    others = _touch_wsclean_outputs(
+        [
+            Path(f"{prefix}-sources.txt"),
+            Path(f"{prefix}-0002-image.fits"),
+            Path(f"{prefix}.MFS.image.fits"),
+        ]
+    )
+
+    removed = clear_wsclean_outputs(prefix=prefix, channels_out=2, pols=None)
+
+    assert sorted(removed) == sorted(earlier)
+    assert not any(path.exists() for path in earlier)
+    assert all(path.exists() for path in others)
 
 
 def test_remove_wsclean_outputs(tmp_path: Path):
@@ -362,13 +395,18 @@ def test_remove_wsclean_outputs(tmp_path: Path):
         )
     )
 
-    removed = remove_wsclean_outputs(outputs=find_wsclean_outputs(prefix=prefix))
+    removed = remove_wsclean_outputs(
+        outputs=find_wsclean_outputs(prefix=prefix, channels_out=2, pols=None)
+    )
     assert sorted(path.name for path in removed) == sorted(
         f"{prefix.name}-{c:04d}-{image_type}.fits"
         for c in range(2)
         for image_type in ("residual", "psf", "model")
     )
-    remaining = {output.path.name for output in find_wsclean_outputs(prefix=prefix)}
+    remaining = {
+        output.path.name
+        for output in find_wsclean_outputs(prefix=prefix, channels_out=2, pols=None)
+    }
     assert remaining == {
         f"{prefix.name}-0000-image.fits",
         f"{prefix.name}-0001-image.fits",
@@ -473,6 +511,76 @@ def test_collect_wsclean_outputs_missing_images(tmp_path: Path):
             wsclean_result=_wsclean_result_for(prefix=prefix, channels_out=3, pol="i"),
             prefix=str(prefix),
         )
+
+
+def test_collect_wsclean_outputs_ignores_earlier_run(tmp_path: Path):
+    """A single channel run gathers only its own image, leaving those a four
+    channel run wrote into the same directory alone"""
+    prefix = tmp_path / "SB56289.RACS_1041+18.beam15.round1.i"
+    _write_wsclean_images(prefix=prefix, channels_out=4, pols=None)
+    earlier = sorted(tmp_path.iterdir())
+    for image_type in ("image", "residual"):
+        _write_channel_image(
+            path=wsclean_output_path(prefix=prefix, image_type=image_type),
+            channel=0,
+            shape=(8, 8),
+        )
+
+    image_set = collect_wsclean_outputs(
+        wsclean_result=_wsclean_result_for(prefix=prefix, channels_out=1, pol="i"),
+        prefix=str(prefix),
+    )
+
+    assert image_set.image == [tmp_path / f"{prefix.name}.image.fits"]
+    assert all(path.exists() for path in earlier)
+
+
+def test_run_wsclean_imager_clears_earlier_outputs(tmp_path: Path, monkeypatch):
+    """Images an earlier attempt left in the hold or MS directory are cleared
+    before wsclean runs, so the run's own images are moved in and gathered"""
+    hold_dir, move_dir = tmp_path / "hold", tmp_path / "move"
+    hold_dir.mkdir()
+    move_dir.mkdir()
+    name = "SB56289.RACS_1041+18.beam15.round1.i"
+
+    # Same names as this run's outputs, with data a fresh run would not write
+    for path in (
+        wsclean_output_path(prefix=move_dir / name, image_type="image", mfs=True),
+        wsclean_output_path(prefix=hold_dir / name, image_type="residual", channel=0),
+    ):
+        _write_channel_image(path=path, channel=99, shape=(8, 8))
+    other_settings = _write_channel_image(
+        path=wsclean_output_path(prefix=move_dir / name, image_type="image", channel=5),
+        channel=99,
+        shape=(8, 8),
+    )
+
+    monkeypatch.setattr(
+        "flint.imager.wsclean.run_singularity_command",
+        lambda **kwargs: _write_wsclean_images(
+            prefix=hold_dir / name, channels_out=2, pols=None
+        ),
+    )
+    ms = MS(path=move_dir / "SB56289.RACS_1041+18.beam15.round1.ms")
+    image_set = run_wsclean_imager(
+        wsclean_result=WSCleanResult(
+            cmd="wsclean",
+            options=WSCleanOptions(channels_out=2, pol="i"),
+            ms=ms,
+            ms_list=[ms],
+            bind_dirs=(),
+            move_hold_directories=(move_dir, hold_dir),
+            image_prefix_str=str(hold_dir / name),
+        ),
+        container=tmp_path / "wsclean.sif",
+        make_cube_from_subbands=False,
+    )
+
+    mfs_image = move_dir / f"{name}.MFS.image.fits"
+    assert mfs_image in image_set.image
+    assert fits.getdata(mfs_image).squeeze()[0, 0] == 0.0
+    assert other_settings.exists()
+    assert other_settings not in image_set.image
 
 
 @pytest.mark.parametrize("suffix", ["racs_all", "pol-v2", "v2.1"])
@@ -802,7 +910,9 @@ def _write_xx_yy_images(prefix: Path, channels_out: int) -> None:
         channel=0,
         shape=(8, 8),
     )
-    for output in find_wsclean_outputs(prefix=prefix):
+    for output in find_wsclean_outputs(
+        prefix=prefix, channels_out=channels_out, pols=("XX", "YY")
+    ):
         if output.pol == "XX":
             _set_feed(path=output.path, scale=1.0, stokes=-5.0)
         elif output.pol == "YY":
