@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from pathlib import Path
@@ -455,6 +456,60 @@ def test_collect_wsclean_outputs_joint_pol(
         f"{base}.u.MFS.image.fits",
     ]
     assert len(split_and_get_image_set(image_set=image_set, get="u")) == 3
+
+
+@pytest.mark.parametrize(
+    "pol, pols, left",
+    [
+        ("i", None, ["i.MFS.dirty", "i.MFS.model", "i.MFS.psf"]),
+        (
+            "qu",
+            ("Q", "U"),
+            ["q.MFS.dirty", "q.MFS.model", "u.MFS.dirty", "u.MFS.model", "qu.MFS.psf"],
+        ),
+    ],
+)
+def test_collect_wsclean_outputs_renames_images_left_on_disk(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    pol: str,
+    pols: tuple[str, ...] | None,
+    left: list[str],
+):
+    """Images that are not gathered, like the MFS dirty, model and PSF, take
+    flint names and stay on disk with a warning, outside the image set"""
+    base = "SB56289.RACS_1041+18.beam15.round1"
+    prefix = tmp_path / f"{base}.{pol}"
+    _write_wsclean_images(prefix=prefix, channels_out=2, pols=pols)
+    for image_pol in pols or (None,):
+        for image_type in ("model", "dirty"):
+            _write_channel_image(
+                path=wsclean_output_path(
+                    prefix=prefix, image_type=image_type, mfs=True, pol=image_pol
+                ),
+                channel=0,
+                shape=(8, 8),
+            )
+    _write_channel_image(
+        path=wsclean_output_path(prefix=prefix, image_type="psf", mfs=True),
+        channel=0,
+        shape=(8, 8),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="flint"):
+        image_set = collect_wsclean_outputs(
+            wsclean_result=_wsclean_result_for(prefix=prefix, channels_out=2, pol=pol),
+            prefix=str(prefix),
+            make_cube_from_subbands=False,
+        )
+
+    left_paths = [tmp_path / f"{base}.{name}.fits" for name in left]
+    assert all(path.exists() for path in left_paths)
+    assert image_set.model is None and image_set.dirty is None and image_set.psf is None
+    assert not list(tmp_path.glob(f"{prefix.name}-*"))
+    assert "Images left on disk without being gathered" in caplog.text
+    for path in left_paths:
+        assert path.name in caplog.text
 
 
 def test_collect_wsclean_outputs_missing_images(tmp_path: Path):
@@ -937,11 +992,10 @@ def test_collect_wsclean_outputs_xx_yy(tmp_path: Path):
     mfs = linear_set.image[1]
     assert fits.getheader(mfs)["CRVAL4"] == 1.0
     # Nothing of XX or YY is left, collected or not, while the shared PSF stays
-    for pattern in ("*.xx.*", "*.yy.*", "*-XX-*", "*-YY-*"):
+    # on as the Stokes I PSF
+    for pattern in ("*.xx.*", "*.yy.*", "*-XX-*", "*-YY-*", "*xxyy*"):
         assert not list(linear_dir.glob(pattern)), pattern
-    assert wsclean_output_path(
-        prefix=linear_prefix, image_type="psf", mfs=True
-    ).exists()
+    assert (linear_dir / f"{base}.i.MFS.psf.fits").exists()
 
 
 def test_collect_wsclean_outputs_keeps_linear_images(tmp_path: Path):
@@ -963,7 +1017,5 @@ def test_collect_wsclean_outputs_keeps_linear_images(tmp_path: Path):
     ]
     for pol in ("xx", "yy"):
         assert (tmp_path / f"{base}.{pol}.MFS.image.fits").exists()
-    for pol in ("XX", "YY"):
-        assert wsclean_output_path(
-            prefix=prefix, image_type="model", mfs=True, pol=pol
-        ).exists()
+    for pol in ("xx", "yy"):
+        assert (tmp_path / f"{base}.{pol}.MFS.model.fits").exists()

@@ -723,7 +723,8 @@ def collect_wsclean_outputs(
     """Gather the images wsclean wrote under ``prefix`` into an ``ImageSet`` with flint names.
 
     With ``pol: xx,yy`` the XX and YY images become Stokes I, and are deleted unless
-    ``flint_keep_linear_images`` is set. Channel images are cubed when
+    ``flint_keep_linear_images`` is set. Images not gathered are renamed too, and
+    left on disk with a warning. Channel images are cubed when
     ``make_cube_from_subbands`` is set and one polarisation remains. Raises
     ``FileNotFoundError`` if an expected image is missing.
     """
@@ -737,34 +738,54 @@ def collect_wsclean_outputs(
         outputs=outputs, prefix=prefix, channels_out=options.channels_out, pols=pols
     )
 
-    image_types = ("image", "residual", *(extra_output_types or ()))
-    collected = [output for output in outputs if output.image_type in image_types]
     pol_token = pol_name_token(pol=options.pol)
-    images: dict[str, list[Path]] = {image_type: [] for image_type in image_types}
     renamed: dict[WSCleanOutput, Path] = {}
-    for output in collected:
+    for output in outputs:
         flint_path = flint_output_path(
             output=output, prefix=prefix, pol_token=pol_token
         )
         logger.info(f"Renaming {output.path} to {flint_path}")
-        output.path.rename(flint_path)
-        images[output.image_type].append(flint_path)
-        renamed[output] = flint_path
+        renamed[output] = output.path.rename(flint_path)
 
-    image_set = ImageSet(prefix=prefix, **images)
+    image_types = ("image", "residual", *(extra_output_types or ()))
+    collected = [output for output in outputs if output.image_type in image_types]
+    image_set = ImageSet(
+        prefix=prefix,
+        **{
+            image_type: [
+                renamed[output]
+                for output in collected
+                if output.image_type == image_type
+            ]
+            for image_type in image_types
+        },
+    )
 
     # The XX and YY channels must become Stokes I before cubing, else they would
     # share one cube
     if pols == ("XX", "YY"):
         image_set = form_stokes_i(image_set=image_set)
+        # The PSF XX and YY share is the Stokes I PSF, whether gathered or not
+        for output in outputs:
+            if output.image_type == "psf" and output not in collected:
+                renamed[output] = renamed[output].rename(
+                    replace_name_field(path=renamed[output], old=pol_token, new="i")
+                )
         if not options.flint_keep_linear_images:
-            linear = [
-                renamed.get(output, output.path)
-                for output in outputs
-                if output.pol is not None
-            ]
+            linear = [renamed[output] for output in outputs if output.pol is not None]
             logger.info(f"Removing {len(linear)} XX and YY images")
             remove_files_folders(*linear)
+
+    gathered = {
+        path
+        for image_type in ("image", "residual", "model", "dirty", "psf")
+        for path in getattr(image_set, image_type) or []
+    }
+    left_on_disk = [
+        path.name for path in renamed.values() if path.exists() and path not in gathered
+    ]
+    if left_on_disk:
+        logger.warning(f"Images left on disk without being gathered: {left_on_disk}")
 
     if options.save_source_list:
         logger.info("Attaching the wsclean clean components SEDs")
