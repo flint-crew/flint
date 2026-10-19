@@ -251,7 +251,6 @@ def all_holography_available(
     racs_all_options: RACSAllOptions,
     output_science_path: Path,
 ) -> Path | None:
-
     if any(
         not isinstance(holo, Path)
         for holo in (
