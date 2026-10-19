@@ -785,12 +785,27 @@ def _set_feed(path: Path, scale: float, stokes: float) -> None:
 
 
 def _write_xx_yy_images(prefix: Path, channels_out: int) -> None:
-    """XX and YY images where YY is three times XX, so I is twice XX"""
+    """XX and YY images where YY is three times XX, so I is twice XX. Like
+    wsclean, the MFS model and dirty images and the shared PSF are written too."""
     _write_wsclean_images(prefix=prefix, channels_out=channels_out, pols=("XX", "YY"))
+    for pol in ("XX", "YY"):
+        for image_type in ("model", "dirty"):
+            _write_channel_image(
+                path=wsclean_output_path(
+                    prefix=prefix, image_type=image_type, mfs=True, pol=pol
+                ),
+                channel=0,
+                shape=(8, 8),
+            )
+    _write_channel_image(
+        path=wsclean_output_path(prefix=prefix, image_type="psf", mfs=True),
+        channel=0,
+        shape=(8, 8),
+    )
     for output in find_wsclean_outputs(prefix=prefix):
         if output.pol == "XX":
             _set_feed(path=output.path, scale=1.0, stokes=-5.0)
-        else:
+        elif output.pol == "YY":
             _set_feed(path=output.path, scale=3.0, stokes=-8.0)
 
 
@@ -839,7 +854,12 @@ def test_collect_wsclean_outputs_xx_yy(tmp_path: Path):
 
     mfs = linear_set.image[1]
     assert fits.getheader(mfs)["CRVAL4"] == 1.0
-    assert not list(linear_dir.glob("*.xx.*")) and not list(linear_dir.glob("*.yy.*"))
+    # Nothing of XX or YY is left, collected or not, while the shared PSF stays
+    for pattern in ("*.xx.*", "*.yy.*", "*-XX-*", "*-YY-*"):
+        assert not list(linear_dir.glob(pattern)), pattern
+    assert wsclean_output_path(
+        prefix=linear_prefix, image_type="psf", mfs=True
+    ).exists()
 
 
 def test_collect_wsclean_outputs_keeps_linear_images(tmp_path: Path):
@@ -861,3 +881,7 @@ def test_collect_wsclean_outputs_keeps_linear_images(tmp_path: Path):
     ]
     for pol in ("xx", "yy"):
         assert (tmp_path / f"{base}.{pol}.MFS.image.fits").exists()
+    for pol in ("XX", "YY"):
+        assert wsclean_output_path(
+            prefix=prefix, image_type="model", mfs=True, pol=pol
+        ).exists()

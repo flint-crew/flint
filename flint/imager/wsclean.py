@@ -53,6 +53,7 @@ from flint.sclient import run_singularity_command
 from flint.utils import (
     hold_then_move_into,
     parse_environment_variables,
+    remove_files_folders,
 )
 
 
@@ -187,7 +188,7 @@ class WSCleanOptions(BaseOptions):
     flint_hold_dir: str | Path | None = None
     """Directory images are written to before being moved beside the MS. Takes precedence over ``temp_dir`` for this purpose"""
     flint_keep_linear_images: bool = False
-    """Keep the XX and YY images that Stokes I is formed from when ``pol`` is ``xx,yy``, rather than deleting them"""
+    """Keep the XX and YY images when ``pol`` is ``xx,yy``, rather than deleting them once Stokes I is formed"""
 
     @model_validator(mode="after")
     def check_pol(self) -> WSCleanOptions:
@@ -865,6 +866,10 @@ def collect_wsclean_outputs(
     """Gather the images wsclean wrote into an ``ImageSet``, renaming them on disk
     to flint's naming and optionally combining their channels into cubes.
 
+    When ``pol`` is ``xx,yy`` the XX and YY images are replaced by Stokes I. Every
+    XX and YY image is then deleted, including those not gathered such as the MFS
+    model and dirty images, unless ``flint_keep_linear_images`` is set.
+
     Args:
         wsclean_result (WSCleanResult): The wsclean command that wrote the images
         prefix (str): The ``-name`` the images were written under, in the directory they are now in
@@ -887,11 +892,14 @@ def collect_wsclean_outputs(
     )
 
     image_types = ("image", "residual", *(extra_output_types or ()))
+    collected = [
+        output
+        for output in outputs
+        if not output.primary_beam and output.image_type in image_types
+    ]
     pol_token = pol_name_token(pol=options.pol)
     images: dict[str, list[Path]] = {image_type: [] for image_type in image_types}
-    for output in outputs:
-        if output.primary_beam or output.image_type not in image_types:
-            continue
+    for output in collected:
         flint_path = flint_output_path(
             output=output, prefix=prefix, pol_token=pol_token
         )
@@ -907,6 +915,14 @@ def collect_wsclean_outputs(
         image_set = form_stokes_i(
             image_set=image_set, keep_linear=options.flint_keep_linear_images
         )
+        if not options.flint_keep_linear_images:
+            uncollected = [
+                output.path
+                for output in outputs
+                if output.pol is not None and output not in collected
+            ]
+            logger.info(f"Removing {len(uncollected)} XX and YY images not collected")
+            remove_files_folders(*uncollected)
 
     if options.save_source_list:
         logger.info("Attaching the wsclean clean components SEDs")
