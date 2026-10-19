@@ -389,6 +389,21 @@ def test_form_stokes_i_needs_pairs(tmp_path: Path):
         )
 
 
+def test_form_stokes_i_blank_planes(tmp_path: Path):
+    """wsclean gives a plane without a fitted PSF a zero beam, and a pair of
+    those is the same beam rather than a mismatch"""
+    xx, yy = _write_linear_pair(directory=tmp_path, suffix="MFS.image.fits")
+    for path in (xx, yy):
+        for key in ("BMAJ", "BMIN", "BPA"):
+            fits.setval(path, key, value=0.0)
+
+    image_set = form_stokes_i(
+        image_set=ImageSet(prefix=str(tmp_path / "x.xxyy"), image=[xx, yy])
+    )
+
+    assert fits.getheader(image_set.image[0])["BMAJ"] == 0.0
+
+
 def test_form_stokes_i_needs_one_beam(tmp_path: Path):
     """XX and YY share a PSF, so differing restoring beams mean something is wrong"""
     xx, yy = _write_linear_pair(

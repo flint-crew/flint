@@ -257,7 +257,9 @@ def write_stokes_i(xx_path: Path, yy_path: Path, i_path: Path) -> Path:
     for key in ("BMAJ", "BMIN", "BPA"):
         if key not in xx_header or key not in yy_header:
             continue
-        if not np.isclose(xx_header[key], yy_header[key]):
+        # wsclean marks a blank plane with a zero beam, but a pirate trusts no
+        # header. Should NaNs come aboard both, they be the same beam, matey
+        if not np.isclose(xx_header[key], yy_header[key], equal_nan=True):
             msg = (
                 f"{xx_path.name} and {yy_path.name} have different {key}, "
                 f"{xx_header[key]} and {yy_header[key]}"
