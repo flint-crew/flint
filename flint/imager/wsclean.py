@@ -201,7 +201,7 @@ class WSCleanOptions(BaseOptions):
             WSCleanOptions: These options, unchanged
         """
         try:
-            pols = _make_pols(pol_str=self.pol)
+            pols = parse_pols(pol_str=self.pol)
         except NotSupportedError as e:
             raise ValueError(str(e)) from e
         if pols == ("XX", "YY") and self.save_source_list:
@@ -844,20 +844,21 @@ def create_wsclean_cmd(
     )
 
 
-def _make_pols(pol_str: str) -> tuple[str, ...] | None:
+def parse_pols(pol_str: str) -> tuple[str, ...] | None:
     """The polarisations wsclean tags each image with, None when a single one is imaged
 
     Args:
         pol_str (str): The wsclean ``-pol`` value, e.g. ``i``, ``qu`` or ``xx,yy``
 
     Raises:
-        NotSupportedError: ``pol_str`` names a feed product other than ``xx,yy``, or something unknown
+        NotSupportedError: ``pol_str`` has an empty or unknown part, or names a feed product other than ``xx,yy``
 
     Returns:
         tuple[str, ...] | None: The polarisations, in the order they are imaged
     """
+    parts = pol_str.lower().split(",")
     tokens = re.findall(r"xx|xy|yx|yy|rr|rl|lr|ll|i|q|u|v", pol_str.lower())
-    if "".join(tokens) != pol_str.lower().replace(",", ""):
+    if not all(parts) or "".join(tokens) != "".join(parts):
         msg = f"Unrecognised polarisation in {pol_str=}"
         raise NotSupportedError(msg)
 
@@ -898,7 +899,7 @@ def collect_wsclean_outputs(
         ImageSet: The renamed images
     """
     options = wsclean_result.options
-    pols = _make_pols(pol_str=options.pol)
+    pols = parse_pols(pol_str=options.pol)
 
     outputs = find_wsclean_outputs(
         prefix=prefix, channels_out=options.channels_out, pols=pols
@@ -1008,7 +1009,7 @@ def run_wsclean_imager(
         logger.warning(f"Setting prefix to {prefix}. Likely this is not correct. ")
 
     channels_out = wsclean_result.options.channels_out
-    pols = _make_pols(pol_str=wsclean_result.options.pol)
+    pols = parse_pols(pol_str=wsclean_result.options.pol)
 
     # Clear what an earlier attempt left under this name, so every image found
     # after the run is from it. A task rerun after a dask worker death meets its

@@ -23,7 +23,6 @@ from flint.imager.wsclean import (
     WSCleanOptions,
     WSCleanOutput,
     WSCleanResult,
-    _make_pols,
     _resolve_wsclean_key_value_to_cli_str,
     _wsclean_output_callback,
     clear_wsclean_outputs,
@@ -35,6 +34,7 @@ from flint.imager.wsclean import (
     flint_output_path,
     get_parser,
     get_wsclean_output_source_list_path,
+    parse_pols,
     parse_wsclean_output,
     remove_wsclean_outputs,
     run_wsclean_imager,
@@ -864,15 +864,31 @@ def test_attemptrerun_wsclean_output_callback():
         ("XX,YY", ("XX", "YY")),
     ],
 )
-def test_make_pols(pol: str, pols: tuple[str, ...] | None):
-    assert _make_pols(pol_str=pol) == pols
+def test_parse_pols(pol: str, pols: tuple[str, ...] | None):
+    assert parse_pols(pol_str=pol) == pols
 
 
-@pytest.mark.parametrize("pol", ["xx", "yy,xx", "xx,xy,yx,yy", "rr,ll", "qux", "ix"])
-def test_make_pols_unsupported(pol: str):
-    """Only XX and YY together are taken of the feed products, as Stokes I is formed from them"""
+@pytest.mark.parametrize(
+    "pol",
+    [
+        "xx",
+        "yy,xx",
+        "xx,xy,yx,yy",
+        "rr,ll",
+        "qux",
+        "ix",
+        "",
+        "i,",
+        ",i",
+        "i,,q",
+        "q,u,",
+    ],
+)
+def test_parse_pols_unsupported(pol: str):
+    """Every comma separated part must name a polarisation, and only XX and YY
+    together are taken of the feed products, as Stokes I is formed from them"""
     with pytest.raises(NotSupportedError):
-        _make_pols(pol_str=pol)
+        parse_pols(pol_str=pol)
     with pytest.raises(ValidationError):
         WSCleanOptions(pol=pol)
 
