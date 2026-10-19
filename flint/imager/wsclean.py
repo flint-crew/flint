@@ -32,7 +32,6 @@ from pydantic import Field, model_validator
 from flint.exceptions import (
     AttemptRerunException,
     CleanDivergenceError,
-    NamingException,
     NotSupportedError,
 )
 from flint.imageset import (
@@ -43,7 +42,11 @@ from flint.imageset import (
 )
 from flint.logging import logger
 from flint.ms import MS, standardise_ms_to_list_ms
-from flint.naming import create_imaging_name_prefix, pol_name_token
+from flint.naming import (
+    create_imaging_name_prefix,
+    pol_name_token,
+    replace_name_field,
+)
 from flint.options import (
     BaseOptions,
     FitsCubeOptions,
@@ -536,13 +539,12 @@ def flint_output_path(
     Returns:
         Path: The flint name, in the directory of ``output``
     """
-    fields = Path(prefix).name.split(".")
+    prefix_path = Path(prefix)
     if output.pol is not None:
-        if pol_token not in fields:
-            msg = f"{pol_token=} is not a field of {prefix=}"
-            raise NamingException(msg)
-        token_index = max(i for i, field in enumerate(fields) if field == pol_token)
-        fields[token_index] = output.pol.lower()
+        prefix_path = replace_name_field(
+            path=prefix_path, old=pol_token, new=output.pol.lower()
+        )
+    fields = prefix_path.name.split(".")
     if output.mfs:
         fields.append("MFS")
     elif output.channel is not None:

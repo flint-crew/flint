@@ -37,6 +37,7 @@ from flint.naming import (
     processed_ms_format,
     raw_ms_format,
     rename_linear_to_stokes,
+    replace_name_field,
     split_images,
     update_beam_resolution_field_in_path,
 )
@@ -338,6 +339,21 @@ def test_create_imaging_name_prefix_linear_feeds():
     components = processed_ms_format(in_name=name)
     assert components is not None
     assert components.pol == "xxyy"
+
+
+def test_replace_name_field():
+    """The last matching field is replaced, which in a flint name is the
+    polarisation rather than any part of the MS name before it"""
+    path = Path("/scratch/SB1.xx.beam00.round1.xx.ch0000-0001.image.fits")
+    assert replace_name_field(path=path, old="xx", new="i") == Path(
+        "/scratch/SB1.xx.beam00.round1.i.ch0000-0001.image.fits"
+    )
+
+
+def test_replace_name_field_missing():
+    path = Path("SB1.F.beam00.round1.i.MFS.image.fits")
+    with pytest.raises(NamingException, match="xx"):
+        replace_name_field(path=path, old="xx", new="yy")
 
 
 def test_get_cube_fits_from_paths():

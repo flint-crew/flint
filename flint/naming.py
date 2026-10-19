@@ -283,6 +283,36 @@ def pol_name_token(pol: str) -> str:
     return pol.lower().replace(",", "")
 
 
+def replace_name_field(path: Path, old: str, new: str) -> Path:
+    """Swap the last dot separated field ``old`` in the name of ``path`` for ``new``.
+
+    The polarisation is the last field a flint name could share with a token like
+    ``xx`` or ``qu``, as only ranges, ``MFS`` and the image type follow it.
+
+    Args:
+        path (Path): The path whose name is changed
+        old (str): The field to replace
+        new (str): The field to put in its place
+
+    Raises:
+        NamingException: ``old`` is not a field of the name
+
+    Returns:
+        Path: ``path`` with the field replaced, in the same directory
+    """
+    # TODO: Swap fields through ProcessedNameComponents once naming is redeveloped to
+    # funnel all creation and parsing through one place (see the suffixspecrejig
+    # branch). That needs the parser to keep the rest of the name and to rebuild
+    # exactly, and to settle names carrying two channel ranges.
+    fields = path.name.split(".")
+    if old not in fields:
+        msg = f"{old=} is not a field of {path.name}"
+        raise NamingException(msg)
+    index = max(i for i, field in enumerate(fields) if field == old)
+    fields[index] = new
+    return path.with_name(".".join(fields))
+
+
 def create_imaging_name_prefix(
     ms_path: Path,
     pol: str | None = None,

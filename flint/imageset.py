@@ -16,6 +16,7 @@ from flint.naming import (
     ProcessedNameComponents,
     extract_components_from_name,
     pol_name_token,
+    replace_name_field,
     split_images,
 )
 from flint.options import BaseOptions, FitsCubeOptions
@@ -236,13 +237,6 @@ def combine_image_set_to_cube(
     return ImageSet(**image_set_dict)
 
 
-def _replace_name_field(path: Path, old: str, new: str) -> Path:
-    """Swap the dot separated field ``old`` in the name of ``path`` for ``new``"""
-    fields = path.name.split(".")
-    fields[fields.index(old)] = new
-    return path.with_name(".".join(fields))
-
-
 def write_stokes_i(xx_path: Path, yy_path: Path, i_path: Path) -> Path:
     """Write the Stokes I image (XX + YY) / 2 of a pair of XX and YY images. The
     XX header is used, with its STOKES axis set to I.
@@ -310,7 +304,7 @@ def form_stokes_i(image_set: ImageSet, keep_linear: bool = False) -> ImageSet:
             continue
 
         pairs = [
-            (image, _replace_name_field(path=image, old="xx", new="yy"))
+            (image, replace_name_field(path=image, old="xx", new="yy"))
             for image in images
             if "xx" in image.name.split(".")
         ]
@@ -325,7 +319,7 @@ def form_stokes_i(image_set: ImageSet, keep_linear: bool = False) -> ImageSet:
             write_stokes_i(
                 xx_path=xx_path,
                 yy_path=yy_path,
-                i_path=_replace_name_field(path=xx_path, old="xx", new="i"),
+                i_path=replace_name_field(path=xx_path, old="xx", new="i"),
             )
             for xx_path, yy_path in pairs
         ]
@@ -335,7 +329,7 @@ def form_stokes_i(image_set: ImageSet, keep_linear: bool = False) -> ImageSet:
         logger.info(f"Removing {len(linear_images)} XX and YY images")
         remove_files_folders(*linear_images)
 
-    prefix = _replace_name_field(
+    prefix = replace_name_field(
         path=Path(image_set.prefix), old=pol_name_token(pol="xx,yy"), new="i"
     )
     return image_set.with_options(prefix=str(prefix), **stokes_i)
