@@ -144,7 +144,6 @@ def process_science_fields_pol(
     flint_ms_directory: Path,
     pol_field_options: PolFieldOptions,
     mss_by_beam: MSsByBeam | None = None,
-    compress_cubes: bool | None = None,
 ) -> PolPipelineResult:
     """Image a field in polarisation and co-add the per-beam products.
 
@@ -152,7 +151,6 @@ def process_science_fields_pol(
         flint_ms_directory (Path): Directory holding the measurement sets to image
         pol_field_options (PolFieldOptions): Options controlling the polarisation imaging
         mss_by_beam (MSsByBeam | None, optional): Already Flint-processed measurement sets handed down by a calling flow, rather than rediscovered on disk. Defaults to None.
-        compress_cubes (bool | None, optional): Overrides the strategy ``fitscube`` compress setting. A calling flow that reads these cubes afterwards (rm-synth, spice) has to set it False, since astropy cannot memmap a compressed (.gz or .fz) file and a chunked read would inflate the whole cube into memory. None honours the strategy. Defaults to None.
 
     Returns:
         PolPipelineResult: Stokes cubes, co-added MFS products, and the futures to wait on
@@ -403,8 +401,10 @@ def process_science_fields_pol(
             mode="fitscube",
         )
     )
-    if compress_cubes is not None:
-        fitscube_options = fitscube_options.with_options(compress=compress_cubes)
+    if pol_field_options.compress_cubes is not None:
+        fitscube_options = fitscube_options.with_options(
+            compress=pol_field_options.compress_cubes
+        )
 
     # Parameters from the strategy, the switch from the flow options, as with
     # every other stage

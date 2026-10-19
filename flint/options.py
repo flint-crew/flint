@@ -235,6 +235,8 @@ class PolFieldOptions(BaseOptions):
     """Specify the final beamsize of linmos field images in (arcsec, arcsec, deg)"""
     total_resolution_cubes: bool = False
     """Also write cubes at one beam covering the whole band, which RM synthesis needs"""
+    compress_cubes: bool | None = None
+    """Overrides the strategy ``fitscube`` compress setting. None honours the strategy"""
     pb_cutoff: float = 0.1
     """Primary beam attenuation cutoff to use during linmos"""
     bane_noise: bool = False

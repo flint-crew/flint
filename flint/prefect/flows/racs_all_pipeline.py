@@ -226,15 +226,15 @@ def process_racs_all(
     # rm-synth needs cubes at one beam across the band. Made in the polarisation
     # stage, while the co-added planes are already in hand, rather than by
     # splitting the finished cubes back apart in the rm-synth stage.
-    resolved_pol_field_options = pol_field_options.with_options(
-        holofile=continuum_result.holography_path,
-        total_resolution_cubes=not pipeline_options.skip_rmsynth,
-    )
-
     # rm-synth and spice read the cubes afterwards (and spice compresses them itself),
     # so the polarisation flow only compresses when neither runs
     later_stage_reads_cubes = not (
         pipeline_options.skip_rmsynth and pipeline_options.skip_spice
+    )
+    resolved_pol_field_options = pol_field_options.with_options(
+        holofile=continuum_result.holography_path,
+        total_resolution_cubes=not pipeline_options.skip_rmsynth,
+        compress_cubes=False if later_stage_reads_cubes else None,
     )
 
     assert pipeline_options.polarisation_cluster_config is not None
@@ -247,7 +247,6 @@ def process_racs_all(
         flint_ms_directory=continuum_result.output_science_path,
         pol_field_options=resolved_pol_field_options,
         mss_by_beam=continuum_result.mss_by_beam,
-        compress_cubes=False if later_stage_reads_cubes else None,
     )
     terminal_results.extend(pol_result.terminal_futures)
 
