@@ -6,10 +6,11 @@ import shutil
 from pathlib import Path, PosixPath
 
 import pytest
+from astropy.io import fits
 
 from flint.exceptions import NamingException
 from flint.imager.wsclean import (
-    get_wsclean_output_names,
+    expected_wsclean_outputs,
     get_wsclean_output_source_list_path,
 )
 from flint.imageset import (
@@ -24,15 +25,14 @@ from flint.logging import logger
 from flint.naming import create_imaging_name_prefix
 from flint.options import FitsCubeOptions
 from flint.utils import get_packaged_resource_path
+from tests.test_cube import _write_channel_image
 
 
 @pytest.fixture
 def example_image_set() -> ImageSet:
-    """Fixture for an example ImageSet object, reflecting the naming produced by a
-    joint Stokes Q/U wsclean run once it has gone through
-    ``rename_wsclean_prefix_in_image_set`` - wsclean's own per-image ``-Q``/``-U``
-    tag is folded into a single-letter ``pol`` field per image (see
-    ``_rename_wsclean_title``), rather than every image sharing the joint ``qu`` tag."""
+    """Fixture for an example ImageSet object, reflecting the naming of a joint
+    Stokes Q/U wsclean run once renamed by ``flint_output_path`` - wsclean's own
+    per-image ``-Q``/``-U`` tag replaces the joint ``qu`` field of each image."""
     base = "/scratch3/gal16b/flint_racsall/56289/SB56289.RACS_1041+18.project-pol.beam15.round1"
     channels = [f"{i:04d}" for i in range(23)] + ["MFS"]
     return ImageSet(
@@ -164,6 +164,30 @@ def test_combine_subbands_to_cube(tmpdir):
         )
 
 
+def test_combine_image_set_to_cube_leaves_mfs_out(tmp_path: Path):
+    """The MFS image is not a channel, so stays beside the cube rather than in it"""
+    prefix = tmp_path / "SB56289.RACS_1041+18.beam15.round1.i"
+    channels = [
+        _write_channel_image(
+            path=Path(f"{prefix}.ch{c:04d}-{c + 1:04d}.image.fits"),
+            channel=c,
+            shape=(8, 8),
+        )
+        for c in range(3)
+    ]
+    mfs = _write_channel_image(
+        path=Path(f"{prefix}.MFS.image.fits"), channel=0, shape=(8, 8)
+    )
+
+    image_set = combine_image_set_to_cube(
+        image_set=ImageSet(prefix=str(prefix), image=[*channels, mfs]),
+        fitscube_options=FitsCubeOptions(),
+    )
+
+    assert image_set.image == [Path(f"{prefix}.image.cube.fits"), mfs]
+    assert fits.getheader(image_set.image[0])["NAXIS4"] == 3
+
+
 def test_combine_subbands_to_cube2(tmpdir):
     """Load in example fits images to combine into a cube without deleting original"""
     files = [
@@ -193,40 +217,54 @@ def test_combine_subbands_to_cube2(tmpdir):
     assert len(new_image_set.image) == 1
 
 
-def test_merge_image_sets():
-    """Test merging image sets"""
-    image_set = get_wsclean_output_names(
-        prefix="JackSparrow", subbands=4, include_mfs=False
+def _wsclean_image_set(prefix: str, pols: tuple[str, ...] | None = None) -> ImageSet:
+    """The channel images wsclean writes for four channels, without the MFS images"""
+    return ImageSet(
+        prefix=prefix,
+        **{
+            image_type: [
+                path
+                for path in expected_wsclean_outputs(
+                    prefix=prefix,
+                    channels_out=4,
+                    pols=pols,
+                    image_types=(image_type,),
+                )
+                if "-MFS-" not in path.name
+            ]
+            for image_type in ("image", "dirty", "model", "residual", "psf")
+        },
     )
 
-    image_set2 = get_wsclean_output_names(
-        prefix="JackSparrow", subbands=4, include_mfs=False
+
+def _stokes_image_set() -> ImageSet:
+    """Separate runs of each Stokes parameter merged together"""
+    ms = Path("SB1234.FieldNme.beam00.round4.ms")
+    return merge_image_sets(
+        image_sets=[
+            _wsclean_image_set(
+                prefix=create_imaging_name_prefix(ms, pol=stokes),
+                pols=(stokes.upper(),),
+            )
+            for stokes in "iquv"
+        ]
     )
+
+
+def test_merge_image_sets():
+    """Test merging image sets"""
+    image_set = _wsclean_image_set(prefix="JackSparrow")
+    image_set2 = _wsclean_image_set(prefix="JackSparrow")
 
     merged = merge_image_sets(image_sets=[image_set, image_set2])
 
     assert isinstance(merged, ImageSet)
     assert merged.prefix == "JackSparrow"
-
-    assert merged.image is not None
-    assert len(merged.image) == 8
-    assert isinstance(merged.image[0], Path)
-
-    assert merged.dirty is not None
-    assert len(merged.dirty) == 8
-    assert isinstance(merged.dirty[0], Path)
-
-    assert merged.model is not None
-    assert len(merged.model) == 8
-    assert isinstance(merged.model[0], Path)
-
-    assert merged.residual is not None
-    assert len(merged.residual) == 8
-    assert isinstance(merged.residual[0], Path)
-
-    assert merged.psf is not None
-    assert len(merged.psf) == 8
-    assert isinstance(merged.psf[0], Path)
+    for image_type in ("image", "dirty", "model", "residual", "psf"):
+        images = getattr(merged, image_type)
+        assert images is not None
+        assert len(images) == 8
+        assert isinstance(images[0], Path)
 
 
 def test_merge_image_sets_with_source_list():
@@ -234,96 +272,26 @@ def test_merge_image_sets_with_source_list():
     a list type."""
     source_list = get_wsclean_output_source_list_path(name_path="JackSparrow", pol="i")
 
-    image_set = get_wsclean_output_names(
-        prefix="JackSparrow", subbands=4, include_mfs=False
+    image_set = _wsclean_image_set(prefix="JackSparrow").with_options(
+        source_list=source_list
     )
-    image_set = image_set.with_options(source_list=source_list)
-
-    image_set2 = get_wsclean_output_names(
-        prefix="JackSparrow", subbands=4, include_mfs=False
+    image_set2 = _wsclean_image_set(prefix="JackSparrow").with_options(
+        source_list=source_list
     )
-    image_set2 = image_set2.with_options(source_list=source_list)
 
     merged = merge_image_sets(image_sets=[image_set, image_set2])
 
     assert isinstance(merged, ImageSet)
     assert merged.prefix == "JackSparrow"
-    assert merged.source_list is not None
     assert merged.source_list == source_list
-
-    assert merged.image is not None
-    assert len(merged.image) == 8
-    assert isinstance(merged.image[0], Path)
-
-    assert merged.dirty is not None
-    assert len(merged.dirty) == 8
-    assert isinstance(merged.dirty[0], Path)
-
-    assert merged.model is not None
-    assert len(merged.model) == 8
-    assert isinstance(merged.model[0], Path)
-
-    assert merged.residual is not None
-    assert len(merged.residual) == 8
-    assert isinstance(merged.residual[0], Path)
-
-    assert merged.psf is not None
-    assert len(merged.psf) == 8
-    assert isinstance(merged.psf[0], Path)
+    for image_type in ("image", "dirty", "model", "residual", "psf"):
+        images = getattr(merged, image_type)
+        assert images is not None
+        assert len(images) == 8
 
 
 def test_split_image_set():
-    ms = Path("SB1234.FieldNme.beam00.round4.ms")
-    i_prefix = create_imaging_name_prefix(ms, pol="i")
-    q_prefix = create_imaging_name_prefix(ms, pol="q")
-    u_prefix = create_imaging_name_prefix(ms, pol="u")
-    v_prefix = create_imaging_name_prefix(ms, pol="v")
-
-    i_image_set = get_wsclean_output_names(
-        prefix=i_prefix,
-        subbands=4,
-        include_mfs=False,
-        pols="I",
-    )
-    q_image_set = get_wsclean_output_names(
-        prefix=q_prefix,
-        subbands=4,
-        include_mfs=False,
-        pols="Q",
-    )
-    u_image_set = get_wsclean_output_names(
-        prefix=u_prefix,
-        subbands=4,
-        include_mfs=False,
-        pols="U",
-    )
-    v_image_set = get_wsclean_output_names(
-        prefix=v_prefix,
-        subbands=4,
-        include_mfs=False,
-        pols="V",
-    )
-
-    image_set = ImageSet(
-        prefix=i_prefix,
-        image=i_image_set.image
-        + q_image_set.image
-        + u_image_set.image
-        + v_image_set.image,
-        dirty=i_image_set.dirty
-        + q_image_set.dirty
-        + u_image_set.dirty
-        + v_image_set.dirty,
-        model=i_image_set.model
-        + q_image_set.model
-        + u_image_set.model
-        + v_image_set.model,
-        residual=i_image_set.residual
-        + q_image_set.residual
-        + u_image_set.residual
-        + v_image_set.residual,
-        psf=i_image_set.psf + q_image_set.psf + u_image_set.psf + v_image_set.psf,
-    )
+    image_set = _stokes_image_set()
 
     split_dict = split_image_set(image_set=image_set, by="pol", mode="image")
 
@@ -344,60 +312,8 @@ def test_split_image_set():
 
 
 def test_split_and_get_image_set_by_stokes():
-    ms = Path("SB1234.FieldNme.beam00.round4.ms")
-    i_prefix = create_imaging_name_prefix(ms, pol="i")
-    q_prefix = create_imaging_name_prefix(ms, pol="q")
-    u_prefix = create_imaging_name_prefix(ms, pol="u")
-    v_prefix = create_imaging_name_prefix(ms, pol="v")
-
-    i_image_set = get_wsclean_output_names(
-        prefix=i_prefix,
-        subbands=4,
-        include_mfs=False,
-        pols="I",
-    )
-    q_image_set = get_wsclean_output_names(
-        prefix=q_prefix,
-        subbands=4,
-        include_mfs=False,
-        pols="Q",
-    )
-    u_image_set = get_wsclean_output_names(
-        prefix=u_prefix,
-        subbands=4,
-        include_mfs=False,
-        pols="U",
-    )
-    v_image_set = get_wsclean_output_names(
-        prefix=v_prefix,
-        subbands=4,
-        include_mfs=False,
-        pols="V",
-    )
-
-    image_set = ImageSet(
-        prefix=i_prefix,
-        image=i_image_set.image
-        + q_image_set.image
-        + u_image_set.image
-        + v_image_set.image,
-        dirty=i_image_set.dirty
-        + q_image_set.dirty
-        + u_image_set.dirty
-        + v_image_set.dirty,
-        model=i_image_set.model
-        + q_image_set.model
-        + u_image_set.model
-        + v_image_set.model,
-        residual=i_image_set.residual
-        + q_image_set.residual
-        + u_image_set.residual
-        + v_image_set.residual,
-        psf=i_image_set.psf + q_image_set.psf + u_image_set.psf + v_image_set.psf,
-    )
-
     split_list = split_and_get_image_set(
-        image_set=image_set, get="i", by="pol", mode="image"
+        image_set=_stokes_image_set(), get="i", by="pol", mode="image"
     )
 
     assert isinstance(split_list, list)

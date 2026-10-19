@@ -271,6 +271,11 @@ def create_image_cube_name(
     return Path(output_cube_name)
 
 
+def pol_name_token(pol: str) -> str:
+    """The field naming the polarisations imaged, as it appears in file names"""
+    return pol.lower()
+
+
 def create_imaging_name_prefix(
     ms_path: Path,
     pol: str | None = None,
@@ -306,7 +311,7 @@ def create_imaging_name_prefix(
     names = [name]
 
     if pol is not None:
-        names.append(f"{pol.lower()}")
+        names.append(pol_name_token(pol=pol))
     if channel_range is not None:
         names.append(f"ch{channel_range[0]:04}-{channel_range[1]:04}")
     if scan_range is not None:
@@ -618,7 +623,7 @@ def processed_ms_format(
 
     # chidx catches wsclean's own bare per-channel index (e.g. ``.0000``), used
     # when channels are imaged individually without being grouped into a flint
-    # ch<lo>-<hi> range (see _rename_wsclean_title)
+    # ch<lo>-<hi> range, as older versions of flint named them
     if groups["chl"]:
         channel_range = (int(groups["chl"]), int(groups["chh"]))
     elif groups["chidx"]:

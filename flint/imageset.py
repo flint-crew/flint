@@ -212,7 +212,7 @@ def combine_image_set_to_cube(
             continue
 
         subband_images = [
-            image for image in image_set_dict[mode] if "-MFS-" not in str(image)
+            image for image in image_set_dict[mode] if ".MFS." not in image.name
         ]
         if len(subband_images) <= 1:
             logger.info(f"Not enough subband images for {mode=}, not creating a cube")

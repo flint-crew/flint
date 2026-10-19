@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import re
+from itertools import product
 from pathlib import Path
 from typing import Any
 
@@ -12,26 +14,31 @@ from pydantic import ValidationError
 from flint.exceptions import (
     AttemptRerunException,
     CleanDivergenceError,
+    NamingException,
 )
 from flint.imager.wsclean import (
     WSCleanOptions,
+    WSCleanOutput,
     WSCleanResult,
-    _rename_wsclean_file,
-    _rename_wsclean_title,
     _resolve_wsclean_key_value_to_cli_str,
     _wsclean_output_callback,
+    collect_wsclean_outputs,
     create_wsclean_cmd,
     create_wsclean_name_argument,
+    expected_wsclean_outputs,
+    find_wsclean_outputs,
+    flint_output_path,
     get_parser,
-    get_wsclean_output_names,
     get_wsclean_output_source_list_path,
-    rename_wsclean_prefix_in_image_set,
+    parse_wsclean_output,
+    remove_wsclean_outputs,
+    verify_wsclean_outputs,
+    wsclean_output_path,
 )
-from flint.imageset import (
-    ImageSet,
-)
+from flint.imageset import split_and_get_image_set
 from flint.naming import create_imaging_name_prefix
-from flint.options import MS
+from flint.options import MS, FitsCubeOptions
+from tests.test_cube import _write_channel_image
 
 
 def test_get_cli_parser() -> None:
@@ -78,199 +85,390 @@ def set_env():
     os.environ["LOCALDIR"] = "Pirates/be/here"
 
 
-def test_rename_wsclean_path_move(tmpdir: Any):
-    """Rename the wsclean supplied part of a filename while moving a file"""
-    test_path = Path(tmpdir) / "move_file/"
-    test_path.mkdir(parents=True, exist_ok=True)
-
-    ex = test_path / Path("SB39400.RACS_0635-31.beam33.poli-MFS-image.fits")
-    out_ex = test_path / Path("SB39400.RACS_0635-31.beam33.poli.MFS.image.fits")
-
-    with open(ex, "w") as out_file:
-        out_file.write("example")
-
-    assert ex.exists()
-    assert not out_ex.exists()
-    assert _rename_wsclean_file(input_path=ex, rename_file=True) == out_ex
-    assert not ex.exists()
-    assert out_ex.exists()
+PREFIXES = (
+    "SB56289.RACS_1041+18.beam00.round1.i",
+    "SB57516.RACS_0929-81.beam35.round4.i.ch0287-0288",
+    "SB57516.RACS_0929-81.beam35.round4.i.scan0001-0002",
+    "SB56289.RACS_1041+18.project-image.beam15.round1.qu",
+    "/a/path/to/SB39400.RACS_0635-31.beam33.xxyy",
+)
 
 
-def _write_test_image(items: Any):
-    for item in items:
-        with Path(item).open("w") as out_file:
-            out_file.write(str(item))
+@pytest.mark.parametrize("prefix", PREFIXES)
+def test_wsclean_output_round_trip(prefix: str):
+    """Every name the builder makes parses back into the fields it was made from"""
+    for (channel, mfs), pol, interval, image_type, primary_beam in product(
+        ((None, False), (3, False), (None, True)),
+        (None, "I", "Q", "XX", "XYi"),
+        (None, 7),
+        ("image", "dirty", "model", "residual", "psf"),
+        (False, True),
+    ):
+        fields: dict[str, Any] = {
+            "image_type": image_type,
+            "channel": channel,
+            "mfs": mfs,
+            "pol": pol,
+            "interval": interval,
+            "primary_beam": primary_beam,
+        }
+        path = wsclean_output_path(prefix=prefix, **fields)
+        assert path.parent == Path(prefix).parent
+        assert parse_wsclean_output(path=path, prefix=prefix) == WSCleanOutput(
+            path=path, **fields
+        )
 
 
-def test_rename_wsclean_image_set(tmpdir: Any):
-    """Ensure that items described in an image set are able to be properly renamed"""
-
-    test_dir = Path(tmpdir) / "image_setrename"
-    test_dir.mkdir(parents=True, exist_ok=True)
-
-    # create some test files and ensure they all exist
-    keys: dict[Any, Any] = {}
-    prefix = f"{test_dir!s}/SB39400.RACS_0635-31.beam33.i"
-    keys["prefix"] = prefix
-    for mode in ("image", "residual"):
-        items = [
-            Path(f"{prefix}-{subband:04d}-{mode}.fits") for subband in range(4)
-        ] + [Path(f"{prefix}-MFS-{mode}.fits")]
-        _write_test_image(items=items)
-        keys[mode] = items
-        assert all([Path(f).exists() for f in items])
-
-    # form the image set that will have the wsclean appended properties string renamed
-    image_set = ImageSet(**keys)
-    assert isinstance(image_set, ImageSet)
-    new_image_set = rename_wsclean_prefix_in_image_set(input_image_set=image_set)
-
-    # test to see thhat files exists
-    assert new_image_set.prefix == prefix
-    assert new_image_set.image is not None
-    assert all([file.exists() for file in new_image_set.image])
-    assert new_image_set.residual is not None
-    assert all([file.exists() for file in new_image_set.residual])
-
-    # and ensure the originals no longer exist
-    assert all([not Path(file).exists() for file in keys["image"]])
-    assert all([not (file).exists() for file in keys["residual"]])
+def test_parse_wsclean_output_ignores_other_files():
+    """Files that are not wsclean images of this prefix are not parsed"""
+    prefix = "SB56289.RACS_1041+18.beam00.round1.i"
+    for name in (
+        f"{prefix}-sources.txt",
+        f"{prefix}-beam-0.fits",
+        f"{prefix}-0000-image.sub.fits",
+        f"{prefix}.ch0000-0010-image.fits",
+        f"{prefix}i-image.fits",
+        f"{prefix}-000-image.fits",
+        f"{prefix}.MFS.image.fits",
+    ):
+        assert parse_wsclean_output(path=Path(name), prefix=prefix) is None
 
 
-def test_rename_wsclean_path():
-    """Rename the wsclean supplied part of a filename"""
-
-    ex = Path("SB39400.RACS_0635-31.beam33.poli-MFS-image.fits")
-    out_ex = Path("SB39400.RACS_0635-31.beam33.poli.MFS.image.fits")
-    assert _rename_wsclean_file(input_path=ex) == out_ex
-
-    ex = Path("SB39400.RACS_0635-31.beam33.poli-MFS-image")
-    out_ex = Path("SB39400.RACS_0635-31.beam33.poli.MFS.image")
-    assert _rename_wsclean_file(input_path=ex) == out_ex
-
-    ex = Path("/a/path/that/is/a/parent/SB39400.RACS_0635-31.beam33.poli-MFS-image")
-    out_ex = Path("/a/path/that/is/a/parent/SB39400.RACS_0635-31.beam33.poli.MFS.image")
-    assert _rename_wsclean_file(input_path=ex) == out_ex
-
-    # This one makes sure that the second component of ch0234-0345 is not pixked up
-    # as the wsclean added subband indicator
-    ex = Path("/a/path/that/is/a/parent/SB39400.RACS_0635-31.beam33.poli-MFS-image")
-    out_ex = Path("/a/path/that/is/a/parent/SB39400.RACS_0635-31.beam33.poli.MFS.image")
-    assert _rename_wsclean_file(input_path=ex) == out_ex
-
-    ex = Path(
-        "/a/path/that/is/a/parent/SB57516.RACS_0929-81.beam35.round4.i.ch0287-0288-image.fits"
+def test_parse_wsclean_output_interval_before_channel():
+    """wsclean writes the interval ahead of the channel, as t plus four digits"""
+    prefix = "SB56289.RACS_1041+18.beam00.round1.i"
+    output = parse_wsclean_output(
+        path=Path(f"{prefix}-t0005-0002-image.fits"), prefix=prefix
     )
-    out_ex = Path(
-        "/a/path/that/is/a/parent/SB57516.RACS_0929-81.beam35.round4.i.ch0287-0288.image.fits"
+    assert output is not None
+    assert output.interval == 5
+    assert output.channel == 2
+
+
+@pytest.mark.parametrize(
+    "prefix, wsclean_suffix, pol_token, flint_suffix",
+    [
+        ("SB39400.RACS_0635-31.beam33.poli", "-MFS-image", "i", ".MFS.image"),
+        (
+            "SB57516.RACS_0929-81.beam35.round4.i.ch0287-0288",
+            "-image",
+            "i",
+            ".image",
+        ),
+        ("SB57988.RACS_1415-46.beam34.round4.v", "-MFS-model", "v", ".MFS.model"),
+        (
+            "SB56289.RACS_1041+18.beam00.round1.i",
+            "-0000-image",
+            "i",
+            ".ch0000-0001.image",
+        ),
+        (
+            "SB56289.RACS_1041+18.beam00.round1.i",
+            "-t0005-0000-image",
+            "i",
+            ".ch0000-0001.scan0005-0006.image",
+        ),
+        ("SB56289.RACS_1041+18.beam00.round1.i", "-0002-psf", "i", ".ch0002-0003.psf"),
+        ("SB56289.RACS_1041+18.beam00.round1.i", "-MFS-image-pb", "i", ".MFS.image.pb"),
+    ],
+)
+def test_flint_output_path_single_pol(
+    prefix: str, wsclean_suffix: str, pol_token: str, flint_suffix: str
+):
+    """A single polarisation keeps the prefix as it is, and gains dot separated fields"""
+    output = parse_wsclean_output(
+        path=Path(f"/scratch/{prefix}{wsclean_suffix}.fits"), prefix=prefix
     )
-    assert _rename_wsclean_file(input_path=ex) == out_ex
+    assert output is not None
+    assert flint_output_path(output=output, prefix=prefix, pol_token=pol_token) == Path(
+        f"/scratch/{prefix}{flint_suffix}.fits"
+    )
 
 
-def test_rename_stokes_v_model():
-    """Some model files are not being renamed correctly. Arr"""
-
-    ex = "SB57988.RACS_1415-46.beam34.round4.v-MFS-model.fits"
-    out_ex = "SB57988.RACS_1415-46.beam34.round4.v.MFS.model.fits"
-
-    assert _rename_wsclean_title(name_str=ex) == out_ex
-
-
-def test_regex_rename_wsclean_title():
-    """Rename the wsclean supplied using regex"""
-
-    ex = "SB39400.RACS_0635-31.beam33.poli-MFS-image.fits"
-    out_ex = "SB39400.RACS_0635-31.beam33.poli.MFS.image.fits"
-    assert _rename_wsclean_title(name_str=ex) == out_ex
-
-    ex = "SB39400.RACS_0635-31.beam33.poli-MFS-image"
-    out_ex = "SB39400.RACS_0635-31.beam33.poli.MFS.image"
-    assert _rename_wsclean_title(name_str=ex) == out_ex
-
-    ex = "SB39400.RACS_0635-31.beam33.poli-MFS-image"
-    out_ex = "SB39400.RACS_0635.31.beam33.poli.MFS.image"
-    assert not _rename_wsclean_title(name_str=ex) == out_ex
-
-    ex = "SB39400.RACS_0635-31.beam33.poli.MFS.image.fits"
-    out_ex = "SB39400.RACS_0635-31.beam33.poli.MFS.image.fits"
-    assert _rename_wsclean_title(name_str=ex) == out_ex
-    assert _rename_wsclean_title(name_str=ex) is ex
-
-    ex = "SB39400.RACS_0635-31.beam33.poli-i-MFS-image"
-    out_ex = "SB39400.RACS_0635-31.beam33.poli.i.MFS.image"
-    assert _rename_wsclean_title(name_str=ex) == out_ex
-
-    ex = "SB39400.RACS_0635-31.beam33.ch109-110-i-MFS-image"
-    out_ex = "SB39400.RACS_0635-31.beam33.ch109-110.i.MFS.image"
-    assert _rename_wsclean_title(name_str=ex) == out_ex
-
-    ex = "SB39400.RACS_0635-31.beam33.i.ch109-110-i-MFS-image"
-    out_ex = "SB39400.RACS_0635-31.beam33.i.ch109-110.i.MFS.image"
-    assert _rename_wsclean_title(name_str=ex) == out_ex
-
-    # wsclean's own bare per-channel index (no flint ch<lo>-<hi> range) must still
-    # be dot-converted rather than left as a stray hyphen - regression test for the
-    # negative lookbehind typo that previously left this as `i-0000-image`. It is
-    # also reformatted into flint's ch<lo>-<hi> range so it parses back out as a
-    # proper channel_range rather than an ambiguous bare index.
-    ex = "SB56289.RACS_1041+18.beam00.round1.i-0000-image.fits"
-    out_ex = "SB56289.RACS_1041+18.beam00.round1.i.ch0000-0001.image.fits"
-    assert _rename_wsclean_title(name_str=ex) == out_ex
+@pytest.mark.parametrize(
+    "token, wsclean_pol, flint_pol",
+    [
+        ("qu", "Q", "q"),
+        ("qu", "U", "u"),
+        ("iquv", "I", "i"),
+        ("iquv", "V", "v"),
+        ("xxyy", "XX", "xx"),
+        ("xxyy", "YY", "yy"),
+    ],
+)
+def test_flint_output_path_joint_pol(token: str, wsclean_pol: str, flint_pol: str):
+    """The image's own polarisation replaces the field naming every polarisation imaged"""
+    base = "SB56289.RACS_1041+18.beam15.round1"
+    prefix = f"{base}.{token}"
+    for wsclean_suffix, flint_suffix in (
+        (f"-0000-{wsclean_pol}-image", ".ch0000-0001.image"),
+        (f"-MFS-{wsclean_pol}-residual", ".MFS.residual"),
+        (f"-{wsclean_pol}-image", ".image"),
+    ):
+        output = parse_wsclean_output(
+            path=Path(f"{prefix}{wsclean_suffix}.fits"), prefix=prefix
+        )
+        assert output is not None
+        assert flint_output_path(output=output, prefix=prefix, pol_token=token) == Path(
+            f"{base}.{flint_pol}{flint_suffix}.fits"
+        )
 
 
-def test_regex_rename_wsclean_title_timestep():
-    """wsclean's own `-t00005` timestep suffix (from interval-based imaging) must
-    be folded into flint's scan<lo>-<hi> range convention, not left as a bare
-    index or mislabelled as a multiscale term."""
-    ex = "SB56289.RACS_1041+18.beam00.round1.i-0000-t00005-image.fits"
-    out_ex = "SB56289.RACS_1041+18.beam00.round1.i.ch0000-0001.scan0005-0006.image.fits"
-    assert _rename_wsclean_title(name_str=ex) == out_ex
+def test_flint_output_path_joint_pol_with_channel_range():
+    """The polarisation field is found even when a channel range follows it"""
+    prefix = "SB56289.RACS_1041+18.beam15.round1.qu.ch0010-0020"
+    output = parse_wsclean_output(
+        path=Path(f"{prefix}-0001-U-image.fits"), prefix=prefix
+    )
+    assert output is not None
+    assert flint_output_path(output=output, prefix=prefix, pol_token="qu") == Path(
+        "SB56289.RACS_1041+18.beam15.round1.u.ch0010-0020.ch0001-0002.image.fits"
+    )
 
 
-def test_regex_stokes_wsclean_title():
-    """Test whether all stokes values are picked up properly"""
+def test_flint_output_path_joint_pol_psf():
+    """The PSF is shared by every polarisation, so keeps the joint field"""
+    prefix = "SB56289.RACS_1041+18.beam15.round1.qu"
+    output = parse_wsclean_output(path=Path(f"{prefix}-0001-psf.fits"), prefix=prefix)
+    assert output is not None
+    assert flint_output_path(output=output, prefix=prefix, pol_token="qu") == Path(
+        f"{prefix}.ch0001-0002.psf.fits"
+    )
 
-    prefix = "SB39400.RACS_0635-31.beam33.poli."
-    end = "-MFS-image.fits"
-    transformed = end.replace("-", ".")
 
-    for stokes in ("i", "q", "u", "v", "xx", "xy", "yx", "yy"):
-        ex = f"{prefix}-{stokes}{end}"
-        out_ex = f"{prefix}.{stokes}{transformed}"
-        assert _rename_wsclean_title(name_str=ex) == out_ex
-
-    name = "SB59058.RACS_1626-84.beam34.round4.i.ch287-288-image.fits"
-    out_name = "SB59058.RACS_1626-84.beam34.round4.i.ch287-288.image.fits"
-    assert _rename_wsclean_title(name_str=name) == out_name
+def test_flint_output_path_missing_pol_token():
+    prefix = "SB56289.RACS_1041+18.beam15.round1.i"
+    output = parse_wsclean_output(
+        path=Path(f"{prefix}-0001-Q-image.fits"), prefix=prefix
+    )
+    assert output is not None
+    with pytest.raises(NamingException):
+        flint_output_path(output=output, prefix=prefix, pol_token="qu")
 
 
 @pytest.mark.parametrize(
     "project",
-    [
-        "pol",
-        "image",
-        "dirty",
-        "model",
-        "residual",
-        "psf",
-        "MFS",
-        "i",
-        "q",
-        "jack",
-        "sparrow",
-    ],
+    ["pol", "image", "dirty", "model", "residual", "psf", "MFS", "i", "q", "jack"],
 )
-def test_rename_wsclean_title_project_field_collision(project: str):
-    """The `project` field is a free-form token (e.g. `.project-<name>.`) that sits
-    ahead of the wsclean-appended suffix in the file name. If a project name happens
-    to collide with a reserved wsclean token (an image type, MFS, or a pol letter),
-    the wsclean suffix search must not match inside the project token instead of the
-    real trailing suffix."""
-    ex = f"SB56289.RACS_1041+18.project-{project}.beam15.round1.i-0000-image.fits"
-    out_ex = (
-        f"SB56289.RACS_1041+18.project-{project}.beam15.round1.i.ch0000-0001.image.fits"
+def test_flint_output_path_project_field_collision(project: str):
+    """A project name matching a wsclean token is part of the prefix, so is left alone"""
+    prefix = f"SB56289.RACS_1041+18.project-{project}.beam15.round1.i"
+    output = parse_wsclean_output(path=Path(f"{prefix}-0000-image.fits"), prefix=prefix)
+    assert output is not None
+    assert flint_output_path(output=output, prefix=prefix, pol_token="i") == Path(
+        f"{prefix}.ch0000-0001.image.fits"
     )
-    assert _rename_wsclean_title(name_str=ex) == out_ex
+
+
+def test_expected_wsclean_outputs_with_pols():
+    paths = expected_wsclean_outputs(
+        prefix="JackSparrow", channels_out=4, pols=("I", "Q"), image_types=("image",)
+    )
+    assert len(paths) == 10
+    assert paths[0] == Path("JackSparrow-0000-I-image.fits")
+    assert paths[4] == Path("JackSparrow-MFS-I-image.fits")
+    assert paths[5] == Path("JackSparrow-0000-Q-image.fits")
+    assert paths[9] == Path("JackSparrow-MFS-Q-image.fits")
+
+    psfs = expected_wsclean_outputs(
+        prefix="JackSparrow", channels_out=4, pols=("I", "Q"), image_types=("psf",)
+    )
+    assert psfs == [Path(f"JackSparrow-{c:04d}-psf.fits") for c in range(4)] + [
+        Path("JackSparrow-MFS-psf.fits")
+    ]
+
+
+def test_expected_wsclean_outputs_single_channel():
+    """Imaging one channel adds no channel field, and there is no MFS image"""
+    paths = expected_wsclean_outputs(
+        prefix="JackSparrow", channels_out=1, pols=None, image_types=("image", "psf")
+    )
+    assert paths == [Path("JackSparrow-image.fits"), Path("JackSparrow-psf.fits")]
+
+
+def _touch_wsclean_outputs(paths: list[Path]) -> list[Path]:
+    for path in paths:
+        path.write_text(path.name)
+    return paths
+
+
+def test_find_wsclean_outputs(tmp_path: Path):
+    """Only this prefix's images come back, ordered by channel with MFS last"""
+    prefix = tmp_path / "SB56289.RACS_1041+18.beam15.round1.qu"
+    expected = _touch_wsclean_outputs(
+        expected_wsclean_outputs(
+            prefix=prefix,
+            channels_out=3,
+            pols=("Q", "U"),
+            image_types=("image", "residual", "psf"),
+        )
+    )
+    _touch_wsclean_outputs(
+        [
+            Path(f"{prefix}-sources.txt"),
+            Path(f"{prefix}.ch0000-0010-0000-Q-image.fits"),
+            tmp_path / "SB56289.RACS_1041+18.beam15.round1.i-0000-image.fits",
+        ]
+    )
+
+    outputs = find_wsclean_outputs(prefix=prefix)
+    assert sorted(output.path for output in outputs) == sorted(expected)
+
+    q_images = [
+        output.path.name
+        for output in outputs
+        if output.image_type == "image" and output.pol == "Q"
+    ]
+    assert q_images == [
+        f"{prefix.name}-{c}-Q-image.fits" for c in ("0000", "0001", "0002", "MFS")
+    ]
+
+
+def test_verify_wsclean_outputs(tmp_path: Path):
+    prefix = tmp_path / "SB56289.RACS_1041+18.beam15.round1.qu"
+    paths = _touch_wsclean_outputs(
+        expected_wsclean_outputs(prefix=prefix, channels_out=3, pols=("Q", "U"))
+    )
+    verify_wsclean_outputs(
+        outputs=find_wsclean_outputs(prefix=prefix),
+        prefix=prefix,
+        channels_out=3,
+        pols=("Q", "U"),
+    )
+
+    paths[1].unlink()
+    with pytest.raises(FileNotFoundError, match=re.escape(paths[1].name)):
+        verify_wsclean_outputs(
+            outputs=find_wsclean_outputs(prefix=prefix),
+            prefix=prefix,
+            channels_out=3,
+            pols=("Q", "U"),
+        )
+
+
+def test_remove_wsclean_outputs(tmp_path: Path):
+    """Channel images of the named types go, MFS images and the science images stay"""
+    prefix = tmp_path / "SB56289.RACS_1041+18.beam15.round1.i"
+    _touch_wsclean_outputs(
+        expected_wsclean_outputs(
+            prefix=prefix,
+            channels_out=2,
+            pols=None,
+            image_types=("image", "residual", "psf", "model"),
+        )
+    )
+
+    removed = remove_wsclean_outputs(outputs=find_wsclean_outputs(prefix=prefix))
+    assert sorted(path.name for path in removed) == sorted(
+        f"{prefix.name}-{c:04d}-{image_type}.fits"
+        for c in range(2)
+        for image_type in ("residual", "psf", "model")
+    )
+    remaining = {output.path.name for output in find_wsclean_outputs(prefix=prefix)}
+    assert remaining == {
+        f"{prefix.name}-0000-image.fits",
+        f"{prefix.name}-0001-image.fits",
+        f"{prefix.name}-MFS-image.fits",
+        f"{prefix.name}-MFS-residual.fits",
+        f"{prefix.name}-MFS-psf.fits",
+        f"{prefix.name}-MFS-model.fits",
+    }
+
+
+def _wsclean_result_for(prefix: Path, **options: Any) -> WSCleanResult:
+    ms = MS(path=prefix.parent / "SB56289.RACS_1041+18.beam15.round1.ms")
+    return WSCleanResult(
+        cmd="wsclean",
+        options=WSCleanOptions(**options),
+        ms=ms,
+        ms_list=[ms],
+        bind_dirs=(),
+        move_hold_directories=(prefix.parent, prefix.parent),
+        image_prefix_str=str(prefix),
+    )
+
+
+def _write_wsclean_images(
+    prefix: Path, channels_out: int, pols: tuple[str, ...] | None
+) -> None:
+    for pol in pols or (None,):
+        for channel in range(channels_out):
+            for image_type in ("image", "residual"):
+                _write_channel_image(
+                    path=wsclean_output_path(
+                        prefix=prefix, image_type=image_type, channel=channel, pol=pol
+                    ),
+                    channel=channel,
+                    shape=(8, 8),
+                )
+        for image_type in ("image", "residual"):
+            _write_channel_image(
+                path=wsclean_output_path(
+                    prefix=prefix, image_type=image_type, mfs=True, pol=pol
+                ),
+                channel=0,
+                shape=(8, 8),
+            )
+
+
+def test_collect_wsclean_outputs_stokes_i(tmp_path: Path):
+    """Images are renamed to flint's naming and the channels cubed, under the
+    same names as before images were renamed ahead of cubing"""
+    prefix = tmp_path / "SB56289.RACS_1041+18.beam15.round1.i"
+    _write_wsclean_images(prefix=prefix, channels_out=3, pols=None)
+
+    image_set = collect_wsclean_outputs(
+        wsclean_result=_wsclean_result_for(prefix=prefix, channels_out=3, pol="i"),
+        prefix=str(prefix),
+        fitscube_options=FitsCubeOptions(),
+    )
+
+    assert image_set.prefix == str(prefix)
+    assert image_set.image == [
+        tmp_path / f"{prefix.name}.image.cube.fits",
+        tmp_path / f"{prefix.name}.MFS.image.fits",
+    ]
+    assert image_set.residual == [
+        tmp_path / f"{prefix.name}.residual.cube.fits",
+        tmp_path / f"{prefix.name}.MFS.residual.fits",
+    ]
+    assert all(path.exists() for path in image_set.image + image_set.residual)
+    assert not list(tmp_path.glob("*-image.fits"))
+
+
+def test_collect_wsclean_outputs_joint_pol(tmp_path: Path):
+    """Each polarisation of a joint run is named by its own field"""
+    prefix = tmp_path / "SB56289.RACS_1041+18.beam15.round1.qu"
+    _write_wsclean_images(prefix=prefix, channels_out=2, pols=("Q", "U"))
+
+    image_set = collect_wsclean_outputs(
+        wsclean_result=_wsclean_result_for(prefix=prefix, channels_out=2, pol="qu"),
+        prefix=str(prefix),
+        make_cube_from_subbands=False,
+    )
+
+    base = "SB56289.RACS_1041+18.beam15.round1"
+    assert [path.name for path in image_set.image] == [
+        f"{base}.q.ch0000-0001.image.fits",
+        f"{base}.q.ch0001-0002.image.fits",
+        f"{base}.q.MFS.image.fits",
+        f"{base}.u.ch0000-0001.image.fits",
+        f"{base}.u.ch0001-0002.image.fits",
+        f"{base}.u.MFS.image.fits",
+    ]
+    assert len(split_and_get_image_set(image_set=image_set, get="u")) == 3
+
+
+def test_collect_wsclean_outputs_missing_images(tmp_path: Path):
+    prefix = tmp_path / "SB56289.RACS_1041+18.beam15.round1.i"
+    _write_wsclean_images(prefix=prefix, channels_out=3, pols=None)
+    wsclean_output_path(prefix=prefix, image_type="image", channel=1).unlink()
+
+    with pytest.raises(FileNotFoundError):
+        collect_wsclean_outputs(
+            wsclean_result=_wsclean_result_for(prefix=prefix, channels_out=3, pol="i"),
+            prefix=str(prefix),
+        )
 
 
 @pytest.mark.parametrize("suffix", ["racs_all", "pol-v2", "v2.1"])
@@ -287,23 +485,6 @@ def test_flint_name_suffix_must_parse_back(suffix: str):
 def test_flint_name_suffix_accepts_letters_and_digits():
     assert WSCleanOptions(flint_name_suffix="pol2").flint_name_suffix == "pol2"
     assert WSCleanOptions().flint_name_suffix is None
-
-
-def test_rename_wsclean_title_qu_joint_pol():
-    """The join_polarizations 'qu' tag should be folded into a single-letter
-    pol field per wsclean's own per-image -Q/-U suffix, for both per-channel
-    and MFS outputs."""
-    ex = "SB56289.RACS_1041+18.beam15.round1.qu-0000-Q-image.fits"
-    out_ex = "SB56289.RACS_1041+18.beam15.round1.q.ch0000-0001.image.fits"
-    assert _rename_wsclean_title(name_str=ex) == out_ex
-
-    ex = "SB56289.RACS_1041+18.beam15.round1.qu-0000-U-image.fits"
-    out_ex = "SB56289.RACS_1041+18.beam15.round1.u.ch0000-0001.image.fits"
-    assert _rename_wsclean_title(name_str=ex) == out_ex
-
-    ex = "SB56289.RACS_1041+18.beam15.round1.qu-MFS-Q-residual.fits"
-    out_ex = "SB56289.RACS_1041+18.beam15.round1.q.MFS.residual.fits"
-    assert _rename_wsclean_title(name_str=ex) == out_ex
 
 
 def test_resolve_key_value_to_cli():
@@ -557,132 +738,3 @@ def test_attemptrerun_wsclean_output_callback():
     for b in bad:
         with pytest.raises(AttemptRerunException):
             _wsclean_output_callback(line=b)
-
-
-def test_wsclean_output_named_raises():
-    with pytest.raises(FileExistsError):
-        _ = get_wsclean_output_names(
-            prefix="JackSparrow", subbands=4, verify_exists=True
-        )
-
-
-def test_wsclean_output_named_check_when_adding():
-    image_set = get_wsclean_output_names(
-        prefix="JackSparrow",
-        subbands=4,
-        verify_exists=True,
-        check_exists_when_adding=True,
-    )
-
-    assert isinstance(image_set, ImageSet)
-    assert len(image_set.image) == 0
-
-
-def test_wsclean_output_named():
-    image_set = get_wsclean_output_names(prefix="JackSparrow", subbands=4)
-
-    assert isinstance(image_set, ImageSet)
-    assert image_set.prefix == "JackSparrow"
-
-    assert image_set.image is not None
-    assert len(image_set.image) == 5
-    assert isinstance(image_set.image[0], Path)
-
-    assert image_set.dirty is not None
-    assert len(image_set.dirty) == 5
-    assert isinstance(image_set.dirty[0], Path)
-
-    assert image_set.model is not None
-    assert len(image_set.model) == 5
-    assert isinstance(image_set.model[0], Path)
-
-    assert image_set.residual is not None
-    assert len(image_set.residual) == 5
-    assert isinstance(image_set.residual[0], Path)
-
-    assert image_set.psf is not None
-    assert len(image_set.psf) == 5
-    assert isinstance(image_set.psf[0], Path)
-
-
-def test_wsclean_output_named_wpols():
-    image_set = get_wsclean_output_names(
-        prefix="JackSparrow", subbands=4, pols=("I", "Q")
-    )
-
-    assert isinstance(image_set, ImageSet)
-    assert image_set.prefix == "JackSparrow"
-
-    expected = 10
-    assert image_set.image is not None
-    assert len(image_set.image) == expected
-    assert isinstance(image_set.image[0], Path)
-
-    assert image_set.dirty is not None
-    assert len(image_set.dirty) == expected
-    assert isinstance(image_set.dirty[0], Path)
-
-    assert image_set.model is not None
-    assert len(image_set.model) == expected
-    assert isinstance(image_set.model[0], Path)
-
-    assert image_set.residual is not None
-    assert len(image_set.residual) == expected
-    assert isinstance(image_set.residual[0], Path)
-
-    assert image_set.psf is not None
-    assert len(image_set.psf) == 5  # PSF is the same across all pols
-    assert isinstance(image_set.psf[0], Path)
-
-    assert image_set.image[0] == Path("JackSparrow-0000-I-image.fits")
-    assert image_set.image[4] == Path("JackSparrow-MFS-I-image.fits")
-    assert image_set.image[5] == Path("JackSparrow-0000-Q-image.fits")
-    assert image_set.image[9] == Path("JackSparrow-MFS-Q-image.fits")
-
-
-def test_wsclean_output_named_nomfs():
-    image_set = get_wsclean_output_names(
-        prefix="JackSparrow", subbands=4, include_mfs=False
-    )
-
-    assert isinstance(image_set, ImageSet)
-    assert image_set.prefix == "JackSparrow"
-
-    assert image_set.image is not None
-    assert len(image_set.image) == 4
-    assert isinstance(image_set.image[0], Path)
-
-    assert image_set.dirty is not None
-    assert len(image_set.dirty) == 4
-    assert isinstance(image_set.dirty[0], Path)
-
-    assert image_set.model is not None
-    assert len(image_set.model) == 4
-    assert isinstance(image_set.model[0], Path)
-
-    assert image_set.residual is not None
-    assert len(image_set.residual) == 4
-    assert isinstance(image_set.residual[0], Path)
-
-    assert image_set.psf is not None
-    assert len(image_set.psf) == 4
-    assert isinstance(image_set.psf[0], Path)
-
-
-def test_wsclean_names_no_subbands():
-    """The spectral line modes image per channel, so there is therefore no subband type
-    in the wsclean named output"""
-    image_set = get_wsclean_output_names(
-        prefix="JackSparrow", subbands=1, include_mfs=False
-    )
-
-    assert isinstance(image_set, ImageSet)
-    assert image_set.prefix == "JackSparrow"
-
-    assert image_set.image
-    assert len(image_set.image) == 1
-    assert image_set.image[0] == Path("JackSparrow-image.fits")
-
-    assert image_set.psf
-    assert len(image_set.psf) == 1
-    assert image_set.psf[0] == Path("JackSparrow-psf.fits")

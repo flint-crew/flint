@@ -16,10 +16,10 @@ with a ``.``.
 
 from __future__ import annotations
 
+import glob
 import re
 from argparse import ArgumentParser
 from collections.abc import Collection
-from glob import glob
 from numbers import Number
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -27,19 +27,19 @@ from typing import Any, NamedTuple
 from capn_crunch import (
     add_options_to_parser,
     create_options_from_parser,
-    options_to_dict,
 )
 from pydantic import Field
 
 from flint.exceptions import (
     AttemptRerunException,
     CleanDivergenceError,
+    NamingException,
     NotSupportedError,
 )
 from flint.imageset import ImageSet, combine_image_set_to_cube, merge_image_sets
 from flint.logging import logger
 from flint.ms import MS, standardise_ms_to_list_ms
-from flint.naming import create_imaging_name_prefix
+from flint.naming import create_imaging_name_prefix, pol_name_token
 from flint.options import (
     BaseOptions,
     FitsCubeOptions,
@@ -265,114 +265,212 @@ def get_wsclean_output_source_list_path(
     return source_list_path
 
 
-def _rename_wsclean_title(name_str: str) -> str:
-    """Identify the wsclean-appended properties suffix at the end of a file
-    name and rewrite it with `.` separators instead of `-`.
+class WSCleanOutput(NamedTuple):
+    """An image wsclean wrote, broken into the fields of its name"""
 
-    The suffix's fields (polarisation, sub-band/MFS index, timestep,
-    image type) are captured by name and the dot-separated replacement is
-    built directly from those fields. The sub-band and timestep indices are
-    reformatted as flint's canonical ``ch<lo>-<hi>``/``scan<lo>-<hi>`` ranges
-    (exclusive upper bound) rather than the bare wsclean index, so that
-    ``ProcessedNameComponents.channel_range``/``scan_range`` parse them
-    consistently with every other flint-named path.
+    path: Path
+    """Where the image is"""
+    image_type: str
+    """One of image, dirty, model, residual or psf"""
+    channel: int | None = None
+    """Output channel index. None when a single channel is imaged, or for an MFS image"""
+    mfs: bool = False
+    """Whether this is the multi-frequency synthesis image over all channels"""
+    pol: str | None = None
+    """wsclean's polarisation token, e.g. ``XX`` or ``Q``. None when a single polarisation is imaged"""
+    interval: int | None = None
+    """Interval index, only present with ``-intervals-out``"""
+    primary_beam: bool = False
+    """Whether this is a primary beam corrected image"""
 
-    Args:
-        name_str (str): The name that will be extracted and modified
 
-    Returns:
-        str: The modified string if a wsclean string was matched, otherwise the input `name-str`
-    """
-    # Yolo chatGPT
-    # The following should replace the .qu with .q or .u whilst removing the -Q and -U
-    logger.info(f"Renaming {name_str=} for qu components if necessary")
-    name_str = re.sub(
-        r"(\.qu)-(?P<chan>[^-]+)-?(?P<qu_pol>[QU])?(?P<tail>-(?:psf|image|dirty|model|residual)\.fits)",
-        lambda m: (
-            f".{m['qu_pol'].lower() if m['qu_pol'] else 'q'}-{m['chan']}{m['tail']}"
-        ),
-        name_str,
+def wsclean_output_pattern(prefix: str | Path) -> re.Pattern[str]:
+    """The pattern matching the name of every image wsclean writes for a ``-name`` of ``prefix``"""
+    return re.compile(
+        rf"^{re.escape(Path(prefix).name)}"
+        r"(?:-t(?P<interval>\d{4}))?"
+        r"(?:-(?:(?P<channel>\d{4})|(?P<mfs>MFS)))?"
+        r"(?:-(?P<pol>(?:XX|XY|YX|YY|RR|RL|LR|LL|I|Q|U|V)i?))?"
+        r"-(?P<image_type>image|dirty|model|residual|psf)"
+        r"(?P<primary_beam>-pb)?\.fits$"
     )
 
-    # Note the negative look back - the (?<!...) bit. This is to make
-    # sure that the ch0000-0001 field is not captured. For example:
-    # SB57516.RACS_0929-81.beam35.round4.i.ch0287-0288-image.fits
-    # would be inadvertently picked up and replaced. The [0-9]{4}
-    # we are testing for are the channel indicator when --channel-out is used.
-    # The trailing look ahead anchors the image type to the end of the name
-    # (before an optional .fits) so that a project field matching a reserved
-    # word, e.g. .project-image., is not picked up instead.
-    search_re = (
-        r"(?:-(?P<pol>i|q|u|v|xx|xy|yx|yy))?"
-        r"(?:-(?P<mfs>MFS)|-(?P<chidx>(?<!ch[0-9]{4}-)[0-9]{4}))?"
-        r"(?:-(?P<time>t[0-9]{5}))?"
-        r"-(?P<image_type>image|dirty|model|residual|psf)(?=\.fits$|$)"
+
+def parse_wsclean_output(path: Path, prefix: str | Path) -> WSCleanOutput | None:
+    """Break the name of an image wsclean wrote into its fields, or None if it is not one"""
+    match = wsclean_output_pattern(prefix=prefix).match(path.name)
+    if match is None:
+        return None
+
+    return WSCleanOutput(
+        path=path,
+        image_type=match["image_type"],
+        channel=int(match["channel"]) if match["channel"] else None,
+        mfs=match["mfs"] is not None,
+        pol=match["pol"],
+        interval=int(match["interval"]) if match["interval"] else None,
+        primary_beam=match["primary_beam"] is not None,
     )
-    match_re = re.compile(search_re)
-
-    logger.info(f"Searching {name_str=} for wsclean added filename components")
-    result = match_re.search(str(name_str))
-
-    if result is None:
-        return name_str
-
-    # Build the dot-separated suffix from the named fields (pol, channel
-    # index, timestep, image type) rather than the raw matched text. The
-    # channel/timestep index is reformatted into flint's ch<lo>-<hi>/
-    # scan<lo>-<hi> range convention (exclusive upper bound) so it parses
-    # back out as a proper ProcessedNameComponents.channel_range/scan_range
-    # instead of the ambiguous bare wsclean index.
-    groups = result.groupdict()
-    chan_field = (
-        f"ch{int(groups['chidx']):04d}-{int(groups['chidx']) + 1:04d}"
-        if groups["chidx"]
-        else groups["mfs"]
-    )
-    time_field = (
-        f"scan{int(groups['time'][1:]):04d}-{int(groups['time'][1:]) + 1:04d}"
-        if groups["time"]
-        else None
-    )
-    fields = (
-        groups["pol"],
-        chan_field,
-        time_field,
-        groups["image_type"],
-    )
-    new_suffix = "." + ".".join(field for field in fields if field)
-
-    name = name_str.replace(result[0], new_suffix)
-
-    return name
 
 
-def _rename_wsclean_file(
-    input_path: Path,
-    rename_file: bool = False,
+def wsclean_output_path(
+    prefix: str | Path,
+    image_type: str,
+    channel: int | None = None,
+    mfs: bool = False,
+    pol: str | None = None,
+    interval: int | None = None,
+    primary_beam: bool = False,
 ) -> Path:
-    """Rename a file with wsclean appended string information to convert its
-    `-` separation markers with `.`. This should handle skipping the field
-    name of the target field observed.
+    """The name wsclean gives an image, the inverse of ``parse_wsclean_output``"""
+    fields = [str(prefix)]
+    if interval is not None:
+        fields.append(f"t{interval:04d}")
+    if mfs:
+        fields.append("MFS")
+    elif channel is not None:
+        fields.append(f"{channel:04d}")
+    if pol is not None:
+        fields.append(pol)
+    fields.append(image_type)
+    if primary_beam:
+        fields.append("pb")
 
-    Args:
-        input_path (Path): The file path that would be examined and modified
-        clean_parts (Union[int, Tuple[int, ...]], optional): Which parts of a split string will be modified. Defaults to -2.
-        rename_file (bool, optional): Whether the file should be moved / renamed. Defaults to False.
+    return Path("-".join(fields) + ".fits")
+
+
+def expected_wsclean_outputs(
+    prefix: str | Path,
+    channels_out: int,
+    pols: tuple[str, ...] | None,
+    image_types: Collection[str] = ("image",),
+) -> list[Path]:
+    """The images wsclean writes for each of ``image_types``, where ``pols`` is None
+    when a single polarisation is imaged. The PSF is shared by every polarisation."""
+    channels: list[dict[str, Any]] = [{}]
+    if channels_out > 1:
+        channels = [{"channel": channel} for channel in range(channels_out)]
+        channels.append({"mfs": True})
+
+    paths: list[Path] = []
+    for image_type in image_types:
+        image_pols = (None,) if pols is None or image_type == "psf" else pols
+        paths += [
+            wsclean_output_path(
+                prefix=prefix, image_type=image_type, pol=pol, **channel
+            )
+            for pol in image_pols
+            for channel in channels
+        ]
+
+    return paths
+
+
+def find_wsclean_outputs(prefix: str | Path) -> list[WSCleanOutput]:
+    """Find the images wsclean wrote for a ``-name`` of ``prefix``, ordered by
+    type, polarisation and channel with the MFS image last"""
+    prefix = Path(prefix)
+    candidates = prefix.parent.glob(f"{glob.escape(prefix.name)}-*.fits")
+    outputs = [
+        output
+        for output in (
+            parse_wsclean_output(path=path, prefix=prefix) for path in candidates
+        )
+        if output is not None
+    ]
+
+    return sorted(
+        outputs,
+        key=lambda output: (
+            output.image_type,
+            output.pol or "",
+            output.interval or 0,
+            output.mfs,
+            output.channel or 0,
+        ),
+    )
+
+
+def verify_wsclean_outputs(
+    outputs: list[WSCleanOutput],
+    prefix: str | Path,
+    channels_out: int,
+    pols: tuple[str, ...] | None,
+) -> None:
+    """Raise if an image wsclean should have written is not among ``outputs``.
+
+    Only the ``image`` type is checked, as cleaning up deletes the others.
+
+    Raises:
+        FileNotFoundError: Some expected images are missing
+    """
+    found = {output.path.name for output in outputs}
+    missing = [
+        path.name
+        for path in expected_wsclean_outputs(
+            prefix=prefix, channels_out=channels_out, pols=pols
+        )
+        if path.name not in found
+    ]
+    if missing:
+        msg = f"wsclean did not write {len(missing)} expected images: {missing}"
+        raise FileNotFoundError(msg)
+
+
+def flint_output_path(
+    output: WSCleanOutput, prefix: str | Path, pol_token: str
+) -> Path:
+    """The flint name of an image wsclean wrote, its fields separated by ``.``.
+
+    When wsclean tagged the image with a polarisation it replaces ``pol_token``,
+    the field of ``prefix`` naming every polarisation imaged (e.g. ``qu``).
+    Channel and interval indices become flint's ``ch<lo>-<hi>`` and
+    ``scan<lo>-<hi>`` ranges, whose upper bound is exclusive.
+
+    Raises:
+        NamingException: ``pol_token`` is not a field of ``prefix``
+    """
+    fields = Path(prefix).name.split(".")
+    if output.pol is not None:
+        if pol_token not in fields:
+            msg = f"{pol_token=} is not a field of {prefix=}"
+            raise NamingException(msg)
+        token_index = max(i for i, field in enumerate(fields) if field == pol_token)
+        fields[token_index] = output.pol.lower()
+    if output.mfs:
+        fields.append("MFS")
+    elif output.channel is not None:
+        fields.append(f"ch{output.channel:04d}-{output.channel + 1:04d}")
+    if output.interval is not None:
+        fields.append(f"scan{output.interval:04d}-{output.interval + 1:04d}")
+    fields.append(output.image_type)
+    if output.primary_beam:
+        fields.append("pb")
+
+    return output.path.parent / (".".join(fields) + ".fits")
+
+
+def remove_wsclean_outputs(
+    outputs: list[WSCleanOutput],
+    image_types: Collection[str] = ("dirty", "psf", "model", "residual"),
+) -> list[Path]:
+    """Delete the channel images of ``image_types``, keeping every MFS image
 
     Returns:
-        Path: Path to the renamed file
+        list[Path]: The images deleted
     """
-    input_path = Path(input_path)
-    file_name = Path(input_path.name)
-    new_name = _rename_wsclean_title(name_str=str(file_name))
+    removed: list[Path] = []
+    for output in outputs:
+        if output.mfs or output.image_type not in image_types:
+            continue
+        logger.info(f"Removing {output.path}")
+        try:
+            output.path.unlink()
+            removed.append(output.path)
+        except Exception as e:
+            logger.critical(f"Removing {output.path} failed: {e}")
 
-    new_path = input_path.parent / new_name
-
-    if rename_file:
-        logger.info(f"Renaming {input_path} to {new_path}")
-        input_path.rename(new_path)
-
-    return new_path
+    return removed
 
 
 def _wsclean_output_callback(line: str) -> None:
@@ -397,192 +495,6 @@ def _wsclean_output_callback(line: str) -> None:
         sleep(2)
 
         raise AttemptRerunException
-
-
-# TODO: Update this function to also add int the source list
-def get_wsclean_output_names(  #
-    prefix: str,
-    subbands: int | None = None,
-    pols: str | tuple[str] | tuple[str, ...] | None = None,
-    verify_exists: bool = False,
-    include_mfs: bool = True,
-    output_types: str | Collection[str] = (
-        "image",
-        "dirty",
-        "residual",
-        "model",
-        "psf",
-    ),
-    check_exists_when_adding: bool = False,
-) -> ImageSet:
-    """Attempt to generate the file names and paths that would be
-    created by an imaging run of wsclean. This is done using a the
-    known (expected) naming format of modern wsclean versions.
-
-    Checks can be made to ensure a file exists before adding it
-    to the output ``ImageSet``. This might be important as some
-    wsclean image products might be deleted in order to preserve
-    disk space.
-
-    Args:
-        prefix (str): The prefix of the imaging run (akin to -name option in wsclean call)
-        subbands (int): Number of subbands that were imaged
-        pols (Optional[Union[str,Tuple[str]]], optional): The polarisation of the image. If None are provided then this is not used. Multiple polarisation may be supplied. If multiple pols are given in an iterable, each will be produced. Defaults to None.
-        verify_exists (bool, optional): Ensures that each generated path corresponds to an actual file. Defaults to False.
-        include_mfs (bool, optional): Include the MFS images produced by wsclean. Defaults to True.
-        output_types (Union[str,Collection[str]]): Include files of this type, including image, dirty, residual, model, psf. Defaults to  ('image','dirty','residual','model', 'psf').
-        check_exists_when_adding (bool, optional): Only add a generated file if it exists. Although related to the ``verify_exists``, when this optional is ``True`` files will silently be ignored if they are not found. if this and ``verify_exists`` are both ``True`` then no errors on missing files will be raised. Defaults to False.
-
-    Raises:
-        FileExistsError: Raised when a file does not exist and verify_exists is True.
-
-    Returns:
-        ImageSet: The file paths that wsclean should create/has created.
-    """
-    logger.info(f"Finding wsclean outputs, {prefix=}")
-    # TODO: Use a regular expression for this
-    subband_strs: list[str | None] = [
-        None,
-    ]
-    if subbands and subbands > 1:
-        subband_strs = [f"{subband:04}" for subband in range(subbands)]
-        if include_mfs:
-            subband_strs.append("MFS")
-
-    in_pols: tuple[None, ...] | tuple[str, ...]
-    if pols is None:
-        in_pols = (None,)
-    elif isinstance(pols, str):
-        in_pols = (pols,)
-    else:
-        in_pols = pols
-
-    if isinstance(output_types, str):
-        output_types = (output_types,)
-
-    images: dict[str, list[Path]] = {}
-    for image_type in ("image", "dirty", "model", "residual"):
-        if image_type not in output_types:
-            continue
-
-        paths: list[Path] = []
-        for pol in in_pols:
-            for subband_str in subband_strs:
-                components = [prefix]
-                if subband_str:
-                    components.append(subband_str)
-                if pol:
-                    components.append(pol)
-                components.append(image_type)
-                path_str = "-".join(components) + ".fits"
-
-                if check_exists_when_adding and not Path(path_str).exists():
-                    logger.debug(f"{path_str} does not existing. Not adding. ")
-                    continue
-
-                paths.append(Path(path_str))
-
-        images[image_type] = paths
-
-    # The PSF is the same for all stokes
-    if "psf" in output_types:
-        psf_images = [
-            (
-                Path(f"{prefix}-{subband_str}-psf.fits")
-                if subband_str
-                else Path(f"{prefix}-psf.fits")
-            )
-            for subband_str in subband_strs
-        ]
-        # Filter out files if they do not exists
-        if check_exists_when_adding:
-            psf_images = [psf_image for psf_image in psf_images if psf_image.exists()]
-
-        images["psf"] = psf_images
-
-    if verify_exists:
-        paths_no_exists: list[Path] = []
-        for _, check_paths in images.items():
-            paths_no_exists += [path for path in check_paths if not path.exists()]
-        if len(paths_no_exists) > 0:
-            raise FileExistsError(
-                f"The following {len(paths_no_exists)} files do not exist: {paths_no_exists}"
-            )
-
-    return ImageSet(prefix=prefix, **images)
-
-
-def delete_wsclean_outputs(
-    prefix: str,
-    output_type: str = "image",
-    ignore_mfs: bool = True,
-    no_subbands: bool = False,
-) -> list[Path]:
-    """Attempt to remove elected wsclean output files
-
-    If ``no_subbands`` is True (as in ``channels_out`` is 1) then nothing is deleted.
-
-    Args:
-        prefix (str): The prefix of the files to remove. This would correspond to the -name of wsclean.
-        output_type (str, optional): What type of wsclean output to try to remove. Defaults to 'image'.
-        ignore_mfs (bool, optional): If True, do not remove MFS outputs (attempt to, at least). Defaults to True.
-        no_subbands (bool, Optional): If True, nothing is deleted. Defaults to False.
-
-    Returns:
-        List[Path]: The paths that were removed (or at least attempted to be removed)/
-    """
-    # TODO: This glob needs to be replaced with something more explicit
-    paths = [Path(p) for p in glob(f"{prefix}-*{output_type}.fits")]
-    logger.info(f"Found {len(paths)} matching {prefix=} and {output_type=}.")
-    rm_paths: list[Path] = []
-
-    for path in paths:
-        if no_subbands:
-            continue
-        if ignore_mfs and "-MFS-" in str(path.name):
-            logger.info(f"{path=} appears to be an MFS product, not removing. ")
-            continue
-        if path.exists():
-            logger.warning(f"Removing {path}.")
-            try:
-                rm_paths.append(path)
-                path.unlink()
-            except Exception as e:
-                logger.critical(f"Removing {path} failed: {e}")
-
-    return rm_paths
-
-
-# TODO: This should be expanded to denote levels of things to delete
-# TODO: Need to create a regex based mode, and better handlijng of -MFS-,
-# which is only created when -join-channels is used
-def wsclean_cleanup_files(
-    prefix: str | Path,
-    output_types: tuple[str, ...] | None = ("dirty", "psf", "model", "residual"),
-    single_channel: bool = False,
-) -> tuple[Path, ...]:
-    """Clean up (i.e. delete) files from wsclean.
-
-    Args:
-        prefix (Union[str, Path]): The prefix used to search for files. This is generally the -name
-        output_types (Optional[Tuple[str]], optional): Which type of output wsclean products to delete. Defaults to ("dirty", "psf", "model", "residual").
-        single_channel (bool, optional): Whether there is the subband part of the wsclean file names to consider. Defaults to False.
-
-    Returns:
-        Tuple[Path, ...]: Set of files that were deleted
-    """
-    rm_files = []
-    logger.info(f"Removing wsclean files with {prefix=} {output_types=}")
-
-    if output_types is not None:
-        for output_type in output_types:
-            rm_files += delete_wsclean_outputs(
-                prefix=str(prefix),
-                output_type=output_type,
-                no_subbands=single_channel and output_type == "image",
-            )
-
-    return tuple(rm_files)
 
 
 def create_wsclean_name_argument(
@@ -821,41 +733,6 @@ def create_wsclean_cmd(
     )
 
 
-def rename_wsclean_prefix_in_image_set(input_image_set: ImageSet) -> ImageSet:
-    """Given an input image_set, rename the files contained in it to
-    remove the `-` separator that wsclean uses and replace it with `.`.
-
-    Files will be renamed on disk appropriately.
-
-    Args:
-        input_image_set (ImageSet): The collection of output wsclean products
-
-    Returns:
-        ImageSet: The updated image_set after replacing the separator and renaming files
-    """
-
-    input_args = options_to_dict(input_options=input_image_set)
-
-    check_keys = ("prefix", "image", "residual", "model", "dirty")
-
-    output_args: dict[str, Any] = {}
-
-    for key, value in input_args.items():
-        if key == "prefix":
-            output_args[key] = _rename_wsclean_title(name_str=value)
-        elif key in check_keys and value is not None:
-            output_args[key] = [
-                _rename_wsclean_file(input_path=fits_path, rename_file=True)
-                for fits_path in value
-            ]
-        else:
-            output_args[key] = value
-
-    output_image_set = ImageSet(**output_args)
-
-    return output_image_set
-
-
 def _make_pols(pol_str: str) -> tuple[str, ...] | None:
     """Create a tuple of polarisations from a polarisation string
 
@@ -873,6 +750,69 @@ def _make_pols(pol_str: str) -> tuple[str, ...] | None:
     if len(pol_str) > 1:
         pols = tuple(p.upper() for p in "".join(pol_str.split(",")))
     return pols
+
+
+def collect_wsclean_outputs(
+    wsclean_result: WSCleanResult,
+    prefix: str,
+    make_cube_from_subbands: bool = True,
+    fitscube_options: FitsCubeOptions | None = None,
+    extra_output_types: tuple[str, ...] | None = None,
+) -> ImageSet:
+    """Gather the images wsclean wrote into an ``ImageSet``, renaming them on disk
+    to flint's naming and optionally combining their channels into cubes.
+
+    Args:
+        wsclean_result (WSCleanResult): The wsclean command that wrote the images
+        prefix (str): The ``-name`` the images were written under, in the directory they are now in
+        make_cube_from_subbands (bool, optional): Combine the channel images of each type into a cube. Defaults to True.
+        fitscube_options (FitsCubeOptions | None, optional): Options for forming the cubes. Defaults to None.
+        extra_output_types (tuple[str, ...] | None, optional): Image types beyond ``image`` and ``residual`` to include, e.g. ``("model",)``. Defaults to None.
+
+    Raises:
+        FileNotFoundError: wsclean did not write every image expected of it
+
+    Returns:
+        ImageSet: The renamed images
+    """
+    options = wsclean_result.options
+    pols = _make_pols(pol_str=options.pol)
+
+    outputs = find_wsclean_outputs(prefix=prefix)
+    verify_wsclean_outputs(
+        outputs=outputs, prefix=prefix, channels_out=options.channels_out, pols=pols
+    )
+
+    image_types = ("image", "residual", *(extra_output_types or ()))
+    pol_token = pol_name_token(pol=options.pol)
+    images: dict[str, list[Path]] = {image_type: [] for image_type in image_types}
+    for output in outputs:
+        if output.primary_beam or output.image_type not in image_types:
+            continue
+        flint_path = flint_output_path(
+            output=output, prefix=prefix, pol_token=pol_token
+        )
+        logger.info(f"Renaming {output.path} to {flint_path}")
+        output.path.rename(flint_path)
+        images[output.image_type].append(flint_path)
+
+    image_set = ImageSet(prefix=prefix, **images)
+
+    if options.save_source_list:
+        logger.info("Attaching the wsclean clean components SEDs")
+        source_list_path = get_wsclean_output_source_list_path(
+            name_path=prefix, pol=None
+        )
+        assert source_list_path.exists(), f"{source_list_path=} does not exist"
+        image_set = image_set.with_options(source_list=source_list_path)
+
+    if make_cube_from_subbands:
+        image_set = combine_image_set_to_cube(
+            image_set=image_set,
+            fitscube_options=fitscube_options or FitsCubeOptions(),
+        )
+
+    return image_set
 
 
 def run_wsclean_imager(
@@ -904,7 +844,6 @@ def run_wsclean_imager(
     """
 
     ms = wsclean_result.ms
-    single_channel = wsclean_result.options.channels_out == 1
     wsclean_cleanup = wsclean_result.cleanup
     bind_dirs = wsclean_result.bind_dirs
     move_hold_directories = wsclean_result.move_hold_directories
@@ -940,8 +879,8 @@ def run_wsclean_imager(
                 ignore_logging_output=wsclean_result.options.flint_no_log_wsclean_output,
             )
             if wsclean_cleanup:
-                rm_files = wsclean_cleanup_files(
-                    prefix=prefix, single_channel=single_channel
+                rm_files = remove_wsclean_outputs(
+                    outputs=find_wsclean_outputs(prefix=prefix)
                 )
                 logger.info(f"Removed {len(rm_files)} files")
                 # No need to attempt to clean up again once files have been moved
@@ -967,36 +906,15 @@ def run_wsclean_imager(
 
     if wsclean_cleanup:
         logger.info("Will clean up files created by wsclean. ")
-        rm_files = wsclean_cleanup_files(prefix=prefix, single_channel=single_channel)
+        remove_wsclean_outputs(outputs=find_wsclean_outputs(prefix=prefix))
 
-    pols = _make_pols(pol_str=wsclean_result.options.pol)
-
-    image_set = get_wsclean_output_names(
+    image_set = collect_wsclean_outputs(
+        wsclean_result=wsclean_result,
         prefix=prefix,
-        subbands=wsclean_result.options.channels_out,
-        pols=pols,
-        verify_exists=True,
-        output_types=("image", "residual", *(extra_output_types or ())),
-        check_exists_when_adding=True,
+        make_cube_from_subbands=make_cube_from_subbands,
+        fitscube_options=fitscube_options,
+        extra_output_types=extra_output_types,
     )
-
-    if wsclean_result.options.save_source_list:
-        logger.info("Attaching the wsclean clean components SEDs")
-        source_list_path = get_wsclean_output_source_list_path(
-            name_path=prefix, pol=None
-        )
-        assert source_list_path.exists(), f"{source_list_path=} does not exist"
-        image_set = image_set.with_options(source_list=source_list_path)
-
-    if make_cube_from_subbands:
-        if not fitscube_options:
-            fitscube_options = FitsCubeOptions()
-        image_set = combine_image_set_to_cube(
-            image_set=image_set,
-            fitscube_options=fitscube_options,
-        )
-
-    image_set = rename_wsclean_prefix_in_image_set(input_image_set=image_set)
 
     logger.info(f"Constructed {image_set=}")
 
