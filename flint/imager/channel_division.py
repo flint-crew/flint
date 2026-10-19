@@ -7,8 +7,8 @@ input channel centres ``f[a] .. f[b]`` (the ``bandStart/bandEnd`` half-widths in
 that are actually in the bin, not the requested boundary, so a bin straddling a
 sub-band gap is centred out in the gap where there is no data.
 
-``fitscube`` can only write a linear FREQ axis: ``even_spacing`` takes the
-tolerant gcd of the input centre diffs as ``CDELT3``, so one gap-straddling
+``fitscube`` can only write a linear FREQ axis: ``even_spacing`` uses the
+widest step that holds every input centre as ``CDELT3``, so one gap-straddling
 image collapses the step and pads the cube with thousands of blank planes.
 
 This module partitions the channel list (union of centres across all MSs, which
@@ -30,6 +30,7 @@ import numpy as np
 from astropy import units as u
 from capn_crunch import BaseOptions
 from fitscube.combine_fits import even_spacing
+from fitscube.exceptions import IrregularSpacingException
 
 from flint.exceptions import ChannelDivisionError
 from flint.logging import logger
@@ -137,11 +138,18 @@ def _partition(
 
 def _describe(
     bins: list[tuple[int, int]], frequencies: np.ndarray, channel_width: float
-) -> ChannelDivision:
-    """Build the division and the cube fitscube will make from it."""
+) -> ChannelDivision | None:
+    """Build the division and the cube fitscube will make from it, or None if
+    fitscube cannot place the images on one grid."""
     centres = np.array([(frequencies[a] + frequencies[b]) / 2 for a, b in bins])
     if len(centres) > 1:
-        new_specs, missing = even_spacing(centres * u.Hz)
+        try:
+            new_specs, missing = even_spacing(centres * u.Hz)
+        except IrregularSpacingException:
+            # Only for a grid of over 1000 planes per image, or one that cannot
+            # hold them all, so the cube would be padded well past
+            # MAX_PADDING_FACTOR anyway
+            return None
         n_planes, n_blank = len(new_specs), int(np.sum(missing))
         cdelt3 = float(np.diff(new_specs.to(u.Hz).value)[0])
     else:
@@ -231,14 +239,13 @@ def solve_channel_division(
         }
         for phase in sorted(phases):
             bins = _partition(indices, sizes, t, phase)
-            if bins is not None:
-                candidates.append(
-                    _describe(
-                        bins=bins,
-                        frequencies=frequencies,
-                        channel_width=channel_width,
-                    )
-                )
+            if bins is None:
+                continue
+            division = _describe(
+                bins=bins, frequencies=frequencies, channel_width=channel_width
+            )
+            if division is not None:
+                candidates.append(division)
 
     if not candidates:
         msg = (

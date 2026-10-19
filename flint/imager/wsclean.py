@@ -323,7 +323,10 @@ def combine_images_to_cube(
     if fitscube_options.compress:
         start = time.perf_counter()
         output_cube_name = compress_cube(
-            output_cube_name, method=fitscube_options.compress_method
+            output_cube_name,
+            method=fitscube_options.compress_method,
+            max_workers=fitscube_options.max_workers,
+            quantize_level=fitscube_options.compress_quantize_level,
         )
         logger.info(
             f"Compressed to {output_cube_name.name} in {time.perf_counter() - start:.0f}s"
@@ -507,17 +510,18 @@ def split_cube_into_planes(
         list[Path]: The per-channel images extracted from ``cube``
 
     Raises:
-        NotSupportedError: If ``cube`` is gzip-compressed, as astropy cannot
+        NotSupportedError: If ``cube`` is compressed (.gz or .fz), as astropy cannot
             memmap a compressed FITS file and would decompress the whole cube
             into memory. Set ``FitsCubeOptions.compress=False`` for cubes that
             get split.
     """
-    if cube.suffix == ".gz":
+    if cube.suffix in (".gz", ".fz"):
         msg = (
-            f"{cube=} is gzip-compressed and cannot be split into planes: "
+            f"{cube=} is compressed and cannot be split into planes: "
             "astropy cannot memmap a compressed FITS file, so the per-channel "
             "reads would decompress the whole cube into memory. "
-            "Disable FitsCubeOptions.compress for cubes that will be split."
+            "Disable FitsCubeOptions.compress for cubes that will be split, or "
+            "decompress it first with `fitscube decompress`."
         )
         raise NotSupportedError(msg)
 

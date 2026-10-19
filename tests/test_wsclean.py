@@ -21,6 +21,7 @@ from flint.exceptions import (
     AttemptRerunException,
     CleanDivergenceError,
     NamingException,
+    NotSupportedError,
     ShapeMismatchError,
 )
 from flint.imager.wsclean import (
@@ -364,6 +365,45 @@ def test_split_cube_into_planes(tmpdir) -> None:
 
     with pytest.raises(NamingException):
         split_cube_into_planes(cube=Path(shutil.copy(cube, Path(tmpdir) / "bad.fits")))
+
+
+@pytest.mark.parametrize("suffix", [".gz", ".fz"])
+def test_split_cube_into_planes_refuses_compressed_cubes(tmp_path, suffix) -> None:
+    """Splitting reads plane by plane through a memmap, which a compressed cube cannot give"""
+    cube = tmp_path / f"SB56659.RACS_0940-04.beam17.round3.i.image.cube.fits{suffix}"
+    with pytest.raises(NotSupportedError, match="compressed"):
+        split_cube_into_planes(cube=cube)
+
+
+def test_combine_images_to_cube_tile_compresses(tmpdir) -> None:
+    """A tile-compressed cube is a .fits.fz holding the same planes"""
+    files = [
+        Path(
+            shutil.copy(
+                get_packaged_resource_path(
+                    package="flint.data.tests",
+                    filename=f"SB56659.RACS_0940-04.beam17.round3-000{i}-image.sub.fits",
+                ),
+                Path(tmpdir),
+            )
+        )
+        for i in range(3)
+    ]
+    planes = [fits.getdata(file) for file in files]
+
+    cube = combine_images_to_cube(
+        images=files,
+        prefix=f"{tmpdir}/SB56659.RACS_0940-04.beam17.round3",
+        mode="image",
+        fitscube_options=FitsCubeOptions(compress=True, compress_method="tile-gzip"),
+    )
+
+    assert cube.name.endswith(".fits.fz")
+    with fits.open(cube) as hdul:
+        for channel, plane in enumerate(planes):
+            np.testing.assert_array_equal(
+                np.squeeze(hdul[1].section[channel]), np.squeeze(plane)
+            )
 
 
 def _write_varying_beam_cube(tmp_path: Path, channels: int) -> Path:
