@@ -237,20 +237,7 @@ def combine_image_set_to_cube(
 
 
 def write_stokes_i(xx_path: Path, yy_path: Path, i_path: Path) -> Path:
-    """Write the Stokes I image (XX + YY) / 2 of a pair of XX and YY images. The
-    XX header is used, with its STOKES axis set to I.
-
-    Args:
-        xx_path (Path): The XX image
-        yy_path (Path): The YY image, on the same pixel grid as ``xx_path``
-        i_path (Path): Where the Stokes I image is written. Overwritten if it exists.
-
-    Raises:
-        ValueError: The XX and YY images have different restoring beams
-
-    Returns:
-        Path: The Stokes I image
-    """
+    """Write I = (XX + YY) / 2 to ``i_path``, raising ``ValueError`` if the restoring beams differ"""
     xx_header = fits.getheader(xx_path)
     yy_header = fits.getheader(yy_path)
     for key in ("BMAJ", "BMIN", "BPA"):
@@ -280,23 +267,12 @@ def write_stokes_i(xx_path: Path, yy_path: Path, i_path: Path) -> Path:
 
 
 def form_stokes_i(image_set: ImageSet) -> ImageSet:
-    """Replace the XX and YY images of an image set by Stokes I, I = (XX + YY) / 2.
+    """Replace the XX and YY images of an image set by Stokes I.
 
-    Each XX image is paired with the YY image whose name differs only in its
-    ``xx`` field, and the Stokes I image is named with ``i`` there instead. The
-    ``xxyy`` field of the prefix likewise becomes ``i``, as it does in the name of
-    the PSF, which XX and YY share and so is the Stokes I PSF too. The source list
-    is carried over unchanged. The XX and YY images are left in place, for the
-    caller to keep or delete.
-
-    Args:
-        image_set (ImageSet): The XX and YY images, named by flint
-
-    Raises:
-        NamingException: The images are not all in XX and YY pairs
-
-    Returns:
-        ImageSet: The Stokes I images
+    Each XX image pairs with the YY image named the same but for its ``xx`` field,
+    and I is named with ``i`` there. The prefix and the PSF, which XX and YY share,
+    are renamed likewise. Raises ``NamingException`` if the images are not all in
+    pairs. The XX and YY images are left for the caller.
     """
     stokes_i: dict[str, list[Path]] = {}
     for mode in ("image", "residual", "model", "dirty"):

@@ -272,33 +272,15 @@ def create_image_cube_name(
 
 
 def pol_name_token(pol: str) -> str:
-    """The field naming the polarisations imaged, as it appears in file names.
-
-    Args:
-        pol (str): The wsclean ``-pol`` value, e.g. ``i``, ``QU`` or ``xx,yy``
-
-    Returns:
-        str: The field, lower case and without commas, e.g. ``xxyy`` for ``xx,yy``
-    """
+    """The field naming the polarisations in file names, e.g. ``xxyy`` for ``xx,yy``"""
     return pol.lower().replace(",", "")
 
 
 def replace_name_field(path: Path, old: str, new: str) -> Path:
     """Swap the last dot separated field ``old`` in the name of ``path`` for ``new``.
 
-    The polarisation is the last field a flint name could share with a token like
-    ``xx`` or ``qu``, as only ranges, ``MFS`` and the image type follow it.
-
-    Args:
-        path (Path): The path whose name is changed
-        old (str): The field to replace
-        new (str): The field to put in its place
-
-    Raises:
-        NamingException: ``old`` is not a field of the name
-
-    Returns:
-        Path: ``path`` with the field replaced, in the same directory
+    The last, as in a flint name only ranges, ``MFS`` and the type follow the
+    polarisation. Raises ``NamingException`` if ``old`` is not a field.
     """
     # TODO: Swap fields through ProcessedNameComponents once naming is redeveloped to
     # funnel all creation and parsing through one place (see the suffixspecrejig
