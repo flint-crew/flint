@@ -478,16 +478,22 @@ def test_collect_wsclean_outputs_stokes_i(tmp_path: Path):
     assert not list(tmp_path.glob("*-image.fits"))
 
 
-def test_collect_wsclean_outputs_joint_pol(tmp_path: Path):
-    """Each polarisation of a joint run is named by its own field"""
+@pytest.mark.parametrize("make_cube_from_subbands", [False, True])
+def test_collect_wsclean_outputs_joint_pol(
+    tmp_path: Path, make_cube_from_subbands: bool
+):
+    """Each polarisation of a joint run is named by its own field. As in the
+    polarisation flow, their channel images are kept rather than cubed together"""
     prefix = tmp_path / "SB56289.RACS_1041+18.beam15.round1.qu"
     _write_wsclean_images(prefix=prefix, channels_out=2, pols=("Q", "U"))
 
     image_set = collect_wsclean_outputs(
         wsclean_result=_wsclean_result_for(prefix=prefix, channels_out=2, pol="qu"),
         prefix=str(prefix),
-        make_cube_from_subbands=False,
+        make_cube_from_subbands=make_cube_from_subbands,
     )
+
+    assert not list(tmp_path.glob("*.cube.fits"))
 
     base = "SB56289.RACS_1041+18.beam15.round1"
     assert [path.name for path in image_set.image] == [

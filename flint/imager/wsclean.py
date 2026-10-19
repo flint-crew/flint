@@ -890,7 +890,7 @@ def collect_wsclean_outputs(
     Args:
         wsclean_result (WSCleanResult): The wsclean command that wrote the images
         prefix (str): The ``-name`` the images were written under, in the directory they are now in
-        make_cube_from_subbands (bool, optional): Combine the channel images of each type into a cube. Defaults to True.
+        make_cube_from_subbands (bool, optional): Combine the channel images of each type into a cube. Ignored when more than one polarisation is imaged, whose channel images are left to be cubed per Stokes later. Defaults to True.
         fitscube_options (FitsCubeOptions | None, optional): Options for forming the cubes. Defaults to None.
         extra_output_types (tuple[str, ...] | None, optional): Image types beyond ``image`` and ``residual`` to include, e.g. ``("model",)``. Defaults to None.
 
@@ -950,6 +950,14 @@ def collect_wsclean_outputs(
         )
         assert source_list_path.exists(), f"{source_list_path=} does not exist"
         image_set = image_set.with_options(source_list=source_list_path)
+
+    # One cube can not hold several polarisations, so as the polarisation flow
+    # does their channel images are kept, to be cubed per Stokes later
+    if make_cube_from_subbands and pols not in (None, ("XX", "YY")):
+        logger.warning(
+            f"Not forming cubes, as {pols=} are imaged. Their channel images are kept."
+        )
+        make_cube_from_subbands = False
 
     if make_cube_from_subbands:
         image_set = combine_image_set_to_cube(
