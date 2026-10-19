@@ -101,10 +101,15 @@ self-calibration then absorbs the difference into the antenna gains. With
   the components of both share positions.
 - wsclean grids both polarisations, so expect up to twice the imaging time and
   temporary disk use.
-- `save_source_list` (and so `update_model_data_with_source_list`) cannot be
-  used with `pol: xx,yy`. Predicting `MODEL_DATA` from a source list expects a
-  single Stokes I list, and wsclean's own XX and YY models are what this mode
-  is for.
+- `save_source_list` cannot be used with `pol: xx,yy`. wsclean only saves a
+  source list when a single polarisation is imaged (Stokes I, or a pseudo
+  Stokes I such as XX alone), and refuses to start otherwise. The list would
+  not help in any case: it holds one `I` flux per component, so
+  `update_model_data_with_source_list` would replace the separate XX and YY
+  models with a single unpolarised one.
+- The subtract-cube flow reads the source list from the continuum imaging. If
+  it will be run, keep the final self-cal round at `pol: i` with
+  `save_source_list`, and use `pol: xx,yy` on the earlier rounds.
 - No other feed products are supported. `xx` alone, all four correlations, and
   circular feeds are refused when the strategy is verified.
 - The `polarisation` operation is unaffected. It always sets `pol` from the

@@ -197,7 +197,11 @@ class WSCleanOptions(BaseOptions):
         except NotSupportedError as e:
             raise ValueError(str(e)) from e
         if pols == ("XX", "YY") and self.save_source_list:
-            msg = "save_source_list is not supported with pol='xx,yy', as predicting from a source list expects a single Stokes I list"
+            msg = (
+                "save_source_list is not supported with pol='xx,yy'. wsclean only "
+                "saves a source list when a single polarisation is imaged (Stokes I, "
+                "or pseudo Stokes I: XX, YY, LL or RR)"
+            )
             raise ValueError(msg)
         return self
 
