@@ -33,6 +33,7 @@ from flint.naming import (
     get_potato_output_base_path,
     get_sbid_from_path,
     get_selfcal_ms_name,
+    pol_name_token,
     processed_ms_format,
     raw_ms_format,
     rename_linear_to_stokes,
@@ -322,6 +323,21 @@ def test_create_imaging_name_prefix():
 
     name = create_imaging_name_prefix(ms_path=ms.path, pol="i", project="pol")
     assert name == "SB63789.EMU_1743-51.project-pol.beam03.round4.i"
+
+
+def test_create_imaging_name_prefix_linear_feeds():
+    """The comma of a list of polarisations does not make it into the name, and
+    the name parses back"""
+    assert pol_name_token(pol="xx,yy") == "xxyy"
+    assert pol_name_token(pol="QU") == "qu"
+
+    ms_path = Path("/Jack/Sparrow/SB63789.EMU_1743-51.beam03.round4.ms")
+    name = create_imaging_name_prefix(ms_path=ms_path, pol="xx,yy")
+    assert name == "SB63789.EMU_1743-51.beam03.round4.xxyy"
+
+    components = processed_ms_format(in_name=name)
+    assert components is not None
+    assert components.pol == "xxyy"
 
 
 def test_get_cube_fits_from_paths():

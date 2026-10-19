@@ -28,7 +28,7 @@ from capn_crunch import (
     add_options_to_parser,
     create_options_from_parser,
 )
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from flint.exceptions import (
     AttemptRerunException,
@@ -36,7 +36,12 @@ from flint.exceptions import (
     NamingException,
     NotSupportedError,
 )
-from flint.imageset import ImageSet, combine_image_set_to_cube, merge_image_sets
+from flint.imageset import (
+    ImageSet,
+    combine_image_set_to_cube,
+    form_stokes_i,
+    merge_image_sets,
+)
 from flint.logging import logger
 from flint.ms import MS, standardise_ms_to_list_ms
 from flint.naming import create_imaging_name_prefix, pol_name_token
@@ -181,6 +186,20 @@ class WSCleanOptions(BaseOptions):
     """Save the MFS image, model and residual products (co-added and leakage-corrected the same way as the science image), rather than just the image"""
     flint_hold_dir: str | Path | None = None
     """Directory images are written to before being moved beside the MS. Takes precedence over ``temp_dir`` for this purpose"""
+    flint_keep_linear_images: bool = False
+    """Keep the XX and YY images that Stokes I is formed from when ``pol`` is ``xx,yy``, rather than deleting them"""
+
+    @model_validator(mode="after")
+    def check_pol(self) -> WSCleanOptions:
+        """The polarisations can be imaged, and no source list is asked of XX and YY imaging"""
+        try:
+            pols = _make_pols(pol_str=self.pol)
+        except NotSupportedError as e:
+            raise ValueError(str(e)) from e
+        if pols == ("XX", "YY") and self.save_source_list:
+            msg = "save_source_list is not supported with pol='xx,yy', as predicting from a source list expects a single Stokes I list"
+            raise ValueError(msg)
+        return self
 
 
 class WSCleanResult(BaseOptions):
@@ -734,22 +753,29 @@ def create_wsclean_cmd(
 
 
 def _make_pols(pol_str: str) -> tuple[str, ...] | None:
-    """Create a tuple of polarisations from a polarisation string
+    """The polarisations wsclean tags each image with, None when a single one is imaged
 
     Args:
-        pol_str (str): Polarisation string to convert
+        pol_str (str): The wsclean ``-pol`` value, e.g. ``i``, ``qu`` or ``xx,yy``
+
+    Raises:
+        NotSupportedError: ``pol_str`` names a feed product other than ``xx,yy``, or something unknown
 
     Returns:
-        tuple[str, ...] | None: Tuple of polarisations
+        tuple[str, ...] | None: The polarisations, in the order they are imaged
     """
-    if any(pol in pol_str.lower() for pol in ("x", "y", "r", "l")):
-        msg = f"Found instrumental polarisation in {pol_str=}. This is not supported."
+    tokens = re.findall(r"xx|xy|yx|yy|rr|rl|lr|ll|i|q|u|v", pol_str.lower())
+    if "".join(tokens) != pol_str.lower().replace(",", ""):
+        msg = f"Unrecognised polarisation in {pol_str=}"
         raise NotSupportedError(msg)
 
-    pols: tuple[str, ...] | None = None
-    if len(pol_str) > 1:
-        pols = tuple(p.upper() for p in "".join(pol_str.split(",")))
-    return pols
+    pols = tuple(token.upper() for token in tokens)
+    # Stokes I is formed from XX and YY, and no other feed product is handled
+    if any(len(pol) == 2 for pol in pols) and pols != ("XX", "YY"):
+        msg = f"Found instrumental polarisation in {pol_str=}. Only xx,yy is supported."
+        raise NotSupportedError(msg)
+
+    return pols if len(pols) > 1 else None
 
 
 def collect_wsclean_outputs(
@@ -797,6 +823,13 @@ def collect_wsclean_outputs(
         images[output.image_type].append(flint_path)
 
     image_set = ImageSet(prefix=prefix, **images)
+
+    # The XX and YY channels must become Stokes I before cubing, else they would
+    # share one cube
+    if pols == ("XX", "YY"):
+        image_set = form_stokes_i(
+            image_set=image_set, keep_linear=options.flint_keep_linear_images
+        )
 
     if options.save_source_list:
         logger.info("Attaching the wsclean clean components SEDs")

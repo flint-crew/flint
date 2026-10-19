@@ -8,18 +8,22 @@ from itertools import product
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
+from astropy.io import fits
 from pydantic import ValidationError
 
 from flint.exceptions import (
     AttemptRerunException,
     CleanDivergenceError,
     NamingException,
+    NotSupportedError,
 )
 from flint.imager.wsclean import (
     WSCleanOptions,
     WSCleanOutput,
     WSCleanResult,
+    _make_pols,
     _resolve_wsclean_key_value_to_cli_str,
     _wsclean_output_callback,
     collect_wsclean_outputs,
@@ -738,3 +742,122 @@ def test_attemptrerun_wsclean_output_callback():
     for b in bad:
         with pytest.raises(AttemptRerunException):
             _wsclean_output_callback(line=b)
+
+
+@pytest.mark.parametrize(
+    "pol, pols",
+    [
+        ("i", None),
+        ("v", None),
+        ("qu", ("Q", "U")),
+        ("q,u", ("Q", "U")),
+        ("iquv", ("I", "Q", "U", "V")),
+        ("xx,yy", ("XX", "YY")),
+        ("XX,YY", ("XX", "YY")),
+    ],
+)
+def test_make_pols(pol: str, pols: tuple[str, ...] | None):
+    assert _make_pols(pol_str=pol) == pols
+
+
+@pytest.mark.parametrize("pol", ["xx", "yy,xx", "xx,xy,yx,yy", "rr,ll", "qux", "ix"])
+def test_make_pols_unsupported(pol: str):
+    """Only XX and YY together are taken of the feed products, as Stokes I is formed from them"""
+    with pytest.raises(NotSupportedError):
+        _make_pols(pol_str=pol)
+    with pytest.raises(ValidationError):
+        WSCleanOptions(pol=pol)
+
+
+def test_wsclean_options_xx_yy_refuses_source_list():
+    assert WSCleanOptions(pol="xx,yy").pol == "xx,yy"
+    with pytest.raises(ValidationError):
+        WSCleanOptions(pol="xx,yy", save_source_list=True)
+    with pytest.raises(ValidationError):
+        WSCleanOptions(save_source_list=True).with_options(pol="xx,yy")
+
+
+def _set_feed(path: Path, scale: float, stokes: float) -> None:
+    """Scale an image's pixels, and set the polarisation its STOKES axis names"""
+    with fits.open(path, mode="update") as open_fits:
+        open_fits[0].data *= scale
+        open_fits[0].header["CRVAL4"] = stokes
+
+
+def _write_xx_yy_images(prefix: Path, channels_out: int) -> None:
+    """XX and YY images where YY is three times XX, so I is twice XX"""
+    _write_wsclean_images(prefix=prefix, channels_out=channels_out, pols=("XX", "YY"))
+    for output in find_wsclean_outputs(prefix=prefix):
+        if output.pol == "XX":
+            _set_feed(path=output.path, scale=1.0, stokes=-5.0)
+        else:
+            _set_feed(path=output.path, scale=3.0, stokes=-8.0)
+
+
+def test_collect_wsclean_outputs_xx_yy(tmp_path: Path):
+    """XX and YY become Stokes I named just as a Stokes I run would be, and the
+    channel cube holds only Stokes I"""
+    i_dir, linear_dir = tmp_path / "i", tmp_path / "linear"
+    i_dir.mkdir()
+    linear_dir.mkdir()
+    base = "SB56289.RACS_1041+18.beam15.round1"
+
+    _write_wsclean_images(prefix=i_dir / f"{base}.i", channels_out=3, pols=None)
+    i_set = collect_wsclean_outputs(
+        wsclean_result=_wsclean_result_for(
+            prefix=i_dir / f"{base}.i", channels_out=3, pol="i"
+        ),
+        prefix=str(i_dir / f"{base}.i"),
+    )
+
+    linear_prefix = linear_dir / f"{base}.xxyy"
+    _write_xx_yy_images(prefix=linear_prefix, channels_out=3)
+    linear_set = collect_wsclean_outputs(
+        wsclean_result=_wsclean_result_for(
+            prefix=linear_prefix, channels_out=3, pol="xx,yy"
+        ),
+        prefix=str(linear_prefix),
+    )
+
+    assert linear_set.prefix == str(linear_dir / f"{base}.i")
+    for mode in ("image", "residual"):
+        assert [path.name for path in getattr(linear_set, mode)] == [
+            path.name for path in getattr(i_set, mode)
+        ]
+
+    cube = linear_set.image[0]
+    with fits.open(cube) as open_fits:
+        header, data = open_fits[0].header, open_fits[0].data
+    assert data.shape[0] == 3
+    stokes_axis = next(
+        axis
+        for axis in range(1, header["NAXIS"] + 1)
+        if header[f"CTYPE{axis}"] == "STOKES"
+    )
+    assert header[f"CRVAL{stokes_axis}"] == 1.0
+    np.testing.assert_allclose(data, 2 * fits.getdata(i_set.image[0]))
+
+    mfs = linear_set.image[1]
+    assert fits.getheader(mfs)["CRVAL4"] == 1.0
+    assert not list(linear_dir.glob("*.xx.*")) and not list(linear_dir.glob("*.yy.*"))
+
+
+def test_collect_wsclean_outputs_keeps_linear_images(tmp_path: Path):
+    prefix = tmp_path / "SB56289.RACS_1041+18.beam15.round1.xxyy"
+    _write_xx_yy_images(prefix=prefix, channels_out=2)
+    image_set = collect_wsclean_outputs(
+        wsclean_result=_wsclean_result_for(
+            prefix=prefix, channels_out=2, pol="xx,yy", flint_keep_linear_images=True
+        ),
+        prefix=str(prefix),
+        make_cube_from_subbands=False,
+    )
+
+    base = "SB56289.RACS_1041+18.beam15.round1"
+    assert [path.name for path in image_set.image] == [
+        f"{base}.i.ch0000-0001.image.fits",
+        f"{base}.i.ch0001-0002.image.fits",
+        f"{base}.i.MFS.image.fits",
+    ]
+    for pol in ("xx", "yy"):
+        assert (tmp_path / f"{base}.{pol}.MFS.image.fits").exists()

@@ -67,6 +67,49 @@ As a general rule, the following hierarchy is used to set a value for a given op
 
 Note that not all options are available in all of the above locations.
 
+### `wsclean`
+
+#### Imaging XX and YY
+
+Setting `pol: xx,yy` has wsclean deconvolve the XX and YY polarisations
+separately. flint then forms Stokes I = (XX + YY) / 2 from them itself:
+
+```yaml
+selfcal:
+  3:
+    wsclean:
+      pol: xx,yy
+      join_polarizations: true
+    gaincal:
+      calmode: ap
+```
+
+With `pol: i` wsclean predicts the same Stokes I model into both the XX and
+YY correlations of `MODEL_DATA`. That is wrong for bright sources away from
+the beam centre, where the X and Y primary beams differ. Amplitude
+self-calibration then absorbs the difference into the antenna gains. With
+`pol: xx,yy` each correlation is predicted from its own model.
+
+- The Stokes I images are named exactly as a `pol: i` run names them, so every
+  later stage (cubing, convolution, linmos, source finding) is unchanged. The
+  XX and YY images are deleted once Stokes I is formed. Set
+  `flint_keep_linear_images: true` to keep them, for example to inspect the
+  beam's ellipticity.
+- `join_polarizations: true` is recommended. Without it XX and YY are cleaned
+  independently, each with √2 more noise than Stokes I, so each gets a
+  shallower model with its own mask. With it peaks are found in XX² + YY², and
+  the components of both share positions.
+- wsclean grids both polarisations, so expect up to twice the imaging time and
+  temporary disk use.
+- `save_source_list` (and so `update_model_data_with_source_list`) cannot be
+  used with `pol: xx,yy`. Predicting `MODEL_DATA` from a source list expects a
+  single Stokes I list, and wsclean's own XX and YY models are what this mode
+  is for.
+- No other feed products are supported. `xx` alone, all four correlations, and
+  circular feeds are refused when the strategy is verified.
+- The `polarisation` operation is unaffected. It always sets `pol` from the
+  polarisation being imaged.
+
 ### `fitscube`
 
 In the self-cal flows (`continuum_pipeline`, `racs_all_continuum_selfcal`),

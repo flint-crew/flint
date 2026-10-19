@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+from astropy.io import fits
 from capn_crunch import options_to_dict
 
 from flint.cube import combine_images_to_cube
@@ -13,9 +15,11 @@ from flint.logging import logger
 from flint.naming import (
     ProcessedNameComponents,
     extract_components_from_name,
+    pol_name_token,
     split_images,
 )
 from flint.options import BaseOptions, FitsCubeOptions
+from flint.utils import remove_files_folders
 
 
 class ImageSet(BaseOptions):
@@ -230,3 +234,102 @@ def combine_image_set_to_cube(
         ]
 
     return ImageSet(**image_set_dict)
+
+
+def _replace_name_field(path: Path, old: str, new: str) -> Path:
+    """Swap the dot separated field ``old`` in the name of ``path`` for ``new``"""
+    fields = path.name.split(".")
+    fields[fields.index(old)] = new
+    return path.with_name(".".join(fields))
+
+
+def write_stokes_i(xx_path: Path, yy_path: Path, i_path: Path) -> Path:
+    """Write the Stokes I image (XX + YY) / 2 of a pair of XX and YY images.
+
+    Raises:
+        ValueError: The XX and YY images have different restoring beams
+
+    Returns:
+        Path: The Stokes I image
+    """
+    xx_header = fits.getheader(xx_path)
+    yy_header = fits.getheader(yy_path)
+    for key in ("BMAJ", "BMIN", "BPA"):
+        if key not in xx_header or key not in yy_header:
+            continue
+        if not np.isclose(xx_header[key], yy_header[key]):
+            msg = (
+                f"{xx_path.name} and {yy_path.name} have different {key}, "
+                f"{xx_header[key]} and {yy_header[key]}"
+            )
+            raise ValueError(msg)
+
+    header = xx_header.copy()
+    for axis in range(1, header["NAXIS"] + 1):
+        if header.get(f"CTYPE{axis}") == "STOKES":
+            header[f"CRVAL{axis}"] = 1.0
+    header["HISTORY"] = (
+        f"Stokes I is (XX + YY) / 2 of {xx_path.name} and {yy_path.name}"
+    )
+
+    data = (fits.getdata(xx_path) + fits.getdata(yy_path)) / 2
+    fits.writeto(i_path, data=data, header=header, overwrite=True)
+
+    return i_path
+
+
+def form_stokes_i(image_set: ImageSet, keep_linear: bool = False) -> ImageSet:
+    """Replace the XX and YY images of an image set by Stokes I, I = (XX + YY) / 2.
+
+    Each XX image is paired with the YY image whose name differs only in its
+    ``xx`` field, and the Stokes I image is named with ``i`` there instead. The
+    ``xxyy`` field of the prefix likewise becomes ``i``. The PSF, shared by
+    every polarisation, and the source list are carried over unchanged.
+
+    Args:
+        image_set (ImageSet): The XX and YY images, named by flint
+        keep_linear (bool, optional): Keep the XX and YY images rather than deleting them. Defaults to False.
+
+    Raises:
+        NamingException: The images are not all in XX and YY pairs
+
+    Returns:
+        ImageSet: The Stokes I images
+    """
+    stokes_i: dict[str, list[Path]] = {}
+    linear_images: list[Path] = []
+    for mode in ("image", "residual", "model", "dirty"):
+        images = getattr(image_set, mode)
+        if not images:
+            continue
+
+        pairs = [
+            (image, _replace_name_field(path=image, old="xx", new="yy"))
+            for image in images
+            if "xx" in image.name.split(".")
+        ]
+        paired = {path for pair in pairs for path in pair}
+        if paired != set(images):
+            unpaired = sorted(str(path) for path in paired ^ set(images))
+            msg = f"The {mode} images are not all XX and YY pairs: {unpaired}"
+            raise NamingException(msg)
+
+        logger.info(f"Forming {len(pairs)} Stokes I {mode} images from XX and YY")
+        stokes_i[mode] = [
+            write_stokes_i(
+                xx_path=xx_path,
+                yy_path=yy_path,
+                i_path=_replace_name_field(path=xx_path, old="xx", new="i"),
+            )
+            for xx_path, yy_path in pairs
+        ]
+        linear_images += images
+
+    if not keep_linear:
+        logger.info(f"Removing {len(linear_images)} XX and YY images")
+        remove_files_folders(*linear_images)
+
+    prefix = _replace_name_field(
+        path=Path(image_set.prefix), old=pol_name_token(pol="xx,yy"), new="i"
+    )
+    return image_set.with_options(prefix=str(prefix), **stokes_i)

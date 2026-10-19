@@ -156,6 +156,24 @@ def test_copy_and_timestamp(tmpdir):
     assert filecmp.cmp(example, copy_path)
 
 
+@pytest.mark.parametrize(
+    "wsclean_options",
+    [{"pol": "xx"}, {"pol": "xx,xy,yx,yy"}, {"pol": "xx,yy", "save_source_list": True}],
+)
+def test_verify_configuration_unsupported_pol(package_strategy, wsclean_options):
+    """Strategies asking wsclean for products flint can not handle are refused up front"""
+    package_strategy["selfcal"][1]["wsclean"].update(wsclean_options)
+    with pytest.raises(ValueError):
+        verify_configuration(input_strategy=package_strategy)
+
+
+def test_verify_configuration_xx_yy(package_strategy):
+    package_strategy["selfcal"][1]["wsclean"].update(
+        {"pol": "xx,yy", "join_polarizations": True}
+    )
+    assert verify_configuration(input_strategy=package_strategy)
+
+
 def test_verify_options_with_class_operations(package_strategy_operations):
     """Check whether the stokes-v and other operations around the
     verification and extraction of properties"""

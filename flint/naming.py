@@ -272,8 +272,8 @@ def create_image_cube_name(
 
 
 def pol_name_token(pol: str) -> str:
-    """The field naming the polarisations imaged, as it appears in file names"""
-    return pol.lower()
+    """The field naming the polarisations imaged, as it appears in file names, e.g. ``xx,yy`` is ``xxyy``"""
+    return pol.lower().replace(",", "")
 
 
 def create_imaging_name_prefix(

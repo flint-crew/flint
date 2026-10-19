@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path, PosixPath
 
+import numpy as np
 import pytest
 from astropy.io import fits
 
@@ -16,6 +17,7 @@ from flint.imager.wsclean import (
 from flint.imageset import (
     ImageSet,
     combine_image_set_to_cube,
+    form_stokes_i,
     merge_image_sets,
     split_and_get_image_set,
     split_image_set,
@@ -320,3 +322,79 @@ def test_split_and_get_image_set_by_stokes():
     assert len(split_list) == 4
     assert isinstance(split_list[0], Path)
     assert split_list[0].name.endswith("I-image.fits")
+
+
+def _write_linear_pair(
+    directory: Path, suffix: str, yy_bmaj: float = 0.01
+) -> tuple[Path, Path]:
+    base = directory / "SB56289.RACS_1041+18.beam15.round1"
+    xx = _write_channel_image(path=Path(f"{base}.xx.{suffix}"), channel=0, shape=(8, 8))
+    yy = _write_channel_image(
+        path=Path(f"{base}.yy.{suffix}"), channel=0, shape=(8, 8), bmaj=yy_bmaj
+    )
+    return xx, yy
+
+
+def test_form_stokes_i(tmp_path: Path):
+    """I is the mean of XX and YY, and the PSF and source list are carried over"""
+    xx, yy = _write_linear_pair(directory=tmp_path, suffix="MFS.image.fits")
+    xx_res, yy_res = _write_linear_pair(directory=tmp_path, suffix="MFS.residual.fits")
+    with fits.open(yy, mode="update") as open_fits:
+        open_fits[0].data *= 3
+    expected = 2 * fits.getdata(xx)
+    psf = tmp_path / "SB56289.RACS_1041+18.beam15.round1.xxyy.MFS.psf.fits"
+    source_list = tmp_path / "sources.txt"
+
+    image_set = form_stokes_i(
+        image_set=ImageSet(
+            prefix=str(tmp_path / "SB56289.RACS_1041+18.beam15.round1.xxyy"),
+            image=[xx, yy],
+            residual=[xx_res, yy_res],
+            psf=[psf],
+            source_list=source_list,
+        )
+    )
+
+    stokes_i = tmp_path / "SB56289.RACS_1041+18.beam15.round1.i.MFS.image.fits"
+    assert image_set.prefix == str(tmp_path / "SB56289.RACS_1041+18.beam15.round1.i")
+    assert image_set.image == [stokes_i]
+    assert image_set.residual == [
+        tmp_path / "SB56289.RACS_1041+18.beam15.round1.i.MFS.residual.fits"
+    ]
+    assert image_set.psf == [psf]
+    assert image_set.source_list == source_list
+
+    np.testing.assert_allclose(fits.getdata(stokes_i), expected)
+    assert "XX + YY" in str(fits.getheader(stokes_i)["HISTORY"])
+    assert not any(path.exists() for path in (xx, yy, xx_res, yy_res))
+
+
+def test_form_stokes_i_keep_linear(tmp_path: Path):
+    xx, yy = _write_linear_pair(directory=tmp_path, suffix="MFS.image.fits")
+    form_stokes_i(
+        image_set=ImageSet(prefix=str(tmp_path / "x.xxyy"), image=[xx, yy]),
+        keep_linear=True,
+    )
+    assert xx.exists() and yy.exists()
+
+
+def test_form_stokes_i_needs_pairs(tmp_path: Path):
+    xx, _ = _write_linear_pair(directory=tmp_path, suffix="MFS.image.fits")
+    xx_channel, _ = _write_linear_pair(
+        directory=tmp_path, suffix="ch0000-0001.image.fits"
+    )
+    with pytest.raises(NamingException):
+        form_stokes_i(
+            image_set=ImageSet(prefix=str(tmp_path / "x.xxyy"), image=[xx, xx_channel])
+        )
+
+
+def test_form_stokes_i_needs_one_beam(tmp_path: Path):
+    """XX and YY share a PSF, so differing restoring beams mean something is wrong"""
+    xx, yy = _write_linear_pair(
+        directory=tmp_path, suffix="MFS.image.fits", yy_bmaj=0.02
+    )
+    with pytest.raises(ValueError, match="BMAJ"):
+        form_stokes_i(
+            image_set=ImageSet(prefix=str(tmp_path / "x.xxyy"), image=[xx, yy])
+        )
