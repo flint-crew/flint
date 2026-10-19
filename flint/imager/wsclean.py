@@ -1117,6 +1117,7 @@ def create_wsclean_cmd(
     cmds += [f"-name {name_argument_path!s}"]
 
     assert isinstance(ms_list, list), f"Expected MSs, got {type(ms_list)}"
+    # TODO: Use MS.h5parm to apply facet solutions (-apply-facet-solutions)
     cmds += [f"{ms.path!s}" for ms in ms_list]
     bind_dir_paths += [ms.path.parent for ms in ms_list]
 

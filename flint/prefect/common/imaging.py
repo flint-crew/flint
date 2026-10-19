@@ -193,7 +193,7 @@ def task_flag_ms_aoflagger(ms: FlagMS, container: Path | None) -> FlagMS:
 
     # TODO: Flag with DP3 (dp3_flag) when no aoflagger container is given
     if container is None:
-        logger.warning("AOFlagger {container=}, so skipping the flagging")
+        logger.warning(f"AOFlagger {container=}, so skipping the flagging")
         return ms
 
     extracted_ms = flag_ms_aoflagger(ms=extracted_ms, container=container)

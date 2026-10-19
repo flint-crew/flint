@@ -241,7 +241,16 @@ def dp3_flag(
     aoflagger_options: DP3AOFlaggerOptions | None = None,
     preflagger_options: DP3PreFlaggerOptions | None = None,
 ) -> MS:
-    """Flag a measurement set with aoflagger, after the preflagger if given."""
+    """Flag a measurement set with aoflagger, after the preflagger if given.
+
+    Args:
+        ms (MS | Path): The measurement set, flagging its nominated column
+        aoflagger_options (DP3AOFlaggerOptions | None, optional): Options for aoflagger. Defaults to the packaged ASKAP strategy.
+        preflagger_options (DP3PreFlaggerOptions | None, optional): If set, run the preflagger first. Defaults to None.
+
+    Returns:
+        MS: The flagged measurement set
+    """
     ms = MS.cast(ms)
     aoflagger_options = aoflagger_options or DP3AOFlaggerOptions()
     if aoflagger_options.strategy is None:
@@ -266,8 +275,20 @@ def dp3_flag(
 
 def dp3_ddecal(
     ms: MS | Path, options: DP3DDECalOptions | None = None, h5parm: Path | None = None
-) -> Path:
-    """Solve for gains against the model column with ddecal, returning the h5parm."""
+) -> MS:
+    """Solve for gains against the model column with ddecal.
+
+    Args:
+        ms (MS | Path): The measurement set, with its model column set
+        options (DP3DDECalOptions | None, optional): Options for ddecal. Defaults to None.
+        h5parm (Path | None, optional): Where to write the solutions. Defaults to the MS path with a ``.ddecal.h5`` suffix.
+
+    Raises:
+        ValueError: Raised if the model column is not set or missing
+
+    Returns:
+        MS: The measurement set with ``h5parm`` set to the solutions
+    """
     ms = MS.cast(ms)
     h5parm = h5parm or ms.path.with_suffix(".ddecal.h5")
 
@@ -280,7 +301,7 @@ def dp3_ddecal(
         }
     )
 
-    return h5parm
+    return ms.with_options(h5parm=h5parm)
 
 
 def dp3_gaincal(
@@ -288,10 +309,20 @@ def dp3_gaincal(
     options: DP3GainCalOptions | None = None,
     h5parm: Path | None = None,
     output_column: str | None = None,
-) -> Path:
-    """Solve for gains against the model column with gaincal, returning the h5parm.
+) -> MS:
+    """Solve for gains against the model column with gaincal.
 
-    The solutions are also applied in the same pass if ``output_column`` is set.
+    Args:
+        ms (MS | Path): The measurement set, with its model column set
+        options (DP3GainCalOptions | None, optional): Options for gaincal. Defaults to None.
+        h5parm (Path | None, optional): Where to write the solutions. Defaults to the MS path with a ``.gaincal.h5`` suffix.
+        output_column (str | None, optional): If set, also apply the solutions in the same pass, writing to this column. Defaults to None.
+
+    Raises:
+        ValueError: Raised if the model column is not set or missing
+
+    Returns:
+        MS: The measurement set with ``h5parm`` set, and ``column`` set to ``output_column`` if given
     """
     ms = MS.cast(ms)
     h5parm = h5parm or ms.path.with_suffix(".gaincal.h5")
@@ -306,18 +337,35 @@ def dp3_gaincal(
     }
     run_dp3(parset)
 
-    return h5parm
+    return ms.with_options(h5parm=h5parm, column=output_column or ms.column)
 
 
 def dp3_applycal(
     ms: MS | Path,
-    h5parm: Path,
+    h5parm: Path | None = None,
     options: DP3ApplyCalOptions | None = None,
     output_column: str = "CORRECTED_DATA",
 ) -> MS:
-    """Apply the solutions in an h5parm, writing the corrected data to ``output_column``."""
+    """Apply the solutions in an h5parm, writing the corrected data to ``output_column``.
+
+    Args:
+        ms (MS | Path): The measurement set to correct
+        h5parm (Path | None, optional): The solutions to apply. Defaults to ``ms.h5parm``.
+        options (DP3ApplyCalOptions | None, optional): Options for applycal. Defaults to None.
+        output_column (str, optional): The column to write the corrected data to. Defaults to "CORRECTED_DATA".
+
+    Raises:
+        ValueError: Raised if no h5parm is given or set on the measurement set
+        FileNotFoundError: Raised if the h5parm does not exist
+
+    Returns:
+        MS: The measurement set with ``column`` set to ``output_column`` and ``h5parm`` set
+    """
     ms = MS.cast(ms)
     options = options or DP3ApplyCalOptions()
+    h5parm = h5parm or ms.h5parm
+    if h5parm is None:
+        raise ValueError(f"No h5parm given or set for {ms.path}")
     if not h5parm.exists():
         raise FileNotFoundError(f"Solutions {h5parm} not found")
     check_columns(ms, ms.column)
@@ -338,7 +386,7 @@ def dp3_applycal(
         parset[f"applycal.{name}.correction"] = soltab
     run_dp3(parset)
 
-    return ms.with_options(column=output_column)
+    return ms.with_options(column=output_column, h5parm=h5parm)
 
 
 def dp3_solve_apply(
@@ -347,17 +395,27 @@ def dp3_solve_apply(
     h5parm: Path | None = None,
     output_column: str = "CORRECTED_DATA",
 ) -> MS:
-    """Solve against the model column and apply the solutions to ``output_column``."""
+    """Solve against the model column and apply the solutions to ``output_column``.
+
+    Args:
+        ms (MS | Path): The measurement set, with its model column set
+        options (DP3DDECalOptions | DP3GainCalOptions | None, optional): Solve with ddecal or gaincal depending on the type. Defaults to ddecal.
+        h5parm (Path | None, optional): Where to write the solutions. Defaults to a path next to the MS.
+        output_column (str, optional): The column to write the corrected data to. Defaults to "CORRECTED_DATA".
+
+    Returns:
+        MS: The measurement set with ``column`` set to ``output_column`` and ``h5parm`` set
+    """
     ms = MS.cast(ms)
     options = options or DP3DDECalOptions()
 
     if isinstance(options, DP3GainCalOptions):
-        dp3_gaincal(ms, options, h5parm=h5parm, output_column=output_column)
-        return ms.with_options(column=output_column)
+        return dp3_gaincal(ms, options, h5parm=h5parm, output_column=output_column)
 
     # DDECal can not reliably hand its solutions to applycal in the same pass
-    h5parm = dp3_ddecal(ms, options, h5parm=h5parm)
-    return dp3_applycal(ms, h5parm, output_column=output_column)
+    return dp3_applycal(
+        dp3_ddecal(ms, options, h5parm=h5parm), output_column=output_column
+    )
 
 
 def get_parser() -> ArgumentParser:

@@ -111,6 +111,11 @@ def test_applycal_parset(monkeypatch, tmp_path):
     assert "applycal.correction" not in parset
 
 
+def test_applycal_needs_h5parm():
+    with pytest.raises(ValueError, match="No h5parm"):
+        dp3_applycal(MS(path=Path("some.ms")))
+
+
 def test_calibration_needs_model_column():
     with pytest.raises(ValueError, match="No model column"):
         dp3_ddecal(MS(path=Path("some.ms")))
@@ -184,19 +189,21 @@ def test_dp3_flag(corrupted_ms):
 
 
 def test_dp3_ddecal_and_applycal(corrupted_ms):
-    h5parm = dp3_ddecal(corrupted_ms, DP3DDECalOptions())
-    assert h5parm == corrupted_ms.path.with_suffix(".ddecal.h5")
-    assert h5parm.exists()
+    solved_ms = dp3_ddecal(corrupted_ms, DP3DDECalOptions())
+    assert solved_ms.h5parm == corrupted_ms.path.with_suffix(".ddecal.h5")
+    assert solved_ms.h5parm.exists()
 
-    ms = dp3_applycal(corrupted_ms, h5parm)
+    ms = dp3_applycal(solved_ms)
     assert ms.column == "CORRECTED_DATA"
+    assert ms.h5parm == solved_ms.h5parm
     assert_corrected_matches_model(ms)
 
 
 def test_dp3_gaincal(corrupted_ms):
-    h5parm = dp3_gaincal(corrupted_ms, DP3GainCalOptions())
-    assert h5parm == corrupted_ms.path.with_suffix(".gaincal.h5")
-    assert h5parm.exists()
+    ms = dp3_gaincal(corrupted_ms, DP3GainCalOptions())
+    assert ms.h5parm == corrupted_ms.path.with_suffix(".gaincal.h5")
+    assert ms.h5parm.exists()
+    assert ms.column == corrupted_ms.column
 
     with table(str(corrupted_ms.path), ack=False) as tab:
         assert "CORRECTED_DATA" not in tab.colnames()
