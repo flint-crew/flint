@@ -371,16 +371,8 @@ def test_form_stokes_i(tmp_path: Path):
 
     np.testing.assert_allclose(fits.getdata(stokes_i), expected)
     assert "XX + YY" in str(fits.getheader(stokes_i)["HISTORY"])
-    assert not any(path.exists() for path in (xx, yy, xx_res, yy_res))
-
-
-def test_form_stokes_i_keep_linear(tmp_path: Path):
-    xx, yy = _write_linear_pair(directory=tmp_path, suffix="MFS.image.fits")
-    form_stokes_i(
-        image_set=ImageSet(prefix=str(tmp_path / "x.xxyy"), image=[xx, yy]),
-        keep_linear=True,
-    )
-    assert xx.exists() and yy.exists()
+    # Deleting them is the caller's choice
+    assert all(path.exists() for path in (xx, yy, xx_res, yy_res))
 
 
 def test_form_stokes_i_needs_pairs(tmp_path: Path):

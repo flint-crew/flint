@@ -20,7 +20,6 @@ from flint.naming import (
     split_images,
 )
 from flint.options import BaseOptions, FitsCubeOptions
-from flint.utils import remove_files_folders
 
 
 class ImageSet(BaseOptions):
@@ -280,18 +279,18 @@ def write_stokes_i(xx_path: Path, yy_path: Path, i_path: Path) -> Path:
     return i_path
 
 
-def form_stokes_i(image_set: ImageSet, keep_linear: bool = False) -> ImageSet:
+def form_stokes_i(image_set: ImageSet) -> ImageSet:
     """Replace the XX and YY images of an image set by Stokes I, I = (XX + YY) / 2.
 
     Each XX image is paired with the YY image whose name differs only in its
     ``xx`` field, and the Stokes I image is named with ``i`` there instead. The
     ``xxyy`` field of the prefix likewise becomes ``i``, as it does in the name of
     the PSF, which XX and YY share and so is the Stokes I PSF too. The source list
-    is carried over unchanged.
+    is carried over unchanged. The XX and YY images are left in place, for the
+    caller to keep or delete.
 
     Args:
         image_set (ImageSet): The XX and YY images, named by flint
-        keep_linear (bool, optional): Keep the XX and YY images rather than deleting them. Defaults to False.
 
     Raises:
         NamingException: The images are not all in XX and YY pairs
@@ -300,7 +299,6 @@ def form_stokes_i(image_set: ImageSet, keep_linear: bool = False) -> ImageSet:
         ImageSet: The Stokes I images
     """
     stokes_i: dict[str, list[Path]] = {}
-    linear_images: list[Path] = []
     for mode in ("image", "residual", "model", "dirty"):
         images = getattr(image_set, mode)
         if not images:
@@ -326,11 +324,6 @@ def form_stokes_i(image_set: ImageSet, keep_linear: bool = False) -> ImageSet:
             )
             for xx_path, yy_path in pairs
         ]
-        linear_images += images
-
-    if not keep_linear:
-        logger.info(f"Removing {len(linear_images)} XX and YY images")
-        remove_files_folders(*linear_images)
 
     linear_token = pol_name_token(pol="xx,yy")
     if image_set.psf:

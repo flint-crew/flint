@@ -918,6 +918,7 @@ def collect_wsclean_outputs(
     ]
     pol_token = pol_name_token(pol=options.pol)
     images: dict[str, list[Path]] = {image_type: [] for image_type in image_types}
+    renamed: dict[WSCleanOutput, Path] = {}
     for output in collected:
         flint_path = flint_output_path(
             output=output, prefix=prefix, pol_token=pol_token
@@ -925,23 +926,22 @@ def collect_wsclean_outputs(
         logger.info(f"Renaming {output.path} to {flint_path}")
         output.path.rename(flint_path)
         images[output.image_type].append(flint_path)
+        renamed[output] = flint_path
 
     image_set = ImageSet(prefix=prefix, **images)
 
     # The XX and YY channels must become Stokes I before cubing, else they would
     # share one cube
     if pols == ("XX", "YY"):
-        image_set = form_stokes_i(
-            image_set=image_set, keep_linear=options.flint_keep_linear_images
-        )
+        image_set = form_stokes_i(image_set=image_set)
         if not options.flint_keep_linear_images:
-            uncollected = [
-                output.path
+            linear = [
+                renamed.get(output, output.path)
                 for output in outputs
-                if output.pol is not None and output not in collected
+                if output.pol is not None
             ]
-            logger.info(f"Removing {len(uncollected)} XX and YY images not collected")
-            remove_files_folders(*uncollected)
+            logger.info(f"Removing {len(linear)} XX and YY images")
+            remove_files_folders(*linear)
 
     if options.save_source_list:
         logger.info("Attaching the wsclean clean components SEDs")
