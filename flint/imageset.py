@@ -285,8 +285,9 @@ def form_stokes_i(image_set: ImageSet, keep_linear: bool = False) -> ImageSet:
 
     Each XX image is paired with the YY image whose name differs only in its
     ``xx`` field, and the Stokes I image is named with ``i`` there instead. The
-    ``xxyy`` field of the prefix likewise becomes ``i``. The PSF, shared by
-    every polarisation, and the source list are carried over unchanged.
+    ``xxyy`` field of the prefix likewise becomes ``i``, as it does in the name of
+    the PSF, which XX and YY share and so is the Stokes I PSF too. The source list
+    is carried over unchanged.
 
     Args:
         image_set (ImageSet): The XX and YY images, named by flint
@@ -331,7 +332,12 @@ def form_stokes_i(image_set: ImageSet, keep_linear: bool = False) -> ImageSet:
         logger.info(f"Removing {len(linear_images)} XX and YY images")
         remove_files_folders(*linear_images)
 
-    prefix = replace_name_field(
-        path=Path(image_set.prefix), old=pol_name_token(pol="xx,yy"), new="i"
-    )
+    linear_token = pol_name_token(pol="xx,yy")
+    if image_set.psf:
+        stokes_i["psf"] = [
+            psf.rename(replace_name_field(path=psf, old=linear_token, new="i"))
+            for psf in image_set.psf
+        ]
+
+    prefix = replace_name_field(path=Path(image_set.prefix), old=linear_token, new="i")
     return image_set.with_options(prefix=str(prefix), **stokes_i)

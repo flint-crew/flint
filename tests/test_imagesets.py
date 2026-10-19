@@ -336,13 +336,15 @@ def _write_linear_pair(
 
 
 def test_form_stokes_i(tmp_path: Path):
-    """I is the mean of XX and YY, and the PSF and source list are carried over"""
+    """I is the mean of XX and YY, the shared PSF is renamed to Stokes I, and the
+    source list is carried over"""
     xx, yy = _write_linear_pair(directory=tmp_path, suffix="MFS.image.fits")
     xx_res, yy_res = _write_linear_pair(directory=tmp_path, suffix="MFS.residual.fits")
     with fits.open(yy, mode="update") as open_fits:
         open_fits[0].data *= 3
     expected = 2 * fits.getdata(xx)
     psf = tmp_path / "SB56289.RACS_1041+18.beam15.round1.xxyy.MFS.psf.fits"
+    psf.write_text("psf")
     source_list = tmp_path / "sources.txt"
 
     image_set = form_stokes_i(
@@ -361,7 +363,10 @@ def test_form_stokes_i(tmp_path: Path):
     assert image_set.residual == [
         tmp_path / "SB56289.RACS_1041+18.beam15.round1.i.MFS.residual.fits"
     ]
-    assert image_set.psf == [psf]
+    stokes_i_psf = tmp_path / "SB56289.RACS_1041+18.beam15.round1.i.MFS.psf.fits"
+    assert image_set.psf == [stokes_i_psf]
+    assert stokes_i_psf.read_text() == "psf"
+    assert not psf.exists()
     assert image_set.source_list == source_list
 
     np.testing.assert_allclose(fits.getdata(stokes_i), expected)
