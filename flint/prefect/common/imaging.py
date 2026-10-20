@@ -39,19 +39,20 @@ from flint.convol import (
     convolve_plane_to_beam,
     get_common_beam,
 )
+from flint.cube import combine_images_to_cube, split_cube_into_planes
 from flint.flagging import flag_ms_aoflagger
 from flint.imager.wsclean import (
-    ImageSet,
     WSCleanOptions,
     WSCleanResult,
-    combine_images_to_cube,
     image_set_from_result,
-    merge_image_sets,
     merge_image_sets_from_results,
-    split_and_get_image_set,
-    split_cube_into_planes,
-    transpose_and_sort_channel_images,
     wsclean_imager,
+)
+from flint.imageset import (
+    ImageSet,
+    merge_image_sets,
+    split_and_get_image_set,
+    transpose_and_sort_channel_images,
 )
 from flint.logging import logger
 from flint.ms import (

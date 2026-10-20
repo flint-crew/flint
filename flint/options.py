@@ -808,7 +808,6 @@ class MS(BaseOptions):
 
     @classmethod
     def cast(cls, ms: MS | Path | HasMS) -> MS:
-
         if isinstance(ms, MS):
             pass
         elif isinstance(ms, Path):

@@ -68,6 +68,54 @@ As a general rule, the following hierarchy is used to set a value for a given op
 
 Note that not all options are available in all of the above locations.
 
+### `wsclean`
+
+#### Imaging XX and YY
+
+Setting `pol: xx,yy` has wsclean deconvolve the XX and YY polarisations
+separately. flint then forms Stokes I = (XX + YY) / 2 from them itself:
+
+```yaml
+selfcal:
+  3:
+    wsclean:
+      pol: xx,yy
+      join_polarizations: true
+    gaincal:
+      calmode: ap
+```
+
+With `pol: i` wsclean predicts the same Stokes I model into both the XX and
+YY correlations of `MODEL_DATA`. That is wrong for bright sources away from
+the beam centre, where the X and Y primary beams differ. Amplitude
+self-calibration then absorbs the difference into the antenna gains. With
+`pol: xx,yy` each correlation is predicted from its own model.
+
+- The Stokes I images are named exactly as a `pol: i` run names them, so every
+  later stage (cubing, convolution, linmos, source finding) is unchanged. The
+  XX and YY images are deleted once Stokes I is formed. Set
+  `flint_keep_linear_images: true` to keep them, for example to inspect the
+  beam's ellipticity.
+- `join_polarizations: true` is recommended. Without it XX and YY are cleaned
+  independently, each with √2 more noise than Stokes I, so each gets a
+  shallower model with its own mask. With it peaks are found in XX² + YY², and
+  the components of both share positions.
+- wsclean grids both polarisations, so expect up to twice the imaging time and
+  temporary disk use.
+- `save_source_list` cannot be used with `pol: xx,yy`. wsclean only saves a
+  source list when a single polarisation is imaged (Stokes I, or a pseudo
+  Stokes I such as XX alone), and refuses to start otherwise. The list would
+  not help in any case: it holds one `I` flux per component, so
+  `update_model_data_with_source_list` would replace the separate XX and YY
+  models with a single unpolarised one.
+- The subtract-cube flow reads the source list from the continuum imaging. If
+  it will be run, keep the final self-cal round at `pol: i` with
+  `save_source_list`, and use `pol: xx,yy` on the earlier rounds.
+- No other feed products are supported. `xx` alone, all four correlations, and
+  circular feeds are refused when the strategy is verified.
+- The `polarisation` operation is unaffected. It always sets `pol` from the
+  polarisation being imaged.
+
 ### `fitscube`
 
 In the self-cal flows (`continuum_pipeline`, `racs_all_continuum_selfcal`),
@@ -100,7 +148,7 @@ Compression is only safe for a cube that is never reopened later in the
 pipeline: `astropy` cannot memmap a compressed file (`.gz` or `.fz`), so the
 memmapped reads flint and rm-lite use would decompress the whole cube into
 memory. `split_cube_into_planes` and RM-synthesis refuse compressed cubes for
-exactly this reason (see `flint.imager.wsclean.split_cube_into_planes`).
+exactly this reason (see `flint.cube.split_cube_into_planes`).
 
 How to read, decompress and handle compressed cubes, and the pitfalls of
 quantizing more than once, are covered in

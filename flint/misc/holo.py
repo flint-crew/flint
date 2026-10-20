@@ -270,7 +270,6 @@ def reproject_wrapper(
     output_projection: fits.Header,
     shape_out: tuple[int, int],
 ) -> ReprojectWorker:
-
     in_cube_arr = fits.getdata(reproject_worker.in_cube_path, memmap=True)
 
     plane = in_cube_arr[

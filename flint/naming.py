@@ -271,6 +271,30 @@ def create_image_cube_name(
     return Path(output_cube_name)
 
 
+def pol_name_token(pol: str) -> str:
+    """The field naming the polarisations in file names, e.g. ``xxyy`` for ``xx,yy``"""
+    return pol.lower().replace(",", "")
+
+
+def replace_name_field(path: Path, old: str, new: str) -> Path:
+    """Swap the last dot separated field ``old`` in the name of ``path`` for ``new``.
+
+    The last, as in a flint name only ranges, ``MFS`` and the type follow the
+    polarisation. Raises ``NamingException`` if ``old`` is not a field.
+    """
+    # TODO: Swap fields through ProcessedNameComponents once naming is redeveloped to
+    # funnel all creation and parsing through one place (see the suffixspecrejig
+    # branch). That needs the parser to keep the rest of the name and to rebuild
+    # exactly, and to settle names carrying two channel ranges.
+    fields = path.name.split(".")
+    if old not in fields:
+        msg = f"{old=} is not a field of {path.name}"
+        raise NamingException(msg)
+    index = max(i for i, field in enumerate(fields) if field == old)
+    fields[index] = new
+    return path.with_name(".".join(fields))
+
+
 def create_imaging_name_prefix(
     ms_path: Path,
     pol: str | None = None,
@@ -306,7 +330,7 @@ def create_imaging_name_prefix(
     names = [name]
 
     if pol is not None:
-        names.append(f"{pol.lower()}")
+        names.append(pol_name_token(pol=pol))
     if channel_range is not None:
         names.append(f"ch{channel_range[0]:04}-{channel_range[1]:04}")
     if scan_range is not None:
@@ -618,7 +642,7 @@ def processed_ms_format(
 
     # chidx catches wsclean's own bare per-channel index (e.g. ``.0000``), used
     # when channels are imaged individually without being grouped into a flint
-    # ch<lo>-<hi> range (see _rename_wsclean_title)
+    # ch<lo>-<hi> range, as older versions of flint named them
     if groups["chl"]:
         channel_range = (int(groups["chl"]), int(groups["chh"]))
     elif groups["chidx"]:
