@@ -58,6 +58,7 @@ dependencies = [
     "crystalball>=0.4.3",
     "jolly-roger>=0.10.1",
     "capn-crunch>=1.1.0",
+    "eye-patch>=2.0.0,<3",
     "billiard",
 ]
 
@@ -117,7 +118,6 @@ flint_yandalinmos = "flint.coadd.linmos:cli"
 flint_config = "flint.configuration:cli"
 flint_aegean = "flint.source_finding.aegean:cli"
 flint_validation_plot = "flint.validation:cli"
-flint_masking = "flint.masking:cli"
 flint_potato = "flint.peel.potato:cli"
 flint_leakage = "flint.leakage:cli"
 flint_addmodel = "flint.predict.addmodel:cli"

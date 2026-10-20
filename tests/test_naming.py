@@ -10,13 +10,11 @@ import pytest
 from flint.exceptions import NamingException
 from flint.naming import (
     CASDANameComponents,
-    FITSMaskNames,
     ProcessedNameComponents,
     RawNameComponents,
     _rename_linear_to_stokes,
     add_timestamp_to_path,
     casda_ms_format,
-    create_fits_mask_names,
     create_image_cube_name,
     create_imaging_name_prefix,
     create_largest_common_field_name,
@@ -588,33 +586,6 @@ def test_add_timestamp_to_path():
 
     now_path = add_timestamp_to_path(input_path=example_path)
     assert now_path != expected
-
-
-def test_create_fits_mask_names_no_signal():
-    fits_image = Path("38960/SB38960.RACS_1418-12.noselfcal_linmos.fits")
-
-    result = create_fits_mask_names(fits_image=fits_image, include_signal_path=False)
-    assert isinstance(result, FITSMaskNames)
-    assert isinstance(result.mask_fits, Path)
-    assert result.signal_fits is None
-    assert result.mask_fits == Path(
-        "38960/SB38960.RACS_1418-12.noselfcal_linmos.mask.fits"
-    )
-
-
-def test_create_fits_mask_names():
-    fits_image = Path("38960/SB38960.RACS_1418-12.noselfcal_linmos.fits")
-
-    result = create_fits_mask_names(fits_image=fits_image, include_signal_path=True)
-    assert isinstance(result, FITSMaskNames)
-    assert isinstance(result.signal_fits, Path)
-    assert isinstance(result.mask_fits, Path)
-    assert result.signal_fits == Path(
-        "38960/SB38960.RACS_1418-12.noselfcal_linmos.signal.fits"
-    )
-    assert result.mask_fits == Path(
-        "38960/SB38960.RACS_1418-12.noselfcal_linmos.mask.fits"
-    )
 
 
 def test_aocalibrate_into_process_ms_format():
