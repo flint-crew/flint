@@ -12,12 +12,12 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from eye_patch.options import MaskingOptions
 from jolly_roger.tractor import TukeyTractorOptions
 from pydantic import ValidationError
 
 from flint.imager.wsclean import WSCleanOptions
 from flint.logging import logger
-from flint.masking import MaskingOptions
 from flint.misc.holo import ConcatHoloOptions
 from flint.naming import add_timestamp_to_path
 from flint.options import (

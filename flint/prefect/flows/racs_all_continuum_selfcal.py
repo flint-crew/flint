@@ -497,7 +497,7 @@ def process_racs_all_continuum(
 
                 # TODO: An explicit trminder to add per-beam aegean source finding, or
                 # just make the mac for this explicit and required
-                assert update_masking_options["flood_fill_use_mac"], (
+                assert update_masking_options["use_mac"], (
                     "Currently only support mac based masking (no per-beam aegean)"
                 )
 

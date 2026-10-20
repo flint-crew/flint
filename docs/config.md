@@ -45,14 +45,15 @@ A 'mode' refers to a set of options for a given tool. As of version 0.2, the fol
 
 - `wsclean` : This corresponds to `flint.imager.wsclean.WSCleanOptions`
 - `gaincal` : This corresponds to `flint.selfcal.casa.GainCalOptions`
-- `masking` : This corresponds to `flint.masking.MaskingOptions`
+- `masking` : This corresponds to `eye_patch.options.MaskingOptions` (see [Creating Clean Masks](masking.md))
 - `archive` : This corresponds to `flint.options.ArchiveOptions`
 - `bane` : This corresponds to `flint.source_finding.aegean.BANEOptions`
 - `aegean` : This corresponds to `flint.source_finding.aegean.AegeanOptions`
 - `potatopeel`: This corresponds to `flint.peel.potato.PotatoPeelOptions`
 - `fitscube`: This correspond to `flint.options.FitsCubeOptions`
 
-To see all the available options you can run `flint_{mode} -h` on the command-line.
+To see all the available options you can run `flint_{mode} -h` on the command-line
+(`eye-patch mask -h` for `masking`).
 All attributes available in the corresponding `Options` class listed above may be
 provided in the strategy YAML file.
 

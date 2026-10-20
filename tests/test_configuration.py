@@ -323,7 +323,7 @@ def test_get_mask_options(package_strategy):
     )
 
     assert isinstance(masking, dict)
-    assert masking["flood_fill_positive_seed_clip"] == 4.5
+    assert masking["seed_clip"] == 4.5
 
     masking2 = get_options_from_strategy(
         strategy=package_strategy, mode="masking", round_info=1, operation="selfcal"
@@ -332,10 +332,10 @@ def test_get_mask_options(package_strategy):
     print(strategy)
 
     assert isinstance(masking2, dict)
-    assert masking2["flood_fill_positive_seed_clip"] == 40
+    assert masking2["seed_clip"] == 40
 
     for k in masking.keys():
-        if k == "flood_fill_positive_seed_clip":
+        if k == "seed_clip":
             continue
 
         assert masking[k] == masking2[k]
@@ -350,17 +350,17 @@ def test_get_mask_options_from_path(package_strategy_path):
     )
 
     assert isinstance(masking, dict)
-    assert masking["flood_fill_positive_seed_clip"] == 4.5
+    assert masking["seed_clip"] == 4.5
 
     masking2 = get_options_from_strategy(
         strategy=package_strategy, mode="masking", round_info=1, operation="selfcal"
     )
 
     assert isinstance(masking2, dict)
-    assert masking2["flood_fill_positive_seed_clip"] == 40
+    assert masking2["seed_clip"] == 40
 
     for k in masking.keys():
-        if k == "flood_fill_positive_seed_clip":
+        if k == "seed_clip":
             continue
 
         assert masking[k] == masking2[k]

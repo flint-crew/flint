@@ -12,6 +12,10 @@ from typing import Any, NamedTuple, ParamSpec, TypeVar
 
 import numpy as np
 import pandas as pd
+from eye_patch.extract import extract_beam_mask_from_mosaic
+from eye_patch.masking import create_mask_from_fits
+from eye_patch.naming import FITSMaskNames
+from eye_patch.options import MaskingOptions
 from fitscube.bounding_box import BoundingBox, get_common_bounding_box
 from prefect import Task, unmapped
 from prefect.artifacts import create_table_artifact
@@ -51,11 +55,6 @@ from flint.imager.wsclean import (
     wsclean_imager,
 )
 from flint.logging import logger
-from flint.masking import (
-    MaskingOptions,
-    create_snr_mask_from_fits,
-    extract_beam_mask_from_mosaic,
-)
 from flint.ms import (
     MS,
     copy_and_preprocess_casda_askap_ms,
@@ -65,7 +64,6 @@ from flint.ms import (
     standardise_ms_to_list_ms,
 )
 from flint.naming import (
-    FITSMaskNames,
     ResolutionModes,
     create_name_from_common_fields,
     get_fits_cube_from_paths,
@@ -1480,7 +1478,7 @@ def task_create_image_mask_model(
     if update_masking_options:
         masking_options = masking_options.with_options(**update_masking_options)
 
-    mask_names = create_snr_mask_from_fits(
+    mask_names = create_mask_from_fits(
         fits_image_path=source_image,
         fits_bkg_path=source_bkg,
         fits_rms_path=source_rms,
@@ -1488,7 +1486,7 @@ def task_create_image_mask_model(
         create_signal_fits=source_rms is not None,
     )
 
-    logger.info(f"Created {mask_names.mask_fits}")
+    logger.info(f"Created {mask_names=}")
 
     return mask_names
 
