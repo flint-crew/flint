@@ -462,38 +462,39 @@ def cli() -> None:
         return
 
     ms = MS(path=args.ms, column=args.column)
-    if args.task == "flag":
-        dp3_flag(
-            ms,
-            aoflagger_options=create_options_from_parser(
-                parser_namespace=args, options_class=DP3AOFlaggerOptions
-            ),
-        )
-    elif args.task == "ddecal":
-        dp3_ddecal(
-            ms.with_options(model_column=args.model_column),
-            options=create_options_from_parser(
-                parser_namespace=args, options_class=DP3DDECalOptions
-            ),
-            h5parm=args.h5parm,
-        )
-    elif args.task == "gaincal":
-        dp3_gaincal(
-            ms.with_options(model_column=args.model_column),
-            options=create_options_from_parser(
-                parser_namespace=args, options_class=DP3GainCalOptions
-            ),
-            h5parm=args.h5parm,
-        )
-    elif args.task == "applycal":
-        dp3_applycal(
-            ms,
-            h5parm=args.h5parm,
-            options=create_options_from_parser(
-                parser_namespace=args, options_class=DP3ApplyCalOptions
-            ),
-            output_column=args.output_column,
-        )
+    match args.task:
+        case "flag":
+            dp3_flag(
+                ms,
+                aoflagger_options=create_options_from_parser(
+                    parser_namespace=args, options_class=DP3AOFlaggerOptions
+                ),
+            )
+        case "ddecal":
+            dp3_ddecal(
+                ms.with_options(model_column=args.model_column),
+                options=create_options_from_parser(
+                    parser_namespace=args, options_class=DP3DDECalOptions
+                ),
+                h5parm=args.h5parm,
+            )
+        case "gaincal":
+            dp3_gaincal(
+                ms.with_options(model_column=args.model_column),
+                options=create_options_from_parser(
+                    parser_namespace=args, options_class=DP3GainCalOptions
+                ),
+                h5parm=args.h5parm,
+            )
+        case "applycal":
+            dp3_applycal(
+                ms,
+                h5parm=args.h5parm,
+                options=create_options_from_parser(
+                    parser_namespace=args, options_class=DP3ApplyCalOptions
+                ),
+                output_column=args.output_column,
+            )
 
 
 if __name__ == "__main__":
