@@ -3,7 +3,7 @@
 Clean masks restrict where CLEAN may place components. `flint` makes them with
 [eye-patch](https://github.com/flint-crew/eye-patch), which began as the
 `flint.masking` module. The
-[eye-patch documentation](https://eye-patch.readthedocs.io/) describes the
+[eye-patch documentation](https://eye-patch.readthedocs.io/en/stable/) describes the
 signal-to-noise and minimum absolute clip statistics, flood filling, beam shape
 erosion and the `convolve_first` approach.
 
@@ -18,24 +18,23 @@ Masks can also be made outside of a flow. `eye-patch mask` creates a mask for an
 image, and `eye-patch extractmask` cuts the region of a beam out of a larger
 mask. Run either with `-h` to list its options.
 
-## Renamed options
+### Per-scale masks
 
-eye-patch 2.0 renamed most of the masking options. A strategy file that uses an
-old name fails verification until it is renamed:
+`convolve_first`, and `beam_shape_erode` with more than one `multiscale_scales`,
+make a per-scale mask. In a round where wsclean cleans with `multiscale` it is
+passed as wsclean's per-scale mask. In any other round it is passed as a plain
+clean mask, where every non-zero pixel may be cleaned.
 
-| Old name                                  | New name                         |
-| ----------------------------------------- | -------------------------------- |
-| `base_snr_clip`                           | `base_clip`                      |
-| `flood_fill_positive_seed_clip`           | `seed_clip`                      |
-| `flood_fill_positive_flood_clip`          | `flood_clip`                     |
-| `flood_fill_use_mac`                      | `use_mac`                        |
-| `flood_fill_use_mac_box_size`             | `mac_box_size`                   |
-| `flood_fill_use_mac_adaptive_step_factor` | `mac_adaptive_step_factor`       |
-| `flood_fill_use_mac_adaptive_skew_delta`  | `mac_adaptive_skew_delta`        |
-| `flood_fill_use_mac_adaptive_max_depth`   | `mac_adaptive_max_depth`         |
-| `grow_low_snr_island_size`                | `grow_low_snr_island_min_pixels` |
-| `beam_shape_erode_scales`                 | `multiscale_scales`              |
+wsclean reads bit _n_ of each pixel as its _n_'th smallest scale, and does not
+clean at a scale that has no pixels set. In multiscale rounds the masking
+`multiscale_scales` must therefore match that round's wsclean
+`multiscale_scales`. `flint` does not check this yet.
 
-Each of the `multiscale_scales` is now treated as a wsclean multi-scale scale,
-which erodes less than earlier versions did. Set
-`beam_shape_erode_scales_as_fwhm: true` to keep the old behaviour.
+## Upgrading strategy files
+
+eye-patch 2.0 renamed most of the masking options and changed what some of them
+do. A strategy file that uses an old name fails verification. eye-patch's
+[migration notes](https://eye-patch.readthedocs.io/en/stable/masking.html#changes-from-v1-0-1-and-earlier-versions)
+map each old name to its new one, and list the changes in behaviour. In
+particular, settings that use `use_mac` or `grow_low_snr_island` without
+`flood_fill` now make a different mask, and should be revisited.

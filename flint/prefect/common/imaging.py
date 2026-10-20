@@ -12,7 +12,6 @@ from typing import Any, NamedTuple, ParamSpec, TypeVar
 
 import numpy as np
 import pandas as pd
-from eye_patch.extract import extract_beam_mask_from_mosaic
 from eye_patch.masking import create_mask_from_fits
 from eye_patch.naming import FITSMaskNames
 from eye_patch.options import MaskingOptions
@@ -389,10 +388,16 @@ def task_wsclean_imager(
     )
 
     if fits_mask:
-        if fits_mask.mask_fits is not None and fits_mask.mask_fits.exists():
-            update_wsclean_options["fits_mask"] = fits_mask.mask_fits
-        if fits_mask.scale_mask_fits is not None and fits_mask.scale_mask_fits.exists():
+        # radler only uses a per-scale mask in a multiscale clean, and prefers a
+        # plain mask over it, so pass one
+        if update_wsclean_options.get("multiscale") and fits_mask.scale_mask_fits:
+            # TODO: Check the mask was made with the scales wsclean cleans at, as
+            # bit n of each pixel gates wsclean's n'th smallest scale
             update_wsclean_options["multiscale_fits_mask"] = fits_mask.scale_mask_fits
+        else:
+            update_wsclean_options["fits_mask"] = (
+                fits_mask.mask_fits or fits_mask.scale_mask_fits
+            )
 
     if channel_range:
         update_wsclean_options["channel_range"] = channel_range
@@ -1431,20 +1436,9 @@ def task_create_image_mask_model(
     image_products: AegeanOutputs | None = None,
     update_masking_options: dict[str, Any] | None = None,
 ) -> FITSMaskNames:
-    """Create a mask for an image, with the intention of providing it as a clean mask
-    to an appropriate imager.
-
-    Args:
-        linmos_parset (LinmosResult): Linmos command and associated meta-data
-        image_products (AegeanOutputs | None, optional): Images of the RMS and BKG. If None then signal mask creation will also be skipped.
-        update_masking_options (Optional[Dict[str,Any]], optional): Updated options supplied to the default MaskingOptions. Defaults to None.
-
-
-    Raises:
-        ValueError: Raised when ``image_products`` are not known
-
-    Returns:
-        FITSMaskNames: Clean mask where all pixels below a S/N are masked
+    """Make a clean mask for an image with eye-patch, returning the names of the
+    mask files it wrote. RMS and background images are needed unless ``use_mac``
+    or ``convolve_first`` is set.
     """
     if isinstance(image_products, AegeanOutputs):
         source_rms = image_products.rms
@@ -1483,37 +1477,11 @@ def task_create_image_mask_model(
         fits_bkg_path=source_bkg,
         fits_rms_path=source_rms,
         masking_options=masking_options,
-        create_signal_fits=source_rms is not None,
     )
 
     logger.info(f"Created {mask_names=}")
 
     return mask_names
-
-
-@task
-def task_extract_beam_mask_image(
-    linmos_mask_names: FITSMaskNames, wsclean_result: WSCleanResult
-) -> FITSMaskNames:
-    """Extract a clean mask for a beam from a larger clean mask (e.g. derived from a field)
-
-    Args:
-        linmos_mask_names (FITSMaskNames): Mask that will be drawn from to form a smaller clean mask (e.g. for a beam)
-        wsclean_result (WSCleanResult): Wsclean command and meta-data. This is used to draw from the WCS to create an appropriate pixel-to-pixel mask
-
-    Returns:
-        FITSMaskNames: Clean mask for a image
-    """
-    # All images made by wsclean will have the same WCS
-    assert wsclean_result.image_set is not None, (
-        f"{wsclean_result.image_set=}, which should not happen"
-    )
-    beam_image = next(iter(wsclean_result.image_set.image))
-    beam_mask_names = extract_beam_mask_from_mosaic(
-        fits_beam_image_path=beam_image, fits_mosaic_mask_names=linmos_mask_names
-    )
-
-    return beam_mask_names
 
 
 @task

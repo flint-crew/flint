@@ -227,7 +227,7 @@ requires-dist = [
     { name = "crystalball", specifier = ">=0.4.3" },
     { name = "dask" },
     { name = "dask-jobqueue" },
-    { name = "eye-patch", specifier = ">=2.0.0" },
+    { name = "eye-patch", specifier = ">=2.0.0,<3" },
     { name = "fitscube", extras = ["pgzip"], specifier = ">=2.11" },
     { name = "fixms", marker = "extra == 'all'", specifier = ">=0.4.0" },
     { name = "fixms", marker = "extra == 'casa'", specifier = ">=0.4.0" },
