@@ -16,6 +16,13 @@ from eye_patch.options import MaskingOptions
 from jolly_roger.tractor import TukeyTractorOptions
 from pydantic import ValidationError
 
+from flint.dp3 import (
+    DP3AOFlaggerOptions,
+    DP3ApplyCalOptions,
+    DP3DDECalOptions,
+    DP3GainCalOptions,
+    DP3PreFlaggerOptions,
+)
 from flint.imager.wsclean import WSCleanOptions
 from flint.logging import logger
 from flint.misc.holo import ConcatHoloOptions
@@ -62,6 +69,11 @@ MODE_OPTIONS_MAPPING = {
     "fftbane": FFTBANEOptions,
     "concatholo": ConcatHoloOptions,
     "spice": SpiceOptions,
+    "dp3preflagger": DP3PreFlaggerOptions,
+    "dp3aoflagger": DP3AOFlaggerOptions,
+    "dp3ddecal": DP3DDECalOptions,
+    "dp3gaincal": DP3GainCalOptions,
+    "dp3applycal": DP3ApplyCalOptions,
 }
 POLARISATION_MAPPING = {
     "total": "i",

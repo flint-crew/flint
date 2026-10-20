@@ -805,6 +805,8 @@ class MS(BaseOptions):
     """If set indicates the field of the data in the MS"""
     model_column: str | None = None
     """If set indicates the column with model visibilities"""
+    h5parm: Path | None = None
+    """If set indicates the h5parm with calibration solutions for the MS"""
 
     @property
     def ms(self) -> MS:

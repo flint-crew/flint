@@ -176,6 +176,8 @@ def process_science_fields_pol(
             find_mss(
                 mss_parent_path=flint_ms_directory,
                 expected_ms_count=pol_field_options.expected_ms,
+                # TODO: Image the ionosphere-corrected column. A defaults
+                # data_column key fails strategy validation, so this is always DATA
                 data_column=strategy["defaults"].get("data_column", "DATA"),
             )
         )
@@ -227,6 +229,8 @@ def process_science_fields_pol(
         # Each beam is a single MS when discovered this way (one SBID/band per directory)
         resolved_mss_by_beam = tuple((ms,) for ms in science_mss)
 
+    # TODO: Correct ionospheric Faraday rotation here, before imaging: Spinifex
+    # writes an RM h5parm per MS which dp3_applycal applies to a new column
     science_mss = [ms for beam_mss in resolved_mss_by_beam for ms in beam_mss]
 
     field_summary = task_create_field_summary.submit(
