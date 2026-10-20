@@ -240,6 +240,10 @@ line-ending = "auto"
 [tool.typos.files]
 extend-exclude = ["*.fits", "flint/data/**/*", "ignore_words.txt"]
 
+[tool.typos.default]
+# Lines marked for codespell with "# codespell:ignore <word>" are skipped by typos too
+extend-ignore-re = ["(?Rm)^.*#\\s*codespell:ignore.*$"]
+
 [tool.typos.default.extend-identifiers]
 FIELDs = "FIELDs"
 FoV = "FoV"
