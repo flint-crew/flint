@@ -117,6 +117,26 @@ def _no_products(
     )
 
 
+def get_polarisation_fits_masks(
+    polarisation: str,
+    fits_masks_by_beam: Sequence[FITSMaskNames | None] | None,
+    flat_fits_masks: Sequence[PrefectFuture[FITSMaskNames] | None] | None,
+    n_beams: int,
+) -> list[FITSMaskNames | PrefectFuture[FITSMaskNames] | None]:
+    """The clean mask of each beam for a polarisation. Stokes I can use a per-scale
+    mask as is, the others need a plain one. None per beam without masks."""
+    # Each mask should be plain or per-scale by now, but this pirate trusts no one
+    # Only need to check scalemask is correct, at this point ``flat_fits_mask`` is a future
+    assert not any(
+        fits_mask.mask_fits is not None and fits_mask.scale_mask_fits is not None
+        for fits_mask in fits_masks_by_beam or []
+        if fits_mask is not None
+    ), f"A clean mask is both plain and per-scale: {fits_masks_by_beam}"
+
+    fits_masks = fits_masks_by_beam if polarisation == "total" else flat_fits_masks
+    return list(fits_masks) if fits_masks else [None] * n_beams
+
+
 def _polarisations_to_image(strategy: Strategy) -> dict[str, Any]:
     """Pull the polarisations to image out of the strategy's polarisation operation.
 
@@ -145,7 +165,7 @@ def process_science_fields_pol(
     flint_ms_directory: Path,
     pol_field_options: PolFieldOptions,
     mss_by_beam: MSsByBeam | None = None,
-    fits_masks_by_beam: Sequence[FITSMaskNames] | None = None,
+    fits_masks_by_beam: Sequence[FITSMaskNames | None] | None = None,
 ) -> PolPipelineResult:
     """Image a field in polarisation and co-add the per-beam products.
 
@@ -153,7 +173,7 @@ def process_science_fields_pol(
         flint_ms_directory (Path): Directory holding the measurement sets to image
         pol_field_options (PolFieldOptions): Options controlling the polarisation imaging
         mss_by_beam (MSsByBeam | None, optional): Already Flint-processed measurement sets handed down by a calling flow, rather than rediscovered on disk. Defaults to None.
-        fits_masks_by_beam (Sequence[FITSMaskNames] | None, optional): A clean mask for each beam, in the order of the beams. Stokes I is imaged with it as is, and the linear and circular polarisations with it flattened to a plain mask. If None no clean masks are used. Defaults to None.
+        fits_masks_by_beam (Sequence[FITSMaskNames | None] | None, optional): A clean mask for each beam, in the order of the beams. Stokes I is imaged with it as is, and the linear and circular polarisations with it flattened to a plain mask. A beam whose mask is None, or every beam if this is None, is imaged without one. Defaults to None.
 
     Returns:
         PolPipelineResult: Stokes cubes, co-added MFS products, and the futures to wait on
@@ -260,13 +280,15 @@ def process_science_fields_pol(
 
     polarisations = _polarisations_to_image(strategy=strategy)
 
-    flat_fits_masks: list[PrefectFuture[FITSMaskNames]] | None = None
+    flat_fits_masks: list[PrefectFuture[FITSMaskNames] | None] | None = None
     if fits_masks_by_beam:
         if len(fits_masks_by_beam) != len(resolved_mss_by_beam):
             msg = f"{len(fits_masks_by_beam)} clean masks for {len(resolved_mss_by_beam)} beams"
             raise ValueError(msg)
         flat_fits_masks = [
             task_flatten_mask.submit(fits_mask=fits_mask)
+            if fits_mask is not None
+            else None
             for fits_mask in fits_masks_by_beam
         ]
 
@@ -287,10 +309,12 @@ def process_science_fields_pol(
     image_sets_dict: dict[str, PrefectFuture[ImageSet]] = {}
     for polarisation in polarisations.keys():
         _image_sets = []
-        # Stokes I can use a per-scale mask as is, the others need a plain one
-        beam_fits_masks = (
-            fits_masks_by_beam if polarisation == "total" else flat_fits_masks
-        ) or [None] * len(resolved_mss_by_beam)
+        beam_fits_masks = get_polarisation_fits_masks(
+            polarisation=polarisation,
+            fits_masks_by_beam=fits_masks_by_beam,
+            flat_fits_masks=flat_fits_masks,
+            n_beams=len(resolved_mss_by_beam),
+        )
         with tags(f"polarisation-{polarisation}"):
             for beam_mss, beam_fits_mask in zip(
                 resolved_mss_by_beam, beam_fits_masks, strict=True

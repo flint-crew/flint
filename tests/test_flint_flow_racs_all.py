@@ -19,6 +19,7 @@ from flint.prefect.flows.racs_all_continuum_selfcal import (
     get_final_mask_options,
     get_skymodel_gaincal_options,
     match_beams_across_bands,
+    resolve_final_masks,
 )
 
 
@@ -103,12 +104,63 @@ def test_get_final_mask_options_falls_back_to_the_last_round(
 
 
 def test_get_final_mask_options_without_selfcal_rounds() -> None:
-    """Without a strategy the defaults of MaskingOptions apply, and without selfcal
-    rounds the strategy's defaults do"""
-    assert get_final_mask_options(strategy=None, rounds=0) == {}
-
+    """Without selfcal rounds the strategy's defaults apply"""
     strategy = Strategy({"defaults": {"masking": {"use_mac": True}}})
     assert get_final_mask_options(strategy=strategy, rounds=0) == {"use_mac": True}
+
+
+def test_get_final_mask_options_skips_masks_needing_rms(caplog) -> None:
+    """Masks that need RMS and background images are not made, as the final masks
+    are made from the image alone. The MaskingOptions defaults are such masks."""
+    with caplog.at_level(logging.WARNING):
+        assert get_final_mask_options(strategy=None, rounds=0) is None
+    assert "Not making the final masks" in caplog.text
+
+    strategy = Strategy(
+        {"defaults": {}, "selfcal": {1: {"masking": {"flood_fill": True}}}}
+    )
+    assert get_final_mask_options(strategy=strategy, rounds=0) is None
+
+    strategy = Strategy(
+        {"defaults": {}, "selfcal": {1: {"masking": {"convolve_first": True}}}}
+    )
+    assert get_final_mask_options(strategy=strategy, rounds=0) == {
+        "convolve_first": True
+    }
+
+
+def test_resolve_final_masks() -> None:
+    """Each beam's mask comes back in beam order, and a failed mask raises, naming
+    every beam that failed, so the flow fails and later stages do not run"""
+    from unittest.mock import MagicMock
+
+    from eye_patch.naming import FITSMaskNames
+
+    def _future(result):
+        future = MagicMock()
+        future.result.return_value = result
+        return future
+
+    masks = [FITSMaskNames(mask_fits=Path(f"beam0{i}.mask.fits")) for i in (0, 1)]
+    mss_by_beam = tuple(
+        (MS(path=Path(f"SB1.RACS_0000+00.beam0{i}.round3.ms")),) for i in (0, 1, 2)
+    )
+
+    assert resolve_final_masks(
+        final_fits_masks=[_future(mask) for mask in masks],
+        mss_by_beam=mss_by_beam[:2],
+    ) == tuple(masks)
+
+    error = ValueError("A signal image is needed")
+    futures = [_future(masks[0]), _future(error), _future(KeyError("BMAJ"))]
+    with pytest.raises(RuntimeError, match="failed for 2 beam") as raised:
+        resolve_final_masks(final_fits_masks=futures, mss_by_beam=mss_by_beam)
+
+    assert "SB1.RACS_0000+00.beam01.round3.ms" in str(raised.value)
+    assert "SB1.RACS_0000+00.beam02.round3.ms" in str(raised.value)
+    assert "A signal image is needed" in str(raised.value)
+    assert raised.value.__cause__ is error
+    futures[1].result.assert_called_once_with(raise_on_failure=False)
 
 
 @pytest.fixture

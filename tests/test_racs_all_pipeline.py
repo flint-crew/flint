@@ -726,3 +726,25 @@ def test_the_polarisation_stage_gets_the_continuum_clean_masks(
     continuum_result = racs_all_pipeline.process_racs_all_continuum.with_options.return_value.return_value
     pol_kwargs = racs_all_pipeline.process_science_fields_pol.with_options.return_value.call_args.kwargs
     assert pol_kwargs["fits_masks_by_beam"] is continuum_result.fits_masks_by_beam
+
+
+def test_a_failed_continuum_task_stops_the_later_stages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Should any continuum task fail, e.g. a beam's final mask, the run fails before
+    the polarisation stage starts"""
+    from unittest.mock import MagicMock
+
+    from flint.prefect.flows import racs_all_pipeline
+
+    _stage_mocks(monkeypatch=monkeypatch, tmp_path=tmp_path, convolved_cubes=[])
+    failed = MagicMock()
+    failed.state.is_completed.return_value = False
+    failed.state.message = "A signal image is needed"
+    continuum_result = racs_all_pipeline.process_racs_all_continuum.with_options.return_value.return_value
+    continuum_result.terminal_futures = [failed]
+
+    with pytest.raises(RuntimeError, match="continuum imaging stage did not complete"):
+        _run_racs_all(tmp_path=tmp_path)
+
+    racs_all_pipeline.process_science_fields_pol.with_options.assert_not_called()

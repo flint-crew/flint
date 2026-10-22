@@ -12,6 +12,7 @@ from typing import Any
 from capn_crunch import add_options_to_parser, create_options_from_parser
 from configargparse import ArgumentParser
 from prefect import flow
+from prefect.futures import PrefectFuture
 
 from flint.configuration import (
     POLARISATION_MAPPING,
@@ -184,6 +185,15 @@ def _check_spice_mfs_dependency(
         )
 
 
+def raise_on_failed_stage(stage: str, futures: list[PrefectFuture[Any]]) -> None:
+    """Stop the run should any task of a stage not have completed, so later stages do not start"""
+    failed = [future for future in futures if not future.state.is_completed()]
+    if failed:
+        messages = "; ".join(str(future.state.message) for future in failed[:3])
+        msg = f"{len(failed)} task(s) of the {stage} stage did not complete, so later stages are not run: {messages}"
+        raise RuntimeError(msg)
+
+
 @flow(name="Flint RACS-All Pipeline")
 def process_racs_all(
     pipeline_options: RACSAllPipelineOptions,
@@ -219,6 +229,9 @@ def process_racs_all(
             name="RACS All -- continuum imaging",
         )(racs_all_options=racs_all_options)
         terminal_results.extend(continuum_result.terminal_futures)
+        raise_on_failed_stage(
+            stage="continuum imaging", futures=continuum_result.terminal_futures
+        )
 
     if pipeline_options.skip_polarisation:
         return terminal_results
@@ -250,6 +263,9 @@ def process_racs_all(
         fits_masks_by_beam=continuum_result.fits_masks_by_beam,
     )
     terminal_results.extend(pol_result.terminal_futures)
+    raise_on_failed_stage(
+        stage="polarisation imaging", futures=pol_result.terminal_futures
+    )
 
     # One root for every downstream stage, split into a subdirectory per stage.
     output_root = pipeline_options.output_path or continuum_result.output_science_path

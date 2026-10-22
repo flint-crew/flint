@@ -18,6 +18,7 @@ from capn_crunch import (
 )
 from configargparse import ArgumentParser
 from eye_patch.naming import FITSMaskNames
+from eye_patch.options import MaskingOptions
 from prefect import flow, tags, unmapped
 from prefect.futures import PrefectFuture, wait
 
@@ -102,7 +103,7 @@ class RACSContinuumResult(BaseOptions):
     terminal_futures: list[PrefectFuture[Any]]
     """Every future the continuum imaging stage produced, propagated so Prefect still detects any of their failures"""
     fits_masks_by_beam: tuple[FITSMaskNames, ...] = ()
-    """The clean mask of each beam, made from its final image, in the order of ``mss_by_beam``"""
+    """The clean mask of each beam, made from its final image, in the order of ``mss_by_beam``. Empty when no masks were made"""
 
 
 def _check_racs_all_options(racs_all_options: RACSAllOptions) -> None:
@@ -178,36 +179,75 @@ def get_skymodel_gaincal_options(strategy: Strategy | None) -> dict[str, Any]:
     return {**options, "calmode": "p"}
 
 
-def get_final_mask_options(strategy: Strategy | None, rounds: int) -> dict[str, Any]:
+def get_final_mask_options(
+    strategy: Strategy | None, rounds: int
+) -> dict[str, Any] | None:
     """Masking options for the masks made from the final images, taken from the round
-    after the last one imaged, as if self-calibration carried on."""
+    after the last one imaged, as if self-calibration carried on. None when they
+    need RMS and background images, which the final masks are made without."""
     requested_round = rounds + 1
+    options: dict[str, Any]
     if strategy is None:
         logger.info(
             f"Requested the masking options of selfcal round {requested_round} for the "
             "final masks, but there is no strategy, so using the MaskingOptions defaults"
         )
-        return {}
-    if "selfcal" not in strategy:
+        options = {}
+    elif "selfcal" not in strategy:
         logger.info(
             f"Requested the masking options of selfcal round {requested_round} for the "
             "final masks, but the strategy has no selfcal rounds, so using its defaults"
         )
-        return dict(strategy["defaults"].get("masking", {}))
+        options = dict(strategy["defaults"].get("masking", {}))
+    else:
+        used_round = min(requested_round, max(strategy["selfcal"].keys()))
+        fallback = (
+            f", falling back to the last round defined ({used_round})"
+            if used_round != requested_round
+            else ""
+        )
+        logger.info(
+            f"Requested the masking options of selfcal round {requested_round} for the "
+            f"final masks{fallback}. Using selfcal round {used_round}"
+        )
+        options = get_options_from_strategy(
+            strategy=strategy,
+            mode="masking",
+            round_info=used_round,
+            operation="selfcal",
+        )
 
-    used_round = min(requested_round, max(strategy["selfcal"].keys()))
-    fallback = (
-        f", falling back to the last round defined ({used_round})"
-        if used_round != requested_round
-        else ""
-    )
-    logger.info(
-        f"Requested the masking options of selfcal round {requested_round} for the "
-        f"final masks{fallback}. Using selfcal round {used_round}"
-    )
-    return get_options_from_strategy(
-        strategy=strategy, mode="masking", round_info=used_round, operation="selfcal"
-    )
+    masking_options = MaskingOptions().with_options(**options)
+    if not (masking_options.use_mac or masking_options.convolve_first):
+        logger.warning(
+            "Not making the final masks, as without use_mac or convolve_first they "
+            "need RMS and background images. Polarisation is imaged without masks"
+        )
+        return None
+    return options
+
+
+def resolve_final_masks(
+    final_fits_masks: list[PrefectFuture[FITSMaskNames]],
+    mss_by_beam: tuple[tuple[MS, ...], ...],
+) -> tuple[FITSMaskNames, ...]:
+    """The final mask of each beam, raising ``RuntimeError`` should any have failed"""
+    fits_masks: list[FITSMaskNames] = []
+    failures: dict[str, BaseException] = {}
+    for fits_mask, beam_mss in zip(final_fits_masks, mss_by_beam, strict=True):
+        # Avoid exception here to collect all failures
+        result = fits_mask.result(raise_on_failure=False)
+        if isinstance(result, BaseException):
+            failures[beam_mss[0].path.name] = result
+        else:
+            fits_masks.append(result)
+
+    if failures:
+        details = "; ".join(f"{name}: {error!r}" for name, error in failures.items())
+        msg = f"The final mask failed for {len(failures)} beam(s): {details}"
+        raise RuntimeError(msg) from next(iter(failures.values()))
+
+    return tuple(fits_masks)
 
 
 def _check_create_output_science_path(
@@ -651,14 +691,18 @@ def process_racs_all_continuum(
     final_mask_options = get_final_mask_options(
         strategy=strategy, rounds=racs_all_options.rounds
     )
-    final_fits_masks = [
-        task_create_image_mask_model.submit(
-            image=beam_result.wsclean_result,
-            image_products=None,  # Mac works on apparent brightness
-            update_masking_options=final_mask_options,
-        )
-        for beam_result in imaging_results[racs_all_options.rounds]
-    ]
+    final_fits_masks = (
+        [
+            task_create_image_mask_model.submit(
+                image=beam_result.wsclean_result,
+                image_products=None,  # Mac works on apparent brightness
+                update_masking_options=final_mask_options,
+            )
+            for beam_result in imaging_results[racs_all_options.rounds]
+        ]
+        if final_mask_options is not None
+        else []
+    )
     terminal_futures.extend(final_fits_masks)
 
     if racs_all_options.yandasoft_container:
@@ -764,7 +808,14 @@ def process_racs_all_continuum(
         holography_path=resolved_holography_path,
         output_science_path=output_science_path,
         terminal_futures=terminal_futures,
-        fits_masks_by_beam=tuple(mask.result() for mask in final_fits_masks),
+        fits_masks_by_beam=(
+            resolve_final_masks(
+                final_fits_masks=final_fits_masks,
+                mss_by_beam=final_round_mss_by_beam,
+            )
+            if final_fits_masks
+            else ()
+        ),
     )
 
 
