@@ -18,7 +18,7 @@ from capn_crunch import (
 )
 from configargparse import ArgumentParser
 from prefect import flow, tags, unmapped
-from prefect.futures import PrefectFuture
+from prefect.futures import PrefectFuture, wait
 
 from flint.catalogue import verify_reference_catalogues
 from flint.configuration import (
@@ -693,6 +693,10 @@ def process_racs_all_continuum(
                     holofile=holography_path,
                 )
                 terminal_futures.extend(linmos_cubes)
+
+    # When run as a subflow its task runner shuts down on return, dropping any
+    # task still queued, so everything has to finish before then
+    wait(terminal_futures)
 
     resolved_holography_path = (
         holography_path.result()

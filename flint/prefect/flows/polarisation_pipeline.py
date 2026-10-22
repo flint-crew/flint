@@ -6,7 +6,7 @@ from typing import Any
 from capn_crunch import BaseOptions, add_options_to_parser, create_options_from_parser
 from configargparse import ArgumentParser
 from prefect import flow, tags
-from prefect.futures import PrefectFuture
+from prefect.futures import PrefectFuture, wait
 
 from flint.coadd.linmos import LinmosOptions
 from flint.configuration import (
@@ -249,6 +249,8 @@ def process_science_fields_pol(
 
     if pol_field_options.wsclean_container is None:
         logger.info("No wsclean container provided. Returning. ")
+        # As at the end of the stage, nothing may still be queued once it returns
+        wait([field_summary])
         return _no_products(terminal_futures=[field_summary])
 
     polarisations = _polarisations_to_image(strategy=strategy)
@@ -536,6 +538,10 @@ def process_science_fields_pol(
     terminal_futures: list[PrefectFuture[Any]] = [*cube_results, remove_result]
     if remove_mfs_result is not None:
         terminal_futures.append(remove_mfs_result)
+
+    # When run as a subflow its task runner shuts down on return, dropping any
+    # task still queued, so everything has to finish before then
+    wait(terminal_futures)
 
     return PolPipelineResult(
         stokes_cubes={
