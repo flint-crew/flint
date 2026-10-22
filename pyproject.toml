@@ -58,7 +58,7 @@ dependencies = [
     "crystalball>=0.4.3",
     "jolly-roger>=0.10.1",
     "capn-crunch>=1.2.0",
-    "eye-patch>=2.0.0,<3",
+    "eye-patch>=2.0.1,<3",
     "billiard",
 ]
 

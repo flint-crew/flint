@@ -17,6 +17,7 @@ from capn_crunch import (
     create_options_from_parser,
 )
 from configargparse import ArgumentParser
+from eye_patch.naming import FITSMaskNames
 from prefect import flow, tags, unmapped
 from prefect.futures import PrefectFuture, wait
 
@@ -100,6 +101,8 @@ class RACSContinuumResult(BaseOptions):
     """Directory the continuum imaging stage wrote its output products into"""
     terminal_futures: list[PrefectFuture[Any]]
     """Every future the continuum imaging stage produced, propagated so Prefect still detects any of their failures"""
+    fits_masks_by_beam: tuple[FITSMaskNames, ...] = ()
+    """The clean mask of each beam, made from its final image, in the order of ``mss_by_beam``"""
 
 
 def _check_racs_all_options(racs_all_options: RACSAllOptions) -> None:
@@ -173,6 +176,38 @@ def get_skymodel_gaincal_options(strategy: Strategy | None) -> dict[str, Any]:
             f"Ignoring calmode={options['calmode']!r} for the sky-model calibration round, which is phase-only"
         )
     return {**options, "calmode": "p"}
+
+
+def get_final_mask_options(strategy: Strategy | None, rounds: int) -> dict[str, Any]:
+    """Masking options for the masks made from the final images, taken from the round
+    after the last one imaged, as if self-calibration carried on."""
+    requested_round = rounds + 1
+    if strategy is None:
+        logger.info(
+            f"Requested the masking options of selfcal round {requested_round} for the "
+            "final masks, but there is no strategy, so using the MaskingOptions defaults"
+        )
+        return {}
+    if "selfcal" not in strategy:
+        logger.info(
+            f"Requested the masking options of selfcal round {requested_round} for the "
+            "final masks, but the strategy has no selfcal rounds, so using its defaults"
+        )
+        return dict(strategy["defaults"].get("masking", {}))
+
+    used_round = min(requested_round, max(strategy["selfcal"].keys()))
+    fallback = (
+        f", falling back to the last round defined ({used_round})"
+        if used_round != requested_round
+        else ""
+    )
+    logger.info(
+        f"Requested the masking options of selfcal round {requested_round} for the "
+        f"final masks{fallback}. Using selfcal round {used_round}"
+    )
+    return get_options_from_strategy(
+        strategy=strategy, mode="masking", round_info=used_round, operation="selfcal"
+    )
 
 
 def _check_create_output_science_path(
@@ -613,6 +648,19 @@ def process_racs_all_continuum(
                 )
                 terminal_futures.append(wsclean_result)
 
+    final_mask_options = get_final_mask_options(
+        strategy=strategy, rounds=racs_all_options.rounds
+    )
+    final_fits_masks = [
+        task_create_image_mask_model.submit(
+            image=beam_result.wsclean_result,
+            image_products=None,  # Mac works on apparent brightness
+            update_masking_options=final_mask_options,
+        )
+        for beam_result in imaging_results[racs_all_options.rounds]
+    ]
+    terminal_futures.extend(final_fits_masks)
+
     if racs_all_options.yandasoft_container:
         for selfcal_round, final_beam_imaging_results in imaging_results.items():
             additional_linmos_suffix = (
@@ -716,6 +764,7 @@ def process_racs_all_continuum(
         holography_path=resolved_holography_path,
         output_science_path=output_science_path,
         terminal_futures=terminal_futures,
+        fits_masks_by_beam=tuple(mask.result() for mask in final_fits_masks),
     )
 
 

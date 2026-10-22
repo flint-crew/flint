@@ -15,6 +15,7 @@ import pandas as pd
 from eye_patch.masking import create_mask_from_fits
 from eye_patch.naming import FITSMaskNames
 from eye_patch.options import MaskingOptions
+from eye_patch.scales import flatten_scale_mask_fits
 from fitscube.bounding_box import BoundingBox, get_common_bounding_box
 from prefect import Task, unmapped
 from prefect.artifacts import create_table_artifact
@@ -1496,6 +1497,19 @@ def task_create_image_mask_model(
     logger.info(f"Created {mask_names=}")
 
     return mask_names
+
+
+@task
+def task_flatten_mask(fits_mask: FITSMaskNames) -> FITSMaskNames:
+    """Flatten a per-scale mask into a plain clean mask, returning any other mask as is"""
+    if fits_mask.scale_mask_fits is None:
+        return fits_mask
+
+    # A rerun after a dask worker death meets the mask its first attempt wrote
+    mask_fits = flatten_scale_mask_fits(
+        scale_mask_fits=fits_mask.scale_mask_fits, overwrite=True
+    )
+    return FITSMaskNames(mask_fits=mask_fits)
 
 
 @task

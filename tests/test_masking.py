@@ -12,6 +12,7 @@ from flint.masking import consider_beam_mask_round
 from flint.options import MS
 from flint.prefect.common.imaging import (
     task_create_image_mask_model,
+    task_flatten_mask,
     task_wsclean_imager,
 )
 
@@ -104,3 +105,28 @@ def test_task_create_image_mask_model_scales(tmp_path):
     assert names.mask_fits is None
     assert names.scale_mask_fits is not None and names.scale_mask_fits.exists()
     assert np.max(fits.getdata(names.scale_mask_fits)) == 3
+
+
+def test_task_flatten_mask(tmp_path):
+    """A per-scale mask becomes a plain mask set wherever any scale is"""
+    scale_mask = np.array([[0, 1, 2], [3, 0, 4]], dtype=np.float32)
+    scale_mask_path = tmp_path / "image.scalemask.fits"
+    fits.writeto(scale_mask_path, scale_mask)
+
+    names = task_flatten_mask.fn(
+        fits_mask=FITSMaskNames(scale_mask_fits=scale_mask_path)
+    )
+
+    assert names.scale_mask_fits is None
+    assert names.mask_fits == tmp_path / "image.mask.fits"
+    assert np.array_equal(fits.getdata(names.mask_fits), scale_mask != 0)
+
+    # A rerun replaces the mask its first attempt wrote
+    task_flatten_mask.fn(fits_mask=FITSMaskNames(scale_mask_fits=scale_mask_path))
+
+
+def test_task_flatten_mask_leaves_a_plain_mask():
+    """A mask that is not per-scale is returned as is"""
+    names = FITSMaskNames(mask_fits=Path("image.mask.fits"))
+
+    assert task_flatten_mask.fn(fits_mask=names) is names

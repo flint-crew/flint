@@ -711,3 +711,18 @@ def test_rmsynth_refuses_a_polarisation_strategy_without_the_linear_stokes(
         pipeline_options=RACSAllPipelineOptions(skip_rmsynth=True),
         pol_field_options=PolFieldOptions(imaging_strategy=strategy),
     )
+
+
+def test_the_polarisation_stage_gets_the_continuum_clean_masks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The clean masks made from the final continuum images go to polarisation imaging"""
+    from flint.prefect.flows import racs_all_pipeline
+
+    _stage_mocks(monkeypatch=monkeypatch, tmp_path=tmp_path, convolved_cubes=[])
+
+    _run_racs_all(tmp_path=tmp_path)
+
+    continuum_result = racs_all_pipeline.process_racs_all_continuum.with_options.return_value.return_value
+    pol_kwargs = racs_all_pipeline.process_science_fields_pol.with_options.return_value.call_args.kwargs
+    assert pol_kwargs["fits_masks_by_beam"] is continuum_result.fits_masks_by_beam

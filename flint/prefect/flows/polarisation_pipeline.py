@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 from capn_crunch import BaseOptions, add_options_to_parser, create_options_from_parser
 from configargparse import ArgumentParser
+from eye_patch.naming import FITSMaskNames
 from prefect import flow, tags
 from prefect.futures import PrefectFuture, wait
 
@@ -43,6 +45,7 @@ from flint.prefect.common.imaging import (
     convolve_channel_groups_to_natural_resolution,
     convolve_mfs_beam_images_to_common_resolution,
     linmos_channel_groups_to_cubes,
+    task_flatten_mask,
     task_get_channel_images_from_paths,
     task_get_mfs_image_from_paths,
     task_linmos_images,
@@ -142,6 +145,7 @@ def process_science_fields_pol(
     flint_ms_directory: Path,
     pol_field_options: PolFieldOptions,
     mss_by_beam: MSsByBeam | None = None,
+    fits_masks_by_beam: Sequence[FITSMaskNames] | None = None,
 ) -> PolPipelineResult:
     """Image a field in polarisation and co-add the per-beam products.
 
@@ -149,6 +153,7 @@ def process_science_fields_pol(
         flint_ms_directory (Path): Directory holding the measurement sets to image
         pol_field_options (PolFieldOptions): Options controlling the polarisation imaging
         mss_by_beam (MSsByBeam | None, optional): Already Flint-processed measurement sets handed down by a calling flow, rather than rediscovered on disk. Defaults to None.
+        fits_masks_by_beam (Sequence[FITSMaskNames] | None, optional): A clean mask for each beam, in the order of the beams. Stokes I is imaged with it as is, and the linear and circular polarisations with it flattened to a plain mask. If None no clean masks are used. Defaults to None.
 
     Returns:
         PolPipelineResult: Stokes cubes, co-added MFS products, and the futures to wait on
@@ -255,6 +260,16 @@ def process_science_fields_pol(
 
     polarisations = _polarisations_to_image(strategy=strategy)
 
+    flat_fits_masks: list[PrefectFuture[FITSMaskNames]] | None = None
+    if fits_masks_by_beam:
+        if len(fits_masks_by_beam) != len(resolved_mss_by_beam):
+            msg = f"{len(fits_masks_by_beam)} clean masks for {len(resolved_mss_by_beam)} beams"
+            raise ValueError(msg)
+        flat_fits_masks = [
+            task_flatten_mask.submit(fits_mask=fits_mask)
+            for fits_mask in fits_masks_by_beam
+        ]
+
     # Solved once for all beams, and before any imaging
     cube_division: ChannelDivision | None = None
     if pol_field_options.pol_cube_channel_width:
@@ -272,8 +287,14 @@ def process_science_fields_pol(
     image_sets_dict: dict[str, PrefectFuture[ImageSet]] = {}
     for polarisation in polarisations.keys():
         _image_sets = []
+        # Stokes I can use a per-scale mask as is, the others need a plain one
+        beam_fits_masks = (
+            fits_masks_by_beam if polarisation == "total" else flat_fits_masks
+        ) or [None] * len(resolved_mss_by_beam)
         with tags(f"polarisation-{polarisation}"):
-            for beam_mss in resolved_mss_by_beam:
+            for beam_mss, beam_fits_mask in zip(
+                resolved_mss_by_beam, beam_fits_masks, strict=True
+            ):
                 update_wsclean_options = get_options_from_strategy(
                     strategy=strategy,
                     operation="polarisation",
@@ -295,6 +316,7 @@ def process_science_fields_pol(
                         wsclean_container=pol_field_options.wsclean_container,
                         make_cube_from_subbands=False,  # We will do this later
                         update_wsclean_options=update_wsclean_options,
+                        fits_mask=beam_fits_mask,
                         extra_output_types=("model",) if save_mfs_products else None,
                     )
                 )

@@ -247,6 +247,7 @@ def process_racs_all(
         flint_ms_directory=continuum_result.output_science_path,
         pol_field_options=resolved_pol_field_options,
         mss_by_beam=continuum_result.mss_by_beam,
+        fits_masks_by_beam=continuum_result.fits_masks_by_beam,
     )
     terminal_results.extend(pol_result.terminal_futures)
 

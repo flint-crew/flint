@@ -16,6 +16,7 @@ from flint.prefect.flows.racs_all_continuum_selfcal import (
     _check_create_output_science_path,
     _check_racs_all_options,
     _ensure_all_casda_format,
+    get_final_mask_options,
     get_skymodel_gaincal_options,
     match_beams_across_bands,
 )
@@ -63,6 +64,51 @@ def test_get_skymodel_gaincal_options_stays_phase_only(caplog) -> None:
 
     assert options == {"calmode": "p", "solint": "120s"}
     assert "Ignoring calmode='ap'" in caplog.text
+
+
+@pytest.fixture
+def masking_strategy() -> Strategy:
+    return Strategy(
+        {
+            "defaults": {"masking": {"use_mac": True, "seed_clip": 4.5}},
+            "selfcal": {
+                round_info: {"masking": {"seed_clip": float(round_info)}}
+                for round_info in range(5)
+            },
+        }
+    )
+
+
+def test_get_final_mask_options_uses_the_next_round(masking_strategy, caplog) -> None:
+    """The final masks take the masking of the round after the last one imaged"""
+    with caplog.at_level(logging.INFO):
+        options = get_final_mask_options(strategy=masking_strategy, rounds=3)
+
+    assert options == {"use_mac": True, "seed_clip": 4.0}
+    assert "Requested the masking options of selfcal round 4" in caplog.text
+    assert "falling back" not in caplog.text
+    assert "Using selfcal round 4" in caplog.text
+
+
+def test_get_final_mask_options_falls_back_to_the_last_round(
+    masking_strategy, caplog
+) -> None:
+    """With no round after the last one imaged, the last round defined is used"""
+    with caplog.at_level(logging.INFO):
+        options = get_final_mask_options(strategy=masking_strategy, rounds=4)
+
+    assert options == {"use_mac": True, "seed_clip": 4.0}
+    assert "Requested the masking options of selfcal round 5" in caplog.text
+    assert "falling back to the last round defined (4)" in caplog.text
+
+
+def test_get_final_mask_options_without_selfcal_rounds() -> None:
+    """Without a strategy the defaults of MaskingOptions apply, and without selfcal
+    rounds the strategy's defaults do"""
+    assert get_final_mask_options(strategy=None, rounds=0) == {}
+
+    strategy = Strategy({"defaults": {"masking": {"use_mac": True}}})
+    assert get_final_mask_options(strategy=strategy, rounds=0) == {"use_mac": True}
 
 
 @pytest.fixture
