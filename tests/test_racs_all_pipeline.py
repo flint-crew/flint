@@ -732,19 +732,60 @@ def test_a_failed_continuum_task_stops_the_later_stages(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Should any continuum task fail, e.g. a beam's final mask, the run fails before
-    the polarisation stage starts"""
-    from unittest.mock import MagicMock
+    the polarisation stage starts. A subflow's futures come back as their states."""
+    from prefect.states import Completed, Failed
 
     from flint.prefect.flows import racs_all_pipeline
 
     _stage_mocks(monkeypatch=monkeypatch, tmp_path=tmp_path, convolved_cubes=[])
-    failed = MagicMock()
-    failed.state.is_completed.return_value = False
-    failed.state.message = "A signal image is needed"
     continuum_result = racs_all_pipeline.process_racs_all_continuum.with_options.return_value.return_value
-    continuum_result.terminal_futures = [failed]
+    continuum_result.terminal_futures = [
+        Completed(),
+        Failed(message="A signal image is needed"),
+    ]
 
     with pytest.raises(RuntimeError, match="continuum imaging stage did not complete"):
         _run_racs_all(tmp_path=tmp_path)
 
     racs_all_pipeline.process_science_fields_pol.with_options.assert_not_called()
+
+
+def test_raise_on_failed_stage_reads_what_a_subflow_returns() -> None:
+    """Futures returned by a real subflow arrive as states, completed or failed"""
+    from prefect import flow, task
+    from prefect.testing.utilities import prefect_test_harness
+
+    from flint.prefect.flows.racs_all_continuum_selfcal import RACSContinuumResult
+    from flint.prefect.flows.racs_all_pipeline import raise_on_failed_stage
+
+    @task
+    def works() -> int:
+        return 1
+
+    @task
+    def fails() -> None:
+        raise ValueError("A signal image is needed")
+
+    def _stage(task_to_run):
+        @flow
+        def stage() -> RACSContinuumResult:
+            return RACSContinuumResult(
+                mss_by_beam=(),
+                holography_path=None,
+                output_science_path=Path("."),
+                terminal_futures=[works.submit(), task_to_run.submit()],
+            )
+
+        return stage
+
+    @flow
+    def run(task_to_run) -> None:
+        result = _stage(task_to_run)()
+        raise_on_failed_stage(
+            stage="continuum imaging", futures=result.terminal_futures
+        )
+
+    with prefect_test_harness(), disable_run_logger():
+        run(task_to_run=works)
+        with pytest.raises(RuntimeError, match="1 task\\(s\\) of the continuum"):
+            run(task_to_run=fails)

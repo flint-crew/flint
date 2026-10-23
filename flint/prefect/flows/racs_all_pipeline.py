@@ -13,6 +13,7 @@ from capn_crunch import add_options_to_parser, create_options_from_parser
 from configargparse import ArgumentParser
 from prefect import flow
 from prefect.futures import PrefectFuture
+from prefect.states import State
 
 from flint.configuration import (
     POLARISATION_MAPPING,
@@ -185,11 +186,18 @@ def _check_spice_mfs_dependency(
         )
 
 
-def raise_on_failed_stage(stage: str, futures: list[PrefectFuture[Any]]) -> None:
+def raise_on_failed_stage(
+    stage: str, futures: list[PrefectFuture[Any] | State]
+) -> None:
     """Stop the run should any task of a stage not have completed, so later stages do not start"""
-    failed = [future for future in futures if not future.state.is_completed()]
+    # Prefect hands back the futures a subflow returns as their final states
+    states = [
+        future.state if isinstance(future, PrefectFuture) else future
+        for future in futures
+    ]
+    failed = [state for state in states if not state.is_completed()]
     if failed:
-        messages = "; ".join(str(future.state.message) for future in failed[:3])
+        messages = "; ".join(str(state.message) for state in failed[:3])
         msg = f"{len(failed)} task(s) of the {stage} stage did not complete, so later stages are not run: {messages}"
         raise RuntimeError(msg)
 
