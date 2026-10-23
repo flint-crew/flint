@@ -755,8 +755,8 @@ def test_raise_on_failed_stage_reads_what_a_subflow_returns() -> None:
     from prefect import flow, task
     from prefect.testing.utilities import prefect_test_harness
 
+    from flint.prefect.common.utils import raise_on_failed_stage
     from flint.prefect.flows.racs_all_continuum_selfcal import RACSContinuumResult
-    from flint.prefect.flows.racs_all_pipeline import raise_on_failed_stage
 
     @task
     def works() -> int:
@@ -789,3 +789,47 @@ def test_raise_on_failed_stage_reads_what_a_subflow_returns() -> None:
         run(task_to_run=works)
         with pytest.raises(RuntimeError, match="1 task\\(s\\) of the continuum"):
             run(task_to_run=fails)
+
+
+def test_a_stage_with_a_failed_task_is_itself_failed() -> None:
+    """Checked inside the stage, a failed task fails the stage's own flow run, not
+    only the run that called it"""
+    from prefect import flow, task
+    from prefect.futures import wait
+    from prefect.testing.utilities import prefect_test_harness
+
+    from flint.prefect.common.utils import raise_on_failed_stage
+
+    @task
+    def fails() -> None:
+        raise ValueError("linmos failed")
+
+    @flow
+    def stage() -> None:
+        futures = [fails.submit()]
+        wait(futures)
+        raise_on_failed_stage(stage="continuum imaging", futures=futures)
+
+    @flow
+    def run() -> str:
+        return stage(return_state=True).type.value
+
+    with prefect_test_harness(), disable_run_logger():
+        assert run() == "FAILED"
+
+
+def test_raise_on_failed_stage_refuses_other_values() -> None:
+    """Anything a stage hands back that is neither a future nor a state is refused
+    by name, rather than failing on a missing attribute"""
+    from prefect.states import Completed
+
+    from flint.prefect.common.utils import raise_on_failed_stage
+
+    raise_on_failed_stage(stage="continuum imaging", futures=[Completed()])
+
+    with pytest.raises(
+        TypeError, match="continuum imaging stage handed back PosixPath"
+    ):
+        raise_on_failed_stage(
+            stage="continuum imaging", futures=[Completed(), Path("image.fits")]
+        )

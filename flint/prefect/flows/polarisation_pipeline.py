@@ -9,6 +9,7 @@ from configargparse import ArgumentParser
 from eye_patch.naming import FITSMaskNames
 from prefect import flow, tags
 from prefect.futures import PrefectFuture, wait
+from prefect.states import State
 
 from flint.coadd.linmos import LinmosOptions
 from flint.configuration import (
@@ -57,6 +58,7 @@ from flint.prefect.common.imaging import (
     total_beam_from_channel_groups,
 )
 from flint.prefect.common.utils import (
+    raise_on_failed_stage,
     task_create_field_summary,
     task_getattr,
 )
@@ -87,8 +89,8 @@ class PolPipelineResult(BaseOptions):
     """BANE RMS cube per polarisation, measured on the total-resolution planes. What rm-synthesis wants, as it describes the resolution the FDF is built at"""
     mfs_products: dict[str, dict[str, Path]]
     """MFS image/model/residual products co-added per Stokes parameter, keyed by Stokes ('i', 'q', 'u', 'v') then product type ('image', 'model', 'residual'). Only populated for Stokes imaged under a polarisation with ``WSCleanOptions.flint_save_mfs_products`` set"""
-    terminal_futures: list[PrefectFuture[Any]]
-    """Every future the polarisation stage produced, propagated so Prefect still detects any of their failures"""
+    terminal_futures: list[PrefectFuture[Any] | State]
+    """Every future the polarisation stage produced, propagated so Prefect still detects any of their failures. A calling flow gets them back as their final states"""
 
 
 def _no_products(
@@ -276,6 +278,7 @@ def process_science_fields_pol(
         logger.info("No wsclean container provided. Returning. ")
         # As at the end of the stage, nothing may still be queued once it returns
         wait([field_summary])
+        raise_on_failed_stage(stage="polarisation imaging", futures=[field_summary])
         return _no_products(terminal_futures=[field_summary])
 
     polarisations = _polarisations_to_image(strategy=strategy)
@@ -588,6 +591,7 @@ def process_science_fields_pol(
     # When run as a subflow its task runner shuts down on return, dropping any
     # task still queued, so everything has to finish before then
     wait(terminal_futures)
+    raise_on_failed_stage(stage="polarisation imaging", futures=terminal_futures)
 
     return PolPipelineResult(
         stokes_cubes={

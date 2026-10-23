@@ -12,8 +12,6 @@ from typing import Any
 from capn_crunch import add_options_to_parser, create_options_from_parser
 from configargparse import ArgumentParser
 from prefect import flow
-from prefect.futures import PrefectFuture
-from prefect.states import State
 
 from flint.configuration import (
     POLARISATION_MAPPING,
@@ -35,6 +33,7 @@ from flint.options import (
     pol_field_options_cli_class,
 )
 from flint.prefect.clusters import get_dask_runner
+from flint.prefect.common.utils import raise_on_failed_stage
 from flint.prefect.flows.polarisation_pipeline import process_science_fields_pol
 from flint.prefect.flows.racs_all_continuum_selfcal import process_racs_all_continuum
 from flint.prefect.flows.rmsynth_pipeline import process_rmsynth
@@ -184,22 +183,6 @@ def _check_spice_mfs_dependency(
             "(needed as the aegean source-finding reference image). Pass "
             "--skip-spice to disable the stage."
         )
-
-
-def raise_on_failed_stage(
-    stage: str, futures: list[PrefectFuture[Any] | State]
-) -> None:
-    """Stop the run should any task of a stage not have completed, so later stages do not start"""
-    # Prefect hands back the futures a subflow returns as their final states
-    states = [
-        future.state if isinstance(future, PrefectFuture) else future
-        for future in futures
-    ]
-    failed = [state for state in states if not state.is_completed()]
-    if failed:
-        messages = "; ".join(str(state.message) for state in failed[:3])
-        msg = f"{len(failed)} task(s) of the {stage} stage did not complete, so later stages are not run: {messages}"
-        raise RuntimeError(msg)
 
 
 @flow(name="Flint RACS-All Pipeline")

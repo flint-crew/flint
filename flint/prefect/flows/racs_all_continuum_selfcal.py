@@ -21,6 +21,7 @@ from eye_patch.naming import FITSMaskNames
 from eye_patch.options import MaskingOptions
 from prefect import flow, tags, unmapped
 from prefect.futures import PrefectFuture, wait
+from prefect.states import State
 
 from flint.catalogue import verify_reference_catalogues
 from flint.configuration import (
@@ -65,6 +66,7 @@ from flint.prefect.common.imaging import (
 from flint.prefect.common.ms import task_describe_ms
 from flint.prefect.common.predict import task_addmodel_to_ms, task_create_sky_model
 from flint.prefect.common.utils import (
+    raise_on_failed_stage,
     task_concatenate_holography,
     task_create_beam_summary,
     task_create_field_summary,
@@ -100,8 +102,8 @@ class RACSContinuumResult(BaseOptions):
     """Path to the holography FITS cube used when co-adding beams, if any"""
     output_science_path: Path
     """Directory the continuum imaging stage wrote its output products into"""
-    terminal_futures: list[PrefectFuture[Any]]
-    """Every future the continuum imaging stage produced, propagated so Prefect still detects any of their failures"""
+    terminal_futures: list[PrefectFuture[Any] | State]
+    """Every future the continuum imaging stage produced, propagated so Prefect still detects any of their failures. A calling flow gets them back as their final states"""
     fits_masks_by_beam: tuple[FITSMaskNames, ...] = ()
     """The clean mask of each beam, made from its final image, in the order of ``mss_by_beam``. Empty when no masks were made"""
 
@@ -789,6 +791,7 @@ def process_racs_all_continuum(
     # When run as a subflow its task runner shuts down on return, dropping any
     # task still queued, so everything has to finish before then
     wait(terminal_futures)
+    raise_on_failed_stage(stage="continuum imaging", futures=terminal_futures)
 
     resolved_holography_path = (
         holography_path.result()
