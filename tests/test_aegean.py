@@ -171,7 +171,7 @@ def _beam_image(path: Path, size: int = 512) -> Path:
 
 
 def test_run_bane_and_aegean_with_the_fft_bane(tmp_path, monkeypatch):
-    """With use_fft the maps aegean autoloads are written by flint, on the image's
+    """With flint_use_fft the maps aegean autoloads are written by flint, on the image's
     grid, and only aegean runs in the container"""
     commands = []
     monkeypatch.setattr(
@@ -183,7 +183,7 @@ def test_run_bane_and_aegean_with_the_fft_bane(tmp_path, monkeypatch):
     outputs = run_bane_and_aegean(
         image=image,
         aegean_container=tmp_path / "aegean.sif",
-        bane_options=BANEOptions(use_fft=True),
+        bane_options=BANEOptions(flint_use_fft=True),
     )
 
     assert len(commands) == 1 and commands[0].startswith("aegean ")

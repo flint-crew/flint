@@ -264,7 +264,7 @@ class FFTBANEOptions(BaseOptions):
     invalidate_zeros: bool = True
     """Treat pixels of exactly 0.0 as blank, as ``FitsCubeOptions.invalidate_zeros`` does. linmos fills outside its primary beam cutoff with zeros, not nans"""
     kernel: Literal["gaussian", "tophat"] = "gaussian"
-    """Shape of the smoothing kernel, sized by ``box_size``. ``tophat`` is a disc, the closest to the container BANE's box, and is what ``BANEOptions.use_fft`` uses"""
+    """Shape of the smoothing kernel, sized by ``box_size``. ``tophat`` is a disc, the closest to the container BANE's box, and is what ``BANEOptions.flint_use_fft`` uses"""
 
 
 class _CubesForRMSynth(BaseOptions):

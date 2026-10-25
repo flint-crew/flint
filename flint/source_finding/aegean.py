@@ -25,7 +25,7 @@ class BANEOptions(BaseOptions):
     """The size of the box in pixels"""
     cores: int = 12
     """Number of cores to use. The number of stripes will be less than this number."""
-    use_fft: bool = False
+    flint_use_fft: bool = False
     """Use flint's FFT BANE (``flint.bane``) instead of the container's BANE, rejecting pixels beyond 3 sigma as BANE does and with a tophat kernel for its box. ``grid_size`` and ``box_size`` are translated to it, with the step capped at 4, and ``cores`` is not used"""
 
 
@@ -195,7 +195,7 @@ def run_bane_and_aegean(
     logger.debug(f"{aegean_names=}")
 
     bind_dir = [image.absolute().parent]
-    if bane_options.use_fft:
+    if bane_options.flint_use_fft:
         from flint.bane import bane_fits_image  # pulls in numba
 
         logger.info(f"Running flint's FFT BANE on {image=}")
