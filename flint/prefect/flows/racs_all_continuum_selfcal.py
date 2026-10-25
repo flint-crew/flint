@@ -733,6 +733,12 @@ def process_racs_all_continuum(
                 aegean_outputs = task_run_bane_and_aegean.submit(
                     image=parsets[-1],
                     aegean_container=racs_all_options.aegean_container,
+                    update_bane_options=get_options_from_strategy(
+                        strategy=strategy,
+                        mode="bane",
+                        round_info=selfcal_round,
+                        operation="selfcal",
+                    ),
                 )  # type: ignore
                 field_summary = task_update_field_summary.submit(
                     field_summary=field_summary,

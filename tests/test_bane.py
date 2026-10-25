@@ -262,6 +262,47 @@ def test_bane_fits_image_writes_maps_on_the_input_grid(tmp_path: Path) -> None:
     assert np.nanmedian(fits.getdata(rms_path)) == pytest.approx(1e-3, rel=0.3)
 
 
+@pytest.mark.parametrize(
+    "kernel, kernel_func", [("gaussian", gaussian_kernel), ("tophat", tophat_kernel)]
+)
+def test_the_kernel_option_picks_the_kernel(
+    kernel: str, kernel_func, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The Gaussian is the default and the tophat is opted in to, the closest to the
+    container BANE's box"""
+    import flint.bane
+
+    used = []
+
+    def _get_kernel(**kwargs):
+        used.append(kwargs["kernel_func"])
+        return get_kernel(**kwargs)
+
+    monkeypatch.setattr(flint.bane, "get_kernel", _get_kernel)
+    options = (
+        FFTBANEOptions() if kernel == "gaussian" else FFTBANEOptions(kernel=kernel)
+    )
+
+    _, rms = robust_bane(
+        image=_sky(rms=1e-3), header=_header(), fft_bane_options=options
+    )
+
+    assert used == [kernel_func]
+    assert np.nanmedian(rms) == pytest.approx(1e-3, rel=0.3)
+
+
+def test_bane_fits_image_takes_a_tophat_kernel(tmp_path: Path) -> None:
+    """The tophat reaches the FITS maps through the options"""
+    fits_path = tmp_path / "field.image.fits"
+    fits.writeto(fits_path, _sky(background=0.0, rms=1e-3), _header(), overwrite=True)
+
+    _, rms_path = bane_fits_image(
+        image=fits_path, fft_bane_options=FFTBANEOptions(kernel="tophat")
+    )
+
+    assert np.nanmedian(fits.getdata(rms_path)) == pytest.approx(1e-3, rel=0.3)
+
+
 def test_bane_fits_image_refuses_a_cube(tmp_path: Path) -> None:
     """A cube raises rather than measuring its first channel"""
     fits_path = tmp_path / "cube.fits"
