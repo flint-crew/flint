@@ -11,7 +11,9 @@ import flint.prefect.common.predict as predict_module
 from flint.configuration import Strategy
 from flint.exceptions import NoFieldSourceError
 from flint.ms import MS
+from flint.options import FieldOptions
 from flint.prefect.common.predict import (
+    check_skymodel_calibration_options,
     get_skymodel_gaincal_options,
     task_create_sky_model,
 )
@@ -75,3 +77,23 @@ def test_get_skymodel_gaincal_options_stays_phase_only(caplog) -> None:
 
     assert options == {"calmode": "p", "solint": "120s"}
     assert "Ignoring calmode='ap'" in caplog.text
+
+
+def test_check_skymodel_calibration_options_holofiles(tmp_path) -> None:
+    """Unset holography cubes are allowed, but a set one has to exist"""
+    holofile = tmp_path / "holo.fits"
+    holofile.touch()
+    field_options = FieldOptions(
+        reference_catalogue_directory=tmp_path,
+        calibrate_container=holofile,
+        casa_container=holofile,
+    )
+    check_skymodel_calibration_options(
+        field_options=field_options, holofiles=[None, holofile]
+    )
+
+    with pytest.raises(ValueError, match="missing.fits"):
+        check_skymodel_calibration_options(
+            field_options=field_options,
+            holofiles=[holofile, None, tmp_path / "missing.fits"],
+        )

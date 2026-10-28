@@ -63,7 +63,10 @@ from flint.prefect.common.imaging import (
     validation_items,
 )
 from flint.prefect.common.ms import task_describe_ms
-from flint.prefect.common.predict import calibrate_mss_against_sky_model
+from flint.prefect.common.predict import (
+    calibrate_mss_against_sky_model,
+    check_skymodel_calibration_options,
+)
 from flint.prefect.common.utils import (
     raise_on_failed_stage,
     task_concatenate_holography,
@@ -145,19 +148,14 @@ def _check_racs_all_options(racs_all_options: RACSAllOptions) -> None:
                 "Unable to create linmos cubes without a yandasoft container"
             )
     if racs_all_options.run_skymodel_calibration:
-        # The catalogues themselves are verified by the reference_catalogue_directory check above
-        if racs_all_options.reference_catalogue_directory is None:
-            raise ValueError(
-                "reference_catalogue_directory needs to be set if run_skymodel_calibration is True"
-            )
-        if racs_all_options.calibrate_container is None:
-            raise ValueError(
-                "calibrate_container needs to be set if run_skymodel_calibration is True"
-            )
-        if racs_all_options.casa_container is None:
-            raise ValueError(
-                "casa_container needs to be set if run_skymodel_calibration is True"
-            )
+        check_skymodel_calibration_options(
+            field_options=racs_all_options,
+            holofiles=[
+                racs_all_options.low_holofile,
+                racs_all_options.mid_holofile,
+                racs_all_options.high_holofile,
+            ],
+        )
 
     # For the moment we make sure that this is provided. Can consider moving to mandatory argument in
     # the model definition

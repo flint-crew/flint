@@ -65,7 +65,10 @@ from flint.prefect.common.ms import (
     task_describe_ms,
     task_jolly_roger_tractor,
 )
-from flint.prefect.common.predict import calibrate_mss_against_sky_model
+from flint.prefect.common.predict import (
+    calibrate_mss_against_sky_model,
+    check_skymodel_calibration_options,
+)
 from flint.prefect.common.utils import (
     task_archive_sbid,
     task_create_beam_summary,
@@ -113,20 +116,14 @@ def _check_field_options(field_options: FieldOptions) -> None:
             raise ValueError(
                 "Unable to create linmos cubes without a yandasoft container"
             )
+    if field_options.holofile is not None and not field_options.holofile.exists():
+        raise ValueError(
+            f"Holography cube {field_options.holofile} is set, but does not exist"
+        )
     if field_options.run_skymodel_calibration:
-        # The catalogues themselves are verified by the reference_catalogue_directory check above
-        if field_options.reference_catalogue_directory is None:
-            raise ValueError(
-                "reference_catalogue_directory needs to be set if run_skymodel_calibration is True"
-            )
-        if field_options.calibrate_container is None:
-            raise ValueError(
-                "calibrate_container needs to be set if run_skymodel_calibration is True"
-            )
-        if field_options.casa_container is None:
-            raise ValueError(
-                "casa_container needs to be set if run_skymodel_calibration is True"
-            )
+        check_skymodel_calibration_options(
+            field_options=field_options, holofiles=[field_options.holofile]
+        )
 
 
 def _check_create_output_split_science_path(
@@ -419,7 +416,7 @@ def process_science_fields(
     archive_wait_for.extend(beam_summaries)
 
     field_summary = task_create_field_summary.submit(
-        mss=None,  # Constructed from the ms summaries
+        mss=None,
         cal_sbid_path=bandpass_path,
         holography_path=field_options.holofile,
         ms_summaries=ms_summaries,
@@ -554,7 +551,6 @@ def process_science_fields(
                 wsclean_results=wsclean_results,
                 field_options=field_options,
                 field_summary=field_summary,
-                # indicate in output linmos name no selfcal
                 additional_linmos_suffix_str="noselfcal"
                 if current_round == 0
                 else None,
@@ -630,7 +626,7 @@ def process_science_fields(
             science_folder_path=output_split_science_path,
             archive_path=field_options.sbid_archive_path,
             copy_path=field_options.sbid_copy_path,
-            max_round=field_options.rounds or None,
+            max_round=field_options.rounds,
             update_archive_options=update_archive_options,
             wait_for=archive_wait_for,
         )

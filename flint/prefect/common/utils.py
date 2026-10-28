@@ -183,7 +183,7 @@ def task_archive_sbid(
 
     # TODO: What should this be? Just general new regexs passed through,
     # or is this fine?
-    if max_round:
+    if max_round is not None:
         updated_file_patterns = (
             *tuple(archive_options.tar_file_re_patterns),
             f".*beam[0-9]+\\.round{max_round}-.*-image\\.fits",

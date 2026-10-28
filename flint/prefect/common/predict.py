@@ -152,6 +152,31 @@ def task_create_sky_model(
     return skymodel
 
 
+def check_skymodel_calibration_options(
+    field_options: FieldOptions | RACSAllOptions,
+    holofiles: Sequence[Path | None],
+) -> None:
+    """Raise ``ValueError`` should anything the sky-model calibration round needs be missing."""
+    # The catalogues themselves are verified with the rest of each flow's options
+    if field_options.reference_catalogue_directory is None:
+        raise ValueError(
+            "reference_catalogue_directory needs to be set if run_skymodel_calibration is True"
+        )
+    if field_options.calibrate_container is None:
+        raise ValueError(
+            "calibrate_container needs to be set if run_skymodel_calibration is True"
+        )
+    if field_options.casa_container is None:
+        raise ValueError(
+            "casa_container needs to be set if run_skymodel_calibration is True"
+        )
+    for holofile in holofiles:
+        if holofile is not None and not holofile.exists():
+            raise ValueError(
+                f"Holography cube {holofile} is set for sky-model calibration, but does not exist"
+            )
+
+
 def get_skymodel_gaincal_options(strategy: Strategy | None) -> dict[str, Any]:
     """Gaincal options for the sky-model calibration round: the strategy's round 0, always phase-only."""
     options = get_options_from_strategy(

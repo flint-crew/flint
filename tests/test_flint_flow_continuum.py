@@ -220,3 +220,8 @@ def test_check_field_options_skymodel_requirements(tmp_path, monkeypatch) -> Non
             _check_field_options(
                 field_options=field_options.with_options(**{missing: None})
             )
+
+    with pytest.raises(ValueError, match="Holography cube"):
+        _check_field_options(
+            field_options=field_options.with_options(holofile=tmp_path / "missing.fits")
+        )

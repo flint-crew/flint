@@ -20,6 +20,7 @@ from flint.options import (
     DEFAULT_TAR_RE_PATTERNS,
     ArchiveOptions,
 )
+from flint.prefect.common.utils import task_archive_sbid
 from flint.utils import get_packaged_resource_path
 
 FILES = [f"some_file_{a:02d}-MFS-image.fits" for a in range(36)] + [
@@ -181,6 +182,24 @@ def test_create_sbid_archive(glob_files):
     )
 
     assert tarfile.is_tarfile(tar_out_path)
+
+
+def test_archive_sbid_round0(tmp_path):
+    """The products of a round 0, such as a sky-model calibration, are archived when it is the last round"""
+    science_path = tmp_path / "12345"
+    science_path.mkdir()
+    final_ms = science_path / "SB12345.RACS_0000+00.beam00.round0.ms.zip"
+    final_ms.touch()
+    archive_path = tmp_path / "archive"
+    archive_path.mkdir()
+
+    task_archive_sbid.fn(
+        science_folder_path=science_path, archive_path=archive_path, max_round=0
+    )
+
+    (tar_path,) = archive_path.glob("*.tar")
+    with tarfile.open(tar_path) as tar:
+        assert final_ms.name in {Path(name).name for name in tar.getnames()}
 
 
 def test_archive_new_tar_patterns():
