@@ -203,6 +203,8 @@ class FieldOptions(BaseOptions):
     """Use the jolly roger tukey tractor. See the TukeyTractorOptions and the jolly-roger package for more details."""
     casda_bandpass_table: Path | None = None
     """The bandpass table applied to the MSs for this SBID, as deposited onto CASDA. Used to identify antennas to flag that may be unflagged under certain conditions."""
+    run_skymodel_calibration: bool = False
+    """Whether to run a phase-only self-calibration round (round 0) against a sky-model predicted from a reference catalogue before imaging. The holofile, if set, weights the model by the measured primary beam. Requires calibrate_container, casa_container and reference_catalogue_directory to be set."""
 
 
 class PolFieldOptions(BaseOptions):
@@ -843,7 +845,7 @@ def standardise_ms_to_list_ms(
     input MSs simuletanously, such as wsclean.
 
     Args:
-        ms (Path | MS | tuple[MS  |  Path, ...] | list[MS  |  Path]): Descriptions to create MS instances
+        ms (Path | MS | tuple[MS  |  Path, ...] | list[MS  |  Path] | HasMS): Descriptions to create MS instances
 
     Raises:
         ValueError: Raised when an empty list is formed
@@ -859,6 +861,8 @@ def standardise_ms_to_list_ms(
     elif isinstance(ms, (list, tuple)):
         for item in ms:
             output_list.append(MS.cast(item))
+    else:
+        output_list.append(MS.cast(ms))
     assert isinstance(output_list, list), f"{type(output_list)=} is not list"
 
     if not len(output_list) > 0:

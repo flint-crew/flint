@@ -1,12 +1,12 @@
 # Sky-model calibration with holography beams
 
-The RACS-All continuum flow can calibrate each band against a model of the sky
-before imaging starts. A reference catalogue is turned into a list of
-components. Each component is weighted by the measured ASKAP primary beam from
-a holography cube, predicted into the measurement set with `addmodel`, and
-used for one phase-only round of `gaincal`. The low, mid and high bands are
-calibrated separately, which ties all three to the same external phase
-reference.
+The continuum and RACS-All continuum flows can calibrate each measurement set
+against a model of the sky before imaging starts. A reference catalogue is
+turned into a list of components. Each component is weighted by the measured
+ASKAP primary beam from a holography cube, predicted into the measurement set
+with `addmodel`, and used for one phase-only round of `gaincal`. In the
+RACS-All flow the low, mid and high bands are calibrated separately, which ties
+all three to the same external phase reference.
 
 This page explains how that model is built, with a focus on how the holography
 beam is applied. That part follows linmos exactly, so the beam used for
@@ -39,6 +39,21 @@ flint_flow_racs_all_continuum_pipeline ... \
   −75°, RACS-low below +26°, and NVSS otherwise.
 - The three holography cubes are optional. Without one, a band falls back to a
   Gaussian primary beam with a FWHM of λ/D for a 12 m dish.
+
+The `flint_flow_continuum_pipeline` takes the same options, with the single
+holography cube that is also used to linmos the field:
+
+```bash
+flint_flow_continuum_pipeline ... \
+    --run-skymodel-calibration \
+    --calibrate-container /path/to/calibrate.sif \
+    --casa-container /path/to/casa.sif \
+    --reference-catalogue-directory /path/to/catalogues \
+    --holofile /path/to/akpb.iquv.closepack36.54.943MHz.SB55219.cube.fits
+```
+
+The calibrated measurement sets are named `*.round0.ms`, and the self-calibration
+rounds that follow carry on from them.
 
 The options that shape the model itself live in the `skymodel` section of the
 strategy file. See [Configuration](#skymodel-configuration).

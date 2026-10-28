@@ -45,6 +45,14 @@ def test_standardise_ms_to_list_ms(ms_example) -> None:
     assert all(isinstance(_ms, MS) for _ms in list_ms)
 
 
+def test_standardise_ms_to_list_ms_w_has_ms(ms_example) -> None:
+    """A single item carrying an MS, such as an MSSummary, gives back that MS"""
+    ms = MS(path=Path(ms_example), column="DATA")
+    ms_summary = describe_ms(ms=ms, attach_ms=True)
+
+    assert standardise_ms_to_list_ms(ms=ms_summary) == [ms]
+
+
 def test_standardise_ms_to_list_ms_w_list(ms_example) -> None:
     """Tests around converting a MS to a list of MS. Here input is
     a list of MSs"""
