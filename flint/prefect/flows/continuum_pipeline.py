@@ -424,6 +424,7 @@ def process_science_fields(
     field_summary = task_update_with_options.submit(
         input_object=field_summary, beam_summaries=beam_summaries
     )
+    archive_wait_for.append(field_summary)
 
     # Set up the default value should the user activated mask option is not set
     fits_beam_masks = None
