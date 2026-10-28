@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from capn_crunch import add_options_to_parser, create_options_from_parser
+from capn_crunch import BaseOptions, add_options_to_parser, create_options_from_parser
 from configargparse import ArgumentParser
 from prefect import flow
 
@@ -35,13 +35,43 @@ from flint.options import (
 from flint.prefect.clusters import get_dask_runner
 from flint.prefect.common.utils import raise_on_failed_stage
 from flint.prefect.flows.polarisation_pipeline import process_science_fields_pol
-from flint.prefect.flows.racs_all_continuum_selfcal import process_racs_all_continuum
+from flint.prefect.flows.racs_all_continuum_selfcal import (
+    RACSContinuumResult,
+    process_racs_all_continuum,
+)
 from flint.prefect.flows.rmsynth_pipeline import process_rmsynth
 from flint.prefect.flows.spice_compression_pipeline import process_spice_compression
+from flint.source_finding.aegean import AegeanOutputs
 
 # Fields on the rm-synth/spice options classes that process_racs_all always recomputes
 # from the polarisation stage's output. Excluded from the combined CLI.
 COMPUTED_FIELDS = {"stokes_cubes", "error_cubes", "cubes", "weight_cubes"}
+
+
+class RACSAllResult(BaseOptions):
+    """Return value of ``process_racs_all``"""
+
+    terminal_results: list[Any]
+    """Every future and result the stages produced"""
+    output_science_path: Path | None = None
+    """Directory the continuum imaging stage wrote its products into. None when it was skipped"""
+    final_linmos_image: Path | None = None
+    """The continuum stage's final co-added image. None without one"""
+    final_aegean_outputs: AegeanOutputs | None = None
+    """BANE and Aegean products of the final co-added image. None without them"""
+
+
+def _racs_all_result(
+    terminal_results: list[Any], continuum_result: Any | None
+) -> RACSAllResult:
+    if continuum_result is None:
+        return RACSAllResult(terminal_results=terminal_results)
+    return RACSAllResult(
+        terminal_results=terminal_results,
+        output_science_path=continuum_result.output_science_path,
+        final_linmos_image=continuum_result.final_linmos_image,
+        final_aegean_outputs=continuum_result.final_aegean_outputs,
+    )
 
 
 def _check_stage_prerequisites(
@@ -192,7 +222,7 @@ def process_racs_all(
     pol_field_options: PolFieldOptions,
     rmsynth_field_options: RMSynthFieldOptions,
     spice_field_options: SpiceFieldOptions,
-) -> list[Any]:
+) -> RACSAllResult:
     _check_racs_all_pipeline_options(pipeline_options=pipeline_options)
     _check_spice_mfs_dependency(
         pipeline_options=pipeline_options,
@@ -210,6 +240,7 @@ def process_racs_all(
     )
 
     terminal_results: list[Any] = []
+    continuum_result: RACSContinuumResult | None = None
 
     if not pipeline_options.skip_imaging:
         assert pipeline_options.imaging_cluster_config is not None
@@ -225,7 +256,9 @@ def process_racs_all(
         )
 
     if pipeline_options.skip_polarisation:
-        return terminal_results
+        return _racs_all_result(terminal_results, continuum_result)
+    # _check_racs_all_pipeline_options: polarisation needs the imaging stage
+    assert continuum_result is not None
 
     # rm-synth needs cubes at one beam across the band. Made in the polarisation
     # stage, while the co-added planes are already in hand, rather than by
@@ -328,7 +361,7 @@ def process_racs_all(
         )(spice_field_options=resolved_spice_field_options)
         terminal_results.extend(spice_results)
 
-    return terminal_results
+    return _racs_all_result(terminal_results, continuum_result)
 
 
 def setup_run_racs_all(
@@ -393,10 +426,12 @@ def get_parser() -> ArgumentParser:
     return parser
 
 
-def cli() -> None:
+def options_from_argv(argv: list[str] | None = None) -> dict[str, BaseOptions]:
+    """The arguments of ``process_racs_all`` (and ``setup_run_racs_all``) from a
+    command line, ``sys.argv`` by default, as the ``cli`` entry point takes it."""
     parser = get_parser()
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     # Excluded from the parser (COMPUTED_FIELDS), but create_options_from_parser
     # reads every field off the namespace. process_racs_all sets the real values.
@@ -430,13 +465,17 @@ def cli() -> None:
                 **{cluster_config_attr: args.cluster_config}
             )
 
-    setup_run_racs_all(
-        pipeline_options=pipeline_options,
-        racs_all_options=racs_all_options,
-        pol_field_options=pol_field_options,
-        rmsynth_field_options=rmsynth_field_options,
-        spice_field_options=spice_field_options,
-    )
+    return {
+        "pipeline_options": pipeline_options,
+        "racs_all_options": racs_all_options,
+        "pol_field_options": pol_field_options,
+        "rmsynth_field_options": rmsynth_field_options,
+        "spice_field_options": spice_field_options,
+    }
+
+
+def cli() -> None:
+    setup_run_racs_all(**options_from_argv())
 
 
 if __name__ == "__main__":
