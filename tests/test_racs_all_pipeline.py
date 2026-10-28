@@ -179,7 +179,8 @@ def test_process_racs_all_everything_disabled_returns_immediately(
             spice_field_options=spice_field_options,
         )
 
-    assert result == []
+    assert result.terminal_results == []
+    assert result.output_science_path is None
 
 
 def test_pol_stage_with_nothing_to_do_still_feeds_rm_synth() -> None:
@@ -363,6 +364,8 @@ def _stage_mocks(
     continuum_result.cleanup_futures = []
     continuum_result.output_science_path = tmp_path
     continuum_result.holography_path = None
+    continuum_result.final_linmos_image = None
+    continuum_result.final_aegean_outputs = None
 
     pol_result = PolPipelineResult(
         stokes_cubes={"q": tmp_path / "q.fits", "u": tmp_path / "u.fits"},
@@ -422,14 +425,14 @@ def _stage_mocks(
     return pol_result, spice_stage, rmsynth_stage
 
 
-def _run_racs_all(tmp_path: Path) -> None:
+def _run_racs_all(tmp_path: Path) -> Any:
     container = tmp_path / "container.sif"
     container.touch()
     catalogue = tmp_path / "components.fits"
     catalogue.touch()
 
     with prefect_test_harness(), disable_run_logger():
-        process_racs_all(
+        return process_racs_all(
             pipeline_options=RACSAllPipelineOptions(
                 imaging_cluster_config=tmp_path,
                 polarisation_cluster_config=tmp_path,
@@ -855,3 +858,72 @@ def test_raise_on_failed_stage_refuses_other_values() -> None:
         raise_on_failed_stage(
             stage="continuum imaging", futures=[Completed(), Path("image.fits")]
         )
+
+
+def test_final_products_of_the_continuum_stage_are_returned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The final image and its source finding are handed back, so a caller can
+    report on them without searching the output directory."""
+    from flint.prefect.flows import racs_all_pipeline
+    from flint.source_finding.aegean import AegeanOutputs
+
+    _stage_mocks(monkeypatch=monkeypatch, tmp_path=tmp_path, convolved_cubes=[])
+    continuum = racs_all_pipeline.process_racs_all_continuum
+    continuum_result = continuum.with_options.return_value.return_value
+    aegean = AegeanOutputs(
+        bkg=tmp_path / "i_bkg.fits",
+        rms=tmp_path / "i_rms.fits",
+        comp=tmp_path / "i_comp.fits",
+        beam_shape=(15.0, 15.0, 0.0),
+        image=tmp_path / "i.fits",
+    )
+    continuum_result.final_linmos_image = tmp_path / "i.fits"
+    continuum_result.final_aegean_outputs = aegean
+
+    result = _run_racs_all(tmp_path=tmp_path)
+
+    assert result.output_science_path == tmp_path
+    assert result.final_linmos_image == tmp_path / "i.fits"
+    assert result.final_aegean_outputs == aegean
+
+
+def test_options_from_argv(tmp_path: Path) -> None:
+    from flint.prefect.flows.racs_all_pipeline import options_from_argv
+
+    data = [tmp_path / str(sbid) for sbid in (56289, 67042, 35212)]
+    options = options_from_argv(
+        [*map(str, data), "--cluster-config", "petrichor_main.yaml", "--rounds", "3"]
+    )
+
+    assert set(options) == {
+        "pipeline_options",
+        "racs_all_options",
+        "pol_field_options",
+        "rmsynth_field_options",
+        "spice_field_options",
+    }
+    racs_all_options = options["racs_all_options"]
+    assert [
+        racs_all_options.low_data,
+        racs_all_options.mid_data,
+        racs_all_options.high_data,
+    ] == data
+    assert racs_all_options.rounds == 3
+    # Stage cluster configurations default to --cluster-config
+    pipeline_options = options["pipeline_options"]
+    assert pipeline_options.imaging_cluster_config == Path("petrichor_main.yaml")
+    assert pipeline_options.spice_cluster_config == Path("petrichor_main.yaml")
+
+
+def test_continuum_result_final_products_default_to_none(tmp_path: Path) -> None:
+    from flint.prefect.flows.racs_all_continuum_selfcal import RACSContinuumResult
+
+    result = RACSContinuumResult(
+        mss_by_beam=(),
+        holography_path=None,
+        output_science_path=tmp_path,
+        terminal_futures=[],
+    )
+    assert result.final_linmos_image is None
+    assert result.final_aegean_outputs is None

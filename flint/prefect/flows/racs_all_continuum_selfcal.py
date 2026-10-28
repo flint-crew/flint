@@ -75,6 +75,7 @@ from flint.prefect.common.utils import (
     task_update_field_summary,
     task_update_with_options,
 )
+from flint.source_finding.aegean import AegeanOutputs
 from flint.summary import BeamSummary
 
 
@@ -109,6 +110,15 @@ class RACSContinuumResult(BaseOptions):
     """The clean mask of each beam, made from its final image, in the order of ``mss_by_beam``. Empty when no masks were made"""
     cleanup_futures: list[PrefectFuture[Any] | State] = []
     """The removal of intermediate files, kept apart from ``terminal_futures`` so that a failed deletion does not stop the later stages. A calling flow gets them back as their final states, and should raise on them once its later stages have run"""
+    final_linmos_image: Path | None = None
+    """The final round's co-added image. None without a yandasoft container"""
+    final_aegean_outputs: AegeanOutputs | None = None
+    """BANE and Aegean products of the final round's co-added image. None without an aegean container"""
+
+
+def _resolve(value: Any) -> Any:
+    """The result of a future, or the value itself if it is not one."""
+    return value.result() if isinstance(value, PrefectFuture) else value
 
 
 def _check_racs_all_options(racs_all_options: RACSAllOptions) -> None:
@@ -658,6 +668,9 @@ def process_racs_all_continuum(
     )
     terminal_futures.extend(final_fits_masks)
 
+    # The final round's co-added image and its source finding, returned to callers
+    final_parset: PrefectFuture[Any] | None = None
+    final_aegean_outputs: PrefectFuture[Any] | None = None
     if racs_all_options.yandasoft_container:
         for selfcal_round, final_beam_imaging_results in imaging_results.items():
             additional_linmos_suffix = (
@@ -678,6 +691,8 @@ def process_racs_all_continuum(
                 f"Self-cal round {selfcal_round}, number of parsets {len(parsets)}"
             )
             terminal_futures.extend(parsets)
+            if selfcal_round == racs_all_options.rounds:
+                final_parset = parsets[-1]  # type: ignore[assignment]
 
             if racs_all_options.aegean_container:
                 logger.info(f"Running aegean on round {selfcal_round}")
@@ -697,6 +712,8 @@ def process_racs_all_continuum(
                     round=selfcal_round if selfcal_round > 0 else None,
                 )
                 terminal_futures.append(field_summary)
+                if selfcal_round == racs_all_options.rounds:
+                    final_aegean_outputs = aegean_outputs
 
                 if selfcal_round in (0, racs_all_options.rounds):
                     val_results = validation_items(
@@ -766,7 +783,12 @@ def process_racs_all_continuum(
         for beam_result in imaging_results[racs_all_options.rounds]
     )
 
+    final_linmos = _resolve(final_parset)
     return RACSContinuumResult(
+        final_linmos_image=final_linmos.image_fits
+        if final_linmos is not None
+        else None,
+        final_aegean_outputs=_resolve(final_aegean_outputs),
         mss_by_beam=final_round_mss_by_beam,
         holography_path=resolved_holography_path,
         output_science_path=output_science_path,
