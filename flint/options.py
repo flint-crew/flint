@@ -263,6 +263,8 @@ class FFTBANEOptions(BaseOptions):
     """Seeds the noise clipped pixels are filled with, so a rerun reproduces the maps"""
     invalidate_zeros: bool = True
     """Treat pixels of exactly 0.0 as blank, as ``FitsCubeOptions.invalidate_zeros`` does. linmos fills outside its primary beam cutoff with zeros, not nans"""
+    kernel: Literal["gaussian", "tophat"] = "gaussian"
+    """Shape of the smoothing kernel, sized by ``box_size``. ``tophat`` is a disc, the closest to the container BANE's box, and is what ``BANEOptions.flint_use_fft`` uses"""
 
 
 class _CubesForRMSynth(BaseOptions):
@@ -585,6 +587,10 @@ class RACSAllOptions(BaseOptions):
     """Desired width, in Hz, of each plane of the final cube. The wsclean channel division is solved for this target so the cube has a single linear frequency axis, overriding the strategy ``channels_out`` in the final round. See ``flint.imager.channel_division``"""
     holofile: Path | None = None
     """The oath to a concatenated holography FITS file that contains low-, mid- and high-band cubes"""
+    run_skymodel_calibration: bool = False
+    """Whether to run a phase-only self-calibration round (round 0) against a sky-model predicted from a reference catalogue, independently per band, before imaging. Ties the low-, mid- and high-band data to a common external phase reference. Requires calibrate_container and casa_container to be set."""
+    calibrate_container: Path | None = None
+    """Path to the singularity calibrate container, required by run_skymodel_calibration for the addmodel prediction step"""
 
 
 def pol_field_options_cli_class(
@@ -801,6 +807,8 @@ class MS(BaseOptions):
     """If set indicates the field of the data in the MS"""
     model_column: str | None = None
     """If set indicates the column with model visibilities"""
+    h5parm: Path | None = None
+    """If set indicates the h5parm with calibration solutions for the MS"""
 
     @property
     def ms(self) -> MS:
@@ -808,7 +816,6 @@ class MS(BaseOptions):
 
     @classmethod
     def cast(cls, ms: MS | Path | HasMS) -> MS:
-
         if isinstance(ms, MS):
             pass
         elif isinstance(ms, Path):

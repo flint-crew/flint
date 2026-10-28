@@ -14,6 +14,7 @@ about.md
 data.md
 config.md
 flagging.md
+dp3.md
 masking.md
 source_finding.md
 predict.md

@@ -419,7 +419,6 @@ def robust_bane(
     image: NDArray[np.float32],
     header: fits.Header | dict[str, Any],
     fft_bane_options: FFTBANEOptions | None = None,
-    kernel_func: Callable[[int], NDArray[np.float32]] = gaussian_kernel,
 ) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
     """Background and RMS maps of a single image plane.
 
@@ -433,8 +432,7 @@ def robust_bane(
     Args:
         image (NDArray[np.float32]): The image plane to measure
         header (fits.Header | dict[str, Any]): Its header, for the beam and pixel scale
-        fft_bane_options (FFTBANEOptions | None, optional): Step, box, clip, seed and zero blanking. Defaults to ``FFTBANEOptions()``.
-        kernel_func (Callable, optional): Kernel shape. Defaults to ``gaussian_kernel``.
+        fft_bane_options (FFTBANEOptions | None, optional): Step, box, kernel, clip, seed and zero blanking. Defaults to ``FFTBANEOptions()``.
 
     Returns:
         tuple[NDArray[np.float32], NDArray[np.float32]]: Background and RMS, shaped like `image`
@@ -450,7 +448,9 @@ def robust_bane(
         header=header,
         step_size=fft_bane_options.step_size,
         box_size=fft_bane_options.box_size,
-        kernel_func=kernel_func,
+        kernel_func=(
+            tophat_kernel if fft_bane_options.kernel == "tophat" else gaussian_kernel
+        ),
     )
 
     image = np.asarray(image, dtype=np.float32)
@@ -499,7 +499,7 @@ def bane_fits_image(
 
     Args:
         image (Path): Single-plane FITS image to measure
-        fft_bane_options (FFTBANEOptions | None, optional): Step, box, clip and seed. Defaults to ``FFTBANEOptions()``.
+        fft_bane_options (FFTBANEOptions | None, optional): Step, box, kernel, clip and seed. Defaults to ``FFTBANEOptions()``.
 
     Returns:
         BANEMaps: The background and RMS maps written

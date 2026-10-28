@@ -10,13 +10,11 @@ import pytest
 from flint.exceptions import NamingException
 from flint.naming import (
     CASDANameComponents,
-    FITSMaskNames,
     ProcessedNameComponents,
     RawNameComponents,
     _rename_linear_to_stokes,
     add_timestamp_to_path,
     casda_ms_format,
-    create_fits_mask_names,
     create_image_cube_name,
     create_imaging_name_prefix,
     create_largest_common_field_name,
@@ -33,9 +31,11 @@ from flint.naming import (
     get_potato_output_base_path,
     get_sbid_from_path,
     get_selfcal_ms_name,
+    pol_name_token,
     processed_ms_format,
     raw_ms_format,
     rename_linear_to_stokes,
+    replace_name_field,
     split_images,
     update_beam_resolution_field_in_path,
 )
@@ -324,6 +324,36 @@ def test_create_imaging_name_prefix():
     assert name == "SB63789.EMU_1743-51.project-pol.beam03.round4.i"
 
 
+def test_create_imaging_name_prefix_linear_feeds():
+    """The comma of a list of polarisations does not make it into the name, and
+    the name parses back"""
+    assert pol_name_token(pol="xx,yy") == "xxyy"
+    assert pol_name_token(pol="QU") == "qu"
+
+    ms_path = Path("/Jack/Sparrow/SB63789.EMU_1743-51.beam03.round4.ms")
+    name = create_imaging_name_prefix(ms_path=ms_path, pol="xx,yy")
+    assert name == "SB63789.EMU_1743-51.beam03.round4.xxyy"
+
+    components = processed_ms_format(in_name=name)
+    assert components is not None
+    assert components.pol == "xxyy"
+
+
+def test_replace_name_field():
+    """The last matching field is replaced, which in a flint name is the
+    polarisation rather than any part of the MS name before it"""
+    path = Path("/scratch/SB1.xx.beam00.round1.xx.ch0000-0001.image.fits")
+    assert replace_name_field(path=path, old="xx", new="i") == Path(
+        "/scratch/SB1.xx.beam00.round1.i.ch0000-0001.image.fits"
+    )
+
+
+def test_replace_name_field_missing():
+    path = Path("SB1.F.beam00.round1.i.MFS.image.fits")
+    with pytest.raises(NamingException, match="xx"):
+        replace_name_field(path=path, old="xx", new="yy")
+
+
 def test_get_cube_fits_from_paths():
     """Identify the files that contain the cube field and are fits, including
     compressed cubes produced when FitsCubeOptions.compress is set"""
@@ -588,33 +618,6 @@ def test_add_timestamp_to_path():
 
     now_path = add_timestamp_to_path(input_path=example_path)
     assert now_path != expected
-
-
-def test_create_fits_mask_names_no_signal():
-    fits_image = Path("38960/SB38960.RACS_1418-12.noselfcal_linmos.fits")
-
-    result = create_fits_mask_names(fits_image=fits_image, include_signal_path=False)
-    assert isinstance(result, FITSMaskNames)
-    assert isinstance(result.mask_fits, Path)
-    assert result.signal_fits is None
-    assert result.mask_fits == Path(
-        "38960/SB38960.RACS_1418-12.noselfcal_linmos.mask.fits"
-    )
-
-
-def test_create_fits_mask_names():
-    fits_image = Path("38960/SB38960.RACS_1418-12.noselfcal_linmos.fits")
-
-    result = create_fits_mask_names(fits_image=fits_image, include_signal_path=True)
-    assert isinstance(result, FITSMaskNames)
-    assert isinstance(result.signal_fits, Path)
-    assert isinstance(result.mask_fits, Path)
-    assert result.signal_fits == Path(
-        "38960/SB38960.RACS_1418-12.noselfcal_linmos.signal.fits"
-    )
-    assert result.mask_fits == Path(
-        "38960/SB38960.RACS_1418-12.noselfcal_linmos.mask.fits"
-    )
 
 
 def test_aocalibrate_into_process_ms_format():

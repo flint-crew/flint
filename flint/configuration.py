@@ -12,12 +12,19 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from eye_patch.options import MaskingOptions
 from jolly_roger.tractor import TukeyTractorOptions
 from pydantic import ValidationError
 
+from flint.dp3 import (
+    DP3AOFlaggerOptions,
+    DP3ApplyCalOptions,
+    DP3DDECalOptions,
+    DP3GainCalOptions,
+    DP3PreFlaggerOptions,
+)
 from flint.imager.wsclean import WSCleanOptions
 from flint.logging import logger
-from flint.masking import MaskingOptions
 from flint.misc.holo import ConcatHoloOptions
 from flint.naming import add_timestamp_to_path
 from flint.options import (
@@ -30,6 +37,7 @@ from flint.options import (
 )
 from flint.peel.potato import PotatoPeelOptions
 from flint.selfcal.casa import GainCalOptions
+from flint.sky_model import SkyModelOptions
 from flint.source_finding.aegean import AegeanOptions, BANEOptions
 
 # TODO: It feels like that the standard of this strategy file should
@@ -54,12 +62,18 @@ MODE_OPTIONS_MAPPING = {
     "potatopeel": PotatoPeelOptions,
     "fitscube": FitsCubeOptions,
     "tukeytractor": TukeyTractorOptions,
+    "skymodel": SkyModelOptions,
     "rmsynth": RMSynthOptions,
     "rmclean": RMCleanOptions,
     # "bane" is the containerised aegean BANE; this is the FFT one in flint.bane
     "fftbane": FFTBANEOptions,
     "concatholo": ConcatHoloOptions,
     "spice": SpiceOptions,
+    "dp3preflagger": DP3PreFlaggerOptions,
+    "dp3aoflagger": DP3AOFlaggerOptions,
+    "dp3ddecal": DP3DDECalOptions,
+    "dp3gaincal": DP3GainCalOptions,
+    "dp3applycal": DP3ApplyCalOptions,
 }
 POLARISATION_MAPPING = {
     "total": "i",

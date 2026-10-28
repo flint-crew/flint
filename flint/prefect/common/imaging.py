@@ -12,6 +12,10 @@ from typing import Any, NamedTuple, ParamSpec, TypeVar
 
 import numpy as np
 import pandas as pd
+from eye_patch.masking import create_mask_from_fits
+from eye_patch.naming import FITSMaskNames
+from eye_patch.options import MaskingOptions
+from eye_patch.scales import flatten_scale_mask_fits
 from fitscube.bounding_box import BoundingBox, get_common_bounding_box
 from prefect import Task, unmapped
 from prefect.artifacts import create_table_artifact
@@ -36,26 +40,29 @@ from flint.convol import (
     convolve_plane_to_beam,
     get_common_beam,
 )
+from flint.cube import combine_images_to_cube, split_cube_into_planes
+from flint.dp3 import (
+    dp3_applycal,
+    dp3_ddecal,
+    dp3_flag,
+    dp3_gaincal,
+    dp3_solve_apply,
+)
 from flint.flagging import flag_ms_aoflagger
 from flint.imager.wsclean import (
-    ImageSet,
     WSCleanOptions,
     WSCleanResult,
-    combine_images_to_cube,
     image_set_from_result,
-    merge_image_sets,
     merge_image_sets_from_results,
-    split_and_get_image_set,
-    split_cube_into_planes,
-    transpose_and_sort_channel_images,
     wsclean_imager,
 )
-from flint.logging import logger
-from flint.masking import (
-    MaskingOptions,
-    create_snr_mask_from_fits,
-    extract_beam_mask_from_mosaic,
+from flint.imageset import (
+    ImageSet,
+    merge_image_sets,
+    split_and_get_image_set,
+    transpose_and_sort_channel_images,
 )
+from flint.logging import logger
 from flint.ms import (
     MS,
     copy_and_preprocess_casda_askap_ms,
@@ -65,7 +72,6 @@ from flint.ms import (
     standardise_ms_to_list_ms,
 )
 from flint.naming import (
-    FITSMaskNames,
     ResolutionModes,
     create_name_from_common_fields,
     get_fits_cube_from_paths,
@@ -115,6 +121,11 @@ task_remove_files_folders = task(remove_files_folders)
 task_get_common_bounding_box = task(get_common_bounding_box)
 task_split_cube_into_planes = task(split_cube_into_planes)
 task_bane_fits_image = task(bane_fits_image)
+task_dp3_flag = task(dp3_flag)
+task_dp3_ddecal = task(dp3_ddecal)
+task_dp3_gaincal = task(dp3_gaincal)
+task_dp3_applycal = task(dp3_applycal)
+task_dp3_solve_apply = task(dp3_solve_apply)
 
 # Tasks below are extracting componented from earlier stages, or are
 # otherwise doing something important
@@ -179,8 +190,9 @@ def task_flag_ms_aoflagger(ms: FlagMS, container: Path | None) -> FlagMS:
     # Pirate believes the type ignore below is due to the decorated function and type alias
     extracted_ms = MS.cast(ms=ms)  # type: ignore
 
+    # TODO: Flag with DP3 (dp3_flag) when no aoflagger container is given
     if container is None:
-        logger.warning("AOFlagger {container=}, so skipping the flagging")
+        logger.warning(f"AOFlagger {container=}, so skipping the flagging")
         return ms
 
     extracted_ms = flag_ms_aoflagger(ms=extracted_ms, container=container)
@@ -391,10 +403,16 @@ def task_wsclean_imager(
     )
 
     if fits_mask:
-        if fits_mask.mask_fits is not None and fits_mask.mask_fits.exists():
-            update_wsclean_options["fits_mask"] = fits_mask.mask_fits
-        if fits_mask.scale_mask_fits is not None and fits_mask.scale_mask_fits.exists():
+        # radler only uses a per-scale mask in a multiscale clean, and prefers a
+        # plain mask over it, so pass one
+        if update_wsclean_options.get("multiscale") and fits_mask.scale_mask_fits:
+            # TODO: Check the mask was made with the scales wsclean cleans at, as
+            # bit n of each pixel gates wsclean's n'th smallest scale
             update_wsclean_options["multiscale_fits_mask"] = fits_mask.scale_mask_fits
+        else:
+            update_wsclean_options["fits_mask"] = (
+                fits_mask.mask_fits or fits_mask.scale_mask_fits
+            )
 
     if channel_range:
         update_wsclean_options["channel_range"] = channel_range
@@ -1433,20 +1451,9 @@ def task_create_image_mask_model(
     image_products: AegeanOutputs | None = None,
     update_masking_options: dict[str, Any] | None = None,
 ) -> FITSMaskNames:
-    """Create a mask for an image, with the intention of providing it as a clean mask
-    to an appropriate imager.
-
-    Args:
-        linmos_parset (LinmosResult): Linmos command and associated meta-data
-        image_products (AegeanOutputs | None, optional): Images of the RMS and BKG. If None then signal mask creation will also be skipped.
-        update_masking_options (Optional[Dict[str,Any]], optional): Updated options supplied to the default MaskingOptions. Defaults to None.
-
-
-    Raises:
-        ValueError: Raised when ``image_products`` are not known
-
-    Returns:
-        FITSMaskNames: Clean mask where all pixels below a S/N are masked
+    """Make a clean mask for an image with eye-patch, returning the names of the
+    mask files it wrote. RMS and background images are needed unless ``use_mac``
+    or ``convolve_first`` is set.
     """
     if isinstance(image_products, AegeanOutputs):
         source_rms = image_products.rms
@@ -1480,42 +1487,29 @@ def task_create_image_mask_model(
     if update_masking_options:
         masking_options = masking_options.with_options(**update_masking_options)
 
-    mask_names = create_snr_mask_from_fits(
+    mask_names = create_mask_from_fits(
         fits_image_path=source_image,
         fits_bkg_path=source_bkg,
         fits_rms_path=source_rms,
         masking_options=masking_options,
-        create_signal_fits=source_rms is not None,
     )
 
-    logger.info(f"Created {mask_names.mask_fits}")
+    logger.info(f"Created {mask_names=}")
 
     return mask_names
 
 
 @task
-def task_extract_beam_mask_image(
-    linmos_mask_names: FITSMaskNames, wsclean_result: WSCleanResult
-) -> FITSMaskNames:
-    """Extract a clean mask for a beam from a larger clean mask (e.g. derived from a field)
+def task_flatten_mask(fits_mask: FITSMaskNames) -> FITSMaskNames:
+    """Flatten a per-scale mask into a plain clean mask, returning any other mask as is"""
+    if fits_mask.scale_mask_fits is None:
+        return fits_mask
 
-    Args:
-        linmos_mask_names (FITSMaskNames): Mask that will be drawn from to form a smaller clean mask (e.g. for a beam)
-        wsclean_result (WSCleanResult): Wsclean command and meta-data. This is used to draw from the WCS to create an appropriate pixel-to-pixel mask
-
-    Returns:
-        FITSMaskNames: Clean mask for a image
-    """
-    # All images made by wsclean will have the same WCS
-    assert wsclean_result.image_set is not None, (
-        f"{wsclean_result.image_set=}, which should not happen"
+    # A rerun after a dask worker death meets the mask its first attempt wrote
+    mask_fits = flatten_scale_mask_fits(
+        scale_mask_fits=fits_mask.scale_mask_fits, overwrite=True
     )
-    beam_image = next(iter(wsclean_result.image_set.image))
-    beam_mask_names = extract_beam_mask_from_mosaic(
-        fits_beam_image_path=beam_image, fits_mosaic_mask_names=linmos_mask_names
-    )
-
-    return beam_mask_names
+    return FITSMaskNames(mask_fits=mask_fits)
 
 
 @task

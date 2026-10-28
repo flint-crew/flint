@@ -17,8 +17,11 @@ from capn_crunch import (
     create_options_from_parser,
 )
 from configargparse import ArgumentParser
+from eye_patch.naming import FITSMaskNames
+from eye_patch.options import MaskingOptions
 from prefect import flow, tags, unmapped
-from prefect.futures import PrefectFuture
+from prefect.futures import PrefectFuture, wait
+from prefect.states import State
 
 from flint.catalogue import verify_reference_catalogues
 from flint.configuration import (
@@ -42,6 +45,7 @@ from flint.naming import (
     get_sbid_from_path,
 )
 from flint.options import (
+    AddModelSubtractFieldOptions,
     FitsCubeOptions,
     RACSAllOptions,
     dump_field_options_to_yaml,
@@ -60,13 +64,16 @@ from flint.prefect.common.imaging import (
     validation_items,
 )
 from flint.prefect.common.ms import task_describe_ms
+from flint.prefect.common.predict import task_addmodel_to_ms, task_create_sky_model
 from flint.prefect.common.utils import (
+    raise_on_failed_stage,
     task_concatenate_holography,
     task_create_beam_summary,
     task_create_field_summary,
     task_update_field_summary,
     task_update_with_options,
 )
+from flint.sky_model import SkyModelOptions
 from flint.summary import BeamSummary
 
 
@@ -95,8 +102,10 @@ class RACSContinuumResult(BaseOptions):
     """Path to the holography FITS cube used when co-adding beams, if any"""
     output_science_path: Path
     """Directory the continuum imaging stage wrote its output products into"""
-    terminal_futures: list[PrefectFuture[Any]]
-    """Every future the continuum imaging stage produced, propagated so Prefect still detects any of their failures"""
+    terminal_futures: list[PrefectFuture[Any] | State]
+    """Every future the continuum imaging stage produced, propagated so Prefect still detects any of their failures. A calling flow gets them back as their final states"""
+    fits_masks_by_beam: tuple[FITSMaskNames, ...] = ()
+    """The clean mask of each beam, made from its final image, in the order of ``mss_by_beam``. Empty when no masks were made"""
 
 
 def _check_racs_all_options(racs_all_options: RACSAllOptions) -> None:
@@ -137,12 +146,110 @@ def _check_racs_all_options(racs_all_options: RACSAllOptions) -> None:
             raise ValueError(
                 "Unable to create linmos cubes without a yandasoft container"
             )
+    if racs_all_options.run_skymodel_calibration:
+        # The catalogues themselves are verified by the reference_catalogue_directory check above
+        if racs_all_options.reference_catalogue_directory is None:
+            raise ValueError(
+                "reference_catalogue_directory needs to be set if run_skymodel_calibration is True"
+            )
+        if racs_all_options.calibrate_container is None:
+            raise ValueError(
+                "calibrate_container needs to be set if run_skymodel_calibration is True"
+            )
+        if racs_all_options.casa_container is None:
+            raise ValueError(
+                "casa_container needs to be set if run_skymodel_calibration is True"
+            )
+
     # For the moment we make sure that this is provided. Can consider moving to mandatory argument in
     # the model definition
     assert (
         isinstance(racs_all_options.wsclean_container, Path)
         and racs_all_options.wsclean_container.exists()
     ), "Missing wsclean container path"
+
+
+def get_skymodel_gaincal_options(strategy: Strategy | None) -> dict[str, Any]:
+    """Gaincal options for the sky-model calibration round: the strategy's round 0, always phase-only."""
+    options = get_options_from_strategy(
+        strategy=strategy, mode="gaincal", round_info=0, operation="selfcal"
+    )
+    if options.get("calmode", "p") != "p":
+        logger.warning(
+            f"Ignoring calmode={options['calmode']!r} for the sky-model calibration round, which is phase-only"
+        )
+    return {**options, "calmode": "p"}
+
+
+def get_final_mask_options(
+    strategy: Strategy | None, rounds: int
+) -> dict[str, Any] | None:
+    """Masking options for the masks made from the final images, taken from the round
+    after the last one imaged, as if self-calibration carried on. None when they
+    need RMS and background images, which the final masks are made without."""
+    requested_round = rounds + 1
+    options: dict[str, Any]
+    if strategy is None:
+        logger.info(
+            f"Requested the masking options of selfcal round {requested_round} for the "
+            "final masks, but there is no strategy, so using the MaskingOptions defaults"
+        )
+        options = {}
+    elif "selfcal" not in strategy:
+        logger.info(
+            f"Requested the masking options of selfcal round {requested_round} for the "
+            "final masks, but the strategy has no selfcal rounds, so using its defaults"
+        )
+        options = dict(strategy["defaults"].get("masking", {}))
+    else:
+        used_round = min(requested_round, max(strategy["selfcal"].keys()))
+        fallback = (
+            f", falling back to the last round defined ({used_round})"
+            if used_round != requested_round
+            else ""
+        )
+        logger.info(
+            f"Requested the masking options of selfcal round {requested_round} for the "
+            f"final masks{fallback}. Using selfcal round {used_round}"
+        )
+        options = get_options_from_strategy(
+            strategy=strategy,
+            mode="masking",
+            round_info=used_round,
+            operation="selfcal",
+        )
+
+    masking_options = MaskingOptions().with_options(**options)
+    if not (masking_options.use_mac or masking_options.convolve_first):
+        logger.warning(
+            "Not making the final masks, as without use_mac or convolve_first they "
+            "need RMS and background images. Polarisation is imaged without masks"
+        )
+        return None
+    return options
+
+
+def resolve_final_masks(
+    final_fits_masks: list[PrefectFuture[FITSMaskNames]],
+    mss_by_beam: tuple[tuple[MS, ...], ...],
+) -> tuple[FITSMaskNames, ...]:
+    """The final mask of each beam, raising ``RuntimeError`` should any have failed"""
+    fits_masks: list[FITSMaskNames] = []
+    failures: dict[str, BaseException] = {}
+    for fits_mask, beam_mss in zip(final_fits_masks, mss_by_beam, strict=True):
+        # Avoid exception here to collect all failures
+        result = fits_mask.result(raise_on_failure=False)
+        if isinstance(result, BaseException):
+            failures[beam_mss[0].path.name] = result
+        else:
+            fits_masks.append(result)
+
+    if failures:
+        details = "; ".join(f"{name}: {error!r}" for name, error in failures.items())
+        msg = f"The final mask failed for {len(failures)} beam(s): {details}"
+        raise RuntimeError(msg) from next(iter(failures.values()))
+
+    return tuple(fits_masks)
 
 
 def _check_create_output_science_path(
@@ -251,7 +358,6 @@ def all_holography_available(
     racs_all_options: RACSAllOptions,
     output_science_path: Path,
 ) -> Path | None:
-
     if any(
         not isinstance(holo, Path)
         for holo in (
@@ -413,6 +519,58 @@ def process_racs_all_continuum(
                     update_potato_peel_options=unmapped(potato_peel_options),
                 )
 
+            if racs_all_options.run_skymodel_calibration:
+                with tags("skymodel-cal"):
+                    sky_model_update_options = get_options_from_strategy(
+                        strategy=strategy,
+                        mode="skymodel",
+                        round_info=0,
+                        operation="selfcal",
+                    )
+                    assert racs_all_options.reference_catalogue_directory is not None, (
+                        "reference_catalogue_directory is required by _check_racs_all_options"
+                    )
+                    sky_model_options = SkyModelOptions(
+                        reference_catalogue_directory=racs_all_options.reference_catalogue_directory,
+                        write_calibrate_model=True,
+                    ).with_options(**sky_model_update_options)
+
+                    # science_mss (and therefore preprocess_science_mss) is always
+                    # ordered (low, mid, high), per match_beams_across_bands
+                    holofiles = [
+                        racs_all_options.low_holofile,
+                        racs_all_options.mid_holofile,
+                        racs_all_options.high_holofile,
+                    ]
+                    skymodel = task_create_sky_model.map(
+                        ms=preprocess_science_mss,
+                        sky_model_options=unmapped(sky_model_options),
+                        holofile=holofiles,
+                    )
+                    addmodel_subtract_field_options = AddModelSubtractFieldOptions(
+                        wsclean_pol_mode=["i"],
+                        calibrate_container=racs_all_options.calibrate_container,
+                    )
+                    preprocess_science_mss = task_addmodel_to_ms.map(
+                        ms=preprocess_science_mss,
+                        addmodel_subtract_options=unmapped(
+                            addmodel_subtract_field_options
+                        ),
+                        skymodel=skymodel,
+                    )
+                    preprocess_science_mss = task_gaincal_applycal_ms.map(
+                        ms=preprocess_science_mss,
+                        selfcal_round=0,
+                        archive_input_ms=racs_all_options.zip_ms,
+                        skip_selfcal=False,
+                        rename_ms=racs_all_options.rename_ms,
+                        archive_cal_table=True,
+                        casa_container=racs_all_options.casa_container,
+                        update_gain_cal_options=unmapped(
+                            get_skymodel_gaincal_options(strategy=strategy)
+                        ),
+                    )
+
             update_wsclean_options = get_options_from_strategy(
                 strategy=strategy,
                 mode="wsclean",
@@ -477,6 +635,7 @@ def process_racs_all_continuum(
                     round_info=current_round,
                     operation="selfcal",
                 )
+                # TODO: Offer DP3 (task_dp3_solve_apply) as a container-free self-calibration backend
                 cal_mss = task_gaincal_applycal_ms.map(
                     ms=beam_imaging_results.mss,
                     selfcal_round=current_round,
@@ -497,10 +656,6 @@ def process_racs_all_continuum(
 
                 # TODO: An explicit trminder to add per-beam aegean source finding, or
                 # just make the mac for this explicit and required
-                assert update_masking_options["flood_fill_use_mac"], (
-                    "Currently only support mac based masking (no per-beam aegean)"
-                )
-
                 fits_beam_mask = task_create_image_mask_model.submit(
                     image=beam_imaging_results.wsclean_result,
                     image_products=None,  # Mac works on apparent brightness
@@ -535,6 +690,23 @@ def process_racs_all_continuum(
                 )
                 terminal_futures.append(wsclean_result)
 
+    final_mask_options = get_final_mask_options(
+        strategy=strategy, rounds=racs_all_options.rounds
+    )
+    final_fits_masks = (
+        [
+            task_create_image_mask_model.submit(
+                image=beam_result.wsclean_result,
+                image_products=None,  # Mac works on apparent brightness
+                update_masking_options=final_mask_options,
+            )
+            for beam_result in imaging_results[racs_all_options.rounds]
+        ]
+        if final_mask_options is not None
+        else []
+    )
+    terminal_futures.extend(final_fits_masks)
+
     if racs_all_options.yandasoft_container:
         for selfcal_round, final_beam_imaging_results in imaging_results.items():
             additional_linmos_suffix = (
@@ -561,6 +733,12 @@ def process_racs_all_continuum(
                 aegean_outputs = task_run_bane_and_aegean.submit(
                     image=parsets[-1],
                     aegean_container=racs_all_options.aegean_container,
+                    update_bane_options=get_options_from_strategy(
+                        strategy=strategy,
+                        mode="bane",
+                        round_info=selfcal_round,
+                        operation="selfcal",
+                    ),
                 )  # type: ignore
                 field_summary = task_update_field_summary.submit(
                     field_summary=field_summary,
@@ -616,6 +794,11 @@ def process_racs_all_continuum(
                 )
                 terminal_futures.extend(linmos_cubes)
 
+    # When run as a subflow its task runner shuts down on return, dropping any
+    # task still queued, so everything has to finish before then
+    wait(terminal_futures)
+    raise_on_failed_stage(stage="continuum imaging", futures=terminal_futures)
+
     resolved_holography_path = (
         holography_path.result()
         if isinstance(holography_path, PrefectFuture)
@@ -634,6 +817,14 @@ def process_racs_all_continuum(
         holography_path=resolved_holography_path,
         output_science_path=output_science_path,
         terminal_futures=terminal_futures,
+        fits_masks_by_beam=(
+            resolve_final_masks(
+                final_fits_masks=final_fits_masks,
+                mss_by_beam=final_round_mss_by_beam,
+            )
+            if final_fits_masks
+            else ()
+        ),
     )
 
 

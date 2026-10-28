@@ -46,7 +46,7 @@ class Catalogue(NamedTuple):
     """Column name containing the pa of the source gaussian component"""
     alpha_col: str | None = None  # Used to scale the SED
     """Column name containing the spectral index, used to calculate the source SED. If None a default is used. """
-    q_col: str | None = None  # Used to scale the SED
+    beta_col: str | None = None  # Used to scale the SED
     """Column name containing the curvature of the spectral index, used to calculate the source SED. If None a default is used. """
     vizier_id: str | None = (
         None  # Required for known reference catalogues, not for other specified catalogues

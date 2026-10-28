@@ -12,6 +12,7 @@ from capn_crunch import BaseOptions, add_options_to_parser, create_options_from_
 from flint.exceptions import AttemptRerunException
 from flint.logging import logger
 from flint.naming import create_aegean_names
+from flint.options import FFTBANEOptions
 from flint.sclient import run_singularity_command
 
 
@@ -24,6 +25,8 @@ class BANEOptions(BaseOptions):
     """The size of the box in pixels"""
     cores: int = 12
     """Number of cores to use. The number of stripes will be less than this number."""
+    flint_use_fft: bool = False
+    """Use flint's FFT BANE (``flint.bane``) instead of the container's BANE, rejecting pixels beyond 3 sigma as BANE does and with a tophat kernel for its box. ``grid_size`` and ``box_size`` are translated to it, with the step capped at 4, and ``cores`` is not used"""
 
 
 class AegeanOptions(BaseOptions):
@@ -75,6 +78,43 @@ def _get_bane_command(image: Path, bane_options: BANEOptions) -> str:
     logger.info("Constructed bane command.")
 
     return bane_command_str
+
+
+def fft_bane_options_from_bane(
+    bane_options: BANEOptions, max_step: int = 4
+) -> FFTBANEOptions:
+    """The FFT BANE options matching the container BANE. Pixels beyond 3 sigma are
+    rejected, as BANE does, and the tophat kernel is the closest to its box. The
+    container BANE uses every pixel of a box where the FFT BANE uses every step'th,
+    so the step is capped at ``max_step`` to keep its maps from being much noisier.
+    The box stays the same size in image pixels, as the FFT BANE's is after
+    downsampling."""
+    for name in ("grid_size", "box_size"):
+        size = getattr(bane_options, name)
+        if size is not None and size[0] != size[1]:
+            msg = f"The FFT BANE needs a square {name}, got {size}"
+            raise ValueError(msg)
+
+    grid_size, box_size = bane_options.grid_size, bane_options.box_size
+    step_size = grid_size[0] if grid_size else None
+    if step_size is not None and step_size > max_step:
+        logger.warning(
+            f"Setting the FFT BANE step to {max_step} rather than the grid of "
+            f"{step_size}, as a larger step makes its maps noisier than BANE's"
+        )
+        step_size = max_step
+
+    return FFTBANEOptions(
+        step_size=step_size,
+        # A step of 0 is no downsampling, so the box is in image pixels
+        box_size=(
+            max(1, round(box_size[0] / max(step_size, 1)))
+            if step_size is not None and box_size
+            else None
+        ),
+        clip_sigma=3.0,
+        kernel="tophat",
+    )
 
 
 def _bane_output_callback(line: str) -> None:
@@ -154,19 +194,26 @@ def run_bane_and_aegean(
     aegean_names = create_aegean_names(base_output=base_output)
     logger.debug(f"{aegean_names=}")
 
-    bane_command_str = _get_bane_command(image=image, bane_options=bane_options)
-
-    logger.info(
-        f"Running BANE and Aegean on {image=}. This will use the container {aegean_container=}."
-    )
-
     bind_dir = [image.absolute().parent]
-    run_singularity_command(
-        image=aegean_container,
-        command=bane_command_str,
-        stream_callback_func=_bane_output_callback,
-        bind_dirs=bind_dir,
-    )
+    if bane_options.flint_use_fft:
+        from flint.bane import bane_fits_image  # pulls in numba
+
+        logger.info(f"Running flint's FFT BANE on {image=}")
+        bane_fits_image(
+            image=image,
+            fft_bane_options=fft_bane_options_from_bane(bane_options=bane_options),
+        )
+    else:
+        bane_command_str = _get_bane_command(image=image, bane_options=bane_options)
+        logger.info(
+            f"Running BANE and Aegean on {image=}. This will use the container {aegean_container=}."
+        )
+        run_singularity_command(
+            image=aegean_container,
+            command=bane_command_str,
+            stream_callback_func=_bane_output_callback,
+            bind_dirs=bind_dir,
+        )
 
     aegean_command = _get_aegean_command(
         image=image, base_output=base_output, aegean_options=aegean_options

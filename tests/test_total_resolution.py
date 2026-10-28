@@ -23,7 +23,7 @@ from flint.convol import (
     cubes_share_common_beam,
     get_common_beam,
 )
-from flint.imager.wsclean import combine_images_to_cube, split_cube_into_planes
+from flint.cube import combine_images_to_cube, split_cube_into_planes
 from flint.naming import ResolutionModes
 from flint.options import FFTBANEOptions, FitsCubeOptions
 from flint.prefect.common.imaging import (

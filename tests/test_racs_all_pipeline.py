@@ -711,3 +711,125 @@ def test_rmsynth_refuses_a_polarisation_strategy_without_the_linear_stokes(
         pipeline_options=RACSAllPipelineOptions(skip_rmsynth=True),
         pol_field_options=PolFieldOptions(imaging_strategy=strategy),
     )
+
+
+def test_the_polarisation_stage_gets_the_continuum_clean_masks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The clean masks made from the final continuum images go to polarisation imaging"""
+    from flint.prefect.flows import racs_all_pipeline
+
+    _stage_mocks(monkeypatch=monkeypatch, tmp_path=tmp_path, convolved_cubes=[])
+
+    _run_racs_all(tmp_path=tmp_path)
+
+    continuum_result = racs_all_pipeline.process_racs_all_continuum.with_options.return_value.return_value
+    pol_kwargs = racs_all_pipeline.process_science_fields_pol.with_options.return_value.call_args.kwargs
+    assert pol_kwargs["fits_masks_by_beam"] is continuum_result.fits_masks_by_beam
+
+
+def test_a_failed_continuum_task_stops_the_later_stages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Should any continuum task fail, e.g. a beam's final mask, the run fails before
+    the polarisation stage starts. A subflow's futures come back as their states."""
+    from prefect.states import Completed, Failed
+
+    from flint.prefect.flows import racs_all_pipeline
+
+    _stage_mocks(monkeypatch=monkeypatch, tmp_path=tmp_path, convolved_cubes=[])
+    continuum_result = racs_all_pipeline.process_racs_all_continuum.with_options.return_value.return_value
+    continuum_result.terminal_futures = [
+        Completed(),
+        Failed(message="A signal image is needed"),
+    ]
+
+    with pytest.raises(RuntimeError, match="continuum imaging stage did not complete"):
+        _run_racs_all(tmp_path=tmp_path)
+
+    racs_all_pipeline.process_science_fields_pol.with_options.assert_not_called()
+
+
+def test_raise_on_failed_stage_reads_what_a_subflow_returns() -> None:
+    """Futures returned by a real subflow arrive as states, completed or failed"""
+    from prefect import flow, task
+    from prefect.testing.utilities import prefect_test_harness
+
+    from flint.prefect.common.utils import raise_on_failed_stage
+    from flint.prefect.flows.racs_all_continuum_selfcal import RACSContinuumResult
+
+    @task
+    def works() -> int:
+        return 1
+
+    @task
+    def fails() -> None:
+        raise ValueError("A signal image is needed")
+
+    def _stage(task_to_run):
+        @flow
+        def stage() -> RACSContinuumResult:
+            return RACSContinuumResult(
+                mss_by_beam=(),
+                holography_path=None,
+                output_science_path=Path("."),
+                terminal_futures=[works.submit(), task_to_run.submit()],
+            )
+
+        return stage
+
+    @flow
+    def run(task_to_run) -> None:
+        result = _stage(task_to_run)()
+        raise_on_failed_stage(
+            stage="continuum imaging", futures=result.terminal_futures
+        )
+
+    with prefect_test_harness(), disable_run_logger():
+        run(task_to_run=works)
+        with pytest.raises(RuntimeError, match="1 task\\(s\\) of the continuum"):
+            run(task_to_run=fails)
+
+
+def test_a_stage_with_a_failed_task_is_itself_failed() -> None:
+    """Checked inside the stage, a failed task fails the stage's own flow run, not
+    only the run that called it"""
+    from prefect import flow, task
+    from prefect.futures import wait
+    from prefect.testing.utilities import prefect_test_harness
+
+    from flint.prefect.common.utils import raise_on_failed_stage
+
+    @task
+    def fails() -> None:
+        raise ValueError("linmos failed")
+
+    @flow
+    def stage() -> None:
+        futures = [fails.submit()]
+        wait(futures)
+        raise_on_failed_stage(stage="continuum imaging", futures=futures)
+
+    @flow
+    def run() -> str:
+        return stage(return_state=True).type.value
+
+    with prefect_test_harness(), disable_run_logger():
+        assert run() == "FAILED"
+
+
+def test_raise_on_failed_stage_refuses_other_values() -> None:
+    """Anything a stage hands back that is neither a future nor a state is refused
+    by name, rather than failing on a missing attribute"""
+    from prefect.states import Completed
+
+    from flint.prefect.common.utils import raise_on_failed_stage
+
+    raise_on_failed_stage(stage="continuum imaging", futures=[Completed()])
+
+    with pytest.raises(
+        TypeError, match="continuum imaging stage handed back PosixPath"
+    ):
+        raise_on_failed_stage(
+            stage="continuum imaging", futures=[Completed(), Path("image.fits")]
+        )

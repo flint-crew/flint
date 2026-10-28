@@ -48,7 +48,7 @@ dependencies = [
     "prefect-dask>=0.3.7",
     "dask",
     "dask-jobqueue",
-    "RACS-tools>=4.4.0",
+    "RACS-tools>=4.4.0,<4.5", # 4.5 refuses a common beam that float32 round-off puts a hair inside a plane's beam
     "radio-beam>=0.3.4",
     "reproject",
     "pandas",
@@ -57,7 +57,8 @@ dependencies = [
     "astroquery>=0.4.8.dev0",
     "crystalball>=0.4.3",
     "jolly-roger>=0.10.1",
-    "capn-crunch>=1.1.0",
+    "capn-crunch>=1.2.0",
+    "eye-patch>=2.0.1,<3",
     "billiard",
 ]
 
@@ -97,8 +98,11 @@ casa =[
 rmsynth = [
     "rm-lite==2026.9.14",
 ]
+dp3 = [
+    "dp3>=6.6.0",
+]
 all = [
-    "askap-flint[dev,casa,rmsynth]",
+    "askap-flint[dev,casa,rmsynth,dp3]",
 ]
 
 [project.scripts]
@@ -112,12 +116,12 @@ flint_containers = "flint.containers:cli"
 flint_ms = "flint.ms:cli"
 flint_wsclean = "flint.imager.wsclean:cli"
 flint_gaincal = "flint.selfcal.casa:cli"
+flint_dp3 = "flint.dp3:cli"
 flint_convol = "flint.convol:cli"
 flint_yandalinmos = "flint.coadd.linmos:cli"
 flint_config = "flint.configuration:cli"
 flint_aegean = "flint.source_finding.aegean:cli"
 flint_validation_plot = "flint.validation:cli"
-flint_masking = "flint.masking:cli"
 flint_potato = "flint.peel.potato:cli"
 flint_leakage = "flint.leakage:cli"
 flint_addmodel = "flint.predict.addmodel:cli"
@@ -240,11 +244,18 @@ line-ending = "auto"
 [tool.typos.files]
 extend-exclude = ["*.fits", "flint/data/**/*", "ignore_words.txt"]
 
+[tool.typos.default]
+# Lines marked for codespell with "# codespell:ignore <word>" are skipped by typos too
+extend-ignore-re = ["(?Rm)^.*#\\s*codespell:ignore.*$"]
+
 [tool.typos.default.extend-identifiers]
 FIELDs = "FIELDs"
 FoV = "FoV"
 outweight= "outweight"
 calid = "calid"
+
+[tool.typos.default.extend-words]
+parm = "parm"
 
 [tool.codespell]
 skip = "*.lock"
