@@ -16,7 +16,7 @@ from capn_crunch import add_options_to_parser, create_options_from_parser
 from configargparse import ArgumentParser
 from eye_patch.naming import FITSMaskNames
 from prefect import flow, tags, unmapped
-from prefect.futures import PrefectFuture
+from prefect.futures import PrefectFuture, wait
 
 from flint.calibrate.aocalibrate import find_existing_solutions
 from flint.catalogue import verify_reference_catalogues
@@ -70,6 +70,7 @@ from flint.prefect.common.predict import (
     check_skymodel_calibration_options,
 )
 from flint.prefect.common.utils import (
+    raise_on_failed_stage,
     task_archive_sbid,
     task_create_beam_summary,
     task_create_field_summary,
@@ -161,6 +162,15 @@ def _check_create_output_split_science_path(
     output_split_science_path.mkdir(parents=True)
 
     return output_split_science_path
+
+
+def _finish(futures: list[PrefectFuture[Any]]) -> list[PrefectFuture[Any]]:
+    """Wait on every future, raising should any of their tasks not have completed."""
+    # Prefect fails a run whose returned futures failed, but calling the flow
+    # only raises on an exception, so without this a failed run exits cleanly
+    wait(futures)
+    raise_on_failed_stage(stage="continuum", futures=futures)
+    return futures
 
 
 def preprocess_science_mss(
@@ -331,11 +341,11 @@ def process_science_fields(
         logger.info(
             f"No imaging will be performed, as requested by {field_options.no_imaging=}"
         )
-        return list(mss)
+        return _finish(futures=list(mss))
 
     if field_options.wsclean_container is None:
         logger.info("No wsclean container provided. Returning. ")
-        return list(mss)
+        return _finish(futures=list(mss))
 
     if field_options.potato_container:
         # The call into potato peel task has two potential update option keywords.
@@ -599,6 +609,7 @@ def process_science_fields(
 
     # There are some blocking calls in the cube coadding, so do it
     # as late as possible
+    cleanup_futures: list[PrefectFuture[Any]] = []
     if field_options.coadd_cubes:
         final_round_fitscube_options = get_options_from_strategy(
             strategy=strategy,
@@ -607,17 +618,17 @@ def process_science_fields(
             round_info=field_options.rounds,
         )
         with tags("cubes"):
-            archive_wait_for.extend(
-                create_convolve_linmos_cubes(
-                    wsclean_results=final_results,  # type: ignore
-                    field_options=field_options,
-                    current_round=field_options.rounds or None,
-                    additional_linmos_suffix_str="cube",
-                    fitscube_options=FitsCubeOptions().with_options(
-                        **final_round_fitscube_options
-                    ),
-                )
+            linmos_cubes = create_convolve_linmos_cubes(
+                wsclean_results=final_results,  # type: ignore
+                field_options=field_options,
+                current_round=field_options.rounds or None,
+                additional_linmos_suffix_str="cube",
+                fitscube_options=FitsCubeOptions().with_options(
+                    **final_round_fitscube_options
+                ),
             )
+        archive_wait_for.extend(linmos_cubes.cubes)
+        cleanup_futures.extend(linmos_cubes.cleanup)
 
     if field_options.sbid_archive_path or field_options.sbid_copy_path:
         update_archive_options = get_options_from_strategy(
@@ -629,11 +640,15 @@ def process_science_fields(
             copy_path=field_options.sbid_copy_path,
             max_round=field_options.rounds,
             update_archive_options=update_archive_options,
-            wait_for=archive_wait_for,
+            # A copy, as a task runner may only read wait_for once the task starts,
+            # by when the archive itself has been added to the list
+            wait_for=list(archive_wait_for),
         )
         archive_wait_for.append(archive_sbid)
 
-    return archive_wait_for
+    # The clean-up is kept out of the archive's wait_for, so a failed deletion
+    # still fails the flow but does not stop the products being archived
+    return _finish(futures=[*archive_wait_for, *cleanup_futures])
 
 
 def setup_run_process_science_field(

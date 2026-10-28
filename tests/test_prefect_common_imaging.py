@@ -11,8 +11,7 @@ from flint.prefect.common.imaging import create_convolve_linmos_cubes
 
 
 def test_create_convolve_linmos_cubes_returns_plane_removals(monkeypatch) -> None:
-    """The plane removals are handed back with the cubes, as a task whose future
-    is dropped is forgotten by dask and may never run"""
+    """The plane removals are handed back apart from the cubes, and are retried"""
     channel_groups = [[Path("beam00.ch0.fits"), Path("beam01.ch0.fits")]]
     convolved_channel_groups = [
         [Path("beam00.ch0.conv.fits"), Path("beam01.ch0.conv.fits")]
@@ -23,7 +22,11 @@ def test_create_convolve_linmos_cubes_returns_plane_removals(monkeypatch) -> Non
     convolve = MagicMock()
     convolve.map.return_value.result.return_value = convolved_channel_groups
     remove = MagicMock()
-    remove.submit.side_effect = ["remove_planes", "remove_convolved_planes"]
+    remove_with_retries = remove.with_options.return_value
+    remove_with_retries.submit.side_effect = [
+        "remove_planes",
+        "remove_convolved_planes",
+    ]
     linmos_cubes = MagicMock()
     linmos_cubes.return_value.futures = ["image_cube", "weight_cube"]
 
@@ -43,13 +46,10 @@ def test_create_convolve_linmos_cubes_returns_plane_removals(monkeypatch) -> Non
         fitscube_options=FitsCubeOptions(),
     )
 
-    assert results == [
-        "image_cube",
-        "weight_cube",
-        "remove_planes",
-        "remove_convolved_planes",
-    ]
-    remove_planes, remove_convolved_planes = remove.submit.call_args_list
+    assert results.cubes == ["image_cube", "weight_cube"]
+    assert results.cleanup == ["remove_planes", "remove_convolved_planes"]
+    assert remove.with_options.call_args.kwargs["retries"] > 0
+    remove_planes, remove_convolved_planes = remove_with_retries.submit.call_args_list
     assert remove_planes.args == tuple(channel_groups[0])
     assert remove_convolved_planes.args == tuple(convolved_channel_groups[0])
     assert remove_convolved_planes.kwargs["wait_for"] == ["image_cube", "weight_cube"]

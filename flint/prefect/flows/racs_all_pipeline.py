@@ -210,6 +210,8 @@ def process_racs_all(
     )
 
     terminal_results: list[Any] = []
+    # A failed clean-up fails the run, but only once every later stage has run
+    cleanup_states: list[Any] = []
 
     if not pipeline_options.skip_imaging:
         assert pipeline_options.imaging_cluster_config is not None
@@ -218,13 +220,15 @@ def process_racs_all(
                 cluster=pipeline_options.imaging_cluster_config
             ),
             name="RACS All -- continuum imaging",
-        )(racs_all_options=racs_all_options)
+        )(racs_all_options=racs_all_options, defer_cleanup_failures=True)
         terminal_results.extend(continuum_result.terminal_futures)
         raise_on_failed_stage(
             stage="continuum imaging", futures=continuum_result.terminal_futures
         )
+        cleanup_states = continuum_result.cleanup_futures
 
     if pipeline_options.skip_polarisation:
+        raise_on_failed_stage(stage="continuum clean-up", futures=cleanup_states)
         return terminal_results
 
     # rm-synth needs cubes at one beam across the band. Made in the polarisation
@@ -328,6 +332,7 @@ def process_racs_all(
         )(spice_field_options=resolved_spice_field_options)
         terminal_results.extend(spice_results)
 
+    raise_on_failed_stage(stage="continuum clean-up", futures=cleanup_states)
     return terminal_results
 
 

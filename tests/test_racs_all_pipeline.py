@@ -360,6 +360,7 @@ def _stage_mocks(
 
     continuum_result = MagicMock()
     continuum_result.terminal_futures = []
+    continuum_result.cleanup_futures = []
     continuum_result.output_science_path = tmp_path
     continuum_result.holography_path = None
 
@@ -748,6 +749,27 @@ def test_a_failed_continuum_task_stops_the_later_stages(
         _run_racs_all(tmp_path=tmp_path)
 
     racs_all_pipeline.process_science_fields_pol.with_options.assert_not_called()
+
+
+def test_a_failed_continuum_cleanup_fails_the_run_after_the_later_stages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed continuum clean-up fails the run, but only once every later stage has run"""
+    from prefect.states import Failed
+
+    from flint.prefect.flows import racs_all_pipeline
+
+    _stage_mocks(monkeypatch=monkeypatch, tmp_path=tmp_path, convolved_cubes=[])
+    continuum_stage = racs_all_pipeline.process_racs_all_continuum.with_options
+    continuum_stage.return_value.return_value.cleanup_futures = [
+        Failed(message="Stale file handle")
+    ]
+
+    with pytest.raises(RuntimeError, match="continuum clean-up stage did not complete"):
+        _run_racs_all(tmp_path=tmp_path)
+
+    assert continuum_stage.return_value.call_args.kwargs["defer_cleanup_failures"]
+    racs_all_pipeline.process_spice_compression.with_options.assert_called_once()
 
 
 def test_raise_on_failed_stage_reads_what_a_subflow_returns() -> None:

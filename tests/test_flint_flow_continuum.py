@@ -17,6 +17,7 @@ import flint.prefect.flows.continuum_pipeline as continuum_flow
 from flint.ms import MS
 from flint.naming import extract_components_from_name, get_selfcal_ms_name
 from flint.options import FieldOptions
+from flint.prefect.common.imaging import ConvolvedLinmosCubes
 from flint.prefect.flows.continuum_pipeline import (
     _check_field_options,
     process_science_fields,
@@ -50,9 +51,11 @@ class SubmitRecorder:
         return self.task.submit(**kwargs)
 
 
-def test_process_science_fields_dataflow(tmp_path, monkeypatch) -> None:
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+def test_process_science_fields_dataflow(tmp_path, monkeypatch, cleanup_fails) -> None:
     """Each beam is carried through every round on its own, and no convolution or
-    linmos is submitted before the last imaging and self-calibration job"""
+    linmos is submitted before the last imaging and self-calibration job. A failed
+    clean-up fails the flow, but the products are still archived"""
     beams = (0, 1)
     calls: dict[str, list[dict[str, Any]]] = {}
     submitted: list[str] = []
@@ -81,9 +84,15 @@ def test_process_science_fields_dataflow(tmp_path, monkeypatch) -> None:
         submitted.append("linmos")
         return [fake("linmos_images", returns="parset").submit()]
 
-    def cubes(**_: Any) -> list[Any]:
+    def remove_planes(**_: Any) -> None:
+        if cleanup_fails:
+            raise OSError("Stale file handle")
+
+    def cubes(**_: Any) -> ConvolvedLinmosCubes:
         submitted.append("cubes")
-        return []
+        return ConvolvedLinmosCubes(
+            cubes=[], cleanup=[fake("remove_planes", returns=remove_planes).submit()]
+        )
 
     science_path = tmp_path / "40470"
     container = tmp_path / "container.sif"
@@ -115,6 +124,7 @@ def test_process_science_fields_dataflow(tmp_path, monkeypatch) -> None:
         "task_update_field_summary": fake("update_field_summary", returns="summary"),
         "task_create_image_mask_model": fake("mask", returns="mask"),
         "task_zip_ms": fake("zip"),
+        "task_archive_sbid": fake("archive"),
         "create_convol_linmos_images": linmos,
         "create_convolve_linmos_cubes": cubes,
         "validation_items": lambda **_: None,
@@ -142,14 +152,25 @@ def test_process_science_fields_dataflow(tmp_path, monkeypatch) -> None:
         stokes_v_imaging=True,
         zip_ms=True,
         coadd_cubes=True,
+        sbid_archive_path=tmp_path / "archive",
     )
     # The flow fails, and so raises here, should any of its tasks fail
     with prefect_test_harness(), disable_run_logger():
-        process_science_fields(
-            science_path=science_path,
-            split_path=tmp_path / "out",
-            field_options=field_options,
-        )
+        if cleanup_fails:
+            with pytest.raises(RuntimeError, match="Stale file handle"):
+                process_science_fields(
+                    science_path=science_path,
+                    split_path=tmp_path / "out",
+                    field_options=field_options,
+                )
+        else:
+            process_science_fields(
+                science_path=science_path,
+                split_path=tmp_path / "out",
+                field_options=field_options,
+            )
+
+    assert len(calls["archive"]) == 1
 
     def names(call_name: str, key: str) -> set[str]:
         return {MS.cast(call[key]).path.name for call in calls[call_name]}

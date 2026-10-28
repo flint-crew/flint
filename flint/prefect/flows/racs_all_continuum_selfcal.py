@@ -107,6 +107,8 @@ class RACSContinuumResult(BaseOptions):
     """Every future the continuum imaging stage produced, propagated so Prefect still detects any of their failures. A calling flow gets them back as their final states"""
     fits_masks_by_beam: tuple[FITSMaskNames, ...] = ()
     """The clean mask of each beam, made from its final image, in the order of ``mss_by_beam``. Empty when no masks were made"""
+    cleanup_futures: list[PrefectFuture[Any] | State] = []
+    """The removal of intermediate files, kept apart from ``terminal_futures`` so that a failed deletion does not stop the later stages. A calling flow gets them back as their final states, and should raise on them once its later stages have run"""
 
 
 def _check_racs_all_options(racs_all_options: RACSAllOptions) -> None:
@@ -380,9 +382,11 @@ def all_holography_available(
 @flow
 def process_racs_all_continuum(
     racs_all_options: RACSAllOptions,
+    defer_cleanup_failures: bool = False,
 ) -> RACSContinuumResult:
     # returned futures are resolved by prefect to fail the flow on task failure
     terminal_futures: list[PrefectFuture[Any]] = []
+    cleanup_futures: list[PrefectFuture[Any]] = []
 
     # Any sanity checks will go in here, mateee
     _check_racs_all_options(racs_all_options=racs_all_options)
@@ -739,12 +743,15 @@ def process_racs_all_continuum(
                     additional_linmos_suffix_str="cube",
                     holofile=holography_path,
                 )
-                terminal_futures.extend(linmos_cubes)
+                terminal_futures.extend(linmos_cubes.cubes)
+                cleanup_futures.extend(linmos_cubes.cleanup)
 
     # When run as a subflow its task runner shuts down on return, dropping any
     # task still queued, so everything has to finish before then
-    wait(terminal_futures)
+    wait([*terminal_futures, *cleanup_futures])
     raise_on_failed_stage(stage="continuum imaging", futures=terminal_futures)
+    if not defer_cleanup_failures:
+        raise_on_failed_stage(stage="continuum clean-up", futures=cleanup_futures)
 
     resolved_holography_path = (
         holography_path.result()
@@ -764,6 +771,7 @@ def process_racs_all_continuum(
         holography_path=resolved_holography_path,
         output_science_path=output_science_path,
         terminal_futures=terminal_futures,
+        cleanup_futures=cleanup_futures,
         fits_masks_by_beam=(
             resolve_final_masks(
                 final_fits_masks=final_fits_masks,

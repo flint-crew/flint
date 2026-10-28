@@ -1221,6 +1221,15 @@ def linmos_channel_groups_to_cubes(
     )
 
 
+class ConvolvedLinmosCubes(NamedTuple):
+    """The futures ``create_convolve_linmos_cubes`` hands back"""
+
+    cubes: list[PrefectFuture[Path]]
+    """The co-added cubes"""
+    cleanup: list[PrefectFuture[list[Path]]]
+    """Removal of the planes the cubes were made from. These still have to be waited on, as dask forgets a task once nothing holds its future"""
+
+
 def create_convolve_linmos_cubes(
     wsclean_results: Collection[WSCleanResult],
     field_options: FieldOptions,
@@ -1228,8 +1237,8 @@ def create_convolve_linmos_cubes(
     current_round: int | None = None,
     additional_linmos_suffix_str: str | None = "cube",
     holofile: Path | None = None,
-) -> list[PrefectFuture[Any]]:
-    """Co-add the beam cubes channel by channel, returning the futures of the cubes and of the removal of their planes."""
+) -> ConvolvedLinmosCubes:
+    """Co-add the beam cubes channel by channel, each channel convolved to a common resolution first."""
     suffixes = [f"round{current_round}" if current_round is not None else "noselfcal"]
     if additional_linmos_suffix_str:
         suffixes.insert(0, additional_linmos_suffix_str)
@@ -1254,8 +1263,12 @@ def create_convolve_linmos_cubes(
         cutoff=unmapped(field_options.cube_beam_cutoff),  # type: ignore
     ).result()
 
+    # Retried, as a shared filesystem can briefly fail a deletion
+    remove_files = task_remove_files_folders.with_options(
+        retries=2, retry_delay_seconds=30
+    )
     # The unconvolved planes have been superseded by convolved_channel_groups
-    remove_planes = task_remove_files_folders.submit(
+    remove_planes = remove_files.submit(
         *[plane for beam_images in channel_groups for plane in beam_images]
     )
 
@@ -1274,13 +1287,13 @@ def create_convolve_linmos_cubes(
     ).futures
 
     # Remove the convolved planes once every cube has been formed
-    remove_convolved_planes = task_remove_files_folders.submit(
+    remove_convolved_planes = remove_files.submit(
         *[plane for beam_images in convolved_channel_groups for plane in beam_images],
         wait_for=cube_results,
     )
-    # Dask forgets a task once nothing holds its future, so the removals have to
-    # be handed back for the flow to wait on
-    return [*cube_results, remove_planes, remove_convolved_planes]
+    return ConvolvedLinmosCubes(
+        cubes=cube_results, cleanup=[remove_planes, remove_convolved_planes]
+    )
 
 
 def convolve_channel_groups_to_natural_resolution(
