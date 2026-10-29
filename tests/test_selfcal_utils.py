@@ -13,7 +13,6 @@ from flint.ms import preprocess_askap_ms
 from flint.naming import get_selfcal_ms_name
 from flint.options import MS
 from flint.selfcal.utils import (
-    _resumable_selfcal_ms,
     consider_skip_selfcal_on_round,
     create_and_check_caltable_path,
     get_channel_ranges_given_nspws,
@@ -163,24 +162,35 @@ def _add_corrected_data(ms_path: Path) -> np.ndarray:
     return corrected_data
 
 
-def test_resumable_selfcal_ms(ms_example) -> None:
-    """A MS renamed by an earlier attempt can be picked up again"""
-    ms = MS(path=Path(ms_example), column="DATA")
-    out_ms_path = get_selfcal_ms_name(in_ms_path=ms.path)
+@pytest.mark.parametrize("keep_old_columns", [False, True])
+def test_prepare_ms_for_selfcal_resumes(ms_example, keep_old_columns) -> None:
+    """Preparing can be run again after stopping part way through moving columns, or after finishing"""
+    ms = MS(path=Path(ms_example), column="CORRECTED_DATA")
+    _add_corrected_data(ms_path=ms.path)
+    with table(str(ms.path), readonly=False, ack=False) as tab:
+        if keep_old_columns:
+            tab.renamecol(oldname="DATA", newname="DATA_ROUND0")
+        else:
+            tab.removecols(columnnames="DATA")
 
-    assert not _resumable_selfcal_ms(ms=ms, out_ms_path=out_ms_path)
+    prepared_ms = prepare_ms_for_selfcal(
+        ms=ms, round=1, keep_old_columns=keep_old_columns
+    )
+    assert prepared_ms.path == get_selfcal_ms_name(in_ms_path=ms.path, round=1)
+    colnames = _get_columns(ms_path=prepared_ms.path)
+    assert "DATA" in colnames
+    assert "CORRECTED_DATA" not in colnames
+    assert ("DATA_ROUND0" in colnames) == keep_old_columns
 
-    with pytest.raises(ValueError, match="No attempt to recover."):
-        _resumable_selfcal_ms(
-            ms=ms.with_options(path=Path("JACKSPARROW")), out_ms_path=out_ms_path
-        )
+    # Like the CORRECTED_DATA a potato peel leaves beside DATA
+    _add_corrected_data(ms_path=prepared_ms.path)
+    assert (
+        prepare_ms_for_selfcal(ms=ms, round=1, keep_old_columns=keep_old_columns)
+        == prepared_ms
+    )
 
-    ms.path.rename(out_ms_path)
-    assert _resumable_selfcal_ms(ms=ms, out_ms_path=out_ms_path)
-
-    prepared_ms = prepare_ms_for_selfcal(ms=ms, round=1)
-    assert prepared_ms.path == out_ms_path
-    assert prepared_ms.column == "DATA"
+    with pytest.raises(FileNotFoundError):
+        prepare_ms_for_selfcal(ms=ms.with_options(path=Path("JACKSPARROW.ms")), round=1)
 
 
 def test_prepare_ms_for_selfcal(ms_example) -> None:

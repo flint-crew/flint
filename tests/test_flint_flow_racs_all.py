@@ -216,6 +216,26 @@ def test_check_racs_all_options_skymodel_requirements(
                 racs_all_options=racs_all_options.with_options(**{missing: None})
             )
 
+    with pytest.raises(ValueError, match="casa_container"):
+        _check_racs_all_options(
+            racs_all_options=racs_all_options.with_options(
+                casa_container=tmp_path / "missing.sif"
+            )
+        )
+
+
+def test_check_racs_all_options_casa_container(base_racs_all_options, tmp_path) -> None:
+    """Self-calibration needs a casa_container that exists"""
+    casa_container = tmp_path / "casa.sif"
+    racs_all_options = base_racs_all_options.with_options(
+        rounds=1, casa_container=casa_container
+    )
+    with pytest.raises(ValueError, match="casa_container"):
+        _check_racs_all_options(racs_all_options=racs_all_options)
+
+    casa_container.touch()
+    _check_racs_all_options(racs_all_options=racs_all_options)
+
 
 def test_check_create_output_science_path(tmpdir, monkeypatch) -> None:
     """Ensure we can establish the output science path for the racs all processing"""

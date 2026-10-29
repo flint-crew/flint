@@ -7,8 +7,6 @@ from __future__ import annotations
 from math import ceil
 from pathlib import Path
 
-from casacore.tables import table
-
 from flint.exceptions import MSError
 from flint.flagging import nan_zero_extreme_flag_ms
 from flint.logging import logger
@@ -124,26 +122,6 @@ def consider_skip_selfcal_on_round(
     return current_round in skip_selfcal_on_rounds
 
 
-def _resumable_selfcal_ms(ms: MS, out_ms_path: Path) -> bool:
-    """Whether an earlier attempt already renamed the MS and its columns, so
-    preparing it can be picked up from ``out_ms_path``.
-
-    Raises:
-        ValueError: Raised when neither the input nor output MS exist.
-    """
-    if ms.path.exists():
-        return False
-
-    if not out_ms_path.exists():
-        msg = f"Neither {ms.path=} nor {out_ms_path=} exists. No attempt to recover."
-        raise ValueError(msg)
-
-    with table(str(out_ms_path), ack=False, readonly=True) as tab:
-        column_names: list[str] = tab.colnames()
-
-    return "DATA" in column_names and "CORRECTED_DATA" not in column_names
-
-
 def prepare_ms_for_selfcal(ms: MS, round: int, keep_old_columns: bool = False) -> MS:
     """Rename a measurement set for a round of self-calibration, move its
     nominated column into DATA, and flag bad visibilities.
@@ -160,9 +138,9 @@ def prepare_ms_for_selfcal(ms: MS, round: int, keep_old_columns: bool = False) -
         MS: The renamed measurement set, with DATA as its column
     """
     out_ms_path = get_selfcal_ms_name(in_ms_path=ms.path, round=round)
-    logger.info(f"Renaming {ms.path} to {out_ms_path}")
 
-    if _resumable_selfcal_ms(ms=ms, out_ms_path=out_ms_path):
+    if not ms.path.exists() and out_ms_path.exists():
+        logger.info(f"Resuming from the already renamed {out_ms_path}")
         ms = ms.with_options(path=out_ms_path, column="DATA")
     else:
         if not ms.column:

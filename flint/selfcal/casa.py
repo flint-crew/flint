@@ -14,6 +14,7 @@ from casacore.tables import table
 from flint.casa import applycal, gaincal
 from flint.exceptions import GainCalError, MSError
 from flint.logging import logger
+from flint.ms import check_column_in_ms
 from flint.options import MS, BaseOptions
 from flint.selfcal.utils import (
     create_and_check_caltable_path,
@@ -237,19 +238,24 @@ def get_parser() -> ArgumentParser:
 
     gaincal_parser = sub_parsers.add_parser("gaincal")
     gaincal_parser.add_argument(
-        "ms", type=Path, help="Path to the measurement set to calibrate. "
+        "ms",
+        type=Path,
+        help="Path to the measurement set to calibrate. It is renamed for the round, not copied",
     )
     gaincal_parser.add_argument(
         "--casa-container",
         type=Path,
-        default=None,
+        required=True,
         help="Path to the CASA6 singularity container",
     )
     gaincal_parser.add_argument(
         "--round", type=int, default=1, help="Self-calibration round number. "
     )
     gaincal_parser.add_argument(
-        "--column", type=str, default="DATA", help="The column to self-calibrate"
+        "--column",
+        type=str,
+        default="DATA",
+        help="The column to self-calibrate. It is moved into DATA",
     )
     gaincal_parser.add_argument(
         "--keep-old-columns",
@@ -266,6 +272,17 @@ def cli() -> None:
     args = parser.parse_args()
 
     if args.mode == "gaincal":
+        if not args.casa_container.exists():
+            raise FileNotFoundError(f"{args.casa_container=} does not exist")
+        # applycal would overwrite a previous round's CORRECTED_DATA. Not checked in
+        # prepare_ms_for_selfcal, as peeling in the flows leaves one beside DATA
+        if args.column == "DATA" and check_column_in_ms(
+            ms=args.ms, column="CORRECTED_DATA"
+        ):
+            raise MSError(
+                f"{args.ms} has CORRECTED_DATA, which applycal would overwrite. "
+                "Pass --column CORRECTED_DATA to calibrate it, or remove it first"
+            )
         ms = prepare_ms_for_selfcal(
             ms=MS(path=args.ms, column=args.column),
             round=args.round,

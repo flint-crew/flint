@@ -25,6 +25,7 @@ from fixms.fix_ms_corrs import fix_ms_corrs
 from fixms.fix_ms_dir import fix_ms_dir
 
 from flint.casa import copy_with_mstranform
+from flint.exceptions import MSError
 from flint.logging import logger
 from flint.naming import create_ms_name
 from flint.options import MS, MSSummary, standardise_ms_to_list_ms
@@ -935,9 +936,9 @@ def rename_ms_and_columns_for_selfcal(
     corrected_data: str = "CORRECTED_DATA",
     old_data_column: str | None = None,
 ) -> MS:
-    """Take an existing measurement set, rename it, and move the
-    ``corrected_data`` column into DATA to support a new round of
-    imaging and self-calibration. Other columns are left alone.
+    """Move the ``corrected_data`` column of a measurement set into DATA,
+    then rename it, to support a new round of imaging and self-calibration.
+    Other columns are left alone.
 
     Args:
         ms (MS): The subject measurement set to rename
@@ -948,6 +949,7 @@ def rename_ms_and_columns_for_selfcal(
     Raises:
         FileExistsError: Raised if `target` already exists
         FileNotFoundError: Raise if `ms.path` does not exist
+        MSError: Raised if ``corrected_data`` is not in the measurement set
 
     Returns:
         MS: Updated MS container with new path and appropriate data column
@@ -963,17 +965,16 @@ def rename_ms_and_columns_for_selfcal(
             f"{ms.path} does not exists or is not a directory (hence measurement set)."
         )
 
-    logger.info(f"Renaming {ms.path} to {target=}")
-    ms.path.rename(target=target)
-
     # casa calibrates DATA into CORRECTED_DATA, and nothing else
-    with table(str(target), readonly=False, ack=False) as tab:
+    with table(str(ms.path), readonly=False, ack=False) as tab:
         colnames = tab.colnames()
 
         if corrected_data == "DATA":
             logger.info("DATA is already the nominated column")
         elif corrected_data not in colnames:
-            logger.warning(f"No {corrected_data=} in {target}")
+            raise MSError(
+                f"No {corrected_data=} in {ms.path}. Columns found: {colnames}"
+            )
         else:
             if "DATA" in colnames and old_data_column:
                 logger.info(f"Renaming DATA to {old_data_column}")
@@ -985,6 +986,10 @@ def rename_ms_and_columns_for_selfcal(
             tab.renamecol(oldname=corrected_data, newname="DATA")
 
         tab.flush()
+
+    # Renaming last means an existing target already has its columns moved
+    logger.info(f"Renaming {ms.path} to {target=}")
+    ms.path.rename(target=target)
 
     return ms.with_options(path=target, column="DATA")
 

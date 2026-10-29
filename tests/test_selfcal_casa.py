@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import shutil
+import sys
 from pathlib import Path
 
 import pytest
+from casacore.tables import makecoldesc, table
 
 from flint.exceptions import MSError
 from flint.ms import MS
@@ -11,6 +13,7 @@ from flint.selfcal.casa import (
     GainCalOptions,
     _process_gaincal_options,
     check_for_valid_calibration_table,
+    cli,
     gaincal_applycal_ms,
 )
 from flint.utils import get_packaged_resource_path
@@ -54,6 +57,51 @@ def test_gaincal_applycal_ms_needs_data_column(tmpdir) -> None:
             ms=MS(path=Path("JACKSPARROW.ms"), column="CORRECTED_DATA"),
             casa_container=casa_container,
         )
+
+
+def test_cli_checks_casa_container_first(ms_example, tmp_path, monkeypatch) -> None:
+    """A missing casa container is caught before the MS is renamed"""
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "flint_gaincal",
+            "gaincal",
+            str(ms_example),
+            "--casa-container",
+            str(tmp_path / "casa.sif"),
+        ],
+    )
+    with pytest.raises(FileNotFoundError, match="casa_container"):
+        cli()
+    assert ms_example.exists()
+
+
+def test_cli_refuses_to_overwrite_corrected_data(
+    ms_example, tmp_path, monkeypatch
+) -> None:
+    """Calibrating DATA would lose an existing CORRECTED_DATA"""
+    casa_container = tmp_path / "casa.sif"
+    casa_container.touch()
+    with table(str(ms_example), readonly=False, ack=False) as tab:
+        desc = makecoldesc("DATA", tab.getcoldesc("DATA"))
+        desc["name"] = "CORRECTED_DATA"
+        tab.addcols(desc)
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "flint_gaincal",
+            "gaincal",
+            str(ms_example),
+            "--casa-container",
+            str(casa_container),
+        ],
+    )
+    with pytest.raises(MSError, match="CORRECTED_DATA"):
+        cli()
+    assert ms_example.exists()
 
 
 def test_process_gaincal_options() -> None:

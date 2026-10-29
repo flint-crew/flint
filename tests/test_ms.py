@@ -13,6 +13,7 @@ from casacore.tables import makecoldesc, table
 from pydantic import ValidationError
 
 from flint.calibrate.aocalibrate import ApplySolutions
+from flint.exceptions import MSError
 from flint.ms import (
     MS,
     check_column_in_ms,
@@ -315,7 +316,9 @@ def test_rename_ms_and_columns_for_selfcal(ms_example, tmpdir):
     target.mkdir(parents=True)
     target = target / ms.path.name
 
-    new_ms = rename_ms_and_columns_for_selfcal(ms=ms, target=target)
+    new_ms = rename_ms_and_columns_for_selfcal(
+        ms=ms, target=target, corrected_data="DATA"
+    )
     new_colnames = _get_columns(ms_path=new_ms.path)
 
     assert new_ms.path == target
@@ -343,6 +346,20 @@ def test_rename_ms_and_columns_for_selfcal_old_data_column(ms_example, tmpdir):
     assert "DATA" in new_colnames
     assert "DATA_ROUND0" in new_colnames
     assert "CORRECTED_DATA" not in new_colnames
+
+
+def test_rename_ms_and_columns_for_selfcal_missing_column(ms_example, tmpdir):
+    """A missing nominated column raises, and leaves the MS where it was"""
+    ms = MS.cast(Path(ms_example))
+    target = Path(tmpdir) / "target.ms"
+
+    with pytest.raises(MSError, match="JACKSPARROW"):
+        rename_ms_and_columns_for_selfcal(
+            ms=ms, target=target, corrected_data="JACKSPARROW"
+        )
+
+    assert ms.path.exists()
+    assert not target.exists()
 
 
 def test_preprocess_askap_ms_skip_rotation(ms_example):

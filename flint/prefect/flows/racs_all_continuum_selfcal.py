@@ -135,9 +135,11 @@ def _check_racs_all_options(racs_all_options: RACSAllOptions) -> None:
                 f"{racs_all_options.reference_catalogue_directory=} does not appear to be valid. Check for reference catalogues"
             )
     if racs_all_options.rounds is not None:
-        if racs_all_options.rounds >= 1 and racs_all_options.casa_container is None:
+        if racs_all_options.rounds >= 1 and not (
+            racs_all_options.casa_container and racs_all_options.casa_container.exists()
+        ):
             raise ValueError(
-                "CASA Container needs to be set if self-calibration is to be performed"
+                f"{racs_all_options.casa_container=} needs to exist if self-calibration is to be performed"
             )
     if racs_all_options.coadd_cubes:
         if (
@@ -157,9 +159,11 @@ def _check_racs_all_options(racs_all_options: RACSAllOptions) -> None:
             raise ValueError(
                 "calibrate_container needs to be set if run_skymodel_calibration is True"
             )
-        if racs_all_options.casa_container is None:
+        if not (
+            racs_all_options.casa_container and racs_all_options.casa_container.exists()
+        ):
             raise ValueError(
-                "casa_container needs to be set if run_skymodel_calibration is True"
+                f"{racs_all_options.casa_container=} needs to exist if run_skymodel_calibration is True"
             )
 
     # For the moment we make sure that this is provided. Can consider moving to mandatory argument in

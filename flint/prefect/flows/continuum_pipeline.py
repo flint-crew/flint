@@ -97,9 +97,11 @@ def _check_field_options(field_options: FieldOptions) -> None:
                 f"{field_options.reference_catalogue_directory=} does not appear to be valid. Check for reference catalogues"
             )
     if field_options.rounds is not None:
-        if field_options.rounds >= 1 and field_options.casa_container is None:
+        if field_options.rounds >= 1 and not (
+            field_options.casa_container and field_options.casa_container.exists()
+        ):
             raise ValueError(
-                "CASA Container needs to be set if self-calibration is to be performed"
+                f"{field_options.casa_container=} needs to exist if self-calibration is to be performed"
             )
     if field_options.coadd_cubes:
         if (
