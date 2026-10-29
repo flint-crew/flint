@@ -9,6 +9,7 @@
 ```{toctree}
 :maxdepth: 1
 installation.md
+container_slurm.md
 quickstart.md
 about.md
 data.md
