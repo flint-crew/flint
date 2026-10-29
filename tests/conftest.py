@@ -3,7 +3,9 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+import numpy as np
 import pytest
+from casacore.tables import makecoldesc, table
 
 from flint.utils import get_packaged_resource_path
 
@@ -36,6 +38,25 @@ def which(program: str) -> str | None:
                 return exe_file
 
     return None
+
+
+def get_columns(ms_path: Path) -> list[str]:
+    """The column names of a measurement set"""
+    with table(str(ms_path), readonly=True, ack=False) as tab:
+        return tab.colnames()
+
+
+def add_corrected_data(ms_path: Path) -> np.ndarray:
+    """Add a CORRECTED_DATA that differs from DATA, the way fixms adds columns, and return it"""
+    with table(str(ms_path), readonly=False, ack=False) as tab:
+        desc = makecoldesc("DATA", tab.getcoldesc("DATA"))
+        desc["name"] = "CORRECTED_DATA"
+        tab.addcols(desc)
+        # The packaged MS's DATA is all zeros and NaNs, so scaling it would not differ
+        corrected_data = tab.getcol("DATA") + (1 + 1j)
+        tab.putcol("CORRECTED_DATA", corrected_data)
+
+    return corrected_data
 
 
 def pytest_collection_modifyitems(config, items):

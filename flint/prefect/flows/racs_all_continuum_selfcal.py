@@ -565,7 +565,7 @@ def process_racs_all_continuum(
                     )
                     preprocess_science_mss = task_prepare_ms_for_selfcal.map(
                         ms=preprocess_science_mss,
-                        selfcal_round=0,
+                        round=0,
                         keep_old_columns=racs_all_options.keep_old_columns,
                     )
                     preprocess_science_mss = task_gaincal_applycal_ms.map(
@@ -642,7 +642,7 @@ def process_racs_all_continuum(
                 )
                 cal_mss = task_prepare_ms_for_selfcal.map(
                     ms=beam_imaging_results.mss,
-                    selfcal_round=current_round,
+                    round=current_round,
                     keep_old_columns=racs_all_options.keep_old_columns,
                     wait_for=beam_imaging_results.wsclean_result,
                 )

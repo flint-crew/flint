@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from casacore.tables import makecoldesc, table
+from casacore.tables import table
 
 from flint.ms import preprocess_askap_ms
 from flint.naming import get_selfcal_ms_name
@@ -20,6 +20,8 @@ from flint.selfcal.utils import (
     prepare_ms_for_selfcal,
 )
 from flint.utils import get_packaged_resource_path
+
+from .conftest import add_corrected_data, get_columns
 
 
 def test_create_solution_path():
@@ -37,6 +39,11 @@ def test_create_solution_path():
 
     assert isinstance(cal_table, Path)
     assert cal_table == Path("/jack/has/a/measurement_set.caltable.ch0000-0143")
+
+    cal_table = create_and_check_caltable_path(
+        ms=MS.cast(Path("jack/measurement_set.ms"))
+    )
+    assert cal_table == Path.cwd() / "jack/measurement_set.caltable"
 
 
 @pytest.fixture
@@ -145,28 +152,11 @@ def test_consider_skip_selfcal():
     assert res
 
 
-def _get_columns(ms_path: Path) -> list[str]:
-    with table(str(ms_path), readonly=True, ack=False) as tab:
-        return tab.colnames()
-
-
-def _add_corrected_data(ms_path: Path) -> np.ndarray:
-    """Add a CORRECTED_DATA of twice DATA the way fixms adds columns, and return it"""
-    with table(str(ms_path), readonly=False, ack=False) as tab:
-        desc = makecoldesc("DATA", tab.getcoldesc("DATA"))
-        desc["name"] = "CORRECTED_DATA"
-        tab.addcols(desc)
-        corrected_data = 2 * tab.getcol("DATA")
-        tab.putcol("CORRECTED_DATA", corrected_data)
-
-    return corrected_data
-
-
 @pytest.mark.parametrize("keep_old_columns", [False, True])
 def test_prepare_ms_for_selfcal_resumes(ms_example, keep_old_columns) -> None:
     """Preparing can be run again after stopping part way through moving columns, or after finishing"""
     ms = MS(path=Path(ms_example), column="CORRECTED_DATA")
-    _add_corrected_data(ms_path=ms.path)
+    add_corrected_data(ms_path=ms.path)
     with table(str(ms.path), readonly=False, ack=False) as tab:
         if keep_old_columns:
             tab.renamecol(oldname="DATA", newname="DATA_ROUND0")
@@ -177,13 +167,13 @@ def test_prepare_ms_for_selfcal_resumes(ms_example, keep_old_columns) -> None:
         ms=ms, round=1, keep_old_columns=keep_old_columns
     )
     assert prepared_ms.path == get_selfcal_ms_name(in_ms_path=ms.path, round=1)
-    colnames = _get_columns(ms_path=prepared_ms.path)
+    colnames = get_columns(ms_path=prepared_ms.path)
     assert "DATA" in colnames
     assert "CORRECTED_DATA" not in colnames
     assert ("DATA_ROUND0" in colnames) == keep_old_columns
 
     # Like the CORRECTED_DATA a potato peel leaves beside DATA
-    _add_corrected_data(ms_path=prepared_ms.path)
+    add_corrected_data(ms_path=prepared_ms.path)
     assert (
         prepare_ms_for_selfcal(ms=ms, round=1, keep_old_columns=keep_old_columns)
         == prepared_ms
@@ -193,20 +183,35 @@ def test_prepare_ms_for_selfcal_resumes(ms_example, keep_old_columns) -> None:
         prepare_ms_for_selfcal(ms=ms.with_options(path=Path("JACKSPARROW.ms")), round=1)
 
 
+def test_prepare_ms_for_selfcal_keep_old_columns_round_zero(ms_example) -> None:
+    """Round 0 can only keep old columns when DATA is nominated, as nothing is replaced"""
+    add_corrected_data(ms_path=ms_example)
+    ms = MS(path=Path(ms_example), column="CORRECTED_DATA")
+
+    with pytest.raises(ValueError, match="no earlier round"):
+        prepare_ms_for_selfcal(ms=ms, round=0, keep_old_columns=True)
+    assert ms.path.exists()
+
+    prepared_ms = prepare_ms_for_selfcal(
+        ms=ms.with_options(column="DATA"), round=0, keep_old_columns=True
+    )
+    assert prepared_ms.path.name.endswith(".round0.ms")
+
+
 def test_prepare_ms_for_selfcal(ms_example) -> None:
     """The imaged column becomes DATA in a renamed MS, and INSTRUMENT_DATA is kept"""
     ms = preprocess_askap_ms(ms=ms_example)
-    assert "INSTRUMENT_DATA" in _get_columns(ms_path=ms.path)
+    assert "INSTRUMENT_DATA" in get_columns(ms_path=ms.path)
 
     for round in (1, 2):
-        corrected_data = _add_corrected_data(ms_path=ms.path)
+        corrected_data = add_corrected_data(ms_path=ms.path)
         ms = prepare_ms_for_selfcal(
             ms=ms.with_options(column="CORRECTED_DATA"), round=round
         )
 
         assert ms.path.name.endswith(f".round{round}.ms")
         assert ms.column == "DATA"
-        colnames = _get_columns(ms_path=ms.path)
+        colnames = get_columns(ms_path=ms.path)
         assert "CORRECTED_DATA" not in colnames
         assert "INSTRUMENT_DATA" in colnames
         assert not any(col.startswith("DATA_ROUND") for col in colnames)
@@ -220,18 +225,19 @@ def test_prepare_ms_for_selfcal_keep_old_columns(ms_example) -> None:
     with table(str(ms.path), ack=False) as tab:
         original_data = tab.getcol("DATA")
 
-    _add_corrected_data(ms_path=ms.path)
+    corrected_data = add_corrected_data(ms_path=ms.path)
     ms = prepare_ms_for_selfcal(
         ms=ms.with_options(column="CORRECTED_DATA"), round=1, keep_old_columns=True
     )
-    colnames = _get_columns(ms_path=ms.path)
+    colnames = get_columns(ms_path=ms.path)
     assert {"DATA", "DATA_ROUND0", "INSTRUMENT_DATA"} <= set(colnames)
     assert "CORRECTED_DATA" not in colnames
     with table(str(ms.path), ack=False) as tab:
         assert np.allclose(tab.getcol("DATA_ROUND0"), original_data, equal_nan=True)
+        assert np.allclose(tab.getcol("DATA"), corrected_data, equal_nan=True)
 
-    _add_corrected_data(ms_path=ms.path)
+    add_corrected_data(ms_path=ms.path)
     ms = prepare_ms_for_selfcal(
         ms=ms.with_options(column="CORRECTED_DATA"), round=2, keep_old_columns=True
     )
-    assert {"DATA_ROUND0", "DATA_ROUND1"} <= set(_get_columns(ms_path=ms.path))
+    assert {"DATA_ROUND0", "DATA_ROUND1"} <= set(get_columns(ms_path=ms.path))

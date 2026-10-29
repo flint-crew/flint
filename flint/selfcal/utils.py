@@ -12,7 +12,7 @@ from flint.flagging import nan_zero_extreme_flag_ms
 from flint.logging import logger
 from flint.ms import get_freqs_from_ms, rename_ms_and_columns_for_selfcal
 from flint.naming import get_selfcal_ms_name
-from flint.options import MS
+from flint.options import MS, HasMS
 from flint.utils import remove_files_folders
 
 
@@ -35,9 +35,7 @@ def create_and_check_caltable_path(
     cal_suffix = ".caltable"
     if channel_range:
         cal_suffix += f".ch{channel_range[0]:04d}-{channel_range[1]:04d}"
-    cal_table_name = ms.path.with_suffix(cal_suffix)
-
-    cal_table = ms.path.absolute().parent / cal_table_name
+    cal_table = ms.path.absolute().with_suffix(cal_suffix)
     logger.info(f"Will create calibration table {cal_table}.")
 
     if remove_if_exists and cal_table.exists():
@@ -122,35 +120,44 @@ def consider_skip_selfcal_on_round(
     return current_round in skip_selfcal_on_rounds
 
 
-def prepare_ms_for_selfcal(ms: MS, round: int, keep_old_columns: bool = False) -> MS:
+def prepare_ms_for_selfcal(
+    ms: MS | HasMS, round: int, keep_old_columns: bool = False
+) -> MS:
     """Rename a measurement set for a round of self-calibration, move its
     nominated column into DATA, and flag bad visibilities.
 
     Args:
-        ms (MS): The measurement set whose nominated column was last imaged
+        ms (MS | HasMS): The measurement set whose nominated column was last imaged, or a result that holds it
         round (int): The self-calibration round, used in the new name
         keep_old_columns (bool, optional): Keep the replaced DATA column as ``DATA_ROUND{round - 1}`` rather than removing it. Defaults to False.
 
     Raises:
         MSError: Raised when ``ms`` has no nominated column
+        ValueError: Raised when a DATA column would be kept in round 0, which has no earlier round to name it after
 
     Returns:
         MS: The renamed measurement set, with DATA as its column
     """
+    ms = MS.cast(ms)
     out_ms_path = get_selfcal_ms_name(in_ms_path=ms.path, round=round)
 
     if not ms.path.exists() and out_ms_path.exists():
         logger.info(f"Resuming from the already renamed {out_ms_path}")
-        ms = ms.with_options(path=out_ms_path, column="DATA")
+        prepared_ms: MS = ms.with_options(path=out_ms_path, column="DATA")
     else:
         if not ms.column:
             raise MSError(f"No column has been assigned: {ms}")
+        # Nominating DATA replaces nothing, so the RACS-all sky-model round 0 is fine
+        if keep_old_columns and round < 1 and ms.column != "DATA":
+            raise ValueError(
+                f"Can not keep DATA in {round=}, as there is no earlier round to name it after"
+            )
 
-        ms = rename_ms_and_columns_for_selfcal(
+        prepared_ms = rename_ms_and_columns_for_selfcal(
             ms=ms,
             target=out_ms_path,
             corrected_data=ms.column,
             old_data_column=f"DATA_ROUND{round - 1}" if keep_old_columns else None,
         )
 
-    return nan_zero_extreme_flag_ms(ms=ms)
+    return nan_zero_extreme_flag_ms(ms=prepared_ms)

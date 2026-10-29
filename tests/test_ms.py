@@ -9,7 +9,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from casacore.tables import makecoldesc, table
+from casacore.tables import table
 from pydantic import ValidationError
 
 from flint.calibrate.aocalibrate import ApplySolutions
@@ -30,6 +30,8 @@ from flint.ms import (
     subtract_model_from_data_column,
 )
 from flint.utils import get_packaged_resource_path
+
+from .conftest import add_corrected_data, get_columns
 
 
 def test_standardise_ms_to_list_ms(ms_example) -> None:
@@ -277,18 +279,13 @@ def test_check_column_in_ms(ms_example):
         check_column_in_ms(ms=ms.with_options(column=None))
 
 
-def _get_columns(ms_path):
-    with table(str(ms_path), readonly=True, ack=False) as tab:
-        return tab.colnames()
-
-
 def test_rename_ms_and_columns_for_selfcal_correct2data(ms_example, tmpdir):
     """Sanity around renaming a MS and handling the columns that should be renamed"""
     ms = MS.cast(Path(ms_example))
     with table(str(ms.path), readonly=False, ack=False) as tab:
         tab.renamecol("DATA", "CORRECTED_DATA")
 
-    colnames = _get_columns(ms_path=ms.path)
+    colnames = get_columns(ms_path=ms.path)
 
     assert "DATA" not in colnames
     assert "CORRECTED_DATA" in colnames
@@ -298,7 +295,7 @@ def test_rename_ms_and_columns_for_selfcal_correct2data(ms_example, tmpdir):
     target = target / ms.path.name
 
     new_ms = rename_ms_and_columns_for_selfcal(ms=ms, target=target)
-    new_colnames = _get_columns(ms_path=new_ms.path)
+    new_colnames = get_columns(ms_path=new_ms.path)
 
     assert new_ms.path == target
     assert "DATA" in new_colnames
@@ -308,7 +305,7 @@ def test_rename_ms_and_columns_for_selfcal_correct2data(ms_example, tmpdir):
 def test_rename_ms_and_columns_for_selfcal(ms_example, tmpdir):
     """Sanity around renaming a MS and handling the columns that should be renamed"""
     ms = MS.cast(Path(ms_example))
-    colnames = _get_columns(ms_path=ms.path)
+    colnames = get_columns(ms_path=ms.path)
 
     assert "DATA" in colnames
 
@@ -319,7 +316,7 @@ def test_rename_ms_and_columns_for_selfcal(ms_example, tmpdir):
     new_ms = rename_ms_and_columns_for_selfcal(
         ms=ms, target=target, corrected_data="DATA"
     )
-    new_colnames = _get_columns(ms_path=new_ms.path)
+    new_colnames = get_columns(ms_path=new_ms.path)
 
     assert new_ms.path == target
     assert "DATA" in new_colnames
@@ -328,10 +325,9 @@ def test_rename_ms_and_columns_for_selfcal(ms_example, tmpdir):
 def test_rename_ms_and_columns_for_selfcal_old_data_column(ms_example, tmpdir):
     """The replaced DATA column can be kept under another name"""
     ms = MS.cast(Path(ms_example))
-    with table(str(ms.path), readonly=False, ack=False) as tab:
-        desc = makecoldesc("DATA", tab.getcoldesc("DATA"))
-        desc["name"] = "CORRECTED_DATA"
-        tab.addcols(desc)
+    with table(str(ms.path), ack=False) as tab:
+        original_data = tab.getcol("DATA")
+    corrected_data = add_corrected_data(ms_path=ms.path)
 
     target = Path(tmpdir) / "target_directory"
     target.mkdir(parents=True)
@@ -340,12 +336,15 @@ def test_rename_ms_and_columns_for_selfcal_old_data_column(ms_example, tmpdir):
     new_ms = rename_ms_and_columns_for_selfcal(
         ms=ms, target=target, old_data_column="DATA_ROUND0"
     )
-    new_colnames = _get_columns(ms_path=new_ms.path)
+    new_colnames = get_columns(ms_path=new_ms.path)
 
     assert new_ms.column == "DATA"
     assert "DATA" in new_colnames
     assert "DATA_ROUND0" in new_colnames
     assert "CORRECTED_DATA" not in new_colnames
+    with table(str(new_ms.path), ack=False) as tab:
+        assert np.allclose(tab.getcol("DATA_ROUND0"), original_data, equal_nan=True)
+        assert np.allclose(tab.getcol("DATA"), corrected_data, equal_nan=True)
 
 
 def test_rename_ms_and_columns_for_selfcal_missing_column(ms_example, tmpdir):
@@ -368,7 +367,7 @@ def test_preprocess_askap_ms_skip_rotation(ms_example):
 
     assert ms.path == ms_example
     assert ms.column == "DATA"
-    assert "INSTRUMENT_DATA" not in _get_columns(ms_path=ms.path)
+    assert "INSTRUMENT_DATA" not in get_columns(ms_path=ms.path)
 
 
 def test_phase_dir(ms_example):

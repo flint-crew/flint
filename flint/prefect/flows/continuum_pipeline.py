@@ -416,14 +416,10 @@ def process_science_fields(
 
             cal_mss = task_prepare_ms_for_selfcal.map(
                 ms=wsclean_results,
-                selfcal_round=current_round,
+                round=current_round,
                 keep_old_columns=field_options.keep_old_columns,
-                wait_for=[
-                    field_summary,
-                    # To make sure field summary is created with unzipped MSs
-                    *beam_summaries,
-                    # to make sure the MSs are not renamed before the beam summary
-                ],
+                # The summaries read the MSs, so must finish before they are renamed
+                wait_for=[field_summary, *beam_summaries],
             )  # type: ignore
 
             if not consider_skip_selfcal_on_round(
@@ -610,7 +606,6 @@ def process_science_fields(
                 )
                 archive_wait_for.extend(parsets)
 
-    # zip up the final measurement set, which is not included in the above loop
     if field_options.zip_ms:
         archive_results = task_zip_ms.map(
             in_item=wsclean_results,

@@ -128,6 +128,7 @@ task_dp3_gaincal = task(dp3_gaincal)
 task_dp3_applycal = task(dp3_applycal)
 task_dp3_solve_apply = task(dp3_solve_apply)
 task_gaincal_applycal_ms = task(gaincal_applycal_ms)
+task_prepare_ms_for_selfcal = task(prepare_ms_for_selfcal)
 
 # Tasks below are extracting componented from earlier stages, or are
 # otherwise doing something important
@@ -315,38 +316,6 @@ def task_zip_ms(in_item: WSCleanResult) -> Path:
     zipped_ms = zip_folder(in_path=ms.path)
 
     return zipped_ms
-
-
-@task
-def task_prepare_ms_for_selfcal(
-    ms: MS | WSCleanResult, selfcal_round: int, keep_old_columns: bool = False
-) -> MS:
-    """Rename a measurement set for a round of self-calibration and move its
-    imaged column into DATA. See ``prepare_ms_for_selfcal``.
-
-    Args:
-        ms (Union[MS, WSCleanResult]): The measurement set, or the wsclean result that imaged it.
-        selfcal_round (int): Counter indication which self-calibration round is being performed. A name is included based on this.
-        keep_old_columns (bool, optional): Keep the replaced DATA column rather than removing it. Defaults to False.
-
-    Raises:
-        ValueError: Raised when a ``.ms`` attribute can not be obtained
-
-    Returns:
-        MS: The renamed measurement set, with DATA as its column
-    """
-    # TODO: Need to do a better type system to include the .ms
-    # TODO: This needs to be expanded to handle multiple MS
-    ms = ms if isinstance(ms, MS) else ms.ms  # type: ignore
-
-    if not isinstance(ms, MS):
-        raise ValueError(
-            f"Unsupported {type(ms)=} {ms=}. Likely multiple MS instances? This is not yet supported. "
-        )
-
-    return prepare_ms_for_selfcal(
-        ms=ms, round=selfcal_round, keep_old_columns=keep_old_columns
-    )
 
 
 @task

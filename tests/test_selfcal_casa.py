@@ -5,7 +5,6 @@ import sys
 from pathlib import Path
 
 import pytest
-from casacore.tables import makecoldesc, table
 
 from flint.exceptions import MSError
 from flint.ms import MS
@@ -17,6 +16,8 @@ from flint.selfcal.casa import (
     gaincal_applycal_ms,
 )
 from flint.utils import get_packaged_resource_path
+
+from .conftest import add_corrected_data
 
 
 def test_check_for_valid_calibration_table(tmpdir) -> None:
@@ -83,10 +84,7 @@ def test_cli_refuses_to_overwrite_corrected_data(
     """Calibrating DATA would lose an existing CORRECTED_DATA"""
     casa_container = tmp_path / "casa.sif"
     casa_container.touch()
-    with table(str(ms_example), readonly=False, ack=False) as tab:
-        desc = makecoldesc("DATA", tab.getcoldesc("DATA"))
-        desc["name"] = "CORRECTED_DATA"
-        tab.addcols(desc)
+    add_corrected_data(ms_path=ms_example)
 
     monkeypatch.setattr(
         sys,

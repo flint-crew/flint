@@ -59,19 +59,6 @@ def mstransform(**kwargs) -> str:
 
 
 @singularity_wrapper
-def cvel(**kwargs) -> str:
-    """Generate the CASA cvel command
-
-    Returns:
-        str: The command to execute
-    """
-    cvel_str = args_to_casa_task_string(task="cvel", **kwargs)
-    logger.info(f"{cvel_str=}")
-
-    return cvel_str
-
-
-@singularity_wrapper
 def applycal(**kwargs) -> str:
     """Generate the CASA applycal command
 
