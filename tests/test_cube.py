@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+from functools import partial
 from pathlib import Path
 
 import astropy.units as u
@@ -171,6 +172,35 @@ def test_rotate_cube_is_idempotent(tmpdir) -> None:
 
     assert fits.getheader(cube) == header
     assert np.array_equal(fits.getdata(cube), data)
+
+
+def test_combine_images_to_cube_overwrite(tmpdir) -> None:
+    """An existing cube is only replaced when ``overwrite`` is set"""
+    tmp_path = Path(tmpdir)
+    images = [
+        _write_channel_image(
+            tmp_path / f"SB1234.RACS_0000-00.beam00.round1-{channel:04d}-image.fits",
+            channel=channel,
+            shape=(5, 7),
+        )
+        for channel in range(3)
+    ]
+    fitscube_options = FitsCubeOptions(
+        invalidate_zeros=False, remove_original_images=False
+    )
+    combine = partial(
+        combine_images_to_cube,
+        images=images,
+        prefix=f"{tmp_path}/SB1234.RACS_0000-00.beam00.round1",
+        mode="image",
+    )
+    combine(fitscube_options=fitscube_options)
+
+    with pytest.raises(FileExistsError):
+        combine(fitscube_options=fitscube_options)
+
+    cube = combine(fitscube_options=fitscube_options.with_options(overwrite=True))
+    _assert_cube_matches_images(cube=cube, images=images)
 
 
 def test_rotate_cube_single_stokes_is_header_only(tmpdir) -> None:
