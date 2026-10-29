@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from astropy.table import Table
+from requests.exceptions import RequestException
 
 from flint.catalogue import (
     KNOWN_REFERENCE_CATALOGUES,
@@ -108,7 +109,7 @@ def test_download_vizier_catalogue(tmpdir):
         cata_path = download_vizier_catalogue(
             output_path=output_path, vizier_id=icrf_id.vizier_id
         )
-    except ConnectionError as error:
+    except (ConnectionError, RequestException) as error:
         pytest.skip(f"Vizier service unavailable: {error}")
 
     assert cata_path == output_path
@@ -131,7 +132,7 @@ def test_get_vizier_catalogue(tmpdir):
     assert icrf.vizier_id
     try:
         _ = download_vizier_catalogue(output_path=output_path, vizier_id=icrf.vizier_id)
-    except ConnectionError as error:
+    except (ConnectionError, RequestException) as error:
         pytest.skip(f"Vizier service unavailable: {error}")
     assert output_path.exists()
 
