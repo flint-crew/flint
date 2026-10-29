@@ -755,6 +755,8 @@ class FitsCubeOptions(BaseOptions):
     """If True, modify the file in-place. If False, write to a temporary file and then replace the original. Default True"""
     create_blanks: bool = True
     """Have fitscube re-grid the input frequencies onto a tolerant regular grid before writing."""
+    overwrite: bool = False
+    """Overwrite the output file if it exists"""
 
 
 class MSSummary(BaseOptions):

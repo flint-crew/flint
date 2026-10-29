@@ -80,6 +80,7 @@ def combine_images_to_cube(
             if bounding_box is None
             else bounding_box,
             create_blanks=fitscube_options.create_blanks,
+            overwrite=fitscube_options.overwrite,
         )
     except ShapeMismatchException as e:
         msg = f"Images to be cubed have differing pixel grids: {e}"
