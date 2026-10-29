@@ -57,6 +57,8 @@ singularity pull docker://ghcr.io/flint-crew/flint:{tag}
 
 See the [GitHub packages](https://github.com/flint-crew/flint/pkgs/container/flint) page for the list of available version tags.
 
+To run pipelines from the container on a Slurm cluster, see [Running flint from its container on Slurm](container_slurm.md).
+
 ## Containers
 
 We separately maintain a set of required containers. Pre-built containers are hosted on [DockerHub](https://hub.docker.com/r/alecthomson/flint-containers/tags), and the underlying build scripts can be found over in the [`flint-containers` repository](https://github.com/flint-crew/flint-containers).
