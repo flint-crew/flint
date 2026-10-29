@@ -59,6 +59,7 @@ from flint.prefect.common.imaging import (
     task_flag_ms_aoflagger,
     task_gaincal_applycal_ms,
     task_potato_peel,
+    task_prepare_ms_for_selfcal,
     task_run_bane_and_aegean,
     task_wsclean_imager,
     validation_items,
@@ -558,13 +559,13 @@ def process_racs_all_continuum(
                         ),
                         skymodel=skymodel,
                     )
-                    preprocess_science_mss = task_gaincal_applycal_ms.map(
+                    preprocess_science_mss = task_prepare_ms_for_selfcal.map(
                         ms=preprocess_science_mss,
                         selfcal_round=0,
-                        archive_input_ms=racs_all_options.zip_ms,
-                        skip_selfcal=False,
-                        rename_ms=racs_all_options.rename_ms,
-                        archive_cal_table=True,
+                        keep_old_columns=racs_all_options.keep_old_columns,
+                    )
+                    preprocess_science_mss = task_gaincal_applycal_ms.map(
+                        ms=preprocess_science_mss,
                         casa_container=racs_all_options.casa_container,
                         update_gain_cal_options=unmapped(
                             get_skymodel_gaincal_options(strategy=strategy)
@@ -635,17 +636,17 @@ def process_racs_all_continuum(
                     round_info=current_round,
                     operation="selfcal",
                 )
-                # TODO: Offer DP3 (task_dp3_solve_apply) as a container-free self-calibration backend
-                cal_mss = task_gaincal_applycal_ms.map(
+                cal_mss = task_prepare_ms_for_selfcal.map(
                     ms=beam_imaging_results.mss,
                     selfcal_round=current_round,
-                    archive_input_ms=racs_all_options.zip_ms,
-                    skip_selfcal=False,
-                    rename_ms=racs_all_options.rename_ms,
-                    archive_cal_table=True,
+                    keep_old_columns=racs_all_options.keep_old_columns,
+                    wait_for=beam_imaging_results.wsclean_result,
+                )
+                # TODO: Offer DP3 (task_dp3_solve_apply) as a container-free self-calibration backend
+                cal_mss = task_gaincal_applycal_ms.map(
+                    ms=cal_mss,
                     casa_container=racs_all_options.casa_container,
                     update_gain_cal_options=unmapped(update_gain_options),
-                    wait_for=beam_imaging_results.wsclean_result,
                 )
                 update_masking_options = get_options_from_strategy(
                     strategy=strategy,

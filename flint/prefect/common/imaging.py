@@ -81,6 +81,7 @@ from flint.peel.potato import potato_peel
 from flint.prefect.caching import task
 from flint.prefect.common.utils import task_getattr, upload_image_as_artifact
 from flint.selfcal.casa import gaincal_applycal_ms
+from flint.selfcal.utils import prepare_ms_for_selfcal
 from flint.source_finding.aegean import AegeanOutputs, run_bane_and_aegean
 from flint.summary import FieldSummary
 from flint.utils import (
@@ -126,6 +127,7 @@ task_dp3_ddecal = task(dp3_ddecal)
 task_dp3_gaincal = task(dp3_gaincal)
 task_dp3_applycal = task(dp3_applycal)
 task_dp3_solve_apply = task(dp3_solve_apply)
+task_gaincal_applycal_ms = task(gaincal_applycal_ms)
 
 # Tasks below are extracting componented from earlier stages, or are
 # otherwise doing something important
@@ -316,33 +318,22 @@ def task_zip_ms(in_item: WSCleanResult) -> Path:
 
 
 @task
-def task_gaincal_applycal_ms(
-    ms: MS | WSCleanResult,
-    selfcal_round: int,
-    casa_container: Path,
-    update_gain_cal_options: dict[str, Any] | None = None,
-    archive_input_ms: bool = False,
-    skip_selfcal: bool = False,
-    rename_ms: bool = False,
-    archive_cal_table: bool = False,
+def task_prepare_ms_for_selfcal(
+    ms: MS | WSCleanResult, selfcal_round: int, keep_old_columns: bool = False
 ) -> MS:
-    """Perform self-calibration using CASA gaincal and applycal.
+    """Rename a measurement set for a round of self-calibration and move its
+    imaged column into DATA. See ``prepare_ms_for_selfcal``.
 
     Args:
-        ms (Union[MS, WSCleanResult]): A resulting wsclean output. This is used purely to extract the ``.ms`` attribute.
+        ms (Union[MS, WSCleanResult]): The measurement set, or the wsclean result that imaged it.
         selfcal_round (int): Counter indication which self-calibration round is being performed. A name is included based on this.
-        casa_container (Path): A path to a singularity container with CASA tooling.
-        update_gain_cal_options (Optional[Dict[str, Any]], optional): Options used to overwrite the default ``gaincal`` options. Defaults to None.
-        archive_input_ms (bool, optional): If True the input measurement set is zipped. Defaults to False.
-        skip_selfcal (bool, optional): Should this self-cal be skipped. If `True`, the a new MS is created but not calibrated the appropriate new name and returned.
-        rename_ms (bool, optional): It `True` simply rename a MS and adjust columns appropriately (potentially deleting them) instead of copying the complete MS. If `True` `archive_input_ms` is ignored. Defaults to False.
-        archive_cal_table (bool, optional): Archive the output calibration table in a tarball. Defaults to False.
+        keep_old_columns (bool, optional): Keep the replaced DATA column rather than removing it. Defaults to False.
 
     Raises:
         ValueError: Raised when a ``.ms`` attribute can not be obtained
 
     Returns:
-        MS: Self-calibrated measurement set
+        MS: The renamed measurement set, with DATA as its column
     """
     # TODO: Need to do a better type system to include the .ms
     # TODO: This needs to be expanded to handle multiple MS
@@ -353,15 +344,8 @@ def task_gaincal_applycal_ms(
             f"Unsupported {type(ms)=} {ms=}. Likely multiple MS instances? This is not yet supported. "
         )
 
-    return gaincal_applycal_ms(
-        ms=ms,
-        round=selfcal_round,
-        casa_container=casa_container,
-        update_gain_cal_options=update_gain_cal_options,
-        archive_input_ms=archive_input_ms,
-        skip_selfcal=skip_selfcal,
-        rename_ms=rename_ms,
-        archive_cal_table=archive_cal_table,
+    return prepare_ms_for_selfcal(
+        ms=ms, round=selfcal_round, keep_old_columns=keep_old_columns
     )
 
 

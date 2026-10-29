@@ -15,6 +15,7 @@ from capn_crunch import (
 
 from flint.options import (
     FieldOptions,
+    RACSAllOptions,
     dump_field_options_to_yaml,
 )
 from flint.prefect.flows.continuum_pipeline import get_parser
@@ -39,6 +40,19 @@ def test_options_to_dict():
 
     with pytest.raises(TypeError):
         _ = options_to_dict(input_options="Jack")
+
+
+def test_rename_ms_is_deprecated(recwarn):
+    """Setting rename_ms warns that it will be removed, leaving it unset does not"""
+    data = dict(low_data=Path("a"), mid_data=Path("b"), high_data=Path("c"))
+    FieldOptions()
+    RACSAllOptions(**data)
+    assert not [w for w in recwarn if w.category is FutureWarning]
+
+    with pytest.warns(FutureWarning, match="rename_ms is deprecated"):
+        FieldOptions(rename_ms=True)
+    with pytest.warns(FutureWarning, match="rename_ms is deprecated"):
+        RACSAllOptions(rename_ms=True, **data)
 
 
 def test_dump_field_options_to_yaml(tmpdir):

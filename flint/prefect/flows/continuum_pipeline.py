@@ -48,6 +48,7 @@ from flint.prefect.common.imaging import (
     task_flag_ms_aoflagger,
     task_gaincal_applycal_ms,
     task_potato_peel,
+    task_prepare_ms_for_selfcal,
     task_preprocess_askap_ms,
     task_rename_column_in_ms,
     task_run_bane_and_aegean,
@@ -411,34 +412,34 @@ def process_science_fields(
         with tags(f"selfcal-{current_round}"):
             final_round = current_round == field_options.rounds
 
-            skip_gaincal_current_round = consider_skip_selfcal_on_round(
-                current_round=current_round,
-                skip_selfcal_on_rounds=field_options.skip_selfcal_on_rounds,
-            )
-
-            update_gain_options = get_options_from_strategy(
-                strategy=strategy,
-                mode="gaincal",
-                round_info=current_round,
-                operation="selfcal",
-            )
-            # TODO: Offer DP3 (task_dp3_solve_apply) as a container-free self-calibration backend
-            cal_mss = task_gaincal_applycal_ms.map(
+            cal_mss = task_prepare_ms_for_selfcal.map(
                 ms=wsclean_results,
                 selfcal_round=current_round,
-                archive_input_ms=field_options.zip_ms,
-                skip_selfcal=skip_gaincal_current_round,
-                rename_ms=field_options.rename_ms,
-                archive_cal_table=True,
-                casa_container=field_options.casa_container,
-                update_gain_cal_options=unmapped(update_gain_options),
+                keep_old_columns=field_options.keep_old_columns,
                 wait_for=[
                     field_summary,
                     # To make sure field summary is created with unzipped MSs
                     *beam_summaries,
-                    # to make sure gaincal does not run before the beam summary
+                    # to make sure the MSs are not renamed before the beam summary
                 ],
             )  # type: ignore
+
+            if not consider_skip_selfcal_on_round(
+                current_round=current_round,
+                skip_selfcal_on_rounds=field_options.skip_selfcal_on_rounds,
+            ):
+                update_gain_options = get_options_from_strategy(
+                    strategy=strategy,
+                    mode="gaincal",
+                    round_info=current_round,
+                    operation="selfcal",
+                )
+                # TODO: Offer DP3 (task_dp3_solve_apply) as a container-free self-calibration backend
+                cal_mss = task_gaincal_applycal_ms.map(
+                    ms=cal_mss,
+                    casa_container=field_options.casa_container,
+                    update_gain_cal_options=unmapped(update_gain_options),
+                )  # type: ignore
             stokes_v_mss = cal_mss
 
             fits_beam_masks = None

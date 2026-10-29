@@ -9,6 +9,7 @@ hold stateful properties throughout the flint codebase.
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Annotated, Literal, Protocol, Self, TypeAlias
@@ -18,7 +19,7 @@ import yaml
 from astropy.coordinates import EarthLocation, SkyCoord
 from astropy.time import Time
 from capn_crunch import BaseOptions
-from pydantic import Field, create_model
+from pydantic import AfterValidator, Field, create_model
 
 from flint.exceptions import MSError, NamingException
 from flint.logging import logger
@@ -122,6 +123,23 @@ class SubtractFieldOptions(BaseOptions):
     """The maximum number of scans/channels to consider"""
 
 
+def _warn_rename_ms_deprecated(rename_ms: bool) -> bool:
+    """Warn that ``rename_ms`` does nothing, as self-calibration always renames MSs"""
+    if rename_ms:
+        warnings.warn(
+            "rename_ms is deprecated and will be removed. Self-calibration always renames MSs, so it has no effect.",
+            FutureWarning,
+            stacklevel=2,
+        )
+    return rename_ms
+
+
+DeprecatedRenameMS: TypeAlias = Annotated[
+    bool, AfterValidator(_warn_rename_ms_deprecated)
+]
+"""The ``rename_ms`` option, kept until its removal so existing configurations still load"""
+
+
 class FieldOptions(BaseOptions):
     """Container that represents the flint related options that
     might be used throughout components related to the actual
@@ -156,7 +174,7 @@ class FieldOptions(BaseOptions):
     skip_selfcal_on_rounds: list[int] | None = None
     """Do not perform the derive and apply self-calibration solutions on these rounds"""
     zip_ms: bool = False
-    """Whether to zip measurement sets once they are no longer required"""
+    """Whether to zip the final round measurement sets once imaging is done"""
     run_aegean: bool = False
     """Whether to run the aegean source finding tool"""
     aegean_container: Path | None = None
@@ -191,8 +209,10 @@ class FieldOptions(BaseOptions):
     """Path that SBID archive tarballs will be created under. If None no archive tarballs are created. See ArchiveOptions. """
     sbid_copy_path: Path | None = None
     """Path that final processed products will be copied into. If None no copying of file products is performed. See ArchiveOptions. """
-    rename_ms: bool = False
-    """Rename MSs throughout rounds of imaging and self-cal instead of creating copies. This will delete data-columns throughout. """
+    rename_ms: DeprecatedRenameMS = False
+    """Deprecated and ignored, as self-calibration always renames MSs. Will be removed"""
+    keep_old_columns: bool = False
+    """Keep each round's replaced DATA column as DATA_ROUND{n} rather than deleting it. Each costs a full column of disk"""
     stokes_v_imaging: bool = False
     """Specifies whether Stokes-V imaging will be carried out after the final round of imagine (whether or not self-calibration is enabled). """
     coadd_cubes: bool = False
@@ -556,7 +576,7 @@ class RACSAllOptions(BaseOptions):
     rounds: int = 2
     """Number of required rouds of self-calibration and imaging to perform"""
     zip_ms: bool = False
-    """Whether to zip measurement sets once they are no longer required"""
+    """Not used yet. Reserved for zipping measurement sets in a future final archiving step"""
     run_aegean: bool = False
     """Whether to run the aegean source finding tool"""
     aegean_container: Path | None = None
@@ -579,8 +599,10 @@ class RACSAllOptions(BaseOptions):
     """Path that SBID archive tarballs will be created under. If None no archive tarballs are created. See ArchiveOptions. """
     sbid_copy_path: Path | None = None
     """Path that final processed products will be copied into. If None no copying of file products is performed. See ArchiveOptions. """
-    rename_ms: bool = False
-    """Rename MSs throughout rounds of imaging and self-cal instead of creating copies. This will delete data-columns throughout. """
+    rename_ms: DeprecatedRenameMS = False
+    """Deprecated and ignored, as self-calibration always renames MSs. Will be removed"""
+    keep_old_columns: bool = False
+    """Keep each round's replaced DATA column as DATA_ROUND{n} rather than deleting it. Each costs a full column of disk"""
     coadd_cubes: bool = False
     """Co-add cubes formed throughout imaging together. Cubes will be smoothed channel-wise to a common resolution. Only performed on final set of images"""
     cube_channel_width: float | None = None

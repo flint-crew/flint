@@ -9,7 +9,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from casacore.tables import table
+from casacore.tables import makecoldesc, table
 from pydantic import ValidationError
 
 from flint.calibrate.aocalibrate import ApplySolutions
@@ -320,6 +320,29 @@ def test_rename_ms_and_columns_for_selfcal(ms_example, tmpdir):
 
     assert new_ms.path == target
     assert "DATA" in new_colnames
+
+
+def test_rename_ms_and_columns_for_selfcal_old_data_column(ms_example, tmpdir):
+    """The replaced DATA column can be kept under another name"""
+    ms = MS.cast(Path(ms_example))
+    with table(str(ms.path), readonly=False, ack=False) as tab:
+        desc = makecoldesc("DATA", tab.getcoldesc("DATA"))
+        desc["name"] = "CORRECTED_DATA"
+        tab.addcols(desc)
+
+    target = Path(tmpdir) / "target_directory"
+    target.mkdir(parents=True)
+    target = target / ms.path.name
+
+    new_ms = rename_ms_and_columns_for_selfcal(
+        ms=ms, target=target, old_data_column="DATA_ROUND0"
+    )
+    new_colnames = _get_columns(ms_path=new_ms.path)
+
+    assert new_ms.column == "DATA"
+    assert "DATA" in new_colnames
+    assert "DATA_ROUND0" in new_colnames
+    assert "CORRECTED_DATA" not in new_colnames
 
 
 def test_preprocess_askap_ms_skip_rotation(ms_example):

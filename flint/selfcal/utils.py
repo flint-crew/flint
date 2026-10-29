@@ -7,8 +7,13 @@ from __future__ import annotations
 from math import ceil
 from pathlib import Path
 
+from casacore.tables import table
+
+from flint.exceptions import MSError
+from flint.flagging import nan_zero_extreme_flag_ms
 from flint.logging import logger
-from flint.ms import get_freqs_from_ms
+from flint.ms import get_freqs_from_ms, rename_ms_and_columns_for_selfcal
+from flint.naming import get_selfcal_ms_name
 from flint.options import MS
 from flint.utils import remove_files_folders
 
@@ -117,3 +122,57 @@ def consider_skip_selfcal_on_round(
     )
 
     return current_round in skip_selfcal_on_rounds
+
+
+def _resumable_selfcal_ms(ms: MS, out_ms_path: Path) -> bool:
+    """Whether an earlier attempt already renamed the MS and its columns, so
+    preparing it can be picked up from ``out_ms_path``.
+
+    Raises:
+        ValueError: Raised when neither the input nor output MS exist.
+    """
+    if ms.path.exists():
+        return False
+
+    if not out_ms_path.exists():
+        msg = f"Neither {ms.path=} nor {out_ms_path=} exists. No attempt to recover."
+        raise ValueError(msg)
+
+    with table(str(out_ms_path), ack=False, readonly=True) as tab:
+        column_names: list[str] = tab.colnames()
+
+    return "DATA" in column_names and "CORRECTED_DATA" not in column_names
+
+
+def prepare_ms_for_selfcal(ms: MS, round: int, keep_old_columns: bool = False) -> MS:
+    """Rename a measurement set for a round of self-calibration, move its
+    nominated column into DATA, and flag bad visibilities.
+
+    Args:
+        ms (MS): The measurement set whose nominated column was last imaged
+        round (int): The self-calibration round, used in the new name
+        keep_old_columns (bool, optional): Keep the replaced DATA column as ``DATA_ROUND{round - 1}`` rather than removing it. Defaults to False.
+
+    Raises:
+        MSError: Raised when ``ms`` has no nominated column
+
+    Returns:
+        MS: The renamed measurement set, with DATA as its column
+    """
+    out_ms_path = get_selfcal_ms_name(in_ms_path=ms.path, round=round)
+    logger.info(f"Renaming {ms.path} to {out_ms_path}")
+
+    if _resumable_selfcal_ms(ms=ms, out_ms_path=out_ms_path):
+        ms = ms.with_options(path=out_ms_path, column="DATA")
+    else:
+        if not ms.column:
+            raise MSError(f"No column has been assigned: {ms}")
+
+        ms = rename_ms_and_columns_for_selfcal(
+            ms=ms,
+            target=out_ms_path,
+            corrected_data=ms.column,
+            old_data_column=f"DATA_ROUND{round - 1}" if keep_old_columns else None,
+        )
+
+    return nan_zero_extreme_flag_ms(ms=ms)

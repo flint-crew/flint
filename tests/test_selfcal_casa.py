@@ -4,15 +4,14 @@ import shutil
 from pathlib import Path
 
 import pytest
-from casacore.tables import table
 
+from flint.exceptions import MSError
 from flint.ms import MS
-from flint.naming import get_selfcal_ms_name
 from flint.selfcal.casa import (
     GainCalOptions,
     _process_gaincal_options,
-    _skippable_ms_copy_and_clean,
     check_for_valid_calibration_table,
+    gaincal_applycal_ms,
 )
 from flint.utils import get_packaged_resource_path
 
@@ -45,34 +44,16 @@ def test_check_for_valid_calibration_table(tmpdir) -> None:
     assert check_for_valid_calibration_table(caltable_path=caltable_path)
 
 
-def test_skippable_ms_copy_and_clean(ms_example) -> None:
-    """Examine the conditions around self-calibration and the MS to see
-    if the cleaning / copying steps can be skipped, e.g. in case of rerun"""
-    ms = MS(path=Path(ms_example), column="DATA")
-    out_ms_path = get_selfcal_ms_name(in_ms_path=ms.path)
+def test_gaincal_applycal_ms_needs_data_column(tmpdir) -> None:
+    """casa only calibrates DATA, so other columns are refused"""
+    casa_container = Path(tmpdir) / "casa.sif"
+    casa_container.touch()
 
-    assert ms.path != out_ms_path
-    assert not out_ms_path.exists()
-
-    assert not _skippable_ms_copy_and_clean(
-        ms=ms, out_ms_path=out_ms_path, rename_ms=False
-    )
-
-    # If rename is true then in all cases the base MS should not exist
-    with pytest.raises(ValueError, match="No attempt to recover."):
-        assert not _skippable_ms_copy_and_clean(
-            ms=ms.with_options(path=Path("JACKSPARROW")),
-            out_ms_path=out_ms_path,
-            rename_ms=True,
+    with pytest.raises(MSError, match="casa calibrates DATA"):
+        gaincal_applycal_ms(
+            ms=MS(path=Path("JACKSPARROW.ms"), column="CORRECTED_DATA"),
+            casa_container=casa_container,
         )
-
-    ms.path.rename(out_ms_path)
-    assert not ms.path.exists()
-    assert out_ms_path.exists()
-    with table(str(out_ms_path), ack=False) as tab:
-        assert "DATA" in tab.colnames()
-
-    assert _skippable_ms_copy_and_clean(ms=ms, out_ms_path=out_ms_path, rename_ms=True)
 
 
 def test_process_gaincal_options() -> None:

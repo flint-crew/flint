@@ -933,20 +933,17 @@ def rename_ms_and_columns_for_selfcal(
     ms: MS,
     target: str | Path,
     corrected_data: str = "CORRECTED_DATA",
-    data: str = "DATA",
+    old_data_column: str | None = None,
 ) -> MS:
-    """Take an existing measurement set, rename it, and appropriately
-    rename the "DATA" and "CORRECTED_DATA" columns to support a new
-    round of imaging and self-calibration.
-
-    This could be considered for larger measurement sets where holding
-    multiple copies throughout rounds of self-calibration is not advisable.
+    """Take an existing measurement set, rename it, and move the
+    ``corrected_data`` column into DATA to support a new round of
+    imaging and self-calibration. Other columns are left alone.
 
     Args:
         ms (MS): The subject measurement set to rename
         target (Union[str, Path]): The targett path the measurement set will be renamed to. This should not already exist.
-        corrected_data (str, optional): The name of the column with the latest calibrated data. This becomes the `data` column. Defaults to "CORRECTED_DATA".
-        data (str, optional): The name of the column that will be subsequently processed. If it exists it will be removed. Defaults to "DATA".
+        corrected_data (str, optional): The name of the column with the latest calibrated data. This becomes the DATA column. Defaults to "CORRECTED_DATA".
+        old_data_column (str | None, optional): Rename the replaced DATA column to this rather than removing it. Defaults to None.
 
     Raises:
         FileExistsError: Raised if `target` already exists
@@ -969,50 +966,27 @@ def rename_ms_and_columns_for_selfcal(
     logger.info(f"Renaming {ms.path} to {target=}")
     ms.path.rename(target=target)
 
-    # Just some sanity in case None is passed through
-    if not (corrected_data or data):
-        return ms.with_options(path=target)
-
-    # Now move the corrected data column into the column to be imaged.
-    # For casa it really needs to be DATA
+    # casa calibrates DATA into CORRECTED_DATA, and nothing else
     with table(str(target), readonly=False, ack=False) as tab:
         colnames = tab.colnames()
 
-        if (
-            all([col in colnames for col in (corrected_data, data)])
-            and corrected_data != data
-        ):
-            logger.info(f"Removing {data} and renaming {corrected_data}")
-            tab.removecols(columnnames=data)
-            tab.renamecol(oldname=corrected_data, newname=data)
-        elif (
-            corrected_data in colnames
-            and data not in colnames
-            and corrected_data != data
-        ):
-            logger.info(f"Renaming {corrected_data=} to {data=}")
-            tab.renamecol(oldname=corrected_data, newname=data)
-        elif corrected_data not in colnames and data in colnames:
-            logger.warning(f"No {corrected_data=}, and {data=} seems to be present")
-        elif (
-            all([col in colnames for col in (corrected_data, data)])
-            and corrected_data == data
-            and corrected_data != "DATA"
-        ):
-            data = "DATA"
+        if corrected_data == "DATA":
+            logger.info("DATA is already the nominated column")
+        elif corrected_data not in colnames:
+            logger.warning(f"No {corrected_data=} in {target}")
+        else:
+            if "DATA" in colnames and old_data_column:
+                logger.info(f"Renaming DATA to {old_data_column}")
+                tab.renamecol(oldname="DATA", newname=old_data_column)
+            elif "DATA" in colnames:
+                logger.info("Removing DATA")
+                tab.removecols(columnnames="DATA")
             logger.info(f"Renaming {corrected_data} to DATA")
-            tab.renamecol(corrected_data, data)
+            tab.renamecol(oldname=corrected_data, newname="DATA")
 
         tab.flush()
 
-    # This is a safe guard against my bad handling of the above / mutineers
-    # There could be interplay with these columns when potato peel is used
-    # as some MSs will have CORRECYED_DATA and others may not.
-    assert data == "DATA", (
-        f"Somehow data column is not DATA, instead {data=}. Likely a problem for casa."
-    )
-
-    return ms.with_options(path=target, column=data)
+    return ms.with_options(path=target, column="DATA")
 
 
 MSsByBeam: TypeAlias = tuple[tuple[MS, ...], ...]

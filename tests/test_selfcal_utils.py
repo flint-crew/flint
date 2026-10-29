@@ -5,14 +5,20 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+import numpy as np
 import pytest
+from casacore.tables import makecoldesc, table
 
+from flint.ms import preprocess_askap_ms
+from flint.naming import get_selfcal_ms_name
 from flint.options import MS
 from flint.selfcal.utils import (
+    _resumable_selfcal_ms,
     consider_skip_selfcal_on_round,
     create_and_check_caltable_path,
     get_channel_ranges_given_nspws,
     get_channel_ranges_given_nspws_for_ms,
+    prepare_ms_for_selfcal,
 )
 from flint.utils import get_packaged_resource_path
 
@@ -138,3 +144,84 @@ def test_consider_skip_selfcal():
     assert res
     res = consider_skip_selfcal_on_round(current_round=2, skip_selfcal_on_rounds=2)
     assert res
+
+
+def _get_columns(ms_path: Path) -> list[str]:
+    with table(str(ms_path), readonly=True, ack=False) as tab:
+        return tab.colnames()
+
+
+def _add_corrected_data(ms_path: Path) -> np.ndarray:
+    """Add a CORRECTED_DATA of twice DATA the way fixms adds columns, and return it"""
+    with table(str(ms_path), readonly=False, ack=False) as tab:
+        desc = makecoldesc("DATA", tab.getcoldesc("DATA"))
+        desc["name"] = "CORRECTED_DATA"
+        tab.addcols(desc)
+        corrected_data = 2 * tab.getcol("DATA")
+        tab.putcol("CORRECTED_DATA", corrected_data)
+
+    return corrected_data
+
+
+def test_resumable_selfcal_ms(ms_example) -> None:
+    """A MS renamed by an earlier attempt can be picked up again"""
+    ms = MS(path=Path(ms_example), column="DATA")
+    out_ms_path = get_selfcal_ms_name(in_ms_path=ms.path)
+
+    assert not _resumable_selfcal_ms(ms=ms, out_ms_path=out_ms_path)
+
+    with pytest.raises(ValueError, match="No attempt to recover."):
+        _resumable_selfcal_ms(
+            ms=ms.with_options(path=Path("JACKSPARROW")), out_ms_path=out_ms_path
+        )
+
+    ms.path.rename(out_ms_path)
+    assert _resumable_selfcal_ms(ms=ms, out_ms_path=out_ms_path)
+
+    prepared_ms = prepare_ms_for_selfcal(ms=ms, round=1)
+    assert prepared_ms.path == out_ms_path
+    assert prepared_ms.column == "DATA"
+
+
+def test_prepare_ms_for_selfcal(ms_example) -> None:
+    """The imaged column becomes DATA in a renamed MS, and INSTRUMENT_DATA is kept"""
+    ms = preprocess_askap_ms(ms=ms_example)
+    assert "INSTRUMENT_DATA" in _get_columns(ms_path=ms.path)
+
+    for round in (1, 2):
+        corrected_data = _add_corrected_data(ms_path=ms.path)
+        ms = prepare_ms_for_selfcal(
+            ms=ms.with_options(column="CORRECTED_DATA"), round=round
+        )
+
+        assert ms.path.name.endswith(f".round{round}.ms")
+        assert ms.column == "DATA"
+        colnames = _get_columns(ms_path=ms.path)
+        assert "CORRECTED_DATA" not in colnames
+        assert "INSTRUMENT_DATA" in colnames
+        assert not any(col.startswith("DATA_ROUND") for col in colnames)
+        with table(str(ms.path), ack=False) as tab:
+            assert np.allclose(tab.getcol("DATA"), corrected_data, equal_nan=True)
+
+
+def test_prepare_ms_for_selfcal_keep_old_columns(ms_example) -> None:
+    """Each round's replaced DATA is kept under the name of its round"""
+    ms = preprocess_askap_ms(ms=ms_example)
+    with table(str(ms.path), ack=False) as tab:
+        original_data = tab.getcol("DATA")
+
+    _add_corrected_data(ms_path=ms.path)
+    ms = prepare_ms_for_selfcal(
+        ms=ms.with_options(column="CORRECTED_DATA"), round=1, keep_old_columns=True
+    )
+    colnames = _get_columns(ms_path=ms.path)
+    assert {"DATA", "DATA_ROUND0", "INSTRUMENT_DATA"} <= set(colnames)
+    assert "CORRECTED_DATA" not in colnames
+    with table(str(ms.path), ack=False) as tab:
+        assert np.allclose(tab.getcol("DATA_ROUND0"), original_data, equal_nan=True)
+
+    _add_corrected_data(ms_path=ms.path)
+    ms = prepare_ms_for_selfcal(
+        ms=ms.with_options(column="CORRECTED_DATA"), round=2, keep_old_columns=True
+    )
+    assert {"DATA_ROUND0", "DATA_ROUND1"} <= set(_get_columns(ms_path=ms.path))
