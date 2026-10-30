@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
+from prefect import unmapped
+from prefect.futures import PrefectFuture, PrefectFutureList
+
+from flint.configuration import Strategy, get_options_from_strategy
 from flint.exceptions import NoFieldSourceError
 from flint.logging import logger
 from flint.ms import MS
-from flint.options import AddModelSubtractFieldOptions
+from flint.options import AddModelSubtractFieldOptions, FieldOptions, RACSAllOptions
 from flint.predict.crystalball import CrystalBallOptions
 from flint.prefect.caching import task
+from flint.prefect.common.imaging import task_gaincal_applycal_ms
 from flint.sky_model import SkyModel, SkyModelOptions, create_sky_model
 
 
@@ -143,3 +150,85 @@ def task_create_sky_model(
         )
 
     return skymodel
+
+
+def check_skymodel_calibration_options(
+    field_options: FieldOptions | RACSAllOptions,
+    holofiles: Sequence[Path | None],
+) -> None:
+    """Raise ``ValueError`` should anything the sky-model calibration round needs be missing."""
+    # The catalogues themselves are verified with the rest of each flow's options
+    if field_options.reference_catalogue_directory is None:
+        raise ValueError(
+            "reference_catalogue_directory needs to be set if run_skymodel_calibration is True"
+        )
+    if field_options.calibrate_container is None:
+        raise ValueError(
+            "calibrate_container needs to be set if run_skymodel_calibration is True"
+        )
+    if field_options.casa_container is None:
+        raise ValueError(
+            "casa_container needs to be set if run_skymodel_calibration is True"
+        )
+    for holofile in holofiles:
+        if holofile is not None and not holofile.exists():
+            raise ValueError(
+                f"Holography cube {holofile} is set for sky-model calibration, but does not exist"
+            )
+
+
+def get_skymodel_gaincal_options(strategy: Strategy | None) -> dict[str, Any]:
+    """Gaincal options for the sky-model calibration round: the strategy's round 0, always phase-only."""
+    options = get_options_from_strategy(
+        strategy=strategy, mode="gaincal", round_info=0, operation="selfcal"
+    )
+    if options.get("calmode", "p") != "p":
+        logger.warning(
+            f"Ignoring calmode={options['calmode']!r} for the sky-model calibration round, which is phase-only"
+        )
+    return {**options, "calmode": "p"}
+
+
+def calibrate_mss_against_sky_model(
+    mss: Sequence[PrefectFuture[MS] | MS],
+    holofiles: Sequence[Path | None],
+    strategy: Strategy | None,
+    field_options: FieldOptions | RACSAllOptions,
+) -> PrefectFutureList[MS]:
+    """Phase-only calibrate each MS against a sky-model predicted from a reference
+    catalogue, as self-calibration round 0. Each MS is paired with the holography
+    cube at the same position in ``holofiles``."""
+    assert field_options.reference_catalogue_directory is not None, (
+        "reference_catalogue_directory is required for sky-model calibration"
+    )
+    sky_model_options = SkyModelOptions(
+        reference_catalogue_directory=field_options.reference_catalogue_directory,
+        write_calibrate_model=True,
+    ).with_options(
+        **get_options_from_strategy(
+            strategy=strategy, mode="skymodel", round_info=0, operation="selfcal"
+        )
+    )
+    skymodels = task_create_sky_model.map(
+        ms=mss, sky_model_options=unmapped(sky_model_options), holofile=holofiles
+    )
+    addmodel_subtract_options = AddModelSubtractFieldOptions(
+        wsclean_pol_mode=["i"], calibrate_container=field_options.calibrate_container
+    )
+    model_mss = task_addmodel_to_ms.map(
+        ms=mss,
+        addmodel_subtract_options=unmapped(addmodel_subtract_options),
+        skymodel=skymodels,
+    )
+    return task_gaincal_applycal_ms.map(
+        ms=model_mss,
+        selfcal_round=0,
+        archive_input_ms=field_options.zip_ms,
+        skip_selfcal=False,
+        rename_ms=field_options.rename_ms,
+        archive_cal_table=True,
+        casa_container=field_options.casa_container,
+        update_gain_cal_options=unmapped(
+            get_skymodel_gaincal_options(strategy=strategy)
+        ),
+    )

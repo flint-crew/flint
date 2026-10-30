@@ -45,7 +45,6 @@ from flint.naming import (
     get_sbid_from_path,
 )
 from flint.options import (
-    AddModelSubtractFieldOptions,
     FitsCubeOptions,
     RACSAllOptions,
     dump_field_options_to_yaml,
@@ -64,7 +63,10 @@ from flint.prefect.common.imaging import (
     validation_items,
 )
 from flint.prefect.common.ms import task_describe_ms
-from flint.prefect.common.predict import task_addmodel_to_ms, task_create_sky_model
+from flint.prefect.common.predict import (
+    calibrate_mss_against_sky_model,
+    check_skymodel_calibration_options,
+)
 from flint.prefect.common.utils import (
     raise_on_failed_stage,
     task_concatenate_holography,
@@ -73,7 +75,6 @@ from flint.prefect.common.utils import (
     task_update_field_summary,
     task_update_with_options,
 )
-from flint.sky_model import SkyModelOptions
 from flint.summary import BeamSummary
 
 
@@ -106,6 +107,8 @@ class RACSContinuumResult(BaseOptions):
     """Every future the continuum imaging stage produced, propagated so Prefect still detects any of their failures. A calling flow gets them back as their final states"""
     fits_masks_by_beam: tuple[FITSMaskNames, ...] = ()
     """The clean mask of each beam, made from its final image, in the order of ``mss_by_beam``. Empty when no masks were made"""
+    cleanup_futures: list[PrefectFuture[Any] | State] = []
+    """The removal of intermediate files, kept apart from ``terminal_futures`` so that a failed deletion does not stop the later stages. A calling flow gets them back as their final states, and should raise on them once its later stages have run"""
 
 
 def _check_racs_all_options(racs_all_options: RACSAllOptions) -> None:
@@ -147,19 +150,14 @@ def _check_racs_all_options(racs_all_options: RACSAllOptions) -> None:
                 "Unable to create linmos cubes without a yandasoft container"
             )
     if racs_all_options.run_skymodel_calibration:
-        # The catalogues themselves are verified by the reference_catalogue_directory check above
-        if racs_all_options.reference_catalogue_directory is None:
-            raise ValueError(
-                "reference_catalogue_directory needs to be set if run_skymodel_calibration is True"
-            )
-        if racs_all_options.calibrate_container is None:
-            raise ValueError(
-                "calibrate_container needs to be set if run_skymodel_calibration is True"
-            )
-        if racs_all_options.casa_container is None:
-            raise ValueError(
-                "casa_container needs to be set if run_skymodel_calibration is True"
-            )
+        check_skymodel_calibration_options(
+            field_options=racs_all_options,
+            holofiles=[
+                racs_all_options.low_holofile,
+                racs_all_options.mid_holofile,
+                racs_all_options.high_holofile,
+            ],
+        )
 
     # For the moment we make sure that this is provided. Can consider moving to mandatory argument in
     # the model definition
@@ -167,18 +165,6 @@ def _check_racs_all_options(racs_all_options: RACSAllOptions) -> None:
         isinstance(racs_all_options.wsclean_container, Path)
         and racs_all_options.wsclean_container.exists()
     ), "Missing wsclean container path"
-
-
-def get_skymodel_gaincal_options(strategy: Strategy | None) -> dict[str, Any]:
-    """Gaincal options for the sky-model calibration round: the strategy's round 0, always phase-only."""
-    options = get_options_from_strategy(
-        strategy=strategy, mode="gaincal", round_info=0, operation="selfcal"
-    )
-    if options.get("calmode", "p") != "p":
-        logger.warning(
-            f"Ignoring calmode={options['calmode']!r} for the sky-model calibration round, which is phase-only"
-        )
-    return {**options, "calmode": "p"}
 
 
 def get_final_mask_options(
@@ -396,9 +382,11 @@ def all_holography_available(
 @flow
 def process_racs_all_continuum(
     racs_all_options: RACSAllOptions,
+    defer_cleanup_failures: bool = False,
 ) -> RACSContinuumResult:
     # returned futures are resolved by prefect to fail the flow on task failure
     terminal_futures: list[PrefectFuture[Any]] = []
+    cleanup_futures: list[PrefectFuture[Any]] = []
 
     # Any sanity checks will go in here, mateee
     _check_racs_all_options(racs_all_options=racs_all_options)
@@ -521,54 +509,17 @@ def process_racs_all_continuum(
 
             if racs_all_options.run_skymodel_calibration:
                 with tags("skymodel-cal"):
-                    sky_model_update_options = get_options_from_strategy(
-                        strategy=strategy,
-                        mode="skymodel",
-                        round_info=0,
-                        operation="selfcal",
-                    )
-                    assert racs_all_options.reference_catalogue_directory is not None, (
-                        "reference_catalogue_directory is required by _check_racs_all_options"
-                    )
-                    sky_model_options = SkyModelOptions(
-                        reference_catalogue_directory=racs_all_options.reference_catalogue_directory,
-                        write_calibrate_model=True,
-                    ).with_options(**sky_model_update_options)
-
                     # science_mss (and therefore preprocess_science_mss) is always
                     # ordered (low, mid, high), per match_beams_across_bands
-                    holofiles = [
-                        racs_all_options.low_holofile,
-                        racs_all_options.mid_holofile,
-                        racs_all_options.high_holofile,
-                    ]
-                    skymodel = task_create_sky_model.map(
-                        ms=preprocess_science_mss,
-                        sky_model_options=unmapped(sky_model_options),
-                        holofile=holofiles,
-                    )
-                    addmodel_subtract_field_options = AddModelSubtractFieldOptions(
-                        wsclean_pol_mode=["i"],
-                        calibrate_container=racs_all_options.calibrate_container,
-                    )
-                    preprocess_science_mss = task_addmodel_to_ms.map(
-                        ms=preprocess_science_mss,
-                        addmodel_subtract_options=unmapped(
-                            addmodel_subtract_field_options
-                        ),
-                        skymodel=skymodel,
-                    )
-                    preprocess_science_mss = task_gaincal_applycal_ms.map(
-                        ms=preprocess_science_mss,
-                        selfcal_round=0,
-                        archive_input_ms=racs_all_options.zip_ms,
-                        skip_selfcal=False,
-                        rename_ms=racs_all_options.rename_ms,
-                        archive_cal_table=True,
-                        casa_container=racs_all_options.casa_container,
-                        update_gain_cal_options=unmapped(
-                            get_skymodel_gaincal_options(strategy=strategy)
-                        ),
+                    preprocess_science_mss = calibrate_mss_against_sky_model(
+                        mss=preprocess_science_mss,
+                        holofiles=[
+                            racs_all_options.low_holofile,
+                            racs_all_options.mid_holofile,
+                            racs_all_options.high_holofile,
+                        ],
+                        strategy=strategy,
+                        field_options=racs_all_options,
                     )
 
             update_wsclean_options = get_options_from_strategy(
@@ -792,12 +743,15 @@ def process_racs_all_continuum(
                     additional_linmos_suffix_str="cube",
                     holofile=holography_path,
                 )
-                terminal_futures.extend(linmos_cubes)
+                terminal_futures.extend(linmos_cubes.cubes)
+                cleanup_futures.extend(linmos_cubes.cleanup)
 
     # When run as a subflow its task runner shuts down on return, dropping any
     # task still queued, so everything has to finish before then
-    wait(terminal_futures)
+    wait([*terminal_futures, *cleanup_futures])
     raise_on_failed_stage(stage="continuum imaging", futures=terminal_futures)
+    if not defer_cleanup_failures:
+        raise_on_failed_stage(stage="continuum clean-up", futures=cleanup_futures)
 
     resolved_holography_path = (
         holography_path.result()
@@ -817,6 +771,7 @@ def process_racs_all_continuum(
         holography_path=resolved_holography_path,
         output_science_path=output_science_path,
         terminal_futures=terminal_futures,
+        cleanup_futures=cleanup_futures,
         fits_masks_by_beam=(
             resolve_final_masks(
                 final_fits_masks=final_fits_masks,

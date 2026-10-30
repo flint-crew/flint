@@ -183,7 +183,7 @@ def task_archive_sbid(
 
     # TODO: What should this be? Just general new regexs passed through,
     # or is this fine?
-    if max_round:
+    if max_round is not None:
         updated_file_patterns = (
             *tuple(archive_options.tar_file_re_patterns),
             f".*beam[0-9]+\\.round{max_round}-.*-image\\.fits",
@@ -274,7 +274,7 @@ def task_flatten(to_flatten: list[list[T]]) -> list[T]:
 def raise_on_failed_stage(
     stage: str, futures: list[PrefectFuture[Any] | State]
 ) -> None:
-    """Stop the run should any task of a stage not have completed, so later stages do not start"""
+    """Raise should any task of a stage not have completed, so that no later stage starts"""
     # Prefect hands back the futures a subflow returns as their final states
     states = [
         future.state if isinstance(future, PrefectFuture) else future
@@ -287,5 +287,5 @@ def raise_on_failed_stage(
     failed = [state for state in states if not state.is_completed()]
     if failed:
         messages = "; ".join(str(state.message) for state in failed[:3])
-        msg = f"{len(failed)} task(s) of the {stage} stage did not complete, so later stages are not run: {messages}"
+        msg = f"{len(failed)} task(s) of the {stage} stage did not complete: {messages}"
         raise RuntimeError(msg)
