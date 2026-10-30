@@ -8,6 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from flint.configuration import (
+    FORMAT_VERSION,
     Strategy,
     TukeyTractorOptions,
     _create_mode_mapping_defaults,
@@ -154,6 +155,24 @@ def test_copy_and_timestamp(tmpdir):
 
     assert copy_path != example
     assert filecmp.cmp(example, copy_path)
+
+
+@pytest.mark.parametrize(
+    "wsclean_options",
+    [{"pol": "xx"}, {"pol": "xx,xy,yx,yy"}, {"pol": "xx,yy", "save_source_list": True}],
+)
+def test_verify_configuration_unsupported_pol(package_strategy, wsclean_options):
+    """Strategies asking wsclean for products flint can not handle are refused up front"""
+    package_strategy["selfcal"][1]["wsclean"].update(wsclean_options)
+    with pytest.raises(ValueError):
+        verify_configuration(input_strategy=package_strategy)
+
+
+def test_verify_configuration_xx_yy(package_strategy):
+    package_strategy["selfcal"][1]["wsclean"].update(
+        {"pol": "xx,yy", "join_polarizations": True}
+    )
+    assert verify_configuration(input_strategy=package_strategy)
 
 
 def test_verify_options_with_class_operations(package_strategy_operations):
@@ -323,7 +342,7 @@ def test_get_mask_options(package_strategy):
     )
 
     assert isinstance(masking, dict)
-    assert masking["flood_fill_positive_seed_clip"] == 4.5
+    assert masking["seed_clip"] == 4.5
 
     masking2 = get_options_from_strategy(
         strategy=package_strategy, mode="masking", round_info=1, operation="selfcal"
@@ -332,10 +351,10 @@ def test_get_mask_options(package_strategy):
     print(strategy)
 
     assert isinstance(masking2, dict)
-    assert masking2["flood_fill_positive_seed_clip"] == 40
+    assert masking2["seed_clip"] == 40
 
     for k in masking.keys():
-        if k == "flood_fill_positive_seed_clip":
+        if k == "seed_clip":
             continue
 
         assert masking[k] == masking2[k]
@@ -350,17 +369,17 @@ def test_get_mask_options_from_path(package_strategy_path):
     )
 
     assert isinstance(masking, dict)
-    assert masking["flood_fill_positive_seed_clip"] == 4.5
+    assert masking["seed_clip"] == 4.5
 
     masking2 = get_options_from_strategy(
         strategy=package_strategy, mode="masking", round_info=1, operation="selfcal"
     )
 
     assert isinstance(masking2, dict)
-    assert masking2["flood_fill_positive_seed_clip"] == 40
+    assert masking2["seed_clip"] == 40
 
     for k in masking.keys():
-        if k == "flood_fill_positive_seed_clip":
+        if k == "seed_clip":
             continue
 
         assert masking[k] == masking2[k]
@@ -667,5 +686,31 @@ def test_verify_polarisation_catches_bad_override(
 
     strategy["polarisation"]["linear"]["wsclean"].pop("ThisDoesNotExist")
     strategy["polarisation"]["ThisIsNotAPolarisationOrMode"] = {}
+    with pytest.raises(ValueError):
+        verify_configuration(input_strategy=strategy)
+
+
+def test_dp3_options_from_strategy():
+    """DP3 modes are verified and looked up per self-calibration round"""
+    strategy = Strategy(
+        {
+            "version": FORMAT_VERSION,
+            "defaults": {"dp3ddecal": {"solint": 6}, "dp3applycal": {}},
+            "selfcal": {1: {"dp3ddecal": {"mode": "diagonal"}}},
+        }
+    )
+    assert verify_configuration(input_strategy=strategy)
+
+    ddecal = get_options_from_strategy(
+        strategy=strategy, mode="dp3ddecal", round_info=1, operation="selfcal"
+    )
+    assert ddecal == {"solint": 6, "mode": "diagonal"}
+
+    strategy["defaults"]["dp3ddecal"]["not_a_dp3_key"] = 1
+    with pytest.raises(ValueError):
+        verify_configuration(input_strategy=strategy)
+
+    del strategy["defaults"]["dp3ddecal"]["not_a_dp3_key"]
+    strategy["selfcal"][1]["dp3ddecal"]["mode"] = "scalarphse"
     with pytest.raises(ValueError):
         verify_configuration(input_strategy=strategy)

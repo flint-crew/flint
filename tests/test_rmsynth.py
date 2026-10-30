@@ -1040,13 +1040,14 @@ def test_rmsynth_warns_when_it_has_no_error_cubes(tmp_path, caplog) -> None:
     assert "No error or weight cubes given" in caplog.text
 
 
-def test_rmsynth_rejects_compressed_cubes(tmp_path: Path) -> None:
-    """A gzipped cube cannot be memmapped, so rm-lite's per-block reopens would
-    each inflate the whole cube into memory."""
+@pytest.mark.parametrize("suffix", [".gz", ".fz"])
+def test_rmsynth_rejects_compressed_cubes(tmp_path: Path, suffix: str) -> None:
+    """A gzipped or tile-compressed cube cannot be memmapped, so rm-lite's
+    per-block reopens would each inflate the whole cube into memory."""
     with pytest.raises(NotSupportedError):
         _run_rmsynth_3d(
-            stokes_q_cube=tmp_path / "q.fits.gz",
-            stokes_u_cube=tmp_path / "u.fits.gz",
+            stokes_q_cube=tmp_path / f"q.fits{suffix}",
+            stokes_u_cube=tmp_path / f"u.fits{suffix}",
             rmsynth_options=RMSynthOptions(),
         )
 

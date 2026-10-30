@@ -22,6 +22,7 @@ from flint.ms import (
     find_mss,
     get_phase_dir_from_ms,
     get_times_from_ms,
+    preprocess_askap_ms,
     remove_columns_from_ms,
     rename_ms_and_columns_for_selfcal,
     standardise_ms_to_list_ms,
@@ -42,6 +43,14 @@ def test_standardise_ms_to_list_ms(ms_example) -> None:
     assert isinstance(list_ms, list)
     assert len(list_ms) == 1
     assert all(isinstance(_ms, MS) for _ms in list_ms)
+
+
+def test_standardise_ms_to_list_ms_w_has_ms(ms_example) -> None:
+    """A single item carrying an MS, such as an MSSummary, gives back that MS"""
+    ms = MS(path=Path(ms_example), column="DATA")
+    ms_summary = describe_ms(ms=ms, attach_ms=True)
+
+    assert standardise_ms_to_list_ms(ms=ms_summary) == [ms]
 
 
 def test_standardise_ms_to_list_ms_w_list(ms_example) -> None:
@@ -319,6 +328,15 @@ def test_rename_ms_and_columns_for_selfcal(ms_example, tmpdir):
 
     assert new_ms.path == target
     assert "DATA" in new_colnames
+
+
+def test_preprocess_askap_ms_skip_rotation(ms_example):
+    """Skipping the rotation without transforming the MS returns the MS"""
+    ms = preprocess_askap_ms(ms=ms_example, skip_rotation=True)
+
+    assert ms.path == ms_example
+    assert ms.column == "DATA"
+    assert "INSTRUMENT_DATA" not in _get_columns(ms_path=ms.path)
 
 
 def test_phase_dir(ms_example):

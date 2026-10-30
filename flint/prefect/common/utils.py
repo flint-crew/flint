@@ -9,6 +9,8 @@ from typing import Any, ParamSpec, TypeVar
 from uuid import UUID
 
 from prefect.artifacts import create_markdown_artifact
+from prefect.futures import PrefectFuture
+from prefect.states import State
 
 from flint.archive import copy_sbid_files_archive, create_sbid_tar_archive
 from flint.logging import logger
@@ -181,7 +183,7 @@ def task_archive_sbid(
 
     # TODO: What should this be? Just general new regexs passed through,
     # or is this fine?
-    if max_round:
+    if max_round is not None:
         updated_file_patterns = (
             *tuple(archive_options.tar_file_re_patterns),
             f".*beam[0-9]+\\.round{max_round}-.*-image\\.fits",
@@ -267,3 +269,23 @@ def task_flatten(to_flatten: list[list[T]]) -> list[T]:
     logger.debug(f"Flattened list {len(flatten_list)}")
 
     return flatten_list
+
+
+def raise_on_failed_stage(
+    stage: str, futures: list[PrefectFuture[Any] | State]
+) -> None:
+    """Raise should any task of a stage not have completed, so that no later stage starts"""
+    # Prefect hands back the futures a subflow returns as their final states
+    states = [
+        future.state if isinstance(future, PrefectFuture) else future
+        for future in futures
+    ]
+    for state in states:
+        if not isinstance(state, State):
+            msg = f"The {stage} stage handed back {type(state).__name__}, not a future or a state"
+            raise TypeError(msg)
+    failed = [state for state in states if not state.is_completed()]
+    if failed:
+        messages = "; ".join(str(state.message) for state in failed[:3])
+        msg = f"{len(failed)} task(s) of the {stage} stage did not complete: {messages}"
+        raise RuntimeError(msg)

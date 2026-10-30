@@ -49,13 +49,13 @@ defaults:
     gaintype: G
     nspw: 1
   masking:
-    base_snr_clip: 4
+    base_clip: 4
     flood_fill: true
-    flood_fill_positive_seed_clip: 4.5
-    flood_fill_positive_flood_clip: 1.5
+    seed_clip: 4.5
+    flood_clip: 1.5
     grow_low_snr_island: true
     grow_low_snr_island_clip: 1.75
-    grow_low_snr_island_size: 768
+    grow_low_snr_island_min_pixels: 768
   archive:
     tar_file_re_patterns:
       - .*MFS.*image\.fits
@@ -84,8 +84,8 @@ selfcal:
       data_column: "EXAMPLE"
     gaincal: {}
     masking:
-      flood_fill_positive_seed_clip: 40
-      flood_fill_positive_flood_clip: 1.5
+      seed_clip: 40
+      flood_clip: 1.5
   2:
     wsclean:
       multiscale: false

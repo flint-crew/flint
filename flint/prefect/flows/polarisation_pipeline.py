@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 from capn_crunch import BaseOptions, add_options_to_parser, create_options_from_parser
 from configargparse import ArgumentParser
+from eye_patch.naming import FITSMaskNames
 from prefect import flow, tags
-from prefect.futures import PrefectFuture
+from prefect.futures import PrefectFuture, wait
+from prefect.states import State
 
 from flint.coadd.linmos import LinmosOptions
 from flint.configuration import (
@@ -21,10 +24,8 @@ from flint.imager.channel_division import (
     apply_cube_division,
     channel_division_for_beams,
 )
-from flint.imager.wsclean import (
-    ImageSet,
-    WSCleanResult,
-)
+from flint.imager.wsclean import WSCleanResult
+from flint.imageset import ImageSet
 from flint.logging import logger
 from flint.ms import MSsByBeam, find_mss
 from flint.naming import (
@@ -45,6 +46,7 @@ from flint.prefect.common.imaging import (
     convolve_channel_groups_to_natural_resolution,
     convolve_mfs_beam_images_to_common_resolution,
     linmos_channel_groups_to_cubes,
+    task_flatten_mask,
     task_get_channel_images_from_paths,
     task_get_mfs_image_from_paths,
     task_linmos_images,
@@ -56,6 +58,7 @@ from flint.prefect.common.imaging import (
     total_beam_from_channel_groups,
 )
 from flint.prefect.common.utils import (
+    raise_on_failed_stage,
     task_create_field_summary,
     task_getattr,
 )
@@ -86,8 +89,8 @@ class PolPipelineResult(BaseOptions):
     """BANE RMS cube per polarisation, measured on the total-resolution planes. What rm-synthesis wants, as it describes the resolution the FDF is built at"""
     mfs_products: dict[str, dict[str, Path]]
     """MFS image/model/residual products co-added per Stokes parameter, keyed by Stokes ('i', 'q', 'u', 'v') then product type ('image', 'model', 'residual'). Only populated for Stokes imaged under a polarisation with ``WSCleanOptions.flint_save_mfs_products`` set"""
-    terminal_futures: list[PrefectFuture[Any]]
-    """Every future the polarisation stage produced, propagated so Prefect still detects any of their failures"""
+    terminal_futures: list[PrefectFuture[Any] | State]
+    """Every future the polarisation stage produced, propagated so Prefect still detects any of their failures. A calling flow gets them back as their final states"""
 
 
 def _no_products(
@@ -114,6 +117,26 @@ def _no_products(
         mfs_products={},
         terminal_futures=terminal_futures or [],
     )
+
+
+def get_polarisation_fits_masks(
+    polarisation: str,
+    fits_masks_by_beam: Sequence[FITSMaskNames | None] | None,
+    flat_fits_masks: Sequence[PrefectFuture[FITSMaskNames] | None] | None,
+    n_beams: int,
+) -> list[FITSMaskNames | PrefectFuture[FITSMaskNames] | None]:
+    """The clean mask of each beam for a polarisation. Stokes I can use a per-scale
+    mask as is, the others need a plain one. None per beam without masks."""
+    # Each mask should be plain or per-scale by now, but this pirate trusts no one
+    # Only need to check scalemask is correct, at this point ``flat_fits_mask`` is a future
+    assert not any(
+        fits_mask.mask_fits is not None and fits_mask.scale_mask_fits is not None
+        for fits_mask in fits_masks_by_beam or []
+        if fits_mask is not None
+    ), f"A clean mask is both plain and per-scale: {fits_masks_by_beam}"
+
+    fits_masks = fits_masks_by_beam if polarisation == "total" else flat_fits_masks
+    return list(fits_masks) if fits_masks else [None] * n_beams
 
 
 def _polarisations_to_image(strategy: Strategy) -> dict[str, Any]:
@@ -144,7 +167,7 @@ def process_science_fields_pol(
     flint_ms_directory: Path,
     pol_field_options: PolFieldOptions,
     mss_by_beam: MSsByBeam | None = None,
-    compress_cubes: bool | None = None,
+    fits_masks_by_beam: Sequence[FITSMaskNames | None] | None = None,
 ) -> PolPipelineResult:
     """Image a field in polarisation and co-add the per-beam products.
 
@@ -152,7 +175,7 @@ def process_science_fields_pol(
         flint_ms_directory (Path): Directory holding the measurement sets to image
         pol_field_options (PolFieldOptions): Options controlling the polarisation imaging
         mss_by_beam (MSsByBeam | None, optional): Already Flint-processed measurement sets handed down by a calling flow, rather than rediscovered on disk. Defaults to None.
-        compress_cubes (bool | None, optional): Overrides the strategy ``fitscube`` compress setting. A calling flow that reads these cubes afterwards (rm-synth, spice) has to set it False, since astropy cannot memmap a gzip file and a chunked read would inflate the whole cube into memory. None honours the strategy. Defaults to None.
+        fits_masks_by_beam (Sequence[FITSMaskNames | None] | None, optional): A clean mask for each beam, in the order of the beams. Stokes I is imaged with it as is, and the linear and circular polarisations with it flattened to a plain mask. A beam whose mask is None, or every beam if this is None, is imaged without one. Defaults to None.
 
     Returns:
         PolPipelineResult: Stokes cubes, co-added MFS products, and the futures to wait on
@@ -180,6 +203,8 @@ def process_science_fields_pol(
             find_mss(
                 mss_parent_path=flint_ms_directory,
                 expected_ms_count=pol_field_options.expected_ms,
+                # TODO: Image the ionosphere-corrected column. A defaults
+                # data_column key fails strategy validation, so this is always DATA
                 data_column=strategy["defaults"].get("data_column", "DATA"),
             )
         )
@@ -231,6 +256,8 @@ def process_science_fields_pol(
         # Each beam is a single MS when discovered this way (one SBID/band per directory)
         resolved_mss_by_beam = tuple((ms,) for ms in science_mss)
 
+    # TODO: Correct ionospheric Faraday rotation here, before imaging: Spinifex
+    # writes an RM h5parm per MS which dp3_applycal applies to a new column
     science_mss = [ms for beam_mss in resolved_mss_by_beam for ms in beam_mss]
 
     field_summary = task_create_field_summary.submit(
@@ -249,9 +276,24 @@ def process_science_fields_pol(
 
     if pol_field_options.wsclean_container is None:
         logger.info("No wsclean container provided. Returning. ")
+        # As at the end of the stage, nothing may still be queued once it returns
+        wait([field_summary])
+        raise_on_failed_stage(stage="polarisation imaging", futures=[field_summary])
         return _no_products(terminal_futures=[field_summary])
 
     polarisations = _polarisations_to_image(strategy=strategy)
+
+    flat_fits_masks: list[PrefectFuture[FITSMaskNames] | None] | None = None
+    if fits_masks_by_beam:
+        if len(fits_masks_by_beam) != len(resolved_mss_by_beam):
+            msg = f"{len(fits_masks_by_beam)} clean masks for {len(resolved_mss_by_beam)} beams"
+            raise ValueError(msg)
+        flat_fits_masks = [
+            task_flatten_mask.submit(fits_mask=fits_mask)
+            if fits_mask is not None
+            else None
+            for fits_mask in fits_masks_by_beam
+        ]
 
     # Solved once for all beams, and before any imaging
     cube_division: ChannelDivision | None = None
@@ -270,8 +312,16 @@ def process_science_fields_pol(
     image_sets_dict: dict[str, PrefectFuture[ImageSet]] = {}
     for polarisation in polarisations.keys():
         _image_sets = []
+        beam_fits_masks = get_polarisation_fits_masks(
+            polarisation=polarisation,
+            fits_masks_by_beam=fits_masks_by_beam,
+            flat_fits_masks=flat_fits_masks,
+            n_beams=len(resolved_mss_by_beam),
+        )
         with tags(f"polarisation-{polarisation}"):
-            for beam_mss in resolved_mss_by_beam:
+            for beam_mss, beam_fits_mask in zip(
+                resolved_mss_by_beam, beam_fits_masks, strict=True
+            ):
                 update_wsclean_options = get_options_from_strategy(
                     strategy=strategy,
                     operation="polarisation",
@@ -293,6 +343,7 @@ def process_science_fields_pol(
                         wsclean_container=pol_field_options.wsclean_container,
                         make_cube_from_subbands=False,  # We will do this later
                         update_wsclean_options=update_wsclean_options,
+                        fits_mask=beam_fits_mask,
                         extra_output_types=("model",) if save_mfs_products else None,
                     )
                 )
@@ -403,8 +454,10 @@ def process_science_fields_pol(
             mode="fitscube",
         )
     )
-    if compress_cubes is not None:
-        fitscube_options = fitscube_options.with_options(compress=compress_cubes)
+    if pol_field_options.compress_cubes is not None:
+        fitscube_options = fitscube_options.with_options(
+            compress=pol_field_options.compress_cubes
+        )
 
     # Parameters from the strategy, the switch from the flow options, as with
     # every other stage
@@ -534,6 +587,11 @@ def process_science_fields_pol(
     terminal_futures: list[PrefectFuture[Any]] = [*cube_results, remove_result]
     if remove_mfs_result is not None:
         terminal_futures.append(remove_mfs_result)
+
+    # When run as a subflow its task runner shuts down on return, dropping any
+    # task still queued, so everything has to finish before then
+    wait(terminal_futures)
+    raise_on_failed_stage(stage="polarisation imaging", futures=terminal_futures)
 
     return PolPipelineResult(
         stokes_cubes={

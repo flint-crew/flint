@@ -33,6 +33,7 @@ from flint.options import (
     pol_field_options_cli_class,
 )
 from flint.prefect.clusters import get_dask_runner
+from flint.prefect.common.utils import raise_on_failed_stage
 from flint.prefect.flows.polarisation_pipeline import process_science_fields_pol
 from flint.prefect.flows.racs_all_continuum_selfcal import process_racs_all_continuum
 from flint.prefect.flows.rmsynth_pipeline import process_rmsynth
@@ -209,6 +210,8 @@ def process_racs_all(
     )
 
     terminal_results: list[Any] = []
+    # A failed clean-up fails the run, but only once every later stage has run
+    cleanup_states: list[Any] = []
 
     if not pipeline_options.skip_imaging:
         assert pipeline_options.imaging_cluster_config is not None
@@ -217,24 +220,29 @@ def process_racs_all(
                 cluster=pipeline_options.imaging_cluster_config
             ),
             name="RACS All -- continuum imaging",
-        )(racs_all_options=racs_all_options)
+        )(racs_all_options=racs_all_options, defer_cleanup_failures=True)
         terminal_results.extend(continuum_result.terminal_futures)
+        raise_on_failed_stage(
+            stage="continuum imaging", futures=continuum_result.terminal_futures
+        )
+        cleanup_states = continuum_result.cleanup_futures
 
     if pipeline_options.skip_polarisation:
+        raise_on_failed_stage(stage="continuum clean-up", futures=cleanup_states)
         return terminal_results
 
     # rm-synth needs cubes at one beam across the band. Made in the polarisation
     # stage, while the co-added planes are already in hand, rather than by
     # splitting the finished cubes back apart in the rm-synth stage.
-    resolved_pol_field_options = pol_field_options.with_options(
-        holofile=continuum_result.holography_path,
-        total_resolution_cubes=not pipeline_options.skip_rmsynth,
-    )
-
     # rm-synth and spice read the cubes afterwards (and spice compresses them itself),
     # so the polarisation flow only compresses when neither runs
     later_stage_reads_cubes = not (
         pipeline_options.skip_rmsynth and pipeline_options.skip_spice
+    )
+    resolved_pol_field_options = pol_field_options.with_options(
+        holofile=continuum_result.holography_path,
+        total_resolution_cubes=not pipeline_options.skip_rmsynth,
+        compress_cubes=False if later_stage_reads_cubes else None,
     )
 
     assert pipeline_options.polarisation_cluster_config is not None
@@ -247,9 +255,12 @@ def process_racs_all(
         flint_ms_directory=continuum_result.output_science_path,
         pol_field_options=resolved_pol_field_options,
         mss_by_beam=continuum_result.mss_by_beam,
-        compress_cubes=False if later_stage_reads_cubes else None,
+        fits_masks_by_beam=continuum_result.fits_masks_by_beam,
     )
     terminal_results.extend(pol_result.terminal_futures)
+    raise_on_failed_stage(
+        stage="polarisation imaging", futures=pol_result.terminal_futures
+    )
 
     # One root for every downstream stage, split into a subdirectory per stage.
     output_root = pipeline_options.output_path or continuum_result.output_science_path
@@ -321,6 +332,7 @@ def process_racs_all(
         )(spice_field_options=resolved_spice_field_options)
         terminal_results.extend(spice_results)
 
+    raise_on_failed_stage(stage="continuum clean-up", futures=cleanup_states)
     return terminal_results
 
 

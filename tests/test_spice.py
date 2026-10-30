@@ -21,6 +21,7 @@ from flint.options import SpiceOptions
 from flint.spice import (
     SkyBoundingBox,
     check_cubes_share_shape,
+    compress_methods,
     island_sky_boxes,
     keep_mask_from_boxes,
     setup_spice_header,
@@ -766,3 +767,14 @@ def test_setup_spice_header_shifts_the_grid_and_leaves_the_input_alone():
     assert "spiced for a test" in str(spiced["HISTORY"])
     assert all(card.is_blank for card in spiced.cards[-108:])
     assert header == original
+
+
+@pytest.mark.parametrize(
+    ("compress_method", "weight_method"),
+    [("tile-rice", "tile-gzip"), ("tile-gzip", "tile-gzip"), ("pgzip", "pgzip")],
+)
+def test_compress_methods_never_quantize_weights(compress_method, weight_method):
+    methods = compress_methods(
+        compress_method=compress_method, cube_count=3, weight_cube_count=2
+    )
+    assert methods == [compress_method] * 3 + [weight_method] * 2

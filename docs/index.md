@@ -9,11 +9,13 @@
 ```{toctree}
 :maxdepth: 1
 installation.md
+container_slurm.md
 quickstart.md
 about.md
 data.md
 config.md
 flagging.md
+dp3.md
 masking.md
 source_finding.md
 predict.md

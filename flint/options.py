@@ -203,6 +203,8 @@ class FieldOptions(BaseOptions):
     """Use the jolly roger tukey tractor. See the TukeyTractorOptions and the jolly-roger package for more details."""
     casda_bandpass_table: Path | None = None
     """The bandpass table applied to the MSs for this SBID, as deposited onto CASDA. Used to identify antennas to flag that may be unflagged under certain conditions."""
+    run_skymodel_calibration: bool = False
+    """Whether to run a phase-only self-calibration round (round 0) against a sky-model predicted from a reference catalogue before imaging. The holofile, if set, weights the model by the measured primary beam. Requires calibrate_container, casa_container and reference_catalogue_directory to be set."""
 
 
 class PolFieldOptions(BaseOptions):
@@ -235,6 +237,8 @@ class PolFieldOptions(BaseOptions):
     """Specify the final beamsize of linmos field images in (arcsec, arcsec, deg)"""
     total_resolution_cubes: bool = False
     """Also write cubes at one beam covering the whole band, which RM synthesis needs"""
+    compress_cubes: bool | None = None
+    """Overrides the strategy ``fitscube`` compress setting. None honours the strategy"""
     pb_cutoff: float = 0.1
     """Primary beam attenuation cutoff to use during linmos"""
     bane_noise: bool = False
@@ -261,6 +265,8 @@ class FFTBANEOptions(BaseOptions):
     """Seeds the noise clipped pixels are filled with, so a rerun reproduces the maps"""
     invalidate_zeros: bool = True
     """Treat pixels of exactly 0.0 as blank, as ``FitsCubeOptions.invalidate_zeros`` does. linmos fills outside its primary beam cutoff with zeros, not nans"""
+    kernel: Literal["gaussian", "tophat"] = "gaussian"
+    """Shape of the smoothing kernel, sized by ``box_size``. ``tophat`` is a disc, the closest to the container BANE's box, and is what ``BANEOptions.flint_use_fft`` uses"""
 
 
 class _CubesForRMSynth(BaseOptions):
@@ -452,10 +458,12 @@ class SpiceOptions(BaseOptions):
     """Column name for the per-source PSF minor axis, paired with catalogue_psf_maj_col"""
     catalogue_psf_pa_col: str | None = None
     """Column name for the per-source PSF position angle, paired with catalogue_psf_maj_col"""
-    compress_method: Literal["gzip", "pgzip"] = "pgzip"
-    """Compression backend for the mandatory gzip of every spiced cube."""
+    compress_method: Literal["gzip", "pgzip", "tile-gzip", "tile-rice"] = "tile-gzip"
+    """How every spiced cube is compressed. 'tile-gzip' (lossless) and 'tile-rice' (lossy) write tile-compressed .fits.fz cubes, 'gzip'/'pgzip' gzip whole files. Weight and background cubes are never quantized: under 'tile-rice' they use 'tile-gzip'. See fitscube's README on working with compressed cubes"""
+    compress_quantize_level: float = 4.0
+    """Quantization steps per noise sigma for 'tile-rice'. Higher keeps more precision and compresses less"""
     compress_max_workers: int | None = None
-    """Thread count handed to the compression backend"""
+    """Thread count handed to the compression"""
 
 
 class RMSynthFieldOptions(BaseOptions):
@@ -581,6 +589,10 @@ class RACSAllOptions(BaseOptions):
     """Desired width, in Hz, of each plane of the final cube. The wsclean channel division is solved for this target so the cube has a single linear frequency axis, overriding the strategy ``channels_out`` in the final round. See ``flint.imager.channel_division``"""
     holofile: Path | None = None
     """The oath to a concatenated holography FITS file that contains low-, mid- and high-band cubes"""
+    run_skymodel_calibration: bool = False
+    """Whether to run a phase-only self-calibration round (round 0) against a sky-model predicted from a reference catalogue, independently per band, before imaging. Ties the low-, mid- and high-band data to a common external phase reference. Requires calibrate_container and casa_container to be set."""
+    calibrate_container: Path | None = None
+    """Path to the singularity calibrate container, required by run_skymodel_calibration for the addmodel prediction step"""
 
 
 def pol_field_options_cli_class(
@@ -734,15 +746,19 @@ class FitsCubeOptions(BaseOptions):
     invalidate_zeros: bool = True
     """Set pixels whose values are exactly 0.0 to not-a-number (nan)"""
     compress: bool = False
-    """Gzip-compress the output cube once written"""
-    compress_method: Literal["gzip", "pgzip"] = "pgzip"
-    """The compression backend to use when ``compress`` is set"""
+    """Compress the output cube once written"""
+    compress_method: Literal["gzip", "pgzip", "tile-gzip", "tile-rice"] = "pgzip"
+    """How to compress when ``compress`` is set. 'gzip'/'pgzip' write .fits.gz, 'tile-gzip' (lossless) and 'tile-rice' (lossy) write tile-compressed .fits.fz"""
+    compress_quantize_level: float = 4.0
+    """Quantization steps per noise sigma for 'tile-rice'"""
     remove_original_images: bool = True
     """Remove the images that go into forming the fitscube"""
     inplace: bool = True
     """If True, modify the file in-place. If False, write to a temporary file and then replace the original. Default True"""
     create_blanks: bool = True
     """Have fitscube re-grid the input frequencies onto a tolerant regular grid before writing."""
+    overwrite: bool = False
+    """Overwrite the output file if it exists"""
 
 
 class MSSummary(BaseOptions):
@@ -795,6 +811,8 @@ class MS(BaseOptions):
     """If set indicates the field of the data in the MS"""
     model_column: str | None = None
     """If set indicates the column with model visibilities"""
+    h5parm: Path | None = None
+    """If set indicates the h5parm with calibration solutions for the MS"""
 
     @property
     def ms(self) -> MS:
@@ -802,7 +820,6 @@ class MS(BaseOptions):
 
     @classmethod
     def cast(cls, ms: MS | Path | HasMS) -> MS:
-
         if isinstance(ms, MS):
             pass
         elif isinstance(ms, Path):
@@ -830,7 +847,7 @@ def standardise_ms_to_list_ms(
     input MSs simuletanously, such as wsclean.
 
     Args:
-        ms (Path | MS | tuple[MS  |  Path, ...] | list[MS  |  Path]): Descriptions to create MS instances
+        ms (Path | MS | tuple[MS  |  Path, ...] | list[MS  |  Path] | HasMS): Descriptions to create MS instances
 
     Raises:
         ValueError: Raised when an empty list is formed
@@ -846,6 +863,8 @@ def standardise_ms_to_list_ms(
     elif isinstance(ms, (list, tuple)):
         for item in ms:
             output_list.append(MS.cast(item))
+    else:
+        output_list.append(MS.cast(ms))
     assert isinstance(output_list, list), f"{type(output_list)=} is not list"
 
     if not len(output_list) > 0:
