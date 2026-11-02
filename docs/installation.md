@@ -71,6 +71,29 @@ With `flint` installed, you can use the `flint_containers` CLI to download or ch
 :path: download
 ```
 
+Each container release `{tag}` is published in three builds:
+
+| Tag | `--cpu` | Runs on |
+| --- | --- | --- |
+| `{tag}` | `portable` (default) | Any 64-bit x86 or ARM CPU |
+| `{tag}-x86-64-v3` | `x86-64-v3` | x86 CPUs with AVX2 (most Intel and AMD CPUs from about 2015) |
+| `{tag}-x86-64-v4` | `x86-64-v4` | x86 CPUs with AVX-512 (e.g. Intel Sapphire Rapids, AMD Zen 4) |
+
+The `-x86-64-v3` and `-x86-64-v4` builds are faster, but will not start on a CPU
+that lacks those instructions. `--cpu auto` picks the highest level the machine
+running the command supports, based on the flags in `/proc/cpuinfo`, and falls
+back to `portable` on non-x86 machines. These builds only exist for releases
+made after the [CPU-specific builds](https://github.com/flint-crew/flint-containers/pull/8)
+were added, so pass such a release with `--tag`.
+
+```{admonition} Caution
+:class: caution
+
+On a cluster, run the download (or at least `--cpu auto`) on a compute node rather than the login node, e.g. through `srun` or a batch job. Login and compute nodes often have different CPUs, and a container built for a newer CPU than the one it runs on fails with an "illegal instruction" error. If the compute nodes are mixed, pick the level the oldest of them supports.
+
+Containers that already exist in the download directory are not replaced, so use a new directory (or remove the old files) when changing `--cpu`.
+```
+
 In a future release it is planned that tasks or processes that require a container
 will internally resolve them automatically. For the moment though it is expected
 that the user provides the appropriate set of paths through CLI keyword arguments.
