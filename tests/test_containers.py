@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import get_args
 
 import pytest
 
@@ -168,7 +169,7 @@ def test_detect_cpu_level_missing_cpuinfo(tmp_path):
 
 def test_detect_cpu_level_this_machine():
     """Whatever this machine is, it gets a known level"""
-    assert detect_cpu_level() in flint.containers.CPU_LEVELS
+    assert detect_cpu_level() in get_args(flint.containers.CpuLevel)
 
 
 def test_resolve_cpu_level(monkeypatch):
@@ -178,7 +179,7 @@ def test_resolve_cpu_level(monkeypatch):
     assert resolve_cpu_level("x86-64-v3") == "x86-64-v3"
     assert resolve_cpu_level("portable") == "portable"
     with pytest.raises(ValueError):
-        resolve_cpu_level("x86-64-v2")
+        resolve_cpu_level("x86-64-v2")  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(
@@ -259,5 +260,5 @@ def test_download_tag_selection_auto(tmp_path, pulled_uris, monkeypatch):
 def test_download_bad_cpu(tmp_path, pulled_uris):
     """An unknown CPU level fails before anything is pulled"""
     with pytest.raises(ValueError):
-        download_known_containers(container_directory=tmp_path, cpu="avx2")
+        download_known_containers(container_directory=tmp_path, cpu="avx2")  # type: ignore[arg-type]
     assert pulled_uris == []
