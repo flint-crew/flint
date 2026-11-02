@@ -362,6 +362,15 @@ def test_preprocess_askap_ms_does_not_rotate_twice(casda_example):
         assert history.getcol("MESSAGE").count(ROTATED_HISTORY_MESSAGE) == 1
 
 
+def test_preprocess_askap_ms_not_marked_without_rotation(casda_example, monkeypatch):
+    """The MS is not marked as rotated when fixms writes no corrected column"""
+    monkeypatch.setattr("flint.ms.fix_ms_corrs", lambda **kwargs: None)
+
+    ms = preprocess_askap_ms(ms=casda_example, fix_stokes_factor=True)
+
+    assert not ms_is_rotated(ms=ms)
+
+
 def test_phase_dir(ms_example):
     pos = get_phase_dir_from_ms(ms=ms_example)
 

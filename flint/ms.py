@@ -873,7 +873,9 @@ def preprocess_askap_ms(
             corrected_data_column=data_column,
             fix_stokes_factor=fix_stokes_factor,
         )
-        mark_ms_as_rotated(ms=ms)
+        # fix_ms_corrs can return quietly without writing data_column
+        if check_column_in_ms(ms=ms, column=data_column):
+            mark_ms_as_rotated(ms=ms)
     else:
         # TODO: Should we copy the DATA to INSTRUMENT_DATA?
         logger.info("Skipping the rotation of the visibilities. ")
@@ -939,9 +941,7 @@ def copy_and_preprocess_casda_askap_ms(
     # built against newer casacore (e.g. wsclean) hits odd "bad value" errors
     # reading them. Rewriting the MS with mstransform avoids this.
     copy_with_mstranform(
-        casa_container=casa_container,
-        ms_path=ms.path,
-        output_ms_path=None if out_ms_path == ms.path else out_ms_path,
+        casa_container=casa_container, ms_path=ms.path, output_ms_path=out_ms_path
     )
     ms = ms.with_options(path=out_ms_path)
 

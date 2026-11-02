@@ -60,7 +60,7 @@ def test_copy_with_mstranform(tmp_path, monkeypatch):
     result = copy_with_mstranform(
         casa_container=container, ms_path=ms_path, output_ms_path=output_ms
     )
-    assert result == output_ms
+    assert result == output_ms.resolve()
     assert output_ms.exists()
     assert (ms_path / "original").exists()
 
@@ -70,6 +70,47 @@ def test_copy_with_mstranform(tmp_path, monkeypatch):
         )
 
     result = copy_with_mstranform(casa_container=container, ms_path=ms_path)
-    assert result == ms_path
+    assert result == ms_path.resolve()
     assert not (ms_path / "original").exists()
     assert not list(tmp_path.glob("*.ms_transform"))
+
+
+def test_copy_with_mstranform_resolves_paths(tmp_path, monkeypatch):
+    """Symlinks are resolved before reaching the container, and an output that is
+    the input reached another way is rewritten in place"""
+    commands = []
+
+    def fake_run(image, command, bind_dirs, *args, **kwargs):
+        commands.append(command)
+        Path(re.search(r"outputvis='([^']+)'", command).group(1)).mkdir()
+
+    monkeypatch.setattr("flint.sclient.run_singularity_command", fake_run)
+
+    ms_path = tmp_path / "real" / "input.ms"
+    ms_path.mkdir(parents=True)
+    (ms_path / "original").touch()
+    (tmp_path / "link").symlink_to(tmp_path / "real")
+
+    result = copy_with_mstranform(
+        casa_container=tmp_path / "casa.sif",
+        ms_path=tmp_path / "link" / "input.ms",
+        output_ms_path=ms_path,
+    )
+
+    assert result == ms_path.resolve()
+    assert f"vis='{ms_path.resolve()!s}'" in commands[0]
+    assert not (ms_path / "original").exists()
+
+
+def test_copy_with_mstranform_no_output(tmp_path, monkeypatch):
+    """The input is kept when mstransform writes nothing"""
+    monkeypatch.setattr(
+        "flint.sclient.run_singularity_command", lambda *args, **kwargs: None
+    )
+
+    ms_path = tmp_path / "input.ms"
+    ms_path.mkdir()
+
+    with pytest.raises(RuntimeError):
+        copy_with_mstranform(casa_container=tmp_path / "casa.sif", ms_path=ms_path)
+    assert ms_path.exists()
