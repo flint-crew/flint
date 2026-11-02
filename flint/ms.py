@@ -573,7 +573,7 @@ def consistent_channelwise_frequencies(
 
     freqs_are_same = np.all(freqs - freqs[0, None] == 0, axis=1)
     assert len(freqs_are_same.shape) == 1, (
-        f"Channelwise check should be length 1, but have {freqs_are_same.shaope=}"
+        f"Channelwise check should be length 1, but have {freqs_are_same.shape=}"
     )
     return freqs_are_same
 
