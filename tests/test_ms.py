@@ -15,7 +15,8 @@ from pydantic import ValidationError
 from flint.calibrate.aocalibrate import ApplySolutions
 from flint.ms import (
     MS,
-    ROTATED_HISTORY_MESSAGE,
+    HistoryEntry,
+    add_history_entry,
     check_column_in_ms,
     consistent_channelwise_frequencies,
     copy_and_preprocess_casda_askap_ms,
@@ -23,7 +24,7 @@ from flint.ms import (
     find_mss,
     get_phase_dir_from_ms,
     get_times_from_ms,
-    ms_is_rotated,
+    has_history_entry,
     preprocess_askap_ms,
     remove_columns_from_ms,
     rename_ms_and_columns_for_selfcal,
@@ -256,7 +257,7 @@ def test_copy_preprocess_ms(casda_example, tmpdir, monkeypatch):
     _test_the_data(ms=new_ms.path)
 
     assert new_ms.path == out_ms
-    assert ms_is_rotated(ms=new_ms)
+    assert has_history_entry(ms=new_ms, entry=HistoryEntry.ROTATED)
     assert len(commands) == 1
     assert f"vis='{casda_example!s}'" in commands[0]
     assert "INSTRUMENT_DATA" not in _get_columns(ms_path=casda_example)
@@ -359,7 +360,7 @@ def test_preprocess_askap_ms_does_not_rotate_twice(casda_example):
     with table(str(ms.path), ack=False) as tab:
         assert np.array_equal(tab.getcol("DATA"), rotated_data)
     with table(f"{ms.path!s}/HISTORY", ack=False) as history:
-        assert history.getcol("MESSAGE").count(ROTATED_HISTORY_MESSAGE) == 1
+        assert history.getcol("MESSAGE").count(HistoryEntry.ROTATED) == 1
 
 
 def test_preprocess_askap_ms_not_marked_without_rotation(casda_example, monkeypatch):
@@ -368,7 +369,28 @@ def test_preprocess_askap_ms_not_marked_without_rotation(casda_example, monkeypa
 
     ms = preprocess_askap_ms(ms=casda_example, fix_stokes_factor=True)
 
-    assert not ms_is_rotated(ms=ms)
+    assert not has_history_entry(ms=ms, entry=HistoryEntry.ROTATED)
+
+
+def test_history_entry(casda_example):
+    """Only entries flint added are found, and the table stays readable"""
+    assert not has_history_entry(ms=casda_example, entry=HistoryEntry.ROTATED)
+
+    with table(f"{casda_example!s}/HISTORY", ack=False, readonly=False) as history:
+        history.addrows(1)
+        row = history.nrows() - 1
+        history.putcell("MESSAGE", row, str(HistoryEntry.ROTATED))
+        history.putcell("APPLICATION", row, "another_tool")
+        history.putcell("CLI_COMMAND", row, [""])
+        history.putcell("APP_PARAMS", row, [""])
+    assert not has_history_entry(ms=casda_example, entry=HistoryEntry.ROTATED)
+
+    entry = add_history_entry(ms=casda_example, entry=HistoryEntry.ROTATED)
+    assert entry is HistoryEntry.ROTATED
+    assert has_history_entry(ms=casda_example, entry=HistoryEntry.ROTATED)
+
+    with table(f"{casda_example!s}/HISTORY", ack=False) as history:
+        assert history.getcol("APP_PARAMS")
 
 
 def test_phase_dir(ms_example):

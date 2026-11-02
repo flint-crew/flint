@@ -12,6 +12,7 @@ from __future__ import annotations
 import shutil
 from argparse import ArgumentParser
 from contextlib import contextmanager
+from enum import StrEnum
 from os import PathLike
 from pathlib import Path
 from typing import TypeAlias, cast
@@ -749,15 +750,28 @@ def subtract_model_from_data_column(
     return ms
 
 
-ROTATED_HISTORY_MESSAGE = "flint: rotated the visibilities to the sky frame with fixms"
+class HistoryEntry(StrEnum):
+    """Steps flint records in the HISTORY table of a measurement set"""
+
+    ROTATED = "flint: rotated the visibilities to the sky frame with fixms"
+    """Visibilities rotated from the instrument frame to the sky frame by fixms"""
 
 
-def mark_ms_as_rotated(ms: MS) -> None:
-    """Record in the HISTORY table that the visibilities have been rotated."""
-    entry = {
+def add_history_entry(ms: MS | Path, entry: HistoryEntry) -> HistoryEntry:
+    """Add a flint entry to the HISTORY table of a measurement set.
+
+    Args:
+        ms (MS | Path): The measurement set to add the entry to
+        entry (HistoryEntry): The step to record
+
+    Returns:
+        HistoryEntry: The entry that was recorded
+    """
+    ms = MS.cast(ms)
+    row_values = {
         "TIME": (Time.now().mjd * u.day).to_value(u.s),
         "OBSERVATION_ID": 0,
-        "MESSAGE": ROTATED_HISTORY_MESSAGE,
+        "MESSAGE": str(entry),
         "PRIORITY": "NORMAL",
         "ORIGIN": f"flint-{__version__}",
         "APPLICATION": "flint",
@@ -768,14 +782,28 @@ def mark_ms_as_rotated(ms: MS) -> None:
     with table(f"{ms.path!s}/HISTORY", ack=False, readonly=False) as history:
         history.addrows(1)
         row = history.nrows() - 1
-        for column, value in entry.items():
+        for column, value in row_values.items():
             history.putcell(column, row, value)
 
+    return entry
 
-def ms_is_rotated(ms: MS) -> bool:
-    """Whether the HISTORY table records that the visibilities have been rotated."""
+
+def has_history_entry(ms: MS | Path, entry: HistoryEntry) -> bool:
+    """Whether the HISTORY table of a measurement set holds a flint entry.
+
+    Entries written by other software with the same message are ignored.
+
+    Args:
+        ms (MS | Path): The measurement set to inspect
+        entry (HistoryEntry): The step to look for
+
+    Returns:
+        bool: Whether flint has recorded `entry` in the HISTORY table
+    """
+    ms = MS.cast(ms)
     with table(f"{ms.path!s}/HISTORY", ack=False) as history:
-        return ROTATED_HISTORY_MESSAGE in history.getcol("MESSAGE")
+        rows = zip(history.getcol("APPLICATION"), history.getcol("MESSAGE"))
+        return ("flint", str(entry)) in rows
 
 
 # TODO: Clean up the usage and description of the argument `instrument_column`
@@ -835,7 +863,7 @@ def preprocess_askap_ms(
     # mstransform drops the INSTRUMENT_DATA column that otherwise stops a
     # second rotation, so the HISTORY table is checked too
     rotate = not skip_rotation
-    if rotate and ms_is_rotated(ms=ms):
+    if rotate and has_history_entry(ms=ms, entry=HistoryEntry.ROTATED):
         logger.warning(f"{ms.path} has already been rotated, not rotating again.")
         rotate = False
 
@@ -875,7 +903,7 @@ def preprocess_askap_ms(
         )
         # fix_ms_corrs can return quietly without writing data_column
         if check_column_in_ms(ms=ms, column=data_column):
-            mark_ms_as_rotated(ms=ms)
+            add_history_entry(ms=ms, entry=HistoryEntry.ROTATED)
     else:
         # TODO: Should we copy the DATA to INSTRUMENT_DATA?
         logger.info("Skipping the rotation of the visibilities. ")
