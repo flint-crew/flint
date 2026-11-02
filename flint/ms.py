@@ -24,11 +24,12 @@ from casacore.tables import table, taql
 from fixms.fix_ms_corrs import fix_ms_corrs
 from fixms.fix_ms_dir import fix_ms_dir
 
+from flint import __version__
 from flint.casa import copy_with_mstranform
 from flint.logging import logger
 from flint.naming import create_ms_name
 from flint.options import MS, MSSummary, standardise_ms_to_list_ms
-from flint.utils import copy_directory, rsync_copy_directory
+from flint.utils import rsync_copy_directory
 
 # TODO: Some common MS validation functions?
 # - list / number of fields
@@ -748,6 +749,35 @@ def subtract_model_from_data_column(
     return ms
 
 
+ROTATED_HISTORY_MESSAGE = "flint: rotated the visibilities to the sky frame with fixms"
+
+
+def mark_ms_as_rotated(ms: MS) -> None:
+    """Record in the HISTORY table that the visibilities have been rotated."""
+    entry = {
+        "TIME": (Time.now().mjd * u.day).to_value(u.s),
+        "OBSERVATION_ID": 0,
+        "MESSAGE": ROTATED_HISTORY_MESSAGE,
+        "PRIORITY": "NORMAL",
+        "ORIGIN": f"flint-{__version__}",
+        "APPLICATION": "flint",
+        # An empty list would stop casacore reading these columns with getcol
+        "CLI_COMMAND": [""],
+        "APP_PARAMS": [""],
+    }
+    with table(f"{ms.path!s}/HISTORY", ack=False, readonly=False) as history:
+        history.addrows(1)
+        row = history.nrows() - 1
+        for column, value in entry.items():
+            history.putcell(column, row, value)
+
+
+def ms_is_rotated(ms: MS) -> bool:
+    """Whether the HISTORY table records that the visibilities have been rotated."""
+    with table(f"{ms.path!s}/HISTORY", ack=False) as history:
+        return ROTATED_HISTORY_MESSAGE in history.getcol("MESSAGE")
+
+
 # TODO: Clean up the usage and description of the argument `instrument_column`
 # as it is currently being used in unclear ways. Specifically there is a renaming
 # of the data_column to instrument_column before the rotation of things
@@ -782,7 +812,7 @@ def preprocess_askap_ms(
         overwrite (bool, optional): If the `instrument_column` and `data_column` both exist and `overwrite=True` the `data_column` will be overwritten. Otherwise, a `ValueError` is raised. Defaults to True.
         skip_rotation (bool, optional): If true, the visibilities are not rotated Defaults to False.
         fix_stokes_factor (bool, optional): Apply the stokes scaling factor (aruses in different definition of Stokes between Ynadasoft and other applications) when rotation visibilities. This should be set to False is the bandpass solutions have already absorded this scaling term. Defaults to False.
-        apply_ms_transform (bool, optional): If True, the MS will be transformed using the `casa_container` provided. Defaults to False.
+        apply_ms_transform (bool, optional): If True, the MS will be rewritten with mstransform using the `casa_container` provided. CASDA MSs need this, as software built against newer casacore (e.g. wsclean) misreads them. Defaults to False.
         casa_container (Path, optional): The path to the CASA container that will be used to transform the MS. Defaults to None.
         rename (bool, optional): If True, the MS will be renamed to a Flint-processed name. Defaults to False.
 
@@ -800,11 +830,14 @@ def preprocess_askap_ms(
             raise ValueError(
                 "apply_ms_transform=True, but no casa_container provided. "
             )
-        corrected_ms_path = copy_with_mstranform(
-            casa_container=casa_container,
-            ms_path=ms.path,
-        )
-        ms = MS.cast(corrected_ms_path)
+        copy_with_mstranform(casa_container=casa_container, ms_path=ms.path)
+
+    # mstransform drops the INSTRUMENT_DATA column that otherwise stops a
+    # second rotation, so the HISTORY table is checked too
+    rotate = not skip_rotation
+    if rotate and ms_is_rotated(ms=ms):
+        logger.warning(f"{ms.path} has already been rotated, not rotating again.")
+        rotate = False
 
     logger.info(f"Will be running ASKAP MS conversion operations against {ms.path!s}.")
     logger.info("Correcting directions. ")
@@ -822,36 +855,28 @@ def preprocess_askap_ms(
             if not overwrite:
                 raise ValueError(msg)
 
-        if (
-            not skip_rotation
-            and data_column in colnames
-            and instrument_column not in colnames
-        ):
+        if rotate and instrument_column not in colnames:
             logger.info(f"Renaming {data_column} to {instrument_column}.")
             tab.renamecol(data_column, instrument_column)
-
-        tab.flush()
 
     logger.info("Correcting the field table. ")
     fix_ms_dir(ms=str(ms.path))
 
-    if skip_rotation:
+    if rotate:
+        logger.info("Applying rotation matrix to correlations. ")
+        logger.info(
+            f"Rotating visibilities for {ms.path} with data_column={instrument_column} and corrected_data_column={data_column}"
+        )
+        fix_ms_corrs(
+            ms=ms.path,
+            data_column=instrument_column,
+            corrected_data_column=data_column,
+            fix_stokes_factor=fix_stokes_factor,
+        )
+        mark_ms_as_rotated(ms=ms)
+    else:
         # TODO: Should we copy the DATA to INSTRUMENT_DATA?
         logger.info("Skipping the rotation of the visibilities. ")
-        ms = ms.with_options(column=data_column)
-        logger.info(f"Returning {ms=}.")
-        return cast(MS, ms)
-
-    logger.info("Applying rotation matrix to correlations. ")
-    logger.info(
-        f"Rotating visibilities for {ms.path} with data_column={instrument_column} and corrected_data_column={data_column}"
-    )
-    fix_ms_corrs(
-        ms=ms.path,
-        data_column=instrument_column,
-        corrected_data_column=data_column,
-        fix_stokes_factor=fix_stokes_factor,
-    )
 
     if rename:
         logger.info("Renaming the measurement set.")
@@ -886,35 +911,39 @@ def copy_and_preprocess_casda_askap_ms(
 
     Args:
         casda_ms (Union[MS, Path]): The measurement set to preprocess
+        casa_container (Path): Path to the container with CASA tooling, used to run mstransform
         data_column (str, optional): The column with data to preprocess. Defaults to "DATA".
         instrument_column (str, optional): The name of the column to be created with data in the instrument frame. Defaults to "INSTRUMENT_DATA".
-        fix_stokes_factor (bool, optional): Whether to scale the visibilities to account for the factor of 2 error. Defaults to True.
         output_directory (Path, optional): The output directory that the preprocessed MS will be placed into. Defaults to Path("./").
+
+    Raises:
+        FileNotFoundError: Raised if `casa_container` or `casda_ms` does not exist
+        ValueError: Raised if `data_column` is not in `casda_ms`
 
     Returns:
         MS: a corrected and preprocessed measurement set
     """
     ms = MS.cast(casda_ms)
 
-    if casa_container is None:
-        raise TypeError(f"{casa_container=}, which is bad.")
     if not Path(casa_container).exists():
         raise FileNotFoundError(f"{casa_container=} does not exist")
 
-    # TODO: This could probably be replaced with the mstransform?
-    # Save the extra hit to disk later on.
     out_ms_path = output_directory / create_ms_name(ms_path=ms.path)
-    if ms.path != out_ms_path:
-        logger.info(f"New MS name: {out_ms_path}")
-        out_ms_path = copy_directory(
-            input_directory=ms.path, output_directory=out_ms_path
-        )
+    if not ms.path.exists():
+        raise FileNotFoundError(f"{ms.path} does not exist")
+    if not check_column_in_ms(ms=ms, column=data_column):
+        raise ValueError(f"Column {data_column} not found in {ms.path!s}")
 
-        ms = ms.with_options(path=out_ms_path)
-
-    logger.info(
-        f"Will be running CASDA ASKAP MS conversion operations against {ms.path!s}."
+    logger.info(f"New MS name: {out_ms_path}")
+    # CASDA MSs are written by a different casacore version, and software
+    # built against newer casacore (e.g. wsclean) hits odd "bad value" errors
+    # reading them. Rewriting the MS with mstransform avoids this.
+    copy_with_mstranform(
+        casa_container=casa_container,
+        ms_path=ms.path,
+        output_ms_path=None if out_ms_path == ms.path else out_ms_path,
     )
+    ms = ms.with_options(path=out_ms_path)
 
     return preprocess_askap_ms(
         ms=ms,
@@ -923,8 +952,6 @@ def copy_and_preprocess_casda_askap_ms(
         overwrite=True,
         skip_rotation=False,  # CASDA always requires rotation
         fix_stokes_factor=True,  # CASDA always requires fixing the factor of 2
-        apply_ms_transform=True,  # CASDA MSs often need the silly mstranform applied
-        casa_container=casa_container,
         rename=False,  # We have already renamed the MS
     )
 
