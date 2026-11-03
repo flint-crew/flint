@@ -15,6 +15,8 @@ from pydantic import ValidationError
 from flint.calibrate.aocalibrate import ApplySolutions
 from flint.ms import (
     MS,
+    HistoryEntry,
+    add_history_entry,
     check_column_in_ms,
     consistent_channelwise_frequencies,
     copy_and_preprocess_casda_askap_ms,
@@ -22,6 +24,7 @@ from flint.ms import (
     find_mss,
     get_phase_dir_from_ms,
     get_times_from_ms,
+    has_history_entry,
     preprocess_askap_ms,
     remove_columns_from_ms,
     rename_ms_and_columns_for_selfcal,
@@ -235,17 +238,16 @@ def test_copy_preprocess_ms(casda_example, tmpdir, monkeypatch):
     from flint.naming import create_ms_name
     from flint.utils import copy_directory
 
-    # Put the transform MS into place since it is not going to be created
-    # by the skipped singularity run command
-    transform_ms = output_path / (create_ms_name(ms_path=casda_example) + "_transform")
+    # mstransform is not run, so put its output into place instead
+    out_ms = output_path / create_ms_name(ms_path=casda_example)
 
-    runs = []
-    monkeypatch.setattr(
-        "flint.sclient.run_singularity_command",
-        lambda image, command, bind_dirs, *args, **kwargs: runs.append(
-            copy_directory(casda_example, transform_ms)
-        ),
-    )
+    commands = []
+
+    def fake_run(image, command, bind_dirs, *args, **kwargs):
+        commands.append(command)
+        copy_directory(casda_example, out_ms)
+
+    monkeypatch.setattr("flint.sclient.run_singularity_command", fake_run)
 
     new_ms = copy_and_preprocess_casda_askap_ms(
         casda_ms=Path(casda_example),
@@ -253,6 +255,13 @@ def test_copy_preprocess_ms(casda_example, tmpdir, monkeypatch):
         output_directory=output_path,
     )
     _test_the_data(ms=new_ms.path)
+
+    assert new_ms.path == out_ms
+    assert has_history_entry(ms=new_ms, entry=HistoryEntry.ROTATED)
+    assert len(commands) == 1
+    assert f"vis='{casda_example!s}'" in commands[0]
+    assert "INSTRUMENT_DATA" not in _get_columns(ms_path=casda_example)
+    assert not list(output_path.glob("*.ms_transform"))
 
     # When file format not recognised
     with pytest.raises(ValueError):
@@ -263,7 +272,7 @@ def test_copy_preprocess_ms(casda_example, tmpdir, monkeypatch):
         )
 
     # When input directory does not exist
-    with pytest.raises(AssertionError):
+    with pytest.raises(FileNotFoundError):
         copy_and_preprocess_casda_askap_ms(
             casda_ms=Path(
                 "thisdoesnotexist/scienceData.EMU_0529-60.SB50538.EMU_0529-60.beam08_averaged_cal.leakage.ms"
@@ -337,6 +346,51 @@ def test_preprocess_askap_ms_skip_rotation(ms_example):
     assert ms.path == ms_example
     assert ms.column == "DATA"
     assert "INSTRUMENT_DATA" not in _get_columns(ms_path=ms.path)
+
+
+def test_preprocess_askap_ms_does_not_rotate_twice(casda_example):
+    """A rotated MS that has lost INSTRUMENT_DATA, as mstransform does, is not rotated again"""
+    ms = preprocess_askap_ms(ms=casda_example, fix_stokes_factor=True)
+    with table(str(ms.path), ack=False) as tab:
+        rotated_data = tab.getcol("DATA")
+
+    remove_columns_from_ms(ms=ms, columns_to_remove="INSTRUMENT_DATA")
+    ms = preprocess_askap_ms(ms=ms, fix_stokes_factor=True)
+
+    with table(str(ms.path), ack=False) as tab:
+        assert np.array_equal(tab.getcol("DATA"), rotated_data)
+    with table(f"{ms.path!s}/HISTORY", ack=False) as history:
+        assert history.getcol("MESSAGE").count(HistoryEntry.ROTATED) == 1
+
+
+def test_preprocess_askap_ms_not_marked_without_rotation(casda_example, monkeypatch):
+    """The MS is not marked as rotated when fixms writes no corrected column"""
+    monkeypatch.setattr("flint.ms.fix_ms_corrs", lambda **kwargs: None)
+
+    ms = preprocess_askap_ms(ms=casda_example, fix_stokes_factor=True)
+
+    assert not has_history_entry(ms=ms, entry=HistoryEntry.ROTATED)
+
+
+def test_history_entry(casda_example):
+    """Only entries flint added are found, and the table stays readable"""
+    assert not has_history_entry(ms=casda_example, entry=HistoryEntry.ROTATED)
+
+    with table(f"{casda_example!s}/HISTORY", ack=False, readonly=False) as history:
+        history.addrows(1)
+        row = history.nrows() - 1
+        history.putcell("MESSAGE", row, str(HistoryEntry.ROTATED))
+        history.putcell("APPLICATION", row, "another_tool")
+        history.putcell("CLI_COMMAND", row, [""])
+        history.putcell("APP_PARAMS", row, [""])
+    assert not has_history_entry(ms=casda_example, entry=HistoryEntry.ROTATED)
+
+    entry = add_history_entry(ms=casda_example, entry=HistoryEntry.ROTATED)
+    assert entry is HistoryEntry.ROTATED
+    assert has_history_entry(ms=casda_example, entry=HistoryEntry.ROTATED)
+
+    with table(f"{casda_example!s}/HISTORY", ack=False) as history:
+        assert history.getcol("APP_PARAMS")
 
 
 def test_phase_dir(ms_example):

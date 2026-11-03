@@ -97,20 +97,33 @@ def gaincal(**kwargs) -> str:
     return gaincal_str
 
 
-def copy_with_mstranform(casa_container: Path, ms_path: Path) -> Path:
-    """Use the casa task mstransform to create `nspw` spectral windows
-    in the input measurement set. This is necessary when attempting to
-    use gaincal to solve for some frequency-dependent solution.
+def copy_with_mstranform(
+    casa_container: Path, ms_path: Path, output_ms_path: Path | None = None
+) -> Path:
+    """Rewrite a measurement set with the casa task mstransform.
 
     Args:
         casa_container (Path): Path to the singularity container with CASA tooling
-        ms_path (Path): The measurement set that should be reformed to have `nspw` spectral windows
+        ms_path (Path): The measurement set to rewrite
+        output_ms_path (Path | None, optional): Where to write the new measurement set, leaving `ms_path` untouched. If None or the same as `ms_path`, `ms_path` is replaced. Defaults to None.
+
+    Raises:
+        FileExistsError: Raised if the measurement set to be written already exists
+        RuntimeError: Raised if mstransform did not write the new measurement set
 
     Returns:
-        Path: The path to the measurement set that was updated
+        Path: The path to the rewritten measurement set
     """
 
-    transform_ms = ms_path.with_suffix(".ms_transform")
+    # The container only binds resolved directories, so symlinks must not reach it
+    ms_path = ms_path.resolve()
+    output_ms_path = (output_ms_path or ms_path).resolve()
+    in_place = output_ms_path == ms_path
+
+    transform_ms = ms_path.with_suffix(".ms_transform") if in_place else output_ms_path
+    if transform_ms.exists():
+        raise FileExistsError(f"{transform_ms} already exists")
+    transform_ms.parent.mkdir(parents=True, exist_ok=True)
 
     mstransform(
         container=casa_container,
@@ -121,10 +134,13 @@ def copy_with_mstranform(casa_container: Path, ms_path: Path) -> Path:
         datacolumn="all",
     )
 
+    if not transform_ms.exists():
+        raise RuntimeError(f"mstransform did not create {transform_ms}")
     logger.info(f"Successfully created the transformed measurement set {transform_ms}.")
-    remove_files_folders(ms_path)
 
-    logger.info(f"Renaming {transform_ms} to {ms_path}.")
-    transform_ms.rename(ms_path)
+    if in_place:
+        remove_files_folders(ms_path)
+        logger.info(f"Renaming {transform_ms} to {ms_path}.")
+        transform_ms.rename(ms_path)
 
-    return ms_path
+    return output_ms_path
