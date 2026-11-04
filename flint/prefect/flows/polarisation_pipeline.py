@@ -415,14 +415,14 @@ def process_science_fields_pol(
     # so a beam can be solved for each channel, and so linmos can then run one
     # channel at a time in parallel. Resolving here blocks until the imaging
     # above has completed.
-    stokes_channel_groups: dict[str, list[list[Path]]] = {
+    raw_stokes_channel_groups: dict[str, list[list[Path]]] = {
         stokes: task_transpose_and_sort_channel_images.submit(
             beam_channel_images=beam_channel_images
         ).result()
         for stokes, beam_channel_images in stokes_beam_channel_images.items()
     }
     stokes_channel_groups = convolve_channel_groups_to_natural_resolution(
-        stokes_channel_groups=stokes_channel_groups,
+        stokes_channel_groups=raw_stokes_channel_groups,
         cutoff=pol_field_options.cube_beam_cutoff,
         fixed_beam_shape=pol_field_options.fixed_beam_shape,
     )
@@ -479,7 +479,12 @@ def process_science_fields_pol(
     stokes_total_cubes: dict[str, PrefectFuture[Path]] = {}
     stokes_total_bkg_cubes: dict[str, PrefectFuture[Path]] = {}
     stokes_total_rms_cubes: dict[str, PrefectFuture[Path]] = {}
-    all_input_images: list[Path] = []
+    all_input_images: list[Path] = [
+        image
+        for channel_groups in raw_stokes_channel_groups.values()
+        for beam_images in channel_groups
+        for image in beam_images
+    ]
     for stokes, channel_groups in stokes_channel_groups.items():
         with tags(f"stokes-{stokes}"):
             all_input_images.extend(
@@ -517,11 +522,13 @@ def process_science_fields_pol(
                 stokes_total_rms_cubes[stokes] = stokes_cubes.total_rms
             cube_results.extend(stokes_cubes.futures)
 
-    # Remove the convolved per-beam channel images now that every cube is built.
-    # Stokes I images are kept until here as they feed the Q/U leakage correction.
-    remove_result = task_remove_files_folders.submit(
-        *all_input_images, wait_for=cube_results
-    )
+    # Remove the per-beam channel images, as imaged and as convolved, now that
+    # every cube is built. Stokes I images are kept until here as they feed the
+    # Q/U leakage correction. Retried, as a shared filesystem can briefly fail a
+    # deletion.
+    remove_result = task_remove_files_folders.with_options(
+        retries=2, retry_delay_seconds=30
+    ).submit(*all_input_images, wait_for=cube_results)
 
     # An MFS product has no frequency axis for a natural beam to vary over, so
     # the MFS images get a single common beam of their own rather than the one
