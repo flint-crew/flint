@@ -426,6 +426,15 @@ def process_science_fields_pol(
         cutoff=pol_field_options.cube_beam_cutoff,
         fixed_beam_shape=pol_field_options.fixed_beam_shape,
     )
+    # Superseded by the convolved images, which are all that is read from here on
+    remove_raw_result = task_remove_files_folders.submit(
+        *[
+            image
+            for channel_groups in raw_stokes_channel_groups.values()
+            for beam_images in channel_groups
+            for image in beam_images
+        ]
+    )
 
     # Solved once over every Stokes, so each of them is cubed at the same total
     # resolution. Every channel already shares a beam across Stokes, so a beam
@@ -479,12 +488,7 @@ def process_science_fields_pol(
     stokes_total_cubes: dict[str, PrefectFuture[Path]] = {}
     stokes_total_bkg_cubes: dict[str, PrefectFuture[Path]] = {}
     stokes_total_rms_cubes: dict[str, PrefectFuture[Path]] = {}
-    all_input_images: list[Path] = [
-        image
-        for channel_groups in raw_stokes_channel_groups.values()
-        for beam_images in channel_groups
-        for image in beam_images
-    ]
+    all_input_images: list[Path] = []
     for stokes, channel_groups in stokes_channel_groups.items():
         with tags(f"stokes-{stokes}"):
             all_input_images.extend(
@@ -522,13 +526,11 @@ def process_science_fields_pol(
                 stokes_total_rms_cubes[stokes] = stokes_cubes.total_rms
             cube_results.extend(stokes_cubes.futures)
 
-    # Remove the per-beam channel images, as imaged and as convolved, now that
-    # every cube is built. Stokes I images are kept until here as they feed the
-    # Q/U leakage correction. Retried, as a shared filesystem can briefly fail a
-    # deletion.
-    remove_result = task_remove_files_folders.with_options(
-        retries=2, retry_delay_seconds=30
-    ).submit(*all_input_images, wait_for=cube_results)
+    # Remove the convolved per-beam channel images now that every cube is built.
+    # Stokes I images are kept until here as they feed the Q/U leakage correction.
+    remove_result = task_remove_files_folders.submit(
+        *all_input_images, wait_for=cube_results
+    )
 
     # An MFS product has no frequency axis for a natural beam to vary over, so
     # the MFS images get a single common beam of their own rather than the one
@@ -591,7 +593,11 @@ def process_science_fields_pol(
         else None
     )
 
-    terminal_futures: list[PrefectFuture[Any]] = [*cube_results, remove_result]
+    terminal_futures: list[PrefectFuture[Any]] = [
+        *cube_results,
+        remove_raw_result,
+        remove_result,
+    ]
     if remove_mfs_result is not None:
         terminal_futures.append(remove_mfs_result)
 

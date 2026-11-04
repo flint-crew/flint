@@ -117,7 +117,10 @@ task_merge_image_sets = task(merge_image_sets)
 task_merge_image_sets_from_results = task(merge_image_sets_from_results)
 task_transpose_and_sort_channel_images = task(transpose_and_sort_channel_images)
 task_create_name_from_common_fields = task(create_name_from_common_fields)
-task_remove_files_folders = task(remove_files_folders)
+# Retried, as a shared filesystem can briefly fail a deletion
+task_remove_files_folders = task(
+    remove_files_folders, retries=2, retry_delay_seconds=30
+)
 task_get_common_bounding_box = task(get_common_bounding_box)
 task_split_cube_into_planes = task(split_cube_into_planes)
 task_bane_fits_image = task(bane_fits_image)
@@ -1263,12 +1266,8 @@ def create_convolve_linmos_cubes(
         cutoff=unmapped(field_options.cube_beam_cutoff),  # type: ignore
     ).result()
 
-    # Retried, as a shared filesystem can briefly fail a deletion
-    remove_files = task_remove_files_folders.with_options(
-        retries=2, retry_delay_seconds=30
-    )
     # The unconvolved planes have been superseded by convolved_channel_groups
-    remove_planes = remove_files.submit(
+    remove_planes = task_remove_files_folders.submit(
         *[plane for beam_images in channel_groups for plane in beam_images]
     )
 
@@ -1287,7 +1286,7 @@ def create_convolve_linmos_cubes(
     ).futures
 
     # Remove the convolved planes once every cube has been formed
-    remove_convolved_planes = remove_files.submit(
+    remove_convolved_planes = task_remove_files_folders.submit(
         *[plane for beam_images in convolved_channel_groups for plane in beam_images],
         wait_for=cube_results,
     )
