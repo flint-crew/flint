@@ -180,6 +180,8 @@ class WSCleanOptions(BaseOptions):
     """Number of threads to use during the deconvolution. More may make things faster but can come with a memory hit. If None defaults to -j"""
     taper_gaussian: float | None = None
     """The size of a Gaussian function applied to the weights, assuming units of arcseconds. Defaults to None. """
+    fit_rm: bool = False
+    """Fits each spectrum to a wavelength-squared sinusodial signal, thereby performing RM synthesis during cleaning. This option only works when imaging the Stokes Q and U polarizations."""
     # Options below here are not added to wsclean command
     flint_no_log_wsclean_output: bool = False
     """If True do not log the wsclean output"""
