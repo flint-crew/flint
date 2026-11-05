@@ -182,6 +182,10 @@ class WSCleanOptions(BaseOptions):
     """The size of a Gaussian function applied to the weights, assuming units of arcseconds. Defaults to None. """
     fit_rm: bool = False
     """Fits each spectrum to a wavelength-squared sinusodial signal, thereby performing RM synthesis during cleaning. This option only works when imaging the Stokes Q and U polarizations."""
+    rm_deconvolution: bool = False
+    """Uses the RM deconvolution algorithm that performs peak finding in RM space."""
+    multiscale_fits_mask: Path | None = None
+    """Use the specified fits-file as per-scale mask during multi-scale cleaning. The n'th bit of a pixel value allows the n'th scale at that pixel."""
     # Options below here are not added to wsclean command
     flint_no_log_wsclean_output: bool = False
     """If True do not log the wsclean output"""
