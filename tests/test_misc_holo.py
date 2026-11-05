@@ -487,8 +487,8 @@ def test_concatenate_holography(tmp_path) -> None:
         concat_holo_options=ConcatHoloOptions(
             output_path=tmp_path / "concat.fits",
             holo_cubes=(low, high),
-            # Smaller than the 7 beams, so beams of the first cube are still
-            # pending when the second cube starts
+            # Smaller than the 7 beams, so the window of pending beams both
+            # fills and drains
             max_workers=3,
         )
     )

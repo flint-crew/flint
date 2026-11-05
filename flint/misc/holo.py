@@ -5,7 +5,8 @@ from __future__ import annotations
 import os
 from argparse import ArgumentParser
 from collections import deque
-from concurrent.futures import Future, ThreadPoolExecutor
+from collections.abc import Callable, Iterator
+from concurrent.futures import Executor, Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -602,6 +603,33 @@ def write_beam(
             out_file.write(reprojected[stokes, in_ch].astype(">f4").tobytes())
 
 
+def reproject_in_order(
+    executor: Executor,
+    reproject: Callable[[int], NDArray[np.floating]],
+    nbeam: int,
+    max_pending: int,
+) -> Iterator[NDArray[np.floating]]:
+    """Reproject beams 0 to ``nbeam - 1`` in the executor, yielding them in order.
+
+    Args:
+        executor (Executor): The executor to reproject the beams in
+        reproject (Callable[[int], NDArray[np.floating]]): Reprojects the beam it is given
+        nbeam (int): The number of beams to reproject
+        max_pending (int): The most beams submitted but not yet yielded, which bounds the memory
+
+    Yields:
+        NDArray[np.floating]: Each reprojected beam, in beam order
+    """
+    pending: deque[Future[NDArray[np.floating]]] = deque()
+    for beam in range(nbeam):
+        if len(pending) == max_pending:
+            yield pending.popleft().result()
+        pending.append(executor.submit(reproject, beam))
+
+    while pending:
+        yield pending.popleft().result()
+
+
 def reproject_cubes(
     fits_cube_infos: list[FITSCubeInfo],
     spatial_header: fits.Header,
@@ -642,26 +670,6 @@ def reproject_cubes(
         ThreadPoolExecutor(max_workers) as executor,
         open(final_fits_cube_info.path, "r+b") as out_file,
     ):
-        # Beams are written in the order they were submitted. Capping the pending
-        # beams at max_workers bounds the memory, at the cost of one idle thread
-        # while the oldest is written.
-        pending: deque[tuple[int, int, NDArray, NDArray, Future]] = deque()
-
-        def write_oldest() -> None:
-            cube_idx, beam, ch_out, matched_indices, reprojection = pending.popleft()
-            write_beam(
-                out_file=out_file,
-                final_fits_cube_info=final_fits_cube_info,
-                reprojected=reprojection.result(),
-                beam=beam,
-                ch_out=ch_out,
-                matched_indices=matched_indices,
-            )
-            logger.info(
-                f"  cube {cube_idx} beam {beam + 1}/{nbeam} complete  "
-                f"({len(matched_indices)} channels x {nstokes} Stokes planes)"
-            )
-
         for cube_idx, fits_cube_info in enumerate(fits_cube_infos):
             logger.info(f"Reprojecting cube {cube_idx} - {fits_cube_info.path} ...")
 
@@ -676,21 +684,25 @@ def reproject_cubes(
                 shape_out=shape_out_sky,
             )
 
-            for beam in range(nbeam):
-                pending.append(
-                    (
-                        cube_idx,
-                        beam,
-                        ch_out,
-                        matched_indices,
-                        executor.submit(reproject, beam),
-                    )
+            reprojected_beams = reproject_in_order(
+                executor=executor,
+                reproject=reproject,
+                nbeam=nbeam,
+                max_pending=max_workers,
+            )
+            for beam, reprojected in enumerate(reprojected_beams):
+                write_beam(
+                    out_file=out_file,
+                    final_fits_cube_info=final_fits_cube_info,
+                    reprojected=reprojected,
+                    beam=beam,
+                    ch_out=ch_out,
+                    matched_indices=matched_indices,
                 )
-                if len(pending) == max_workers:
-                    write_oldest()
-
-        while pending:
-            write_oldest()
+                logger.info(
+                    f"  beam {beam + 1}/{nbeam} complete  "
+                    f"({len(matched_indices)} channels x {nstokes} Stokes planes)"
+                )
 
         logger.info("Flushing output cube to disk")
         out_file.flush()
