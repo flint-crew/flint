@@ -266,7 +266,7 @@ requires-dist = [
     { name = "pyyaml" },
     { name = "racs-tools", specifier = ">=4.4.0,<4.5" },
     { name = "radio-beam", specifier = ">=0.3.4" },
-    { name = "reproject" },
+    { name = "reproject", specifier = ">=0.10" },
     { name = "rm-lite", marker = "extra == 'all'", specifier = "==2026.9.14" },
     { name = "rm-lite", marker = "extra == 'rmsynth'", specifier = "==2026.9.14" },
     { name = "rocket-fft" },

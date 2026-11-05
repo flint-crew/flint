@@ -50,7 +50,7 @@ dependencies = [
     "dask-jobqueue",
     "RACS-tools>=4.4.0,<4.5", # 4.5 refuses a common beam that float32 round-off puts a hair inside a plane's beam
     "radio-beam>=0.3.4",
-    "reproject",
+    "reproject>=0.10",
     "pandas",
     "ConfigArgParse>=1.7",
     "fitscube[pgzip]>=2.11",

@@ -38,7 +38,7 @@ class ConcatHoloOptions(BaseOptions):
     placeholder that must be overridden before calling ``concatenate_holography``,
     which raises if it is left unset"""
     max_workers: int = 8
-    """Number of beams reprojected at once, each in its own thread and needing up to 0.75 GB"""
+    """Number of beams reprojected at once, each in its own thread and needing up to 0.3 GB"""
 
 
 @dataclass
@@ -434,13 +434,17 @@ def reproject_beam(
     Returns:
         NDArray[np.floating]: The reprojected beam, shaped (stokes, freq, ny, nx)
     """
+    # Native float32 in and out: reproject is slower on big-endian input, and
+    # would otherwise return float64, doubling the memory
     with fits.open(fits_cube_info.path, memmap=False) as hdul:
-        data = hdul[fits_cube_info.index].section[beam]
+        data = hdul[fits_cube_info.index].section[beam].astype(np.float32)
 
+    reprojected = np.empty((*data.shape[:-2], *shape_out), dtype=np.float32)
     return reproject_interp(
         (data, in_cube_header),
         output_projection=spatial_header,
-        shape_out=shape_out,
+        output_array=reprojected,
+        shape_out=reprojected.shape,
         return_footprint=False,
     )
 
@@ -618,6 +622,7 @@ def reproject_cubes(
                         f"  beam {beam + 1}/{nbeam} complete  "
                         f"({len(matched_indices)} channels x {nstokes} Stokes planes)"
                     )
+                del reprojected
 
         logger.info("Flushing output cube to disk")
         out_file.flush()
