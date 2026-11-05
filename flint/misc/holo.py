@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+import os
 from argparse import ArgumentParser
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from socket import gethostname
 from typing import NamedTuple
 
-import billiard
 import numpy as np
 from astropy import constants as const
 from astropy import units as u
@@ -37,7 +38,7 @@ class ConcatHoloOptions(BaseOptions):
     placeholder that must be overridden before calling ``concatenate_holography``,
     which raises if it is left unset"""
     max_workers: int = 8
-    """The maximum number of sub-processes that may be spawned"""
+    """Number of beams reprojected at once, each in its own thread and needing up to 0.75 GB"""
 
 
 @dataclass
@@ -414,66 +415,34 @@ def _get_cube_header(fits_cube_info: FITSCubeInfo) -> fits.Header:
     return in_header_2d
 
 
-@dataclass
-class ReprojectWorker:
-    in_cube_path: Path
-    """The cube to load"""
-    in_ch_idx: int
-    """The channel index of the input cube"""
-    in_cube_header: fits.Header
-    """The header that corresponds to ``plane``"""
-    beam: int
-    """The beam index"""
-    stokes: int
-    """The stokes index"""
-    out_idx: int
-    """The channel index"""
-    final_fits_cube_info: FinalFITSCubeInfo
-    """Information around the destination FITS cube"""
-
-
-def reproject_wrapper(
-    reproject_worker: ReprojectWorker,
-    output_projection: fits.Header,
+def reproject_beam(
+    fits_cube_info: FITSCubeInfo,
+    beam: int,
+    in_cube_header: fits.Header,
+    spatial_header: fits.Header,
     shape_out: tuple[int, int],
-) -> ReprojectWorker:
-    in_cube_arr = fits.getdata(reproject_worker.in_cube_path, memmap=True)
+) -> NDArray[np.floating]:
+    """Reproject every Stokes and channel plane of one beam onto the output grid.
 
-    plane = in_cube_arr[
-        reproject_worker.beam,
-        reproject_worker.stokes,
-        reproject_worker.in_ch_idx,
-        :,
-        :,
-    ]
-    reprojected, _ = reproject_interp(
-        (plane, reproject_worker.in_cube_header),
-        output_projection=output_projection,
+    Args:
+        fits_cube_info (FITSCubeInfo): The input cube to read the beam from
+        beam (int): The beam index to reproject
+        in_cube_header (fits.Header): The 2D spatial header of the input cube
+        spatial_header (fits.Header): The 2D spatial header of the output grid
+        shape_out (tuple[int, int]): The (ny, nx) shape of the output grid
+
+    Returns:
+        NDArray[np.floating]: The reprojected beam, shaped (stokes, freq, ny, nx)
+    """
+    with fits.open(fits_cube_info.path, memmap=False) as hdul:
+        data = hdul[fits_cube_info.index].section[beam]
+
+    return reproject_interp(
+        (data, in_cube_header),
+        output_projection=spatial_header,
         shape_out=shape_out,
+        return_footprint=False,
     )
-
-    dest_cube_info: FinalFITSCubeInfo = reproject_worker.final_fits_cube_info
-
-    arr = np.memmap(
-        filename=dest_cube_info.path,
-        dtype=">f4",
-        offset=dest_cube_info.data_offset,
-        mode="r+",
-        shape=dest_cube_info.output_shape,
-    )
-    arr[
-        reproject_worker.beam,
-        reproject_worker.stokes,
-        reproject_worker.out_idx,
-        :,
-        :,
-    ] = reprojected.astype(">f4")
-
-    # NOTE: We are relying on the operating system to flush the updated data back
-    # to disk as it sees fit. The Usage of memmap here is pointing to a single
-    # block of memory between processes, and the OS is smart enough to manage
-    # this similar to what it would otherwise do with virtual memory -> page file.
-    return reproject_worker
 
 
 def get_output_data_shape(
@@ -592,6 +561,7 @@ def reproject_cubes(
         frequency_grid (FrequencyGrid): The frequency axis of the output cube
         cdelt_tol (float, optional): The acceptable tolerance between matching the frequency grid of input data to the output cube. Defaults to 1e-6.
         final_fits_cube_info (FinalFITSCubeInfo): The description of the final output cube
+        max_workers (int, optional): Number of beams reprojected at once, each in its own thread. Defaults to 2.
 
     Returns:
         FinalFITSCubeInfo: The final FITS cube info that was provided as input
@@ -599,8 +569,8 @@ def reproject_cubes(
 
     # Axis order follows FITS convention reversed for numpy:
     # (NAXIS5=beam, NAXIS4=Stokes, NAXIS3=freq, NAXIS2=dec, NAXIS1=ra)
-    nbeam = final_fits_cube_info.output_shape[0]
-    nstokes = final_fits_cube_info.output_shape[1]
+    nbeam, nstokes, nchan_out, ny_out, nx_out = final_fits_cube_info.output_shape
+    plane_bytes = ny_out * nx_out * 4  # 4 bytes for float32
 
     logger.info(f"Output cube shape: {final_fits_cube_info.output_shape}")
     tol = (
@@ -608,52 +578,50 @@ def reproject_cubes(
     )  # 1 ppm tolerance for frequency matching
     shape_out_sky = (spatial_header["NAXIS2"], spatial_header["NAXIS1"])
 
-    # Using billiard Pool to allow a process pool executor like parallelism to be
-    # available when running under a dask-worker context. In such cases sub-processes
-    # may not normally be spawned - dask-workers start as a daemon and can not have
-    # children.
-    with billiard.Pool(max_workers) as pool:
+    # Threads rather than processes, as a dask worker cannot start child processes.
+    # Plain reads and writes rather than memory maps, as mapped pages count towards
+    # the memory dask watches when deciding to restart a worker.
+    with (
+        ThreadPoolExecutor(max_workers) as executor,
+        open(final_fits_cube_info.path, "r+b") as out_file,
+    ):
         for cube_idx, fits_cube_info in enumerate(fits_cube_infos):
             logger.info(f"Reprojecting cube {cube_idx} - {fits_cube_info.path} ...")
 
             ch_out, matched_indices = map_frequencies_to_channels(
                 freqs_1=frequency_grid.grid, freqs_2=fits_cube_info.freqs_hz, tol=tol
             )
-            in_cube_header = _get_cube_header(fits_cube_info=fits_cube_info)
-
-            reproject_interp_func = partial(
-                reproject_wrapper,
-                output_projection=spatial_header,
+            reproject = partial(
+                reproject_beam,
+                fits_cube_info,
+                in_cube_header=_get_cube_header(fits_cube_info=fits_cube_info),
+                spatial_header=spatial_header,
                 shape_out=shape_out_sky,
             )
-            for beam in range(nbeam):
-                pool_items = []
-                for stokes in range(nstokes):
-                    for ch_idx in matched_indices:
-                        pool_items.append(
-                            ReprojectWorker(
-                                in_cube_path=fits_cube_info.path,
-                                in_ch_idx=ch_idx,
-                                in_cube_header=in_cube_header,
-                                beam=beam,
-                                stokes=stokes,
-                                out_idx=ch_out[ch_idx],
-                                final_fits_cube_info=final_fits_cube_info,
+
+            # In batches, so at most max_workers reprojected beams are held in memory
+            for first_beam in range(0, nbeam, max_workers):
+                beams = range(first_beam, min(first_beam + max_workers, nbeam))
+                for beam, reprojected in zip(beams, executor.map(reproject, beams)):
+                    for stokes in range(nstokes):
+                        first_plane = (beam * nstokes + stokes) * nchan_out
+                        for in_ch in matched_indices:
+                            plane = first_plane + int(ch_out[in_ch])
+                            out_file.seek(
+                                final_fits_cube_info.data_offset + plane * plane_bytes
                             )
-                        )
+                            out_file.write(
+                                reprojected[stokes, in_ch].astype(">f4").tobytes()
+                            )
 
-                logger.debug(f"Collcted {len(pool_items)} for reprojection")
-                results = pool.map(reproject_interp_func, pool_items, chunksize=8)
-
-                for reproject_worker in results:
-                    logger.debug(
-                        f"Finished {reproject_worker.beam} {reproject_worker.stokes}"
+                    logger.info(
+                        f"  beam {beam + 1}/{nbeam} complete  "
+                        f"({len(matched_indices)} channels x {nstokes} Stokes planes)"
                     )
 
-                logger.info(
-                    f"  beam {beam + 1}/{nbeam} complete  "
-                    f"({len(matched_indices)} channels x {nstokes} Stokes planes)"
-                )
+        logger.info("Flushing output cube to disk")
+        out_file.flush()
+        os.fsync(out_file.fileno())
 
     return final_fits_cube_info
 

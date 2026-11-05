@@ -10,12 +10,16 @@ import pytest
 from astropy import units as u
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
+from reproject import reproject_interp
 
 from flint.exceptions import UnusableBeamError
 from flint.misc.holo import (
+    ConcatHoloOptions,
     FinalFITSCubeInfo,
     FITSCubeInfo,
     FrequencyGrid,
+    _get_cube_header,
+    concatenate_holography,
     construct_frequency_grid,
     construct_spatial_output_wcs,
     create_fits_info,
@@ -440,3 +444,47 @@ def test_sample_beam_response_taper_negative_edge(tmp_path) -> None:
     )
 
     np.testing.assert_array_equal(atten, 0.0)
+
+
+def test_concatenate_holography(tmp_path) -> None:
+    """Every plane lands where reprojecting it on its own would put it, and
+    channels between the input cubes stay empty"""
+    rng = np.random.default_rng(42)
+    low = _write_holo_cube(
+        path=tmp_path, data=rng.random((7, 2, 3, 11, 11)), name="low.fits"
+    )
+    high = _write_holo_cube(
+        path=tmp_path, data=rng.random((7, 2, 3, 11, 11)), name="high.fits"
+    )
+    # 900-902 MHz and 905-907 MHz, leaving 903 and 904 MHz empty
+    fits.setval(high, "CRVAL3", value=905e6)
+
+    output_path = concatenate_holography(
+        concat_holo_options=ConcatHoloOptions(
+            output_path=tmp_path / "concat.fits",
+            holo_cubes=(low, high),
+            # Does not divide the 7 beams, so the last batch is a short one
+            max_workers=3,
+        )
+    )
+
+    fits_cube_infos = load_and_sort_cubes(cube_paths=(low, high))
+    spatial_header = construct_spatial_output_wcs(fits_cube_infos=fits_cube_infos)
+    shape_out = (spatial_header["NAXIS2"], spatial_header["NAXIS1"])
+    concat = fits.getdata(output_path)
+    assert concat.shape == (7, 2, 8, *shape_out)
+
+    for fits_cube_info, first_channel in zip(fits_cube_infos, (0, 5)):
+        cube = fits.getdata(fits_cube_info.path)
+        for beam, stokes, channel in np.ndindex(cube.shape[:3]):
+            expected, _ = reproject_interp(
+                (cube[beam, stokes, channel], _get_cube_header(fits_cube_info)),
+                output_projection=spatial_header,
+                shape_out=shape_out,
+            )
+            np.testing.assert_array_equal(
+                concat[beam, stokes, first_channel + channel],
+                expected.astype(np.float32),
+            )
+
+    assert np.all(concat[:, :, 3:5] == 0)
