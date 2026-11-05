@@ -10,12 +10,16 @@ import pytest
 from astropy import units as u
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
+from reproject import reproject_interp
 
 from flint.exceptions import UnusableBeamError
 from flint.misc.holo import (
+    ConcatHoloOptions,
     FinalFITSCubeInfo,
     FITSCubeInfo,
     FrequencyGrid,
+    _get_cube_header,
+    concatenate_holography,
     construct_frequency_grid,
     construct_spatial_output_wcs,
     create_fits_info,
@@ -27,6 +31,7 @@ from flint.misc.holo import (
     map_frequencies_to_channels,
     outside_planes,
     sample_beam_response,
+    write_beam,
 )
 from flint.sky_model import generate_gaussian_pb
 from flint.utils import get_packaged_resource_path
@@ -107,9 +112,32 @@ def test_construct_placeholder_cube(example_cube_fits, tmpdir) -> None:
     assert new_hdr["NAXIS"] == 5
     assert len(cube.output_shape) == 5
     assert cube.data_offset == 5760
+    assert output_path.stat().st_size % 2880 == 0
     d = fits.getdata(cube.path)
     assert len(d.shape) == 5
     assert d.shape == tuple(cube.output_shape)
+
+
+def test_write_beam_rejects_wrong_shape(tmp_path) -> None:
+    """A beam that does not match the output cube is refused before anything is written"""
+    cube = FinalFITSCubeInfo(
+        path=tmp_path / "cube.fits", output_shape=[2, 4, 10, 5, 5], data_offset=0
+    )
+
+    with (
+        open(cube.path, "w+b") as out_file,
+        pytest.raises(ValueError, match="reprojected to shape"),
+    ):
+        write_beam(
+            out_file=out_file,
+            final_fits_cube_info=cube,
+            reprojected=np.zeros((10, 5, 5)),
+            beam=0,
+            ch_out=np.arange(10),
+            matched_indices=np.arange(10),
+        )
+
+    assert cube.path.stat().st_size == 0
 
 
 def test_construct_frequency_grid(example_cube_fits) -> None:
@@ -440,3 +468,95 @@ def test_sample_beam_response_taper_negative_edge(tmp_path) -> None:
     )
 
     np.testing.assert_array_equal(atten, 0.0)
+
+
+def test_concatenate_holography(tmp_path) -> None:
+    """Every plane lands where reprojecting it on its own would put it, and
+    channels between the input cubes stay empty"""
+    rng = np.random.default_rng(42)
+    low = _write_holo_cube(
+        path=tmp_path, data=rng.random((7, 2, 3, 11, 11)), name="low.fits"
+    )
+    high = _write_holo_cube(
+        path=tmp_path, data=rng.random((7, 2, 3, 11, 11)), name="high.fits"
+    )
+    # 900-902 MHz and 905-907 MHz, leaving 903 and 904 MHz empty
+    fits.setval(high, "CRVAL3", value=905e6)
+
+    output_path = concatenate_holography(
+        concat_holo_options=ConcatHoloOptions(
+            output_path=tmp_path / "concat.fits",
+            holo_cubes=(low, high),
+            # Smaller than the 7 beams, so the window of pending beams both
+            # fills and drains
+            max_workers=3,
+        )
+    )
+
+    fits_cube_infos = load_and_sort_cubes(cube_paths=(low, high))
+    spatial_header = construct_spatial_output_wcs(fits_cube_infos=fits_cube_infos)
+    shape_out = (spatial_header["NAXIS2"], spatial_header["NAXIS1"])
+    concat = fits.getdata(output_path)
+    assert concat.shape == (7, 2, 8, *shape_out)
+
+    for fits_cube_info, first_channel in zip(fits_cube_infos, (0, 5)):
+        cube = fits.getdata(fits_cube_info.path)
+        for beam, stokes, channel in np.ndindex(cube.shape[:3]):
+            expected, _ = reproject_interp(
+                (cube[beam, stokes, channel], _get_cube_header(fits_cube_info)),
+                output_projection=spatial_header,
+                shape_out=shape_out,
+            )
+            np.testing.assert_array_equal(
+                concat[beam, stokes, first_channel + channel],
+                expected.astype(np.float32),
+            )
+
+    assert np.all(concat[:, :, 3:5] == 0)
+    assert sorted(path.name for path in tmp_path.iterdir()) == [
+        "concat.fits",
+        "high.fits",
+        "low.fits",
+    ]
+
+
+@pytest.mark.parametrize("axis", [0, 1])
+def test_concatenate_holography_mismatched_cubes_raise(tmp_path, axis) -> None:
+    """Cubes that differ in their beams (axis 0) or Stokes (axis 1) are refused
+    before anything is written"""
+    shape = [2, 2, 3, 11, 11]
+    low = _write_holo_cube(path=tmp_path, data=np.ones(shape), name="low.fits")
+    shape[axis] = 1
+    high = _write_holo_cube(path=tmp_path, data=np.ones(shape), name="high.fits")
+    fits.setval(high, "CRVAL3", value=905e6)
+
+    with pytest.raises(ValueError, match="beams, Stokes"):
+        concatenate_holography(
+            concat_holo_options=ConcatHoloOptions(
+                output_path=tmp_path / "concat.fits", holo_cubes=(low, high)
+            )
+        )
+
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["high.fits", "low.fits"]
+
+
+def test_concatenate_holography_failure_keeps_output(tmp_path, monkeypatch) -> None:
+    """A run that fails part way leaves any earlier output at the output path untouched"""
+    low = _write_holo_cube(
+        path=tmp_path, data=np.ones((2, 1, 3, 11, 11)), name="low.fits"
+    )
+    output_path = tmp_path / "concat.fits"
+    output_path.write_bytes(b"earlier cube")
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("reprojection failed")
+
+    monkeypatch.setattr("flint.misc.holo.reproject_beam", fail)
+    with pytest.raises(RuntimeError, match="reprojection failed"):
+        concatenate_holography(
+            concat_holo_options=ConcatHoloOptions(
+                output_path=output_path, holo_cubes=(low,)
+            )
+        )
+
+    assert output_path.read_bytes() == b"earlier cube"

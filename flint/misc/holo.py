@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import os
 from argparse import ArgumentParser
+from collections import deque
+from collections.abc import Callable, Iterator
+from concurrent.futures import Executor, Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from socket import gethostname
-from typing import NamedTuple
+from typing import BinaryIO, NamedTuple
 
-import billiard
 import numpy as np
 from astropy import constants as const
 from astropy import units as u
@@ -37,7 +40,7 @@ class ConcatHoloOptions(BaseOptions):
     placeholder that must be overridden before calling ``concatenate_holography``,
     which raises if it is left unset"""
     max_workers: int = 8
-    """The maximum number of sub-processes that may be spawned"""
+    """Number of beams reprojected at once, each in its own thread and needing up to 0.3 GB"""
 
 
 @dataclass
@@ -414,66 +417,37 @@ def _get_cube_header(fits_cube_info: FITSCubeInfo) -> fits.Header:
     return in_header_2d
 
 
-@dataclass
-class ReprojectWorker:
-    in_cube_path: Path
-    """The cube to load"""
-    in_ch_idx: int
-    """The channel index of the input cube"""
-    in_cube_header: fits.Header
-    """The header that corresponds to ``plane``"""
-    beam: int
-    """The beam index"""
-    stokes: int
-    """The stokes index"""
-    out_idx: int
-    """The channel index"""
-    final_fits_cube_info: FinalFITSCubeInfo
-    """Information around the destination FITS cube"""
-
-
-def reproject_wrapper(
-    reproject_worker: ReprojectWorker,
-    output_projection: fits.Header,
+def reproject_beam(
+    fits_cube_info: FITSCubeInfo,
+    beam: int,
+    in_cube_header: fits.Header,
+    spatial_header: fits.Header,
     shape_out: tuple[int, int],
-) -> ReprojectWorker:
-    in_cube_arr = fits.getdata(reproject_worker.in_cube_path, memmap=True)
+) -> NDArray[np.floating]:
+    """Reproject every Stokes and channel plane of one beam onto the output grid.
 
-    plane = in_cube_arr[
-        reproject_worker.beam,
-        reproject_worker.stokes,
-        reproject_worker.in_ch_idx,
-        :,
-        :,
-    ]
-    reprojected, _ = reproject_interp(
-        (plane, reproject_worker.in_cube_header),
-        output_projection=output_projection,
-        shape_out=shape_out,
+    Args:
+        fits_cube_info (FITSCubeInfo): The input cube to read the beam from
+        beam (int): The beam index to reproject
+        in_cube_header (fits.Header): The 2D spatial header of the input cube
+        spatial_header (fits.Header): The 2D spatial header of the output grid
+        shape_out (tuple[int, int]): The (ny, nx) shape of the output grid
+
+    Returns:
+        NDArray[np.floating]: The reprojected beam, shaped (stokes, freq, ny, nx)
+    """
+    # Native float32 in and out: reproject is slower on big-endian input, and
+    # would otherwise return float64, doubling the memory
+    with fits.open(fits_cube_info.path, memmap=False) as hdul:
+        data = hdul[fits_cube_info.index].section[beam].astype(np.float32)
+
+    reprojected = np.empty((*data.shape[:-2], *shape_out), dtype=np.float32)
+    return reproject_interp(
+        (data, in_cube_header),
+        output_projection=spatial_header,
+        output_array=reprojected,
+        return_footprint=False,
     )
-
-    dest_cube_info: FinalFITSCubeInfo = reproject_worker.final_fits_cube_info
-
-    arr = np.memmap(
-        filename=dest_cube_info.path,
-        dtype=">f4",
-        offset=dest_cube_info.data_offset,
-        mode="r+",
-        shape=dest_cube_info.output_shape,
-    )
-    arr[
-        reproject_worker.beam,
-        reproject_worker.stokes,
-        reproject_worker.out_idx,
-        :,
-        :,
-    ] = reprojected.astype(">f4")
-
-    # NOTE: We are relying on the operating system to flush the updated data back
-    # to disk as it sees fit. The Usage of memmap here is pointing to a single
-    # block of memory between processes, and the OS is smart enough to manage
-    # this similar to what it would otherwise do with virtual memory -> page file.
-    return reproject_worker
 
 
 def get_output_data_shape(
@@ -488,12 +462,26 @@ def get_output_data_shape(
         spatial_header (fits.Header): The new output spatial header information
         frequency_grid (FrequencyGrid): The output frequency grid
 
+    Raises:
+        ValueError: Raised if the input cubes differ in their number of beams or Stokes
+
     Returns:
         list[int]: The expected output shape of the new holography
     """
 
     nbeam = fits_cube_infos[0].header["NAXIS5"]
     nstokes = fits_cube_infos[0].header["NAXIS4"]
+    for fits_cube_info in fits_cube_infos[1:]:
+        beams_stokes = (
+            fits_cube_info.header.get("NAXIS5"),
+            fits_cube_info.header.get("NAXIS4"),
+        )
+        if beams_stokes != (nbeam, nstokes):
+            raise ValueError(
+                f"{fits_cube_info.path} has (beams, Stokes) of {beams_stokes}, but "
+                f"{fits_cube_infos[0].path} has {(nbeam, nstokes)}"
+            )
+
     out_shape = [
         nbeam,
         nstokes,
@@ -551,7 +539,9 @@ def create_placeholder_cube(
     )
     logger.info("Generating placeholder data")
 
-    data_payload_size = np.prod(output_shape) * 4  # 4 bytes for float32
+    data_payload_size = int(np.prod(output_shape)) * 4  # 4 bytes for float32
+    # FITS data is zero padded to fill whole 2880 byte blocks
+    padding = -data_payload_size % 2880
     with open(output_path, "wb") as f:
         f.write(output_header.tostring().encode("ascii"))
         data_offset = f.tell()  # End of header, start of data
@@ -561,8 +551,8 @@ def create_placeholder_cube(
         # instantly. This works on linux systemss, may not on Windows
         # or OSX - the latter had a unit test failing when attempting
         # to fits.getdata on it, returning a buffer vs data shape mismatch.
-        # Curious, pal.
-        f.seek(data_payload_size - 1, 1)  # The -1 makes space for empty byte below
+        # Curious, pal. The -1 makes space for the empty byte below.
+        f.seek(data_payload_size + padding - 1, 1)
         f.write(b"\x00")  # Writing out a byte fixes OSX issue
 
     logger.info(f"Start of data: {data_offset} bytes")
@@ -573,6 +563,71 @@ def create_placeholder_cube(
         output_shape=output_shape,
         data_offset=data_offset,
     )
+
+
+def write_beam(
+    out_file: BinaryIO,
+    final_fits_cube_info: FinalFITSCubeInfo,
+    reprojected: NDArray[np.floating],
+    beam: int,
+    ch_out: NDArray[np.int_],
+    matched_indices: NDArray[np.int_],
+) -> None:
+    """Write the matched channels of one reprojected beam into the output cube.
+
+    Args:
+        out_file (BinaryIO): The output cube, opened for reading and writing
+        final_fits_cube_info (FinalFITSCubeInfo): The description of the output cube
+        reprojected (NDArray[np.floating]): The reprojected beam, shaped (stokes, freq, ny, nx)
+        beam (int): The beam index
+        ch_out (NDArray[np.int_]): The output channel of each input channel
+        matched_indices (NDArray[np.int_]): The input channels that have an output channel
+
+    Raises:
+        ValueError: Raised if ``reprojected`` is not one plane per Stokes and input channel on the output grid
+    """
+    _, nstokes, nchan_out, ny_out, nx_out = final_fits_cube_info.output_shape
+    expected_shape = (nstokes, len(ch_out), ny_out, nx_out)
+    if reprojected.shape != expected_shape:
+        raise ValueError(
+            f"Beam {beam} was reprojected to shape {reprojected.shape}, "
+            f"but the output cube needs {expected_shape}"
+        )
+
+    plane_bytes = ny_out * nx_out * 4  # 4 bytes for float32
+    for stokes in range(nstokes):
+        first_plane = (beam * nstokes + stokes) * nchan_out
+        for in_ch in matched_indices:
+            plane = first_plane + int(ch_out[in_ch])
+            out_file.seek(final_fits_cube_info.data_offset + plane * plane_bytes)
+            out_file.write(reprojected[stokes, in_ch].astype(">f4").tobytes())
+
+
+def reproject_in_order(
+    executor: Executor,
+    reproject: Callable[[int], NDArray[np.floating]],
+    nbeam: int,
+    max_pending: int,
+) -> Iterator[NDArray[np.floating]]:
+    """Reproject beams 0 to ``nbeam - 1`` in the executor, yielding them in order.
+
+    Args:
+        executor (Executor): The executor to reproject the beams in
+        reproject (Callable[[int], NDArray[np.floating]]): Reprojects the beam it is given
+        nbeam (int): The number of beams to reproject
+        max_pending (int): The most beams submitted but not yet yielded, which bounds the memory
+
+    Yields:
+        NDArray[np.floating]: Each reprojected beam, in beam order
+    """
+    pending: deque[Future[NDArray[np.floating]]] = deque()
+    for beam in range(nbeam):
+        if len(pending) == max_pending:
+            yield pending.popleft().result()
+        pending.append(executor.submit(reproject, beam))
+
+    while pending:
+        yield pending.popleft().result()
 
 
 def reproject_cubes(
@@ -592,6 +647,7 @@ def reproject_cubes(
         frequency_grid (FrequencyGrid): The frequency axis of the output cube
         cdelt_tol (float, optional): The acceptable tolerance between matching the frequency grid of input data to the output cube. Defaults to 1e-6.
         final_fits_cube_info (FinalFITSCubeInfo): The description of the final output cube
+        max_workers (int, optional): Number of beams reprojected at once, each in its own thread. Defaults to 2.
 
     Returns:
         FinalFITSCubeInfo: The final FITS cube info that was provided as input
@@ -599,8 +655,7 @@ def reproject_cubes(
 
     # Axis order follows FITS convention reversed for numpy:
     # (NAXIS5=beam, NAXIS4=Stokes, NAXIS3=freq, NAXIS2=dec, NAXIS1=ra)
-    nbeam = final_fits_cube_info.output_shape[0]
-    nstokes = final_fits_cube_info.output_shape[1]
+    nbeam, nstokes = final_fits_cube_info.output_shape[:2]
 
     logger.info(f"Output cube shape: {final_fits_cube_info.output_shape}")
     tol = (
@@ -608,52 +663,50 @@ def reproject_cubes(
     )  # 1 ppm tolerance for frequency matching
     shape_out_sky = (spatial_header["NAXIS2"], spatial_header["NAXIS1"])
 
-    # Using billiard Pool to allow a process pool executor like parallelism to be
-    # available when running under a dask-worker context. In such cases sub-processes
-    # may not normally be spawned - dask-workers start as a daemon and can not have
-    # children.
-    with billiard.Pool(max_workers) as pool:
+    # Threads rather than processes, as a dask worker cannot start child processes.
+    # Plain reads and writes rather than memory maps, as mapped pages count towards
+    # the memory dask watches when deciding to restart a worker.
+    with (
+        ThreadPoolExecutor(max_workers) as executor,
+        open(final_fits_cube_info.path, "r+b") as out_file,
+    ):
         for cube_idx, fits_cube_info in enumerate(fits_cube_infos):
             logger.info(f"Reprojecting cube {cube_idx} - {fits_cube_info.path} ...")
 
             ch_out, matched_indices = map_frequencies_to_channels(
                 freqs_1=frequency_grid.grid, freqs_2=fits_cube_info.freqs_hz, tol=tol
             )
-            in_cube_header = _get_cube_header(fits_cube_info=fits_cube_info)
-
-            reproject_interp_func = partial(
-                reproject_wrapper,
-                output_projection=spatial_header,
+            reproject = partial(
+                reproject_beam,
+                fits_cube_info,
+                in_cube_header=_get_cube_header(fits_cube_info=fits_cube_info),
+                spatial_header=spatial_header,
                 shape_out=shape_out_sky,
             )
-            for beam in range(nbeam):
-                pool_items = []
-                for stokes in range(nstokes):
-                    for ch_idx in matched_indices:
-                        pool_items.append(
-                            ReprojectWorker(
-                                in_cube_path=fits_cube_info.path,
-                                in_ch_idx=ch_idx,
-                                in_cube_header=in_cube_header,
-                                beam=beam,
-                                stokes=stokes,
-                                out_idx=ch_out[ch_idx],
-                                final_fits_cube_info=final_fits_cube_info,
-                            )
-                        )
 
-                logger.debug(f"Collcted {len(pool_items)} for reprojection")
-                results = pool.map(reproject_interp_func, pool_items, chunksize=8)
-
-                for reproject_worker in results:
-                    logger.debug(
-                        f"Finished {reproject_worker.beam} {reproject_worker.stokes}"
-                    )
-
+            reprojected_beams = reproject_in_order(
+                executor=executor,
+                reproject=reproject,
+                nbeam=nbeam,
+                max_pending=max_workers,
+            )
+            for beam, reprojected in enumerate(reprojected_beams):
+                write_beam(
+                    out_file=out_file,
+                    final_fits_cube_info=final_fits_cube_info,
+                    reprojected=reprojected,
+                    beam=beam,
+                    ch_out=ch_out,
+                    matched_indices=matched_indices,
+                )
                 logger.info(
                     f"  beam {beam + 1}/{nbeam} complete  "
                     f"({len(matched_indices)} channels x {nstokes} Stokes planes)"
                 )
+
+        logger.info("Flushing output cube to disk")
+        out_file.flush()
+        os.fsync(out_file.fileno())
 
     return final_fits_cube_info
 
@@ -714,11 +767,16 @@ def concatenate_holography(concat_holo_options: ConcatHoloOptions) -> Path:
     spatial_header = construct_spatial_output_wcs(fits_cube_infos=fits_cube_infos)
     frequency_grid = construct_frequency_grid(fits_cube_infos=fits_cube_infos)
 
+    # Only a complete cube is ever at the output path. A failure or a dead worker
+    # leaves just this scratch file, which the next run writes over
+    output_path = concat_holo_options.output_path
+    partial_path = output_path.with_name(f"{output_path.name}.concatenating")
+
     final_fits_cube_info: FinalFITSCubeInfo = create_placeholder_cube(
         fits_cube_infos=fits_cube_infos,
         spatial_header=spatial_header,
         frequency_grid=frequency_grid,
-        output_path=concat_holo_options.output_path,
+        output_path=partial_path,
     )
 
     reproject_cubes(
@@ -729,9 +787,10 @@ def concatenate_holography(concat_holo_options: ConcatHoloOptions) -> Path:
         final_fits_cube_info=final_fits_cube_info,
         max_workers=concat_holo_options.max_workers,
     )
+    partial_path.replace(output_path)
 
-    logger.info(f"Finished writing {concat_holo_options.output_path}")
-    return concat_holo_options.output_path
+    logger.info(f"Finished writing {output_path}")
+    return output_path
 
 
 def get_parser() -> ArgumentParser:
