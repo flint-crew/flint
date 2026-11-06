@@ -44,23 +44,23 @@ class BANEMaps(NamedTuple):
 
 
 @nb.njit(fastmath=True, cache=True)
-def _ft_kernel(kernel: NDArray[np.float32], shape: tuple) -> NDArray[np.float32]:
+def _ft_kernel(kernel: NDArray[np.float64], shape: tuple) -> NDArray[np.complex128]:
     """FFT of `kernel`, zero-padded out to `shape`"""
     return fft.rfft2(kernel, s=shape)
 
 
 @nb.njit(
-    nb.float32[:, :](
-        nb.float32[:, :],
+    nb.float64[:, :](
+        nb.float64[:, :],
         nb.types.UniTuple(nb.int64, 2),
     ),
     fastmath=True,
     cache=True,
 )
 def pad_reflect(
-    array: NDArray[np.float32],
+    array: NDArray[np.float64],
     pad_width: tuple[int, int],
-) -> NDArray[np.float32]:
+) -> NDArray[np.float64]:
     """``np.pad(array, pad_width, mode="reflect")``, in a form numba can compile"""
     nx, ny = array.shape
     px, py = pad_width
@@ -80,13 +80,13 @@ def pad_reflect(
 
 
 @nb.njit(
-    nb.float32[:, :](nb.float32[:, :], nb.float32[:, :]),
+    nb.float64[:, :](nb.float64[:, :], nb.float64[:, :]),
     fastmath=True,
     cache=True,
 )
 def fft_average(
-    image: NDArray[np.float32], kernel: NDArray[np.float32]
-) -> NDArray[np.float32]:
+    image: NDArray[np.float64], kernel: NDArray[np.float64]
+) -> NDArray[np.float64]:
     """Convolve `image` by `kernel`, normalised so a flat image is unchanged"""
     pad_x, pad_y = kernel.shape
     image_padded = pad_reflect(array=image, pad_width=(pad_x, pad_y))
@@ -105,7 +105,7 @@ def fft_average(
     nb.types.UniTuple(nb.float32[:, :], 2)(
         nb.float32[:, :], nb.float32[:, :], nb.float32[:, :]
     ),
-    fastmath=True,
+    # Not fastmath, which may assume no NaNs, as they mark what is blank here
     cache=True,
 )
 def bane_fft(
@@ -114,15 +114,19 @@ def bane_fft(
     valid: NDArray[np.float32],
 ) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
     """Background and RMS of `image`, which must be zero wherever `valid` is"""
-    weight = fft_average(valid, kernel)
-    weight = np.where(weight > 0, weight, np.nan).astype(np.float32)
+    # An FFT's rounding error spreads from the loudest region across the whole
+    # image, which in float32 can exceed the variance of the quiet parts
+    image, kernel = image.astype(np.float64), kernel.astype(np.float64)
 
-    mean = (fft_average(image, kernel) / weight).astype(np.float32)
+    weight = fft_average(valid.astype(np.float64), kernel)
+    weight = np.where(weight > 0, weight, np.nan)
+
+    mean = fft_average(image, kernel) / weight
     # Selected rather than multiplied by `valid`, as NaN * 0 is NaN
-    resid = np.where(valid > 0, (image - mean) ** 2, np.float32(0.0)).astype(np.float32)
-    rms = np.sqrt(fft_average(resid, kernel) / weight).astype(np.float32)
+    resid = np.where(valid > 0, (image - mean) ** 2, 0.0)
+    rms = np.sqrt(fft_average(resid, kernel) / weight)
 
-    return mean, rms
+    return mean.astype(np.float32), rms.astype(np.float32)
 
 
 def tophat_kernel(diameter: int) -> NDArray[np.float32]:
@@ -313,6 +317,16 @@ def box_stats(
     return median, sigma
 
 
+def _fill_from_nearest(
+    unmeasured: NDArray[np.bool_], *grids: NDArray[np.float32]
+) -> list[NDArray[np.float32]]:
+    """Give the `unmeasured` nodes of each grid the value of their nearest measured one"""
+    nearest = ndimage.distance_transform_edt(
+        unmeasured, return_distances=False, return_indices=True
+    )
+    return [grid[tuple(nearest)] for grid in grids]
+
+
 def local_seed(
     image: NDArray[np.float32],
     nan_mask: NDArray[np.bool_],
@@ -332,8 +346,7 @@ def local_seed(
     if unmeasured.all():
         median[:], sigma[:] = clipped_stats(np.sort(image[~nan_mask]))
     elif unmeasured.any():
-        _, nearest = ndimage.distance_transform_edt(unmeasured, return_indices=True)
-        median, sigma = median[tuple(nearest)], sigma[tuple(nearest)]
+        median, sigma = _fill_from_nearest(unmeasured, median, sigma)
 
     with PARALLEL_KERNEL_LOCK:
         background, rms = [
@@ -396,8 +409,15 @@ def bane_round(
     del clipped, source_mask
 
     smooth_background, smooth_rms = bane_fft(downsampled, kernel, round_valid)
-    np.nan_to_num(smooth_background, nan=0.0, copy=False)
-    np.nan_to_num(smooth_rms, nan=0.0, copy=False)
+
+    # An RMS of zero makes every pixel there look infinitely significant
+    unmeasured = ~(smooth_rms > 0)
+    if unmeasured.all():
+        return background, rms
+    if unmeasured.any():
+        smooth_background, smooth_rms = _fill_from_nearest(
+            unmeasured, smooth_background, smooth_rms
+        )
 
     if step_size_pix > 0:
         with PARALLEL_KERNEL_LOCK:

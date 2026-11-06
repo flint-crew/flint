@@ -31,6 +31,10 @@ from flint.bane import (
 
 NY = NX = 1024
 PIX_PER_BEAM = 10
+# What flint's aegean task measures with, from the default BANEOptions
+AEGEAN_BANE_OPTIONS = FFTBANEOptions(
+    step_size=4, box_size=49, clip_sigma=3.0, kernel="tophat"
+)
 
 
 def _header(shape: tuple[int, int] = (NY, NX)) -> fits.Header:
@@ -60,7 +64,7 @@ def _sky(background: float = 0.0, rms: float = 1e-3, seed: int = 0) -> np.ndarra
 def test_pad_reflect_matches_numpy() -> None:
     """Agrees with np.pad(mode='reflect')"""
     rng = np.random.default_rng(0)
-    array = rng.normal(size=(17, 23)).astype(np.float32)
+    array = rng.normal(size=(17, 23))
 
     for pad_y, pad_x in ((1, 1), (5, 3), (8, 11)):
         assert np.allclose(
@@ -71,10 +75,12 @@ def test_pad_reflect_matches_numpy() -> None:
 
 def test_fft_average_preserves_a_flat_image() -> None:
     """Smoothing a constant image returns that constant"""
-    image = np.full((128, 128), 3.0, dtype=np.float32)
+    image = np.full((128, 128), 3.0)
 
     for kernel in (gaussian_kernel(5), tophat_kernel(8)):
-        assert np.allclose(fft_average(image, kernel), 3.0, atol=1e-4)
+        assert np.allclose(
+            fft_average(image, kernel.astype(np.float64)), 3.0, atol=1e-4
+        )
 
 
 def test_bane_recovers_a_varying_background_and_rms() -> None:
@@ -394,11 +400,11 @@ def test_a_wider_plane_is_measured_as_float32() -> None:
 
 def test_fft_average_puts_the_smoothed_pixel_over_the_pixel_it_smooths() -> None:
     """Smoothing does not shift the image"""
-    image = np.zeros((64, 64), dtype=np.float32)
+    image = np.zeros((64, 64))
     image[32, 20] = 1.0
 
     for kernel in (gaussian_kernel(6), gaussian_kernel(9), tophat_kernel(8)):
-        kernel = (kernel / kernel.max()).astype(np.float32)
+        kernel = (kernel / kernel.max()).astype(np.float64)
         smoothed = fft_average(np.ascontiguousarray(image), kernel)
 
         # Not argmax, which a tophat's flat disc puts on its first row
@@ -478,6 +484,59 @@ def test_a_region_of_loud_artefacts_is_measured_as_noise(start: int, stop: int) 
     inside = slice(start + 50, stop - 50)
     assert np.nanmedian(rms[inside, inside]) == pytest.approx(0.1, rel=0.3)
     assert np.nanmedian(rms[600:, 600:]) == pytest.approx(1e-3, rel=0.3)
+
+
+def test_a_loud_region_does_not_wreck_the_noise_elsewhere() -> None:
+    """The FFT rounding error of a very loud region stays below the noise far from it"""
+    rng = np.random.default_rng(0)
+    image = rng.normal(0, 1e-3, (NY, NX)).astype(np.float32)
+    image[:200, :200] = rng.normal(0, 100.0, (200, 200)).astype(np.float32)
+
+    _, rms = robust_bane(
+        image=image, header=_header(), fft_bane_options=AEGEAN_BANE_OPTIONS
+    )
+
+    far = rms[400:, 400:]
+    assert far.min() > 5e-4
+    assert np.median(far) == pytest.approx(1e-3, rel=0.05)
+
+
+def test_nodes_without_a_measure_take_a_neighbours_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A blank or zero RMS node does not reach the maps as a zero"""
+    import flint.bane
+
+    measure = flint.bane.bane_fft
+
+    def _with_holes(image, kernel, valid):
+        mean, rms = measure(image, kernel, valid)
+        rms = np.array(rms)
+        rms[10, 10], rms[20, 20] = np.nan, 0.0
+        return mean, rms
+
+    monkeypatch.setattr(flint.bane, "bane_fft", _with_holes)
+    image = np.random.default_rng(0).normal(0, 1e-3, (NY, NX)).astype(np.float32)
+
+    _, rms = robust_bane(
+        image=image, header=_header(), fft_bane_options=AEGEAN_BANE_OPTIONS
+    )
+
+    assert rms.min() > 5e-4
+
+
+def test_a_plane_the_downsampling_misses_keeps_its_seed() -> None:
+    """Valid pixels that all fall between the downsampling nodes are still measured"""
+    image = np.full((NY, NX), np.nan, dtype=np.float32)
+    image[1::2, 1::2] = np.random.default_rng(0).normal(0, 1e-3, (NY // 2, NX // 2))
+
+    _, rms = robust_bane(
+        image=image, header=_header(), fft_bane_options=AEGEAN_BANE_OPTIONS
+    )
+
+    valid = np.isfinite(image)
+    assert rms[valid].min() > 5e-4
+    assert np.median(rms[valid]) == pytest.approx(1e-3, rel=0.1)
 
 
 def test_a_source_larger_than_a_step_is_still_clipped() -> None:
