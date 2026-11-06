@@ -16,6 +16,7 @@ from scipy import ndimage
 
 from flint.bane import (
     FFTBANEOptions,
+    bane_fft,
     bane_fits_image,
     bilinear_upsample,
     box_stats,
@@ -501,7 +502,7 @@ def test_a_loud_region_does_not_wreck_the_noise_elsewhere() -> None:
     assert np.median(far) == pytest.approx(1e-3, rel=0.05)
 
 
-def test_nodes_without_a_measure_take_a_neighbours_value(
+def test_nodes_without_a_measure_keep_what_the_round_was_given(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A blank or zero RMS node does not reach the maps as a zero"""
@@ -537,6 +538,63 @@ def test_a_plane_the_downsampling_misses_keeps_its_seed() -> None:
     valid = np.isfinite(image)
     assert rms[valid].min() > 5e-4
     assert np.median(rms[valid]) == pytest.approx(1e-3, rel=0.1)
+
+
+def test_rounding_noise_does_not_count_as_coverage() -> None:
+    """A node beyond the kernel's reach of every valid one is unmeasured, however
+    loud they are"""
+    image = np.zeros((256, 256), dtype=np.float32)
+    valid = np.zeros_like(image)
+    image[150:250, 150:250] = np.random.default_rng(0).normal(0, 100.0, (100, 100))
+    valid[150:250, 150:250] = 1.0
+
+    mean, rms = bane_fft(image, tophat_kernel(49), valid)
+
+    assert np.isnan(mean[:100, :100]).all()
+    assert np.isnan(rms[:100, :100]).all()
+
+
+def test_a_fragment_no_node_can_see_is_not_measured_from_rounding_noise() -> None:
+    """A fragment between the nodes takes the seed beside a loud region, not the ratio
+    of two rounding errors"""
+    image = np.full((NY, NX), np.nan, dtype=np.float32)
+    image[101:104, 101:104] = np.random.default_rng(0).normal(0, 1e-3, (3, 3))
+    image[620:1020, 620:1020] = np.random.default_rng(1).normal(0, 100.0, (400, 400))
+
+    background, rms = robust_bane(
+        image=image, header=_header(), fft_bane_options=AEGEAN_BANE_OPTIONS
+    )
+
+    fragment = slice(101, 104)
+    assert rms[fragment, fragment].max() < 150
+    assert np.abs(background[fragment, fragment]).max() < rms[fragment, fragment].min()
+
+
+def test_an_rms_with_nothing_to_measure_is_blank() -> None:
+    """A plane with no spread in it gets a blank RMS rather than one of zero"""
+    one_pixel = np.full((NY, NX), np.nan, dtype=np.float32)
+    one_pixel[101, 101] = 1e-3
+
+    for plane in (one_pixel, np.ones((NY, NX), dtype=np.float32)):
+        _, rms = robust_bane(
+            image=plane, header=_header(), fft_bane_options=AEGEAN_BANE_OPTIONS
+        )
+        assert np.isnan(rms).all()
+
+
+@pytest.mark.filterwarnings("ignore::RuntimeWarning")
+def test_values_near_the_float32_limit_leave_the_maps_free_of_infinities() -> None:
+    """Pixels near the float32 limit leave a finite background and no infinite RMS"""
+    rng = np.random.default_rng(1)
+    image = rng.normal(0, 1e-3, (NY, NX)).astype(np.float32)
+    image[620:1020, 620:1020] = rng.choice([-3e38, 3e38], (400, 400))
+
+    background, rms = robust_bane(
+        image=image, header=_header(), fft_bane_options=AEGEAN_BANE_OPTIONS
+    )
+
+    assert np.isfinite(background).all()
+    assert not np.isinf(rms).any()
 
 
 def test_a_source_larger_than_a_step_is_still_clipped() -> None:

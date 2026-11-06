@@ -119,7 +119,9 @@ def bane_fft(
     image, kernel = image.astype(np.float64), kernel.astype(np.float64)
 
     weight = fft_average(valid.astype(np.float64), kernel)
-    weight = np.where(weight > 0, weight, np.nan)
+    # Half the least a single valid node can add, as anything below is rounding error
+    weight_floor = 0.5 * np.where(kernel > 0, kernel, np.inf).min() / kernel.sum()
+    weight = np.where(weight > weight_floor, weight, np.nan)
 
     mean = fft_average(image, kernel) / weight
     # Selected rather than multiplied by `valid`, as NaN * 0 is NaN
@@ -230,9 +232,10 @@ def bilinear_upsample(
         a, b, fy = y0[i], y1[i], wy[i]
         for j in range(shape[1]):
             c, d, fx = x0[j], x1[j], wx[j]
-            top = grid[a, c] + fx * (grid[a, d] - grid[a, c])
-            bottom = grid[b, c] + fx * (grid[b, d] - grid[b, c])
-            out[i, j] = top + fy * (bottom - top)
+            # As weights, since the difference of two large values can overflow float32
+            top = (1 - fx) * grid[a, c] + fx * grid[a, d]
+            bottom = (1 - fx) * grid[b, c] + fx * grid[b, d]
+            out[i, j] = (1 - fy) * top + fy * bottom
     return out
 
 
@@ -317,16 +320,6 @@ def box_stats(
     return median, sigma
 
 
-def _fill_from_nearest(
-    unmeasured: NDArray[np.bool_], *grids: NDArray[np.float32]
-) -> list[NDArray[np.float32]]:
-    """Give the `unmeasured` nodes of each grid the value of their nearest measured one"""
-    nearest = ndimage.distance_transform_edt(
-        unmeasured, return_distances=False, return_indices=True
-    )
-    return [grid[tuple(nearest)] for grid in grids]
-
-
 def local_seed(
     image: NDArray[np.float32],
     nan_mask: NDArray[np.bool_],
@@ -346,7 +339,8 @@ def local_seed(
     if unmeasured.all():
         median[:], sigma[:] = clipped_stats(np.sort(image[~nan_mask]))
     elif unmeasured.any():
-        median, sigma = _fill_from_nearest(unmeasured, median, sigma)
+        _, nearest = ndimage.distance_transform_edt(unmeasured, return_indices=True)
+        median, sigma = median[tuple(nearest)], sigma[tuple(nearest)]
 
     with PARALLEL_KERNEL_LOCK:
         background, rms = [
@@ -389,13 +383,13 @@ def bane_round(
         + rng.normal(loc=0, scale=1, size=n_source) * rms[source_mask]
     )
 
-    if step_size_pix > 0:
-        y_slice, x_slice = _downsample_slices(image.shape, step_size_pix)
-        downsampled = np.ascontiguousarray(clipped[y_slice, x_slice])
-        round_valid = (~nan_mask[y_slice, x_slice]).astype(np.float32)
-    else:
-        downsampled = np.ascontiguousarray(clipped)
-        round_valid = (~nan_mask).astype(np.float32)
+    y_slice, x_slice = (
+        _downsample_slices(image.shape, step_size_pix)
+        if step_size_pix > 0
+        else (slice(None), slice(None))
+    )
+    downsampled = np.ascontiguousarray(clipped[y_slice, x_slice])
+    round_valid = (~nan_mask[y_slice, x_slice]).astype(np.float32)
 
     # pad_reflect has no bounds checks, so would read off the end instead
     if any(pad >= length for pad, length in zip(kernel.shape, downsampled.shape)):
@@ -410,14 +404,11 @@ def bane_round(
 
     smooth_background, smooth_rms = bane_fft(downsampled, kernel, round_valid)
 
-    # An RMS of zero makes every pixel there look infinitely significant
+    # An RMS of zero makes every pixel there look infinitely significant, so a node
+    # with nothing usable keeps what this round was given
     unmeasured = ~(smooth_rms > 0)
-    if unmeasured.all():
-        return background, rms
-    if unmeasured.any():
-        smooth_background, smooth_rms = _fill_from_nearest(
-            unmeasured, smooth_background, smooth_rms
-        )
+    smooth_background[unmeasured] = background[y_slice, x_slice][unmeasured]
+    smooth_rms[unmeasured] = rms[y_slice, x_slice][unmeasured]
 
     if step_size_pix > 0:
         with PARALLEL_KERNEL_LOCK:
@@ -445,7 +436,8 @@ def robust_bane(
     Two rounds: the first clips against ``local_seed``, the second against the
     first's maps. Non-finite pixels are blank, as are zeros unless
     ``invalidate_zeros`` is unset. A plane that is all blank, or has no usable
-    beam when one is needed, gets blank maps.
+    beam when one is needed, gets blank maps. The RMS is blank wherever it has
+    nothing to measure, as with a plane of one value, and is otherwise positive.
 
     Peaks at roughly five times the plane in memory.
 
@@ -506,7 +498,7 @@ def robust_bane(
         )
 
     background[nan_mask] = np.nan
-    rms[nan_mask] = np.nan
+    rms[nan_mask | (rms <= 0)] = np.nan
 
     return background, rms
 
