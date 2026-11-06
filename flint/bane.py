@@ -44,23 +44,23 @@ class BANEMaps(NamedTuple):
 
 
 @nb.njit(fastmath=True, cache=True)
-def _ft_kernel(kernel: NDArray[np.float32], shape: tuple) -> NDArray[np.float32]:
+def _ft_kernel(kernel: NDArray[np.float64], shape: tuple) -> NDArray[np.complex128]:
     """FFT of `kernel`, zero-padded out to `shape`"""
     return fft.rfft2(kernel, s=shape)
 
 
 @nb.njit(
-    nb.float32[:, :](
-        nb.float32[:, :],
+    nb.float64[:, :](
+        nb.float64[:, :],
         nb.types.UniTuple(nb.int64, 2),
     ),
     fastmath=True,
     cache=True,
 )
 def pad_reflect(
-    array: NDArray[np.float32],
+    array: NDArray[np.float64],
     pad_width: tuple[int, int],
-) -> NDArray[np.float32]:
+) -> NDArray[np.float64]:
     """``np.pad(array, pad_width, mode="reflect")``, in a form numba can compile"""
     nx, ny = array.shape
     px, py = pad_width
@@ -80,13 +80,13 @@ def pad_reflect(
 
 
 @nb.njit(
-    nb.float32[:, :](nb.float32[:, :], nb.float32[:, :]),
+    nb.float64[:, :](nb.float64[:, :], nb.float64[:, :]),
     fastmath=True,
     cache=True,
 )
 def fft_average(
-    image: NDArray[np.float32], kernel: NDArray[np.float32]
-) -> NDArray[np.float32]:
+    image: NDArray[np.float64], kernel: NDArray[np.float64]
+) -> NDArray[np.float64]:
     """Convolve `image` by `kernel`, normalised so a flat image is unchanged"""
     pad_x, pad_y = kernel.shape
     image_padded = pad_reflect(array=image, pad_width=(pad_x, pad_y))
@@ -105,7 +105,7 @@ def fft_average(
     nb.types.UniTuple(nb.float32[:, :], 2)(
         nb.float32[:, :], nb.float32[:, :], nb.float32[:, :]
     ),
-    fastmath=True,
+    # Not fastmath, which may assume no NaNs, as they mark what is blank here
     cache=True,
 )
 def bane_fft(
@@ -114,15 +114,21 @@ def bane_fft(
     valid: NDArray[np.float32],
 ) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
     """Background and RMS of `image`, which must be zero wherever `valid` is"""
-    weight = fft_average(valid, kernel)
-    weight = np.where(weight > 0, weight, np.nan).astype(np.float32)
+    # An FFT's rounding error spreads from the loudest region across the whole
+    # image, which in float32 can exceed the variance of the quiet parts
+    image, kernel = image.astype(np.float64), kernel.astype(np.float64)
 
-    mean = (fft_average(image, kernel) / weight).astype(np.float32)
+    weight = fft_average(valid.astype(np.float64), kernel)
+    # Half the least a single valid node can add, as anything below is rounding error
+    weight_floor = 0.5 * np.where(kernel > 0, kernel, np.inf).min() / kernel.sum()
+    weight = np.where(weight > weight_floor, weight, np.nan)
+
+    mean = fft_average(image, kernel) / weight
     # Selected rather than multiplied by `valid`, as NaN * 0 is NaN
-    resid = np.where(valid > 0, (image - mean) ** 2, np.float32(0.0)).astype(np.float32)
-    rms = np.sqrt(fft_average(resid, kernel) / weight).astype(np.float32)
+    resid = np.where(valid > 0, (image - mean) ** 2, 0.0)
+    rms = np.sqrt(fft_average(resid, kernel) / weight)
 
-    return mean, rms
+    return mean.astype(np.float32), rms.astype(np.float32)
 
 
 def tophat_kernel(diameter: int) -> NDArray[np.float32]:
@@ -226,9 +232,10 @@ def bilinear_upsample(
         a, b, fy = y0[i], y1[i], wy[i]
         for j in range(shape[1]):
             c, d, fx = x0[j], x1[j], wx[j]
-            top = grid[a, c] + fx * (grid[a, d] - grid[a, c])
-            bottom = grid[b, c] + fx * (grid[b, d] - grid[b, c])
-            out[i, j] = top + fy * (bottom - top)
+            # As weights, since the difference of two large values can overflow float32
+            top = (1 - fx) * grid[a, c] + fx * grid[a, d]
+            bottom = (1 - fx) * grid[b, c] + fx * grid[b, d]
+            out[i, j] = (1 - fy) * top + fy * bottom
     return out
 
 
@@ -376,13 +383,13 @@ def bane_round(
         + rng.normal(loc=0, scale=1, size=n_source) * rms[source_mask]
     )
 
-    if step_size_pix > 0:
-        y_slice, x_slice = _downsample_slices(image.shape, step_size_pix)
-        downsampled = np.ascontiguousarray(clipped[y_slice, x_slice])
-        round_valid = (~nan_mask[y_slice, x_slice]).astype(np.float32)
-    else:
-        downsampled = np.ascontiguousarray(clipped)
-        round_valid = (~nan_mask).astype(np.float32)
+    y_slice, x_slice = (
+        _downsample_slices(image.shape, step_size_pix)
+        if step_size_pix > 0
+        else (slice(None), slice(None))
+    )
+    downsampled = np.ascontiguousarray(clipped[y_slice, x_slice])
+    round_valid = (~nan_mask[y_slice, x_slice]).astype(np.float32)
 
     # pad_reflect has no bounds checks, so would read off the end instead
     if any(pad >= length for pad, length in zip(kernel.shape, downsampled.shape)):
@@ -396,8 +403,12 @@ def bane_round(
     del clipped, source_mask
 
     smooth_background, smooth_rms = bane_fft(downsampled, kernel, round_valid)
-    np.nan_to_num(smooth_background, nan=0.0, copy=False)
-    np.nan_to_num(smooth_rms, nan=0.0, copy=False)
+
+    # An RMS of zero makes every pixel there look infinitely significant, so a node
+    # with nothing usable keeps what this round was given
+    unmeasured = ~(smooth_rms > 0)
+    smooth_background[unmeasured] = background[y_slice, x_slice][unmeasured]
+    smooth_rms[unmeasured] = rms[y_slice, x_slice][unmeasured]
 
     if step_size_pix > 0:
         with PARALLEL_KERNEL_LOCK:
@@ -425,7 +436,8 @@ def robust_bane(
     Two rounds: the first clips against ``local_seed``, the second against the
     first's maps. Non-finite pixels are blank, as are zeros unless
     ``invalidate_zeros`` is unset. A plane that is all blank, or has no usable
-    beam when one is needed, gets blank maps.
+    beam when one is needed, gets blank maps. The RMS is blank wherever it has
+    nothing to measure, as with a plane of one value, and is otherwise positive.
 
     Peaks at roughly five times the plane in memory.
 
@@ -486,7 +498,7 @@ def robust_bane(
         )
 
     background[nan_mask] = np.nan
-    rms[nan_mask] = np.nan
+    rms[nan_mask | (rms <= 0)] = np.nan
 
     return background, rms
 
