@@ -22,6 +22,10 @@ from radio_beam.beam import NoBeamException
 from radio_beam.utils import BeamError
 
 from flint.logging import logger
+from flint.naming import Suffix
+
+_BEAMCON_SUFFIX = "conv"
+"""The suffix racs_tools beamcon adds to the files it writes. These are renamed to the flint name."""
 
 warnings.simplefilter("ignore", FITSFixedWarning)
 
@@ -366,9 +370,10 @@ def convolve_cubes(
     cube_paths: Collection[Path],
     beam_shapes: list[BeamShape],
     cutoff: float | None = None,
-    convol_suffix: str = "conv",
+    suffix_spec: Suffix | None = None,
     executor_type: Literal["thread", "process", "mpi"] = "thread",
 ) -> Collection[Path]:
+    suffix_spec = suffix_spec if suffix_spec is not None else Suffix(conv=True)
     logger.info(f"Will attempt to convol {len(cube_paths)} cubes")
     if cutoff:
         logger.info(f"Supplied cutoff {cutoff}")
@@ -391,17 +396,20 @@ def convolve_cubes(
         bmaj=beam_major_list,
         bmin=beam_minor_list,
         bpa=beam_pa_list,
-        suffix=convol_suffix,
+        suffix=_BEAMCON_SUFFIX,
         executor_type=executor_type,
     )
 
-    # Construct the name of the new file created. For the moment this is done
-    # manually as it is not part of the returned object
+    # The name of the file beamcon created is not part of the returned object,
+    # so it is reconstructed, then renamed to the flint name
     # TODO: Extend the return struct from beamcon_3D to include output name
-    convol_cubes_path = [
-        Path(cube_data.filename).with_suffix(f".{convol_suffix}.fits")
-        for cube_data in cube_data_list
-    ]
+    convol_cubes_path = []
+    for cube_data in cube_data_list:
+        input_cube = Path(cube_data.filename)
+        beamcon_cube = input_cube.with_suffix(f".{_BEAMCON_SUFFIX}.fits")
+        output_cube = input_cube + suffix_spec
+        beamcon_cube.rename(output_cube)
+        convol_cubes_path.append(output_cube)
 
     # Show the mapping as a sanity check
     for input_cube, output_cube in zip(list(cube_paths), convol_cubes_path):
@@ -450,7 +458,7 @@ def convolve_images(
     image_paths: Collection[Path],
     beam_shape: BeamShape,
     cutoff: float | None = None,
-    convol_suffix: str = "conv",
+    suffix_spec: Suffix | None = None,
     output_paths: list[Path] | None = None,
 ) -> list[Path]:
     """Convolve a set of input images to a common resolution as specified
@@ -467,8 +475,8 @@ def convolve_images(
         image_paths (Collection[Path]): Set of image paths to FITS images to convol
         beam_shape (BeamShape): The specification of the desired final resolution
         cutoff (Optional[float], optional): Images whose major-axis is larger than this will be blank. Expected in arcseconds. Defaults to None.
-        convol_suffix (str, optional): The suffix added to .fits to indicate smoothed image. Defaults to 'conv'.
-        output_paths (list[Path] | None, optional): The final output file namesfor each input image. If provided this renamed files created using the `convol_suffix`. Defaults to None.
+        suffix_spec (Suffix | None, optional): The suffix fields added to the flint name of each input image to indicate it is smoothed. If None ``Suffix(conv=True)`` is used. Defaults to None.
+        output_paths (list[Path] | None, optional): The final output file names for each input image. If provided these are used instead of names formed with ``suffix_spec``. Defaults to None.
 
     Returns:
         Collection[Path]: Set of paths to the smoothed images
@@ -478,20 +486,27 @@ def convolve_images(
     if cutoff:
         logger.info(f"Supplied cutoff of {cutoff} arcsecond")
 
+    if output_paths:
+        assert isinstance(output_paths, type(image_paths)), (
+            "Types for image_paths and output_paths need to be the same"
+        )
+        assert len(output_paths) == len(image_paths), (
+            f"Mismatch collection lengths of image_paths ({len(image_paths)}) and output_paths ({len(output_paths)})"
+        )
+    else:
+        suffix_spec = suffix_spec if suffix_spec is not None else Suffix(conv=True)
+        output_paths = [Path(image_path) + suffix_spec for image_path in image_paths]
+
     if not np.isfinite(beam_shape.bmaj_arcsec):
         logger.info("Beam shape is not defined. Copying files into place. ")
 
-        conv_image_paths = [
-            Path(str(image_path).replace(".fits", f".{convol_suffix}.fits"))
-            for image_path in image_paths
-        ]
         # If the beam is not defined, simply copy the file into place. Although
         # this takes up more space, it is not more than otherwise
-        for original_path, copy_path in zip(image_paths, conv_image_paths):
+        for original_path, copy_path in zip(image_paths, output_paths):
             logger.info(f"Copying {original_path=} {copy_path=}")
             copyfile(original_path, copy_path)
 
-        return conv_image_paths
+        return list(output_paths)
 
     radio_beam = Beam(
         major=beam_shape.bmaj_arcsec * u.arcsecond,
@@ -501,22 +516,11 @@ def convolve_images(
 
     return_conv_image_paths: list[Path] = []
 
-    if output_paths:
-        assert isinstance(output_paths, type(image_paths)), (
-            "Types for image_paths and output_paths need to be the same"
-        )
-        assert len(output_paths) == len(image_paths), (
-            f"Mismatch collection lengths of image_paths ({len(image_paths)}) and output_paths ({len(output_paths)})"
-        )
-
-    for idx, image_path in enumerate(image_paths):
-        convol_output_path: Path = Path(
-            str(image_path).replace(".fits", f".{convol_suffix}.fits")
-        )
+    for image_path, output_path in zip(image_paths, output_paths):
         header = fits.getheader(image_path)
         if not header_beam_is_usable(header=header):
-            logger.info(f"Copying {image_path} to {convol_output_path=} for empty beam")
-            copyfile(image_path, convol_output_path)
+            logger.info(f"Copying {image_path} to {output_path=} for empty beam")
+            copyfile(image_path, output_path)
         else:
             logger.info(f"Convolving {image_path.name!s}")
             beamcon_2D.beamcon_2d_on_fits(
@@ -524,22 +528,20 @@ def convolve_images(
                 outdir=None,
                 new_beam=radio_beam,
                 conv_mode="robust",
-                suffix=convol_suffix,
+                suffix=_BEAMCON_SUFFIX,
                 cutoff=cutoff,
             )
-
-        if output_paths:
-            output_path: Path = output_paths[idx]
-            logger.info(f"Renaming generate convolved file to {output_path=}")
-            convol_output_path.rename(output_path)
-            convol_output_path = output_path
-
-            # Pirates trust nothing, especially with the silly logic
-            assert convol_output_path.exists(), (
-                f"{convol_output_path=} should exist, but doesn't"
+            # beamcon names its output itself, so move it to the flint name
+            beamcon_output_path = Path(
+                str(image_path).replace(".fits", f".{_BEAMCON_SUFFIX}.fits")
             )
+            logger.info(f"Renaming generated convolved file to {output_path=}")
+            beamcon_output_path.rename(output_path)
 
-        return_conv_image_paths.append(convol_output_path)
+        # Pirates trust nothing, especially with the silly logic
+        assert output_path.exists(), f"{output_path=} should exist, but doesn't"
+
+        return_conv_image_paths.append(output_path)
 
     return return_conv_image_paths
 
@@ -644,12 +646,6 @@ def get_parser() -> ArgumentParser:
         help="Beams whose major-axis are larger then this (in arcseconds) are ignored from the calculation of the optimal beam.",
     )
     convol_parser.add_argument(
-        "--convol-suffix",
-        type=str,
-        default="conv",
-        help="The suffix added to convolved images. ",
-    )
-    convol_parser.add_argument(
         "--cubes",
         action="store_true",
         default=False,
@@ -714,7 +710,6 @@ def cli() -> None:
                     cube_paths=[image],
                     beam_shapes=common_beams,
                     cutoff=args.cutoff,
-                    convol_suffix=args.convol_suffix,
                 )
 
         else:
@@ -726,7 +721,6 @@ def cli() -> None:
                 image_paths=args.images,
                 beam_shape=common_beam,
                 cutoff=args.cutoff,
-                convol_suffix=args.convol_suffix,
             )
     if args.mode == "cubemaxbeam":
         common_beam_shape_list = get_cube_common_beam(

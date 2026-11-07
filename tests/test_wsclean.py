@@ -651,11 +651,11 @@ def test_resolve_key_value_to_cli():
 def test_create_wsclean_name(ms_example) -> None:
     """Test the creation of a wsclean name argument"""
     name = create_imaging_name_prefix(ms_path=ms_example)
-    assert name == "SB39400.RACS_0635-31.beam0.small"
+    assert name == "SB39400.RACS_0635-31.beam00"
 
     for pol in ("i", "I"):
         name = create_imaging_name_prefix(ms_path=ms_example, pol=pol)
-        assert name == "SB39400.RACS_0635-31.beam0.small.i"
+        assert name == "SB39400.RACS_0635-31.beam00.i"
 
 
 def test_create_wsclean_name_argument(ms_example):
@@ -669,14 +669,14 @@ def test_create_wsclean_name_argument(ms_example):
 
     parent = str(Path(ms_example).parent)
     assert isinstance(name_argument_path, Path)
-    assert f"{parent}/SB39400.RACS_0635-31.beam0.small.i" == str(name_argument_path)
+    assert f"{parent}/SB39400.RACS_0635-31.beam00.i" == str(name_argument_path)
 
     wsclean_options_2 = WSCleanOptions(temp_dir="/jack/sparrow")
     name_argument_path = create_wsclean_name_argument(
         wsclean_options=wsclean_options_2, ms=ms
     )
 
-    assert "/jack/sparrow/SB39400.RACS_0635-31.beam0.small.i" == str(name_argument_path)
+    assert "/jack/sparrow/SB39400.RACS_0635-31.beam00.i" == str(name_argument_path)
 
     wsclean_options_3 = WSCleanOptions(flint_name_suffix="pol")
     name_argument_path = create_wsclean_name_argument(
@@ -732,14 +732,14 @@ def test_create_wsclean_name_argument_with_list_mss(ms_example) -> None:
 
     parent = str(Path(ms_example).parent)
     assert isinstance(name_argument_path, Path)
-    assert f"{parent}/SB39400.RACS_0635-31.beam0.small.i" == str(name_argument_path)
+    assert f"{parent}/SB39400.RACS_0635-31.beam00.i" == str(name_argument_path)
 
     wsclean_options_2 = WSCleanOptions(temp_dir="/jack/sparrow")
     name_argument_path = create_wsclean_name_argument(
         wsclean_options=wsclean_options_2, ms=ms
     )
 
-    assert "/jack/sparrow/SB39400.RACS_0635-31.beam0.small.i" == str(name_argument_path)
+    assert "/jack/sparrow/SB39400.RACS_0635-31.beam00.i" == str(name_argument_path)
 
 
 def test_create_wsclean_command(ms_example):

@@ -40,6 +40,7 @@ from flint.logging import logger
 from flint.ms import MS, MSsByBeam, MSSummary, find_mss
 from flint.naming import (
     CASDANameComponents,
+    Suffix,
     add_timestamp_to_path,
     extract_components_from_name,
     get_sbid_from_path,
@@ -673,9 +674,8 @@ def process_racs_all_continuum(
     final_aegean_outputs: PrefectFuture[Any] | None = None
     if racs_all_options.yandasoft_container:
         for selfcal_round, final_beam_imaging_results in imaging_results.items():
-            additional_linmos_suffix = (
-                "noselfcal" if selfcal_round == 0 else f"round{selfcal_round}"
-            )
+            # Later rounds are carried by the round field of the image names
+            additional_linmos_suffix = Suffix(noselfcal=selfcal_round == 0)
             wsclean_results = [
                 final_beam_imaging_result.wsclean_result
                 for final_beam_imaging_result in final_beam_imaging_results
@@ -684,8 +684,8 @@ def process_racs_all_continuum(
                 wsclean_results=wsclean_results,
                 field_options=racs_all_options,
                 field_summary=field_summary,
-                additional_linmos_suffix_str=additional_linmos_suffix,
-                holofile=holography_path,  # indicate in output linmos name no selfcal
+                additional_linmos_suffix=additional_linmos_suffix,  # indicate in output linmos name no selfcal
+                holofile=holography_path,
             )
             logger.info(
                 f"Self-cal round {selfcal_round}, number of parsets {len(parsets)}"
@@ -757,7 +757,6 @@ def process_racs_all_continuum(
                     current_round=(
                         racs_all_options.rounds if racs_all_options.rounds else None
                     ),
-                    additional_linmos_suffix_str="cube",
                     holofile=holography_path,
                 )
                 terminal_futures.extend(linmos_cubes.cubes)

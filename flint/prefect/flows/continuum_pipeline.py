@@ -33,6 +33,7 @@ from flint.masking import consider_beam_mask_round
 from flint.ms import MS, find_mss
 from flint.naming import (
     CASDANameComponents,
+    Suffix,
     add_timestamp_to_path,
     extract_components_from_name,
     get_sbid_from_path,
@@ -622,7 +623,6 @@ def process_science_fields(
                 wsclean_results=final_results,  # type: ignore
                 field_options=field_options,
                 current_round=field_options.rounds or None,
-                additional_linmos_suffix_str="cube",
                 fitscube_options=FitsCubeOptions().with_options(
                     **final_round_fitscube_options
                 ),

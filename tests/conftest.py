@@ -15,6 +15,10 @@ def pytest_addoption(parser):
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "slow: mark test as slow to run")
+    config.addinivalue_line(
+        "markers",
+        "require_singularity: mark test as requiring the singularity/apptainer engine. This is an external dependency.",
+    )
 
 
 # Stolen from: https://stackoverflow.com/questions/377017/test-if-executable-exists-in-python
@@ -39,6 +43,15 @@ def which(program: str) -> str | None:
 
 
 def pytest_collection_modifyitems(config, items):
+    for item in items:
+        if "flint_containers" in getattr(item, "fixturenames", {}):
+            item.add_marker("require_singularity")
+            item.add_marker("slow")
+        if "hello_world_container" in getattr(item, "fixturenames", {}):
+            item.add_marker("require_singularity")
+            item.add_marker("slow")
+            item.add_marker(pytest.mark.flaky(reruns=3, rerun_delay=2))
+
     if config.getoption("--skip-slow"):
         skip_slow = pytest.mark.skip(reason="need --runslow option to run")
         for item in items:

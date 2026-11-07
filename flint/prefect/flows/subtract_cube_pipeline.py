@@ -33,7 +33,12 @@ from flint.ms import (
     get_freqs_from_ms,
     get_times_from_ms,
 )
-from flint.naming import get_sbid_from_path
+from flint.naming import (
+    Suffix,
+    create_image_cube_name,
+    create_name_from_common_fields,
+    get_sbid_from_path,
+)
 from flint.options import (
     AddModelSubtractFieldOptions,
     FitsCubeOptions,
@@ -199,6 +204,7 @@ def task_combine_all_linmos_images(
     linmos_commands: list[LinmosResult],
     combine_weights: bool = False,
     time_domain: bool = False,
+    continuum_subtracted: bool = False,
     update_fits_cube_options: dict[str, Any] | None = None,
 ) -> Path:
     """Use the fits-cube package to take all input images and create a single output cube.
@@ -207,13 +213,12 @@ def task_combine_all_linmos_images(
         linmos_commands (list[LinmosResult]): The output linmos commands to concatenated into a single cube.
         combine_weights (bool, optional): Whether to concatenated the images or the weights that are described by the input `linmos_commands`. Defaults to False.
         time_domain (bool, optional): Whether images are to be formed on the spectral or time axis. Defaults to False.
+        continuum_subtracted (bool, optional): Indicates whether the input images have been continuum subtracted. Used to inform the output file name. Defaults to False.
         update_fits_cube_options (dict[str, Any] | None, optional): Overrides applied to the default `FitsCubeOptions`, including `remove_original_images`, `bounding_box` and `invalidate_zeros`. Defaults to None.
 
     Returns:
         Path: The output cube path
     """
-    output_cube_path = Path("test.fits")
-
     fits_cube_options = FitsCubeOptions()
     if update_fits_cube_options is not None:
         fits_cube_options = fits_cube_options.with_options(**update_fits_cube_options)
@@ -223,25 +228,27 @@ def task_combine_all_linmos_images(
         images_to_combine = [
             linmos_command.weight_fits for linmos_command in linmos_commands
         ]
-        output_suffix = "weight"
     else:
         logger.info("Combining image fits files")
         images_to_combine = [
             linmos_command.image_fits for linmos_command in linmos_commands
         ]
-        output_suffix = "linmos"
 
     logger.info(f"Combining {len(images_to_combine)} FITS files together")
-
-    output_suffix = f"time.{output_suffix}" if time_domain else f"freq.{output_suffix}"
-
-    from flint.naming import create_image_cube_name, create_name_from_common_fields
-
     assert len(images_to_combine) > 0, "No images to combine"
+
+    suffix_spec = Suffix(
+        weight=combine_weights,
+        linmos=not combine_weights,
+        time=time_domain,
+        freq=not time_domain,
+        contsub=continuum_subtracted,
+        cont=not continuum_subtracted,
+    )
 
     base_cube_path = create_name_from_common_fields(in_paths=tuple(images_to_combine))
     output_cube_path = create_image_cube_name(
-        image_prefix=base_cube_path, mode="contsub", suffix=output_suffix
+        image_prefix=base_cube_path, suffix_spec=suffix_spec
     )
 
     _ = combine_fits(
@@ -423,11 +430,10 @@ def flow_subtract_cube(
 
                 channel_parset = task_common_beam_convolve_linmos.submit(
                     wsclean_results=channel_wsclean_cmds,
-                    linmos_suffix_str=None,
                     field_options=subtract_field_options,
                     convol_mode="image",
                     convol_filter="image.",
-                    convol_suffix_str="optimal.conv",
+                    convol_suffix=Suffix(optimal=True, conv=True),
                     trim_linmos_fits=False,  # This is necessary to ensure all images have same pixel-coordinates
                     remove_original_images=True,
                     cleanup_linmos=True,
@@ -482,11 +488,10 @@ def flow_subtract_cube(
 
                 scan_parset = task_common_beam_convolve_linmos.submit(
                     wsclean_results=scan_wsclean_cmds,
-                    linmos_suffix_str=None,
                     field_options=subtract_field_options,
                     convol_mode="image",
                     convol_filter="image.",
-                    convol_suffix_str="optimal.conv",
+                    convol_suffix=Suffix(optimal=True, conv=True),
                     trim_linmos_fits=False,  # This is necessary to ensure all images have same pixel-coordinates
                     remove_original_images=True,
                     cleanup_linmos=True,
