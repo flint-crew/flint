@@ -22,6 +22,7 @@ from fitscube.extract import (
 from flint.exceptions import NamingException, NotSupportedError, ShapeMismatchError
 from flint.logging import logger
 from flint.naming import (
+    Suffix,
     create_image_cube_name,
     create_path_from_processed_name_components,
     processed_ms_format,
@@ -36,7 +37,7 @@ if TYPE_CHECKING:
 def combine_images_to_cube(
     images: list[Path],
     prefix: str,
-    mode: str,
+    suffix_spec: Suffix,
     fitscube_options: FitsCubeOptions,
     bounding_box: bool | BoundingBox | None = None,
     beam_shape: BeamShape | None = None,
@@ -44,12 +45,12 @@ def combine_images_to_cube(
     """Combine wsclean subband channel images into a cube. Each collection attribute
     of the input `image_set` will be inspected. The MFS images will be ignored.
 
-    A output file name will be generated based on the  prefix and mode (e.g. `image`, `residual`, `psf`, `dirty`).
+    A output file name will be generated based on the prefix and suffix fields (e.g. `image`, `residual`, `psf`, `dirty`).
 
     Args:
         images (list[Path]): The images to combine into a cube
         prefix (str): The prefix of the images to combine
-        mode (str): The type of images to combine, e.g. `image`, `residual`, `psf`, `dirty`
+        suffix_spec (Suffix): The suffix fields describing the type of images to combine, e.g. `Suffix(image=True)`
         fitscube_options (FitsCubeOptions): Options to control the cube creation
         bounding_box (bool | BoundingBox | None, optional): Overrides ``fitscube_options.bounding_box``
         when given. Used to force a box shared with another cube (e.g. weights) rather than
@@ -63,7 +64,9 @@ def combine_images_to_cube(
     logger.info("Combining subband images into fits cubes")
     logger.info(f"Running on {socket.gethostname()=}")
 
-    output_cube_name = create_image_cube_name(image_prefix=Path(prefix), mode=mode)
+    output_cube_name = create_image_cube_name(
+        image_prefix=Path(prefix), suffix_spec=suffix_spec
+    )
 
     logger.info(f"Combining {len(images)} images into {output_cube_name}")
     logger.debug(f"{images=}")
@@ -94,7 +97,11 @@ def combine_images_to_cube(
     if beam_shape is not None:
         set_cube_beam(cube=output_cube_name, beam_shape=beam_shape)
 
-    output_freqs_name = output_cube_name.with_suffix(".freqs_Hz.txt")
+    output_freqs_name = create_path_from_processed_name_components(
+        processed_name_components=output_cube_name,
+        parent_path=output_cube_name.parent,
+        ext=".freqs_Hz.txt",
+    )
     np.savetxt(output_freqs_name, freqs.to("Hz").value)
 
     if fitscube_options.remove_original_images:
@@ -155,15 +162,14 @@ def split_cube_into_planes(
         output_path.mkdir(parents=True, exist_ok=True)
 
     def _plane_path(channel: int) -> Path:
-        # Only the flint name fields are retained, so a single cube per beam
-        # should be split at a time to avoid clobbering planes
-        plane_base = create_path_from_processed_name_components(
-            processed_name_components=components._replace(
+        return create_path_from_processed_name_components(
+            processed_name_components=components.with_options(
                 channel_range=(channel, channel)
             ),
             parent_path=cube.parent if output_path is None else output_path,
+            suffix_spec=components.suffix_spec - Suffix(cube=True),
+            ext=".fits",
         )
-        return Path(f"{plane_base}.fits")
 
     channels = count_cube_planes(header=fits.getheader(cube))
     logger.info(f"Splitting {cube} into {channels} planes")

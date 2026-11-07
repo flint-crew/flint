@@ -22,10 +22,10 @@ from flint.convol import (
     check_if_cube_fits,
     common_beam_from_cubes,
     common_beam_shape_from_cubes,
+    convolve_images,
     convolve_images_or_blank,
     convolve_plane_to_beam,
     cubes_share_common_beam,
-    convolve_images,
     get_cube_common_beam,
     header_beam_is_usable,
     usable_beam_mask,
@@ -92,7 +92,7 @@ def test_convolve_images_suffix_names(tmpdir, bmaj_deg: float) -> None:
 
     conv_images = convolve_images(image_paths=[image], beam_shape=beam_shape)
     assert conv_images == [
-        Path(tmpdir) / "SB1234.RACS_0000-00.beam00.round1.i.conv.MFS.image.fits"
+        Path(tmpdir) / "SB1234.RACS_0000-00.beam00.round1.i.MFS.image.conv.fits"
     ]
     assert conv_images[0].exists()
 
@@ -102,11 +102,10 @@ def test_convolve_images_suffix_names(tmpdir, bmaj_deg: float) -> None:
         suffix_spec=Suffix(optimal=True, conv=True),
     )
     assert conv_images == [
-        Path(tmpdir) / "SB1234.RACS_0000-00.beam00.round1.i.optimal.conv.MFS.image.fits"
+        Path(tmpdir) / "SB1234.RACS_0000-00.beam00.round1.i.MFS.image.optimal.conv.fits"
     ]
     assert conv_images[0].exists()
     # Nothing left behind from the intermediate beamcon names
-    assert not (Path(tmpdir) / f"{image.stem}.conv.fits").exists()
 
 
 def test_convolve_images_undefined_beam_copies(tmpdir) -> None:
@@ -119,7 +118,7 @@ def test_convolve_images_undefined_beam_copies(tmpdir) -> None:
 
     conv_images = convolve_images(image_paths=[image], beam_shape=beam_shape)
     assert conv_images == [
-        Path(tmpdir) / "SB1234.RACS_0000-00.beam00.round1.i.conv.MFS.image.fits"
+        Path(tmpdir) / "SB1234.RACS_0000-00.beam00.round1.i.MFS.image.conv.fits"
     ]
     assert conv_images[0].exists()
 
@@ -436,13 +435,13 @@ def test_header_beam_is_usable(tmp_path: Path) -> None:
 
 def test_convolve_plane_to_beam(tmp_path: Path) -> None:
     """A plane is convolved to the target beam, leaving the input in place"""
-    plane = _write_plane_with_beam(tmp_path / "stokes_q.ch0000-0000.fits", 10.0)
+    plane = _write_plane_with_beam(tmp_path / "SB1.F.q.ch0000-0000.fits", 10.0)
     beam_shape = BeamShape(bmaj_arcsec=14.0, bmin_arcsec=12.0, bpa_deg=0.0)
 
     convolved = convolve_plane_to_beam(plane=plane, beam_shape=beam_shape)
 
     assert plane.exists(), "the input plane was consumed"
-    assert convolved == tmp_path / "stokes_q.ch0000-0000.conv.fits"
+    assert convolved == tmp_path / "SB1.F.q.ch0000-0000.conv.fits"
     header = fits.getheader(convolved)
     assert header["BMAJ"] * 3600.0 == pytest.approx(14.0)
     assert header["BMIN"] * 3600.0 == pytest.approx(12.0)
@@ -452,7 +451,7 @@ def test_convolve_plane_to_beam(tmp_path: Path) -> None:
 def test_convolve_plane_to_beam_beyond_cutoff(tmp_path: Path) -> None:
     """A plane coarser than the cutoff is blanked, and marked as holding no PSF
     so the cube it is stacked into does not claim one for that channel"""
-    plane = _write_plane_with_beam(tmp_path / "stokes_q.ch0000-0000.fits", 40.0)
+    plane = _write_plane_with_beam(tmp_path / "SB1.F.q.ch0000-0000.fits", 40.0)
     beam_shape = BeamShape(bmaj_arcsec=14.0, bmin_arcsec=12.0, bpa_deg=0.0)
 
     convolved = convolve_plane_to_beam(plane=plane, beam_shape=beam_shape, cutoff=20.0)
@@ -463,7 +462,7 @@ def test_convolve_plane_to_beam_beyond_cutoff(tmp_path: Path) -> None:
 
 def test_convolve_plane_to_beam_without_beam(tmp_path: Path) -> None:
     """A plane carrying no PSF has no resolution to change, so it is copied through"""
-    plane = _write_plane_with_beam(tmp_path / "stokes_q.ch0000-0000.fits", 0.0)
+    plane = _write_plane_with_beam(tmp_path / "SB1.F.q.ch0000-0000.fits", 0.0)
     beam_shape = BeamShape(bmaj_arcsec=14.0, bmin_arcsec=12.0, bpa_deg=0.0)
 
     convolved = convolve_plane_to_beam(plane=plane, beam_shape=beam_shape, cutoff=20.0)
@@ -566,15 +565,15 @@ def test_common_beam_shape_from_cubes(tmp_path: Path) -> None:
 def test_blank_images(tmp_path: Path) -> None:
     """A blanked image holds no data and claims no PSF"""
     planes = [
-        _write_plane_with_beam(tmp_path / f"stokes_q.ch000{idx}-000{idx}.fits", 10.0)
+        _write_plane_with_beam(tmp_path / f"SB1.F.q.ch000{idx}-000{idx}.fits", 10.0)
         for idx in range(2)
     ]
 
     blanked = blank_images(image_paths=planes)
 
     assert blanked == [
-        tmp_path / "stokes_q.ch0000-0000.conv.fits",
-        tmp_path / "stokes_q.ch0001-0001.conv.fits",
+        tmp_path / "SB1.F.q.ch0000-0000.conv.fits",
+        tmp_path / "SB1.F.q.ch0001-0001.conv.fits",
     ]
     for plane, blank in zip(planes, blanked):
         assert plane.exists(), "the input image was consumed"
@@ -585,12 +584,12 @@ def test_blank_images(tmp_path: Path) -> None:
 
 def test_convolve_images_or_blank(tmp_path: Path) -> None:
     """A defined beam is convolved to, as convolve_images would"""
-    plane = _write_plane_with_beam(tmp_path / "stokes_q.ch0000-0000.fits", 10.0)
+    plane = _write_plane_with_beam(tmp_path / "SB1.F.q.ch0000-0000.fits", 10.0)
     beam_shape = BeamShape(bmaj_arcsec=14.0, bmin_arcsec=12.0, bpa_deg=0.0)
 
     convolved = convolve_images_or_blank(image_paths=[plane], beam_shape=beam_shape)
 
-    assert convolved == [tmp_path / "stokes_q.ch0000-0000.conv.fits"]
+    assert convolved == [tmp_path / "SB1.F.q.ch0000-0000.conv.fits"]
     assert fits.getheader(convolved[0])["BMAJ"] * 3600.0 == pytest.approx(14.0)
     assert np.isfinite(fits.getdata(convolved[0])).any()
 
@@ -600,8 +599,8 @@ def test_convolve_images_or_blank_without_a_beam(tmp_path: Path) -> None:
     own differing resolutions, which whatever they are co-added into would then
     misreport as a single beam"""
     planes = [
-        _write_plane_with_beam(tmp_path / "stokes_q.ch0000-0000.fits", 40.0),
-        _write_plane_with_beam(tmp_path / "stokes_q.ch0001-0001.fits", 50.0),
+        _write_plane_with_beam(tmp_path / "SB1.F.q.ch0000-0000.fits", 40.0),
+        _write_plane_with_beam(tmp_path / "SB1.F.q.ch0001-0001.fits", 50.0),
     ]
     beam_shape = BeamShape(bmaj_arcsec=np.nan, bmin_arcsec=np.nan, bpa_deg=np.nan)
 

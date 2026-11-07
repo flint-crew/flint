@@ -13,7 +13,6 @@ from flint.naming import (
     ProcessedNameComponents,
     RawNameComponents,
     Suffix,
-    _rename_linear_to_stokes,
     add_timestamp_to_path,
     casda_ms_format,
     create_image_cube_name,
@@ -31,13 +30,12 @@ from flint.naming import (
     get_potato_output_base_path,
     get_sbid_from_path,
     get_selfcal_ms_name,
-    pol_name_token,
     get_string_for_suffix,
+    pol_name_token,
     processed_ms_format,
     raw_ms_format,
-    rename_linear_to_stokes,
-    replace_name_field,
     split_images,
+    update_name_fields,
 )
 from flint.options import MS
 
@@ -271,6 +269,8 @@ def test_create_path_from_process_named_components_with_project() -> None:
         processed_name_components=pcn, parent_path=parent
     )
     assert ex == out
+
+
 def test_create_path_from_processed_name_components_with_suffix() -> None:
     """Create a path from processed name components, testing to ensure
     correct handling of suffix specifications"""
@@ -396,29 +396,6 @@ def test_create_imaging_name_prefix_linear_feeds():
     components = processed_ms_format(in_name=name)
     assert components is not None
     assert components.pol == "xxyy"
-
-
-def test_replace_name_field():
-    """The last matching field is replaced, which in a flint name is the
-    polarisation rather than any part of the MS name before it"""
-    path = Path("/scratch/SB1.xx.beam00.round1.xx.ch0000-0001.image.fits")
-    assert replace_name_field(path=path, old="xx", new="i") == Path(
-        "/scratch/SB1.xx.beam00.round1.i.ch0000-0001.image.fits"
-    )
-
-
-def test_replace_name_field_missing():
-    path = Path("SB1.F.beam00.round1.i.MFS.image.fits")
-    with pytest.raises(NamingException, match="xx"):
-        replace_name_field(path=path, old="xx", new="yy")
-    # Single digit beams are zero padded and unrecognised fields are dropped
-    name = create_imaging_name_prefix(
-        ms_path=Path("SB39400.RACS_0635-31.beam0.small.ms"), pol="i"
-    )
-    assert name == "SB39400.RACS_0635-31.beam00.i"
-
-    with pytest.raises(NamingException):
-        create_imaging_name_prefix(ms_path=Path("JackSparrow.ms"))
 
 
 def test_get_cube_fits_from_paths():
@@ -1228,44 +1205,6 @@ def test_create_linmos_names():
     assert linmos_names.parset_output_path == Path("Jack/My/Boi.txt")
 
 
-def test_rename_linear_to_stokes():
-    linear_names = (
-        "jack.qu.sparrow",
-        "qu.sparrow.jack",
-        ".qu.sparrow.jack",
-        "sparrow.jack.qu",
-    )
-    stokes_q_names = (
-        "jack.q.sparrow",
-        "qu.sparrow.jack",
-        ".q.sparrow.jack",
-        "sparrow.jack.q",
-    )
-    stokes_u_names = (
-        "jack.u.sparrow",
-        "qu.sparrow.jack",
-        ".u.sparrow.jack",
-        "sparrow.jack.u",
-    )
-
-    for stokes, stokes_names in zip(("q", "u"), (stokes_q_names, stokes_u_names)):
-        for linear_name, check_name in zip(linear_names, stokes_names):
-            stokes_name = _rename_linear_to_stokes(linear_name, stokes)
-            assert stokes_name == check_name
-
-    with pytest.raises(NameError):
-        _rename_linear_to_stokes("jack.sparrow", "i")
-        _rename_linear_to_stokes("jack.sparrow", "v")
-        _rename_linear_to_stokes("jack.sparrow", "pearl")
-
-    stokes_path = rename_linear_to_stokes(
-        linear_name=Path("jack.qu.sparrow"), stokes="q"
-    )
-    assert isinstance(stokes_path, Path)
-    stokes_path = rename_linear_to_stokes(linear_name="jack.qu.sparrow", stokes="q")
-    assert isinstance(stokes_path, str)
-
-
 def test_split_images():
     with pytest.raises(ValueError):
         split_images(images=[Path("jack.sparrow.i.fits")], by="pol")
@@ -1324,3 +1263,120 @@ def test_get_string_for_suffix_empty() -> None:
     """Ensures that None is returned when no fields are  empty"""
     suffix_spec = Suffix()
     assert get_string_for_suffix(suffix_spec=suffix_spec) is None
+
+
+def test_update_name_fields():
+    """A name field is swapped while the suffixes and extension are kept. The
+    polarisation field is the one changed, not the look-alike in the MS name"""
+    path = Path("/scratch/SB1.xx.beam00.round1.xx.ch0000-0001.image.fits")
+    assert update_name_fields(path, pol="i") == Path(
+        "/scratch/SB1.xx.beam00.round1.i.ch0000-0001.image.fits"
+    )
+    assert update_name_fields(path, round="2", pol="yy") == Path(
+        "/scratch/SB1.xx.beam00.round2.yy.ch0000-0001.image.fits"
+    )
+    with pytest.raises(NamingException):
+        update_name_fields(Path("jack.sparrow.fits"), pol="i")
+
+
+def test_mfs_takes_the_channel_slot():
+    """MFS sits where a channel range would, and the two are exclusive"""
+    components = processed_ms_format("SB1.F.beam00.round1.i.MFS.image.fits")
+    assert components is not None
+    assert components.mfs
+    assert components.pol == "i"
+    assert components.channel_range is None
+    assert components.image
+    assert components.ext == ".fits"
+    assert create_path_from_processed_name_components(
+        processed_name_components=components
+    ) == Path("SB1.F.beam00.round1.i.MFS.image.fits")
+
+    with pytest.raises(AssertionError):
+        create_path_from_processed_name_components(
+            processed_name_components=components.with_options(channel_range=(0, 1))
+        )
+
+
+def test_image_is_not_a_polarisation():
+    """The ``i`` of ``.image`` is not read as Stokes I"""
+    components = processed_ms_format("SB1.F.beam00.round3.image.cube.fits")
+    assert components is not None
+    assert components.pol is None
+    assert components.image and components.cube
+
+
+def test_names_outside_the_scheme_still_parse():
+    """Aegean, BANE and calibration products are not built through the suffix
+    scheme, but anything built from them must not fall over"""
+    components = processed_ms_format("SB1.F.beam00.round1.i.MFS.image_bkg.fits")
+    assert components is not None
+    assert components.image and components.mfs
+    assert components.ext == "_bkg.fits"
+
+    components = processed_ms_format("SB38959.RACS_1357-18.noselfcal.linmos_comp.fits")
+    assert components is not None
+    assert components.noselfcal and components.linmos
+    assert components.ext == "_comp.fits"
+    assert Path("SB38959.RACS_1357-18.noselfcal.linmos_comp.fits") + Suffix(
+        optimal=True
+    ) == Path("SB38959.RACS_1357-18.noselfcal.optimal.linmos_comp.fits")
+
+    components = processed_ms_format("SB1.F.beam08.round1.caltable.ch0000-0143")
+    assert components is not None
+    assert components.round == "1"
+    assert components.ext == ".caltable.ch0000-0143"
+
+
+def test_create_name_from_common_fields_without_suffixes():
+    """With ``keep_suffix`` off only the name fields in common are kept"""
+    examples = (
+        Path("SB1.F.beam00.round2.i.MFS.image.optimal.conv.fits"),
+        Path("SB1.F.beam01.round2.i.MFS.image.optimal.conv.fits"),
+    )
+    assert create_name_from_common_fields(in_paths=examples) == Path(
+        "SB1.F.round2.i.MFS.image.optimal.conv"
+    )
+    assert create_name_from_common_fields(in_paths=examples, keep_suffix=False) == Path(
+        "SB1.F.round2.i.MFS"
+    )
+    assert create_name_from_common_fields(
+        in_paths=examples, keep_suffix=False, suffix_spec=Suffix(linmos=True)
+    ) == Path("SB1.F.round2.i.MFS.linmos")
+
+
+def test_create_image_cube_name_keeps_prefix_suffixes():
+    """Suffixes already on the prefix, like the resolution, carry into the cube name"""
+    name = create_image_cube_name(
+        image_prefix=Path("SB59058.RACS_1626-84.project-pol.q.natural"),
+        suffix_spec=Suffix(image=True),
+    )
+    assert name == Path("SB59058.RACS_1626-84.project-pol.q.image.natural.cube.fits")
+
+    name = create_image_cube_name(
+        image_prefix=Path("SB59058.RACS_1626-84.project-pol.q"),
+        suffix_spec=Suffix(bkg=True, total=True),
+    )
+    assert name == Path("SB59058.RACS_1626-84.project-pol.q.bkg.total.cube.fits")
+
+
+def test_create_linmos_base_path_from_convolved_mfs_images():
+    """The co-added name carries the fields of its inputs and the suffixes asked for,
+    not the convolution markers of the inputs"""
+    examples = [
+        Path(f"SB1.F.beam{beam:02d}.round2.i.MFS.image.optimal.conv.fits")
+        for beam in range(3)
+    ]
+    assert (
+        create_linmos_base_path(
+            input_images=examples, suffix_spec=Suffix(optimal=True, linmos=True)
+        )
+        == Path("SB1.F.round2.i.MFS.optimal.linmos").absolute()
+    )
+    assert (
+        create_linmos_base_path(
+            input_images=examples,
+            suffix_spec=Suffix(residual=True, optimal=True, linmos=True),
+        )
+        == Path("SB1.F.round2.i.MFS.residual.optimal.linmos").absolute()
+    )

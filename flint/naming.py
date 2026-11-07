@@ -9,11 +9,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, NamedTuple, TypeVar, get_args
 
-from capn_crunch import options_to_dict
+from capn_crunch import BaseOptions, options_to_dict
 
 from flint.exceptions import NamingException
 from flint.logging import logger
-from flint.options import BaseOptions
 
 PathStr = TypeVar("PathStr", str, Path)
 
@@ -23,26 +22,22 @@ def _is_set(value: Any) -> bool:
     return value is not None and value is not False
 
 
-def _rename_linear_to_stokes(
-    linear_name_str: str,
-    stokes: str,
-) -> str:
-    if stokes.lower() not in ("q", "u"):
-        raise NameError(f"Stokes {stokes=} is not linear!")
-    pattern = r"\.qu"  # Regex pattern to replace
-    stokes_name = re.sub(pattern, f".{stokes}", linear_name_str)
-    logger.info(f"Renamed {linear_name_str=} to {stokes_name=}")
-    return stokes_name
+def pol_name_token(pol: str) -> str:
+    """The field naming the polarisations in file names, e.g. ``xxyy`` for ``xx,yy``"""
+    return pol.lower().replace(",", "")
 
 
-def rename_linear_to_stokes(
-    linear_name: PathStr,
-    stokes: str,
-) -> PathStr:
-    if isinstance(linear_name, Path):
-        return Path(_rename_linear_to_stokes(linear_name.as_posix(), stokes))
+def update_name_fields(path: Path, **fields: Any) -> Path:
+    """Rebuild a flint format path with some of its name fields changed, keeping its suffixes and extension"""
+    components = processed_ms_format(in_name=path)
+    if components is None:
+        msg = f"{path=} does not follow the flint processed name format"
+        raise NamingException(msg)
 
-    return _rename_linear_to_stokes(linear_name, stokes)
+    return create_path_from_processed_name_components(
+        processed_name_components=components.with_options(**fields),
+        parent_path=path.parent,
+    )
 
 
 def get_fits_cube_from_paths(paths: list[Path]) -> list[Path]:
@@ -56,7 +51,7 @@ def get_fits_cube_from_paths(paths: list[Path]) -> list[Path]:
     Returns:
         List[Path]: Set of paths matching the search criteria
     """
-    cube_expression = re.compile(r"\.cube\..*fits(\.gz)?$")
+    cube_expression = re.compile(r"\.cube\..*fits(\.gz|\.fz)?$")
 
     cube_files = [path for path in paths if bool(cube_expression.search(str(path)))]
 
@@ -150,6 +145,7 @@ def create_largest_common_field_name(
 def create_name_from_common_fields(
     in_paths: tuple[Path, ...],
     suffix_spec: Suffix | None = None,
+    keep_suffix: bool = True,
 ) -> Path:
     """Attempt to craft a base name using the field elements that are in common.
     The expectation that these are paths that can be processed by the ``processed_name_format``
@@ -168,6 +164,7 @@ def create_name_from_common_fields(
     Args:
         in_paths (Tuple[Path, ...]): Collection of input paths to consider
         suffix_spec (Suffix | None, optional): If not None, these suffix fields are added to those common across ``in_paths``. Defaults to None.
+        keep_suffix (bool, optional): Whether suffix fields common across ``in_paths`` are kept. If False only the name fields are, plus ``suffix_spec``. Defaults to True.
 
     Raises:
         ValueError: Raised if any of the ``in_paths`` fail to conform to ``flint`` processed name format
@@ -191,6 +188,7 @@ def create_name_from_common_fields(
         key: processed_components_dict[0][key]
         for key in keys_to_test
         if key != "ext"
+        and (keep_suffix or key not in Suffix.model_fields)
         and len(set([pcd[key] for pcd in processed_components_dict])) == 1
         and _is_set(processed_components_dict[0][key])
     }
@@ -238,7 +236,8 @@ def create_image_cube_name(
     The name returned will be:
     >>> {image_prefix}.{suffix_spec}.cube.fits
 
-    The ``cube`` suffix is always set, and the returned name always has a ``.fits`` extension.
+    Suffix fields already on ``image_prefix`` are kept, the ``cube`` suffix is always set,
+    and the returned name always has a ``.fits`` extension.
 
     Args:
         image_prefix (Path): The unique path of the name. Generally this is the common part among the input planes
@@ -248,11 +247,15 @@ def create_image_cube_name(
         Path: The final path and file name
     """
     image_prefix = Path(image_prefix)
+    components = processed_ms_format(in_name=image_prefix)
+    if components is None:
+        msg = f"{image_prefix=} does not follow the flint processed name format"
+        raise NamingException(msg)
 
     return create_path_from_processed_name_components(
-        processed_name_components=image_prefix.name,
+        processed_name_components=components,
         parent_path=image_prefix.parent,
-        suffix_spec=suffix_spec.with_options(cube=True),
+        suffix_spec=components.suffix_spec + suffix_spec + Suffix(cube=True),
         ext=".fits",
     )
 
@@ -262,6 +265,7 @@ def create_imaging_name_prefix(
     pol: str | None = None,
     channel_range: tuple[int, int] | None = None,
     scan_range: tuple[int, int] | None = None,
+    project: str | None = None,
 ) -> str:
     """Given a measurement set and a polarisation, create the naming prefix to be used
     by some imager
@@ -271,6 +275,7 @@ def create_imaging_name_prefix(
         pol (Optional[str], optional): Whether a polarsation is being considered. Defaults to None.
         channel_range (Optional[Tuple[int,int]], optional): The channel range that is going to be imaged. Defaults to none.
         scan_range (Optional[Tuple[int,int]], optional): The scan range that is going to be imaged. Defaults to none.
+        project (Optional[str], optional): The project name to include in the naming. Defaults to None.
 
     Returns:
         str: The constructed string name
@@ -280,11 +285,15 @@ def create_imaging_name_prefix(
         msg = f"{ms_path=} does not follow the flint processed name format"
         raise NamingException(msg)
 
+    updates: dict[str, Any] = dict(
+        pol=pol_name_token(pol=pol) if pol is not None else None,
+        channel_range=channel_range,
+        scan_range=scan_range,
+        project=project,
+    )
     name_path = create_path_from_processed_name_components(
         processed_name_components=ms_components.with_options(
-            pol=pol.lower() if pol is not None else ms_components.pol,
-            channel_range=channel_range,
-            scan_range=scan_range,
+            **{k: v for k, v in updates.items() if v is not None}
         ),
         ext="",
     )
@@ -472,10 +481,20 @@ class Suffix(BaseOptions):
     """Indicates whether the data product is a model"""
     psf: bool = False
     """Indicates whether the data product is a point spread function"""
+    bkg: bool = False
+    """Indicates a BANE background map"""
+    rms: bool = False
+    """Indicates a BANE noise map"""
     optimal: bool = False
     """Indicates that the image is at an optimal (often natural) resolution"""
     fixed: bool = False
     """Indicates that the image is at a fixed, user specified resolution"""
+    natural: bool = False
+    """Indicates a cube with one beam per channel, so resolution follows frequency"""
+    total: bool = False
+    """Indicates a cube with one beam covering the whole band"""
+    raw: bool = False
+    """Indicates no common resolution has been imposed"""
     conv: bool = False
     """Indicates data have been convolved to some specified resolution"""
     contsub: bool = False
@@ -607,6 +626,8 @@ class ProcessedNameComponents(Suffix):
     """The sbid of the observation"""
     field: str
     """The name of the field extracted"""
+    project: str | None = None
+    """A specialised project name that might be encoded in the file name. This is not always present. """
     beam: str | None = None
     """The beam of the observation processed"""
     spw: str | None = None
@@ -618,9 +639,11 @@ class ProcessedNameComponents(Suffix):
     channel_range: tuple[int, int] | None = None
     """The channel range encoded in a file name. Generally are zero-padded, and are two fields of the form ch1234-1235, where the upper bound is exclusive. Defaults to None."""
     scan_range: tuple[int, int] | None = None
-    """The scane range encoded in a file name. Generally are zero-padded and are two fields of the form scan1234-1235, where the epper bound is exclusive. Defaults to None."""
+    """The scan range encoded in a file name. Generally are zero-padded and are two fields of the form scan1234-1235, where the upper bound is exclusive. Defaults to None."""
+    mfs: bool = False
+    """Whether the name carries the ``MFS`` marker of a multi-frequency synthesis image. It takes the place of a channel range."""
     ext: str | None = None
-    """Any unrecognised trailing components of a name, including the file extension, e.g. ``.MFS.image.fits``. Defaults to None."""
+    """Any unrecognised trailing components of a name, including the file extension, e.g. ``.pirate.fits`` or ``_bkg.fits``. Defaults to None."""
 
     @property
     def suffix_spec(self) -> Suffix:
@@ -654,15 +677,19 @@ def processed_ms_format(
     regex = re.compile(
         r"^SB(?P<sbid>[0-9]+)"
         r"\.(?P<field>[^.]+)"
+        r"((\.project-(?P<project>[a-zA-Z0-9]+))?)"
         r"((\.beam(?P<beam>[0-9]+))?)"
         r"((\.spw(?P<spw>[0-9]+))?)"
         r"((\.round(?P<round>[0-9]+))?)"
-        r"((\.(?P<pol>(i|q|u|v|xx|yy|xy|yx)+))?)"
-        r"((\.ch(?P<chl>([0-9]+))-(?P<chh>([0-9]+)))?)"
+        # The lookahead stops the ``i`` of ``.image`` being read as a polarisation
+        r"((\.(?P<pol>(i|q|u|v|xx|yy|xy|yx)+)(?=[._-]|$))?)"
+        # One slot holds either a channel range, wsclean's own bare channel
+        # index (e.g. ``.0003``, as older flint versions named them), or MFS
+        r"((\.ch(?P<chl>[0-9]+)-(?P<chh>[0-9]+))|(\.(?P<chidx>[0-9]{4}))|(\.(?P<mfs>MFS)))?"
         r"((\.scan(?P<scanl>([0-9]+))-(?P<scanh>([0-9]+)))?)"
         + _SUFFIX_REGEX
-        # Any unrecognised trailing components, e.g. -MFS-image.fits, are ignored
-        + r"((?P<ext>[.-].*)?)$"
+        # Anything unrecognised is kept as the extension, e.g. .pirate.fits or _bkg.fits
+        + r"((?P<ext>[._-].*)?)$"
     )
     results = regex.match(in_name)
 
@@ -674,7 +701,12 @@ def processed_ms_format(
 
     logger.debug(f"Matched groups are: {groups}")
 
-    channel_range = (int(groups["chl"]), int(groups["chh"])) if groups["chl"] else None
+    if groups["chl"]:
+        channel_range = (int(groups["chl"]), int(groups["chh"]))
+    elif groups["chidx"]:
+        channel_range = (int(groups["chidx"]), int(groups["chidx"]))
+    else:
+        channel_range = None
     scan_range = (
         (int(groups["scanl"]), int(groups["scanh"])) if groups["scanl"] else None
     )
@@ -682,12 +714,14 @@ def processed_ms_format(
     return ProcessedNameComponents(
         sbid=groups["sbid"],
         field=groups["field"],
+        project=groups["project"],
         beam=groups["beam"],
         spw=groups["spw"],
         round=groups["round"],
         pol=groups["pol"],
         channel_range=channel_range,
         scan_range=scan_range,
+        mfs=bool(groups["mfs"]),
         ext=groups["ext"],
         **{field: bool(groups[field]) for field in Suffix.model_fields},
     )
@@ -734,6 +768,8 @@ def create_path_from_processed_name_components(
         components.append(f"SB{processed_name_components.sbid}")
     if processed_name_components.field is not None:
         components.append(processed_name_components.field)
+    if processed_name_components.project is not None:
+        components.append(f"project-{processed_name_components.project}")
     if processed_name_components.beam is not None:
         components.append(f"beam{int(processed_name_components.beam):02d}")
     if processed_name_components.spw is not None:
@@ -742,6 +778,13 @@ def create_path_from_processed_name_components(
         components.append(f"round{int(processed_name_components.round)}")
     if processed_name_components.pol is not None:
         components.append(f"{processed_name_components.pol}")
+    assert not (
+        processed_name_components.mfs and processed_name_components.channel_range
+    ), (
+        f"A name holds either MFS or a channel range, not both: {processed_name_components=}"
+    )
+    if processed_name_components.mfs:
+        components.append("MFS")
     if processed_name_components.channel_range is not None:
         components.append(
             f"ch{processed_name_components.channel_range[0]:04d}-{processed_name_components.channel_range[1]:04d}"
@@ -1061,8 +1104,9 @@ def create_linmos_base_path(
     The default operation is to form the name from the common processed name fields
     among all of the input images.
 
-    If either the ``linmos`` or ``weight`` fields are detected they are removed. This can happen
-    when they are common among all input images, e.g. linmos'ing already linmos'd images.
+    Only the name fields common to the inputs are kept. Their suffixes (e.g. ``conv``,
+    ``linmos`` when co-adding already co-added images) are not, so the output only carries
+    the suffixes asked for through ``suffix_spec``.
 
     Args:
         input_images (list[Path] | None, optional): If provided the common fields of the input images are used as basis of the path. Defaults to None.
@@ -1075,8 +1119,9 @@ def create_linmos_base_path(
 
     # Unless something has been specified, we make it up
     logger.info(f"Combining images {input_images}")
-    output_name = create_name_from_common_fields(in_paths=tuple(input_images))
-    output_name = output_name - Suffix(linmos=True, weight=True)
+    output_name = create_name_from_common_fields(
+        in_paths=tuple(input_images), keep_suffix=False
+    )
     if suffix_spec is not None:
         output_name = output_name + suffix_spec
     logger.info(f"Base output image name will be: {output_name}")
@@ -1179,41 +1224,3 @@ def get_aocalibrate_output_path(
     logger.info(f"Constructed {output_path}")
 
     return output_path
-
-
-class FITSMaskNames(NamedTuple):
-    """Contains the names of the FITS images created when creating a mask image/
-    These are only the names, and do not mean that they are necessarily created.
-    """
-
-    mask_fits: Path
-    """Name of the mask FITS file"""
-    signal_fits: Path | None = None
-    """Name of the signal FITS file"""
-    scale_mask_fits: Path | None = None
-    """Path to a FITS file that describes per-scale clean masks. Scales are represented with a bit-mapped values,"""
-
-
-def create_fits_mask_names(
-    fits_image: str | Path, include_signal_path: bool = False
-) -> FITSMaskNames:
-    """Create the names that will be used when generate FITS mask products
-
-    Args:
-        fits_image (Union[str,]Path): Base name of the output files
-        include_signal_path (bool, optional): If True, also include ``signal_fits`` in the output. Defaults to False.
-
-    Returns:
-        FITSMaskNames: collection of names used for the signal and mask FITS images
-    """
-    fits_image = Path(fits_image)
-
-    fits_signal = (
-        fits_image.with_suffix(".signal.fits") if include_signal_path else None
-    )
-    fits_mask = fits_image.with_suffix(".mask.fits")
-    fits_scale_mask = fits_image.with_suffix(".scalemask.fits")
-
-    return FITSMaskNames(
-        signal_fits=fits_signal, mask_fits=fits_mask, scale_mask_fits=fits_scale_mask
-    )

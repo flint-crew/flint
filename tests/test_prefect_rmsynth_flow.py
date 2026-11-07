@@ -25,6 +25,7 @@ from flint.convol import (
     cubes_share_common_beam,
     usable_beam_mask,
 )
+from flint.naming import processed_ms_format
 from flint.options import (
     CubesForRMSynth,
     FFTBANEOptions,
@@ -55,6 +56,11 @@ from .test_rmsynth import (
 STEM = "SB12345.BENCH_0000+00.ch0000-0019"
 
 
+def _linmos_cube_name(pol: str) -> str:
+    """The flint name of a co-added cube, its polarisation before the channel range"""
+    return f"SB12345.BENCH_0000+00.{pol}.ch0000-0019.linmos.fits"
+
+
 def _add_degenerate_axis(path: Path) -> Path:
     """Rewrite a (nfreq, ny, nx) cube in the ASKAP/CASA (nfreq, 1, ny, nx) layout,
     moving the spectral axis to FITS axis 4 and inserting a degenerate Stokes axis."""
@@ -75,8 +81,8 @@ def _renamed_qu_cubes(
 ) -> tuple[Path, Path]:
     q_path, u_path = _make_qu_cubes(tmp_path)
     paths = (
-        q_path.rename(tmp_path / f"{STEM}.q.linmos.fits"),
-        u_path.rename(tmp_path / f"{STEM}.u.linmos.fits"),
+        q_path.rename(tmp_path / _linmos_cube_name("q")),
+        u_path.rename(tmp_path / _linmos_cube_name("u")),
     )
     if not degenerate_axis:
         return paths
@@ -413,7 +419,7 @@ def _cubes_with_beams(tmp_path: Path, offsets: dict[str, float]) -> dict[str, Pa
     """Flint-named cubes, which is what splitting a cube into named planes needs"""
     return {
         pol: _write_cube_with_beam(
-            tmp_path / f"{STEM}.{pol}.linmos.fits", [10.0 + offset] * 3
+            tmp_path / _linmos_cube_name(pol), [10.0 + offset] * 3
         )
         for pol, offset in offsets.items()
     }
@@ -434,7 +440,9 @@ def test_resolve_common_resolution_cubes_convolves(tmp_path: Path) -> None:
     assert cubes_share_common_beam(cube_paths=resolved_cubes)
     # Each Stokes must keep its own data, not be paired to another cube's output
     for stokes, resolved_cube in resolved.items():
-        assert resolved_cube.name.startswith(cubes[stokes].stem)
+        components = processed_ms_format(resolved_cube)
+        assert components is not None and components.pol == stokes
+        assert components.total and components.image and components.cube
     # The weight cubes are untouched, so the convolved cubes must stay on the
     # input pixel and channel grid
     assert fits.getdata(resolved["q"]).shape == fits.getdata(cubes["q"]).shape
@@ -465,7 +473,7 @@ def test_resolve_common_resolution_cubes_from_natural_resolution(
     band, and the natural cubes they came from are left alone to be archived"""
     cubes = {
         pol: _write_cube_with_beam(
-            tmp_path / f"{STEM}.{pol}.linmos.fits", [10.0, 15.0, 20.0]
+            tmp_path / _linmos_cube_name(pol), [10.0, 15.0, 20.0]
         )
         for pol in ("q", "u")
     }
@@ -495,7 +503,7 @@ def test_resolve_common_resolution_cubes_beam_cutoff_blanks_coarse_channels(
     common beam of every channel out to its resolution"""
     cubes = _cubes_with_beams(tmp_path, {"q": 0.0, "u": 0.5})
     coarse = _write_cube_with_beam(
-        tmp_path / f"{STEM}.i.linmos.fits", [10.0, 10.0, 40.0]
+        tmp_path / _linmos_cube_name("i"), [10.0, 10.0, 40.0]
     )
     cubes["i"] = coarse
 
@@ -524,9 +532,7 @@ def test_resolve_common_resolution_cubes_without_usable_beams(tmp_path: Path) ->
     a common-beam solver that cannot solve them"""
     tiny = float(np.finfo(np.float32).tiny)
     cubes = {
-        pol: _write_cube_with_beam(
-            tmp_path / f"{STEM}.{pol}.linmos.fits", [0.0, tiny, 0.0]
-        )
+        pol: _write_cube_with_beam(tmp_path / _linmos_cube_name(pol), [0.0, tiny, 0.0])
         for pol in ("q", "u")
     }
 
@@ -593,10 +599,10 @@ def _cube_names(
     tmp_path: Path, pols: tuple[str, ...], suffix: str = "image"
 ) -> list[Path]:
     """Cube paths named in the flint scheme, which is what from_paths reads"""
-    # STEM carries a channel range, which the flint scheme puts in place of the
-    # polarisation, so these names need a round instead
+    # STEM carries a channel range, which the flint scheme puts after the
+    # polarisation, so these names use a round instead
     stem = "SB12345.BENCH_0000+00.round1"
-    return [tmp_path / f"{stem}.{pol}.pol.{suffix}.cube.fits" for pol in pols]
+    return [tmp_path / f"{stem}.{pol}.{suffix}.natural.cube.fits" for pol in pols]
 
 
 def test_get_parser_takes_a_list_of_stokes_cubes(tmp_path: Path) -> None:

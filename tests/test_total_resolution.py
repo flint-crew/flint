@@ -24,10 +24,9 @@ from flint.convol import (
     get_common_beam,
 )
 from flint.cube import combine_images_to_cube, split_cube_into_planes
-from flint.naming import ResolutionModes
+from flint.naming import Suffix
 from flint.options import FFTBANEOptions, FitsCubeOptions
 from flint.prefect.common.imaging import (
-    _resolution_suffix,
     convolve_channel_groups_to_natural_resolution,
     linmos_channel_groups_to_cubes,
     total_beam_from_channel_groups,
@@ -37,7 +36,7 @@ from flint.prefect.common.imaging import (
 from tests.test_convol import _write_cube_with_beam  # noqa: E402
 from tests.test_natural_resolution import _bmaj_arcsec, _channel_groups  # noqa: E402
 
-STEM = "SB12345.BENCH_0000+00.ch0000-0019"
+STEM = "SB12345.BENCH_0000+00.round1"
 
 
 def _total_beam(
@@ -83,7 +82,7 @@ def _cube_from_planes(
     return combine_images_to_cube(
         images=planes,
         prefix=str(prefix),
-        mode="image",
+        suffix_spec=Suffix(image=True),
         fitscube_options=FitsCubeOptions(
             bounding_box=False,
             create_blanks=False,
@@ -136,7 +135,7 @@ def _planes_at_total_resolution(
             plane=plane,
             beam_shape=total_beam,
             cutoff=cutoff,
-            convol_suffix=ResolutionModes.TOTAL,
+            suffix_spec=Suffix(total=True),
         )
         for plane in planes
     ]
@@ -187,14 +186,6 @@ def test_a_band_entirely_beyond_the_cutoff_fails_clearly(tmp_path: Path) -> None
             prefix=tmp_path / f"{STEM}.q.total",
             beam_shape=total_beam,
         )
-
-
-def test_resolution_suffix_labels_both_sets() -> None:
-    """Each cube says which resolution it is at, rather than one of them being
-    the unlabelled default"""
-    assert _resolution_suffix("pol", ResolutionModes.NATURAL) == "pol.natural"
-    assert _resolution_suffix("pol", ResolutionModes.TOTAL) == "pol.total"
-    assert _resolution_suffix(None, ResolutionModes.TOTAL) == "total"
 
 
 @dataclass(eq=False)
@@ -253,3 +244,11 @@ def test_image_cubes_wait_for_every_reader_of_their_planes(
     for cube in (cubes.weight, cubes.bkg, cubes.rms, cubes.total_bkg, cubes.total_rms):
         assert cube is not None
         assert cube.kwargs["wait_for"] is None
+
+    # Each set of cubes is named for its resolution, built from the fields alone
+    prefixes = [s for s in submitted if s.task == "task_create_name_from_common_fields"]
+    assert [p.kwargs["suffix_spec"] for p in prefixes] == [
+        Suffix(natural=True),
+        Suffix(total=True),
+    ]
+    assert all(p.kwargs["keep_suffix"] is False for p in prefixes)

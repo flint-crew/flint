@@ -104,7 +104,7 @@ def _expected_paths(**kwargs: Any) -> list[Path]:
     "prefix, fields, pol_token, flint_suffix",
     [
         (
-            "SB39400.RACS_0635-31.beam33.poli",
+            "SB39400.RACS_0635-31.project-poli.beam33.i",
             {"image_type": "image", "mfs": True},
             "i",
             ".MFS.image",
@@ -172,11 +172,12 @@ def test_flint_output_path_joint_pol(token: str, wsclean_pol: str, flint_pol: st
 
 
 def test_flint_output_path_joint_pol_with_channel_range():
-    """The polarisation field is found even when a channel range follows it"""
+    """The polarisation field is found even when a channel range follows it, and
+    the channel of the output takes the place of the range that was imaged"""
     prefix = "SB56289.RACS_1041+18.beam15.round1.qu.ch0010-0020"
     output = _output(prefix=prefix, image_type="image", channel=1, pol="U")
     assert flint_output_path(output=output, prefix=prefix, pol_token="qu") == Path(
-        "SB56289.RACS_1041+18.beam15.round1.u.ch0010-0020.ch0001-0002.image.fits"
+        "SB56289.RACS_1041+18.beam15.round1.u.ch0001-0002.image.fits"
     )
 
 
@@ -692,7 +693,7 @@ def test_create_wsclean_name_argument_hold_dir(ms_example) -> None:
     """flint_hold_dir sets the -name directory, and takes precedence over temp_dir"""
 
     ms = MS.cast(ms=Path(ms_example))
-    name = "SB39400.RACS_0635-31.beam0.small.i"
+    name = "SB39400.RACS_0635-31.beam00.i"
 
     wsclean_options = WSCleanOptions(flint_hold_dir="/jack/sparrow")
     name_argument_path = create_wsclean_name_argument(

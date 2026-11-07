@@ -257,7 +257,7 @@ def process_rmsynth(
     )
 
     output_prefix = create_name_from_common_fields(
-        in_paths=(stokes_cubes.q_path, stokes_cubes.u_path)
+        in_paths=(stokes_cubes.q_path, stokes_cubes.u_path), keep_suffix=False
     )
     if rmsynth_field_options.output_path is not None:
         rmsynth_field_options.output_path.mkdir(parents=True, exist_ok=True)

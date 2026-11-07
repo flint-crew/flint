@@ -563,7 +563,7 @@ def process_science_fields(
                 wsclean_results=wsclean_results,
                 field_options=field_options,
                 field_summary=field_summary,
-                additional_linmos_suffix_str="noselfcal"
+                additional_linmos_suffix=Suffix(noselfcal=True)
                 if current_round == 0
                 else None,
             )

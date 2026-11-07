@@ -29,6 +29,7 @@ from flint.exceptions import (
 from flint.imageset import (
     transpose_and_sort_channel_images,
 )
+from flint.naming import Suffix
 from flint.options import FitsCubeOptions
 from flint.utils import get_packaged_resource_path
 
@@ -126,7 +127,7 @@ def test_cube_split_and_recombine_roundtrip(tmpdir) -> None:
     beam_cube = combine_images_to_cube(
         images=images,
         prefix=f"{tmp_path}/SB1234.RACS_0000-00.beam00.round1",
-        mode="image",
+        suffix_spec=Suffix(image=True),
         fitscube_options=FitsCubeOptions(
             invalidate_zeros=False, remove_original_images=False
         ),
@@ -142,7 +143,7 @@ def test_cube_split_and_recombine_roundtrip(tmpdir) -> None:
     field_cube = combine_images_to_cube(
         images=planes,
         prefix=f"{tmp_path}/SB1234.RACS_0000-00.round1",
-        mode="image",
+        suffix_spec=Suffix(image=True),
         fitscube_options=FitsCubeOptions(invalidate_zeros=False),
     )
     _assert_cube_matches_images(cube=field_cube, images=images)
@@ -163,7 +164,7 @@ def test_rotate_cube_is_idempotent(tmpdir) -> None:
     cube = combine_images_to_cube(
         images=images,
         prefix=f"{tmp_path}/SB1234.RACS_0000-00.beam00.round1",
-        mode="image",
+        suffix_spec=Suffix(image=True),
         fitscube_options=FitsCubeOptions(invalidate_zeros=False),
     )
 
@@ -192,7 +193,7 @@ def test_combine_images_to_cube_overwrite(tmpdir) -> None:
         combine_images_to_cube,
         images=images,
         prefix=f"{tmp_path}/SB1234.RACS_0000-00.beam00.round1",
-        mode="image",
+        suffix_spec=Suffix(image=True),
     )
     combine(fitscube_options=fitscube_options)
 
@@ -243,7 +244,7 @@ def test_combine_images_to_cube_shape_mismatch(tmpdir) -> None:
         combine_images_to_cube(
             images=images,
             prefix=f"{tmp_path}/SB1234.RACS_0000-00.beam00.round1",
-            mode="image",
+            suffix_spec=Suffix(image=True),
             fitscube_options=FitsCubeOptions(),
         )
 
@@ -265,7 +266,7 @@ def test_combine_images_to_cube_bounding_box_trims(tmpdir) -> None:
     cube = combine_images_to_cube(
         images=images,
         prefix=f"{tmp_path}/SB1234.RACS_0000-00.beam00.round1",
-        mode="image",
+        suffix_spec=Suffix(image=True),
         fitscube_options=FitsCubeOptions(bounding_box=True),
     )
 
@@ -305,14 +306,14 @@ def test_combine_images_to_cube_bounding_box_override_forces_shared_grid(
     image_cube = combine_images_to_cube(
         images=narrow_border_images,
         prefix=f"{tmp_path}/SB1234.RACS_0000-00.beam00.round1",
-        mode="image",
+        suffix_spec=Suffix(image=True),
         fitscube_options=FitsCubeOptions(bounding_box=False),
         bounding_box=shared_box,
     )
     weight_cube = combine_images_to_cube(
         images=wide_border_images,
         prefix=f"{tmp_path}/SB1234.RACS_0000-00.beam00.round1",
-        mode="weight",
+        suffix_spec=Suffix(weight=True),
         fitscube_options=FitsCubeOptions(
             bounding_box=False, remove_original_images=False
         ),
@@ -322,8 +323,8 @@ def test_combine_images_to_cube_bounding_box_override_forces_shared_grid(
     # Left independent, the wide-border cube would trim to (8, 8), not (6, 6)
     independent_weight_cube = combine_images_to_cube(
         images=wide_border_images,
-        prefix=f"{tmp_path}/SB1234.RACS_0000-00.beam00.round1.independent",
-        mode="weight",
+        prefix=f"{tmp_path}/SB1234.RACS_0000-00.beam00.round2",
+        suffix_spec=Suffix(weight=True),
         fitscube_options=FitsCubeOptions(bounding_box=True),
     )
 
@@ -357,14 +358,14 @@ def test_split_cube_into_planes(tmpdir) -> None:
     cube = combine_images_to_cube(
         images=files,
         prefix=f"{tmpdir}/SB56659.RACS_0940-04.beam17.round3",
-        mode="image",
+        suffix_spec=Suffix(image=True),
         fitscube_options=FitsCubeOptions(),
     )
 
     planes = split_cube_into_planes(cube=cube)
 
     assert [plane.name for plane in planes] == [
-        f"SB56659.RACS_0940-04.beam17.round3.i.ch{channel:04d}-{channel:04d}.fits"
+        f"SB56659.RACS_0940-04.beam17.round3.ch{channel:04d}-{channel:04d}.image.fits"
         for channel in range(3)
     ]
     assert all(plane.exists() for plane in planes)
@@ -402,7 +403,7 @@ def test_combine_images_to_cube_tile_compresses(tmpdir) -> None:
     cube = combine_images_to_cube(
         images=files,
         prefix=f"{tmpdir}/SB56659.RACS_0940-04.beam17.round3",
-        mode="image",
+        suffix_spec=Suffix(image=True),
         fitscube_options=FitsCubeOptions(compress=True, compress_method="tile-gzip"),
     )
 
@@ -428,7 +429,7 @@ def _write_varying_beam_cube(tmp_path: Path, channels: int) -> Path:
     return combine_images_to_cube(
         images=images,
         prefix=f"{tmp_path}/SB1234.RACS_0000-00.beam00.round1",
-        mode="image",
+        suffix_spec=Suffix(image=True),
         fitscube_options=FitsCubeOptions(
             invalidate_zeros=False, remove_original_images=False
         ),
@@ -475,7 +476,7 @@ def test_combine_images_to_cube_single_beam_drops_beam_table(tmp_path) -> None:
     cube = combine_images_to_cube(
         images=images,
         prefix=f"{tmp_path}/SB1234.RACS_0000-00.beam00.round1",
-        mode="image",
+        suffix_spec=Suffix(image=True),
         fitscube_options=FitsCubeOptions(
             invalidate_zeros=False, remove_original_images=False
         ),

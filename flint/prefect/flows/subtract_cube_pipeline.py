@@ -204,7 +204,6 @@ def task_combine_all_linmos_images(
     linmos_commands: list[LinmosResult],
     combine_weights: bool = False,
     time_domain: bool = False,
-    continuum_subtracted: bool = False,
     update_fits_cube_options: dict[str, Any] | None = None,
 ) -> Path:
     """Use the fits-cube package to take all input images and create a single output cube.
@@ -213,7 +212,6 @@ def task_combine_all_linmos_images(
         linmos_commands (list[LinmosResult]): The output linmos commands to concatenated into a single cube.
         combine_weights (bool, optional): Whether to concatenated the images or the weights that are described by the input `linmos_commands`. Defaults to False.
         time_domain (bool, optional): Whether images are to be formed on the spectral or time axis. Defaults to False.
-        continuum_subtracted (bool, optional): Indicates whether the input images have been continuum subtracted. Used to inform the output file name. Defaults to False.
         update_fits_cube_options (dict[str, Any] | None, optional): Overrides applied to the default `FitsCubeOptions`, including `remove_original_images`, `bounding_box` and `invalidate_zeros`. Defaults to None.
 
     Returns:
@@ -242,11 +240,12 @@ def task_combine_all_linmos_images(
         linmos=not combine_weights,
         time=time_domain,
         freq=not time_domain,
-        contsub=continuum_subtracted,
-        cont=not continuum_subtracted,
+        contsub=True,
     )
 
-    base_cube_path = create_name_from_common_fields(in_paths=tuple(images_to_combine))
+    base_cube_path = create_name_from_common_fields(
+        in_paths=tuple(images_to_combine), keep_suffix=False
+    )
     output_cube_path = create_image_cube_name(
         image_prefix=base_cube_path, suffix_spec=suffix_spec
     )

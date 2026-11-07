@@ -63,10 +63,6 @@ from flint.prefect.common.utils import (
     task_getattr,
 )
 
-# Marks images/cubes produced by this pipeline so they don't clash with the
-# continuum self-cal flow's own Stokes I/V products for the same MS/beam.
-POL_NAME_SUFFIX = "pol"
-
 
 class PolPipelineResult(BaseOptions):
     """Return value of ``process_science_fields_pol``, handed in-memory to
@@ -328,7 +324,9 @@ def process_science_fields_pol(
                     mode="wsclean",
                     polarisation=polarisation,
                 )
-                update_wsclean_options["flint_name_suffix"] = POL_NAME_SUFFIX
+                # Marks the products of this pipeline so they don't clash with the
+                # continuum self-cal flow's own Stokes I/V products for the same MS/beam
+                update_wsclean_options["flint_name_suffix"] = "pol"
                 if cube_division is not None:
                     update_wsclean_options = apply_cube_division(
                         update_wsclean_options=update_wsclean_options,
@@ -497,7 +495,6 @@ def process_science_fields_pol(
                 stokesi_channel_groups=i_channel_groups,
                 field_summary=field_summary,
                 fitscube_options=fitscube_options,
-                suffix_str=POL_NAME_SUFFIX,
                 fft_bane_options=fft_bane_options,
                 total_beam_shape=total_beam_shape,
                 beam_cutoff=pol_field_options.cube_beam_cutoff,
@@ -566,7 +563,6 @@ def process_science_fields_pol(
                             cleanup=True,
                         ),
                         field_summary=field_summary,
-                        suffix_str=f"{POL_NAME_SUFFIX}.{product_type}",
                         holofile=pol_field_options.holofile,
                     )
                     mfs_image_path = task_getattr.submit(

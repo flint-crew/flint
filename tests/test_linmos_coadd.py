@@ -306,7 +306,7 @@ def test_linmos_images_blanks_its_padding_once(tmp_path, monkeypatch, trim):
     container = tmp_path / "yandasoft.sif"
     container.touch()
     linmos_options = LinmosOptions(
-        base_output_name=tmp_path / "linmos_field", trim_linmos_fits=trim
+        base_output_name=tmp_path / "SB1.F.round1.i", trim_linmos_fits=trim
     )
     linmos_names = create_linmos_names(name_prefix=linmos_options.base_output_name)
     padded = np.zeros((40, 40), dtype=np.float32)
@@ -544,7 +544,9 @@ def test_linmos_parset_sets_the_regrid_method(tmp_path, linmos_options, expected
 
     summary = generate_linmos_parameter_set(
         images=images,
-        linmos_names=create_linmos_names(name_prefix=str(tmp_path / "field")),
+        linmos_names=create_linmos_names(
+            name_prefix=str(tmp_path / "SB1234.RACS_1200-45.round4.i")
+        ),
         linmos_options=linmos_options,
         weight_list="[weight0,weight1]",
     )

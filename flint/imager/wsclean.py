@@ -32,6 +32,7 @@ from pydantic import Field, model_validator
 from flint.exceptions import (
     AttemptRerunException,
     CleanDivergenceError,
+    NamingException,
     NotSupportedError,
 )
 from flint.imageset import (
@@ -43,9 +44,12 @@ from flint.imageset import (
 from flint.logging import logger
 from flint.ms import MS, standardise_ms_to_list_ms
 from flint.naming import (
+    Suffix,
     create_imaging_name_prefix,
+    create_path_from_processed_name_components,
     pol_name_token,
-    replace_name_field,
+    processed_ms_format,
+    update_name_fields,
 )
 from flint.options import (
     BaseOptions,
@@ -400,19 +404,28 @@ def flint_output_path(
 ) -> Path:
     """The flint name of a wsclean image. Its polarisation, if tagged, replaces
     ``pol_token`` in ``prefix``, and its channel becomes a ``ch<lo>-<hi>`` field."""
-    prefix_path = Path(prefix)
+    components = processed_ms_format(in_name=Path(prefix))
+    if components is None:
+        msg = f"{prefix=} does not follow the flint processed name format"
+        raise NamingException(msg)
     if output.pol is not None:
-        prefix_path = replace_name_field(
-            path=prefix_path, old=pol_token, new=output.pol.lower()
-        )
-    fields = prefix_path.name.split(".")
+        if components.pol != pol_token:
+            msg = f"Expected {pol_token=} in {prefix=}, found {components.pol=}"
+            raise NamingException(msg)
+        components = components.with_options(pol=output.pol.lower())
     if output.mfs:
-        fields.append("MFS")
+        components = components.with_options(mfs=True, channel_range=None)
     elif output.channel is not None:
-        fields.append(f"ch{output.channel:04d}-{output.channel + 1:04d}")
-    fields.append(output.image_type)
+        components = components.with_options(
+            channel_range=(output.channel, output.channel + 1)
+        )
 
-    return output.path.parent / (".".join(fields) + ".fits")
+    return create_path_from_processed_name_components(
+        processed_name_components=components,
+        parent_path=output.path.parent,
+        suffix_spec=Suffix(**{output.image_type: True}),
+        ext=".fits",
+    )
 
 
 def remove_wsclean_outputs(
@@ -770,7 +783,7 @@ def collect_wsclean_outputs(
         for output in outputs:
             if output.image_type == "psf" and output not in collected:
                 renamed[output] = renamed[output].rename(
-                    replace_name_field(path=renamed[output], old=pol_token, new="i")
+                    update_name_fields(renamed[output], pol="i")
                 )
         if not options.flint_keep_linear_images:
             linear = [renamed[output] for output in outputs if output.pol is not None]

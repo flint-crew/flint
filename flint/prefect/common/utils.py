@@ -20,7 +20,6 @@ from flint.naming import (
     add_timestamp_to_path,
     get_fits_cube_from_paths,
     get_sbid_from_path,
-    rename_linear_to_stokes,
 )
 from flint.options import ArchiveOptions
 from flint.prefect.caching import task
@@ -149,7 +148,6 @@ task_update_field_summary = task(update_field_summary)
 task_create_field_summary = task(create_field_summary)
 task_create_beam_summary = task(create_beam_summary)
 task_get_fits_cube_from_paths = task(get_fits_cube_from_paths)
-task_rename_linear_to_stokes = task(rename_linear_to_stokes)
 
 
 @task
@@ -186,7 +184,7 @@ def task_archive_sbid(
     if max_round is not None:
         updated_file_patterns = (
             *tuple(archive_options.tar_file_re_patterns),
-            f".*beam[0-9]+\\.round{max_round}-.*-image\\.fits",
+            f".*beam[0-9]+\\.round{max_round}\\..*\\.image\\.fits",
             f".*beam[0-9]+\\.round{max_round}\\.ms\\.(zip|tar)",
         )
         archive_options = archive_options.with_options(

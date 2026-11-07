@@ -16,7 +16,11 @@ from prefect.futures import PrefectFuture
 from flint.bane import BANEMaps
 from flint.convol import BeamShape
 from flint.logging import logger
-from flint.naming import ResolutionModes
+from flint.naming import (
+    Suffix,
+    create_path_from_processed_name_components,
+    processed_ms_format,
+)
 from flint.options import (
     CubesForRMSynth,
     ErrorCubesForRMSynth,
@@ -72,7 +76,7 @@ def convolve_cubes_to_common_resolution(
     beam_shape: BeamShape,
     output_path: Path | None = None,
     beam_cutoff: float | None = None,
-    convol_suffix: str = ResolutionModes.TOTAL,
+    suffix_spec: Suffix | None = None,
     fft_bane_options: FFTBANEOptions | None = None,
 ) -> CommonResolutionCubes:
     """Bring a set of FITS cubes to the one resolution described by
@@ -91,12 +95,13 @@ def convolve_cubes_to_common_resolution(
         beam_shape (BeamShape): The resolution every channel is brought to
         output_path (Path | None, optional): Directory the new cubes are written into. Defaults to alongside each input cube.
         beam_cutoff (float | None, optional): Channels coarser than this, in arcsec, are blanked rather than convolved to. Defaults to no cutoff.
-        convol_suffix (str, optional): The marker added to the name of a smoothed plane, and of the cube they are stacked into. Defaults to 'total'.
+        suffix_spec (Suffix | None, optional): The suffix fields added to the name of a smoothed plane, and of the cube they are stacked into. If None ``Suffix(total=True)`` is used. Defaults to None.
         fft_bane_options (FFTBANEOptions | None, optional): When given, each convolved plane also gets a BANE background and RMS map, stacked into their own cubes. Measured after the convolution, so they describe the resolution rm-synthesis actually builds the FDF at. Defaults to None.
 
     Returns:
         CommonResolutionCubes: The convolved cube for each key of ``cubes``, and the BANE cubes when asked for
     """
+    suffix_spec = suffix_spec if suffix_spec is not None else Suffix(total=True)
     fitscube_options = FitsCubeOptions(
         # The weight cubes are not convolved, so the convolved image cubes have
         # to stay on the pixel and channel grid of the cubes they came from
@@ -140,7 +145,7 @@ def convolve_cubes_to_common_resolution(
         plane=[plane for planes in planes_per_cube.values() for plane in planes],
         beam_shape=unmapped(beam_shape),
         cutoff=unmapped(beam_cutoff),
-        convol_suffix=unmapped(convol_suffix),
+        suffix_spec=unmapped(suffix_spec),
     ).result()
 
     # Measured on the convolved planes, which is the resolution the FDF is
@@ -154,16 +159,27 @@ def convolve_cubes_to_common_resolution(
         ).result()
 
     cube_futures: dict[str, dict[str, PrefectFuture[Path]]] = {
-        mode: {} for mode in (convol_suffix, "bkg", "rms")
+        mode: {} for mode in ("image", "bkg", "rms")
     }
     plane_idx = 0
     for key, planes in planes_per_cube.items():
         plane_slice = slice(plane_idx, plane_idx + len(planes))
-        prefix = str(cube_parent[key] / cubes[key].stem)
-        cube_futures[convol_suffix][key] = task_combine_images_to_cube.submit(
+        # The new cubes are named from the fields of the input alone, so its own
+        # resolution and product markers do not carry over
+        components = processed_ms_format(in_name=cubes[key])
+        assert components is not None, f"{cubes[key]=} is not a flint format name"
+        prefix = str(
+            create_path_from_processed_name_components(
+                processed_name_components=components,
+                parent_path=cube_parent[key],
+                suffix_spec=Suffix(),
+                ext="",
+            )
+        )
+        cube_futures["image"][key] = task_combine_images_to_cube.submit(
             images=convolved_planes[plane_slice],
             prefix=prefix,
-            mode=convol_suffix,
+            suffix_spec=suffix_spec + Suffix(image=True),
             fitscube_options=fitscube_options,
         )
         for mode, attribute in (("bkg", "bkg_image"), ("rms", "rms_image")):
@@ -173,7 +189,7 @@ def convolve_cubes_to_common_resolution(
                         getattr(maps, attribute) for maps in bane_maps[plane_slice]
                     ],
                     prefix=prefix,
-                    mode=f"{convol_suffix}.{mode}",
+                    suffix_spec=suffix_spec + Suffix(**{mode: True}),
                     fitscube_options=fitscube_options,
                 )
         plane_idx += len(planes)
@@ -186,7 +202,7 @@ def convolve_cubes_to_common_resolution(
         for mode, futures in cube_futures.items()
     }
     convolved_cubes = CommonResolutionCubes(
-        cubes=resolved[convol_suffix],
+        cubes=resolved["image"],
         convolved=True,
         bkg_cubes=resolved["bkg"],
         rms_cubes=resolved["rms"],

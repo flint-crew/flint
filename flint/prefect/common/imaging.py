@@ -72,7 +72,6 @@ from flint.ms import (
     standardise_ms_to_list_ms,
 )
 from flint.naming import (
-    FITSMaskNames,
     Suffix,
     create_name_from_common_fields,
     get_fits_cube_from_paths,
@@ -1027,11 +1026,6 @@ class LinmosCubes(NamedTuple):
         return [future for future in self if future is not None]
 
 
-def _resolution_suffix(suffix_str: str | None, mode: ResolutionModes) -> str:
-    """The linmos suffix with the resolution of the product appended"""
-    return f"{suffix_str}.{mode}" if suffix_str else str(mode)
-
-
 def linmos_channel_groups_to_cubes(
     channel_groups: Collection[Collection[Path]],
     container: Path,
@@ -1123,7 +1117,7 @@ def linmos_channel_groups_to_cubes(
                 plane=image_plane,
                 beam_shape=total_beam_shape,
                 cutoff=beam_cutoff,
-                convol_suffix=ResolutionModes.TOTAL,
+                suffix_spec=Suffix(total=True),
             )
             total_planes.append(total_plane)
 
@@ -1152,13 +1146,14 @@ def linmos_channel_groups_to_cubes(
     # removing the per-channel mosaics once cubed.
     cube_prefix = task_create_name_from_common_fields.submit(
         in_paths=image_planes,
-        additional_suffixes=_resolution_suffix(suffix_str, ResolutionModes.NATURAL),
+        suffix_spec=(linmos_suffix or Suffix()) + Suffix(natural=True),
+        keep_suffix=False,
     )
     cubes = {
         mode: task_combine_images_to_cube.submit(
             images=planes,
             prefix=cube_prefix,
-            suffix_spec=suffix_spec,
+            suffix_spec=Suffix(**{mode: True}),
             fitscube_options=fitscube_options,
             bounding_box=bounding_box,
             # ``remove_original_images`` has the image cube delete the planes the
@@ -1179,7 +1174,8 @@ def linmos_channel_groups_to_cubes(
     total_prefix = (
         task_create_name_from_common_fields.submit(
             in_paths=image_planes,
-            additional_suffixes=_resolution_suffix(suffix_str, ResolutionModes.TOTAL),
+            suffix_spec=(linmos_suffix or Suffix()) + Suffix(total=True),
+            keep_suffix=False,
         )
         if total_planes
         else None
@@ -1188,7 +1184,7 @@ def linmos_channel_groups_to_cubes(
         mode: task_combine_images_to_cube.submit(
             images=planes,
             prefix=total_prefix,
-            mode=mode,
+            suffix_spec=Suffix(**{mode: True}),
             fitscube_options=fitscube_options,
             bounding_box=bounding_box,
             beam_shape=total_beam_shape,
@@ -1231,10 +1227,10 @@ def create_convolve_linmos_cubes(
     holofile: Path | None = None,
 ) -> ConvolvedLinmosCubes:
     """Co-add the beam cubes channel by channel, each channel convolved to a common resolution first."""
-    suffixes = [f"round{current_round}" if current_round is not None else "noselfcal"]
-    if additional_linmos_suffix_str:
-        suffixes.insert(0, additional_linmos_suffix_str)
-    linmos_suffix_str = ".".join(suffixes)
+    # The self-calibration round is carried by the image names themselves
+    linmos_suffix = Suffix(noselfcal=current_round is None)
+    if additional_linmos_suffix is not None:
+        linmos_suffix = linmos_suffix + additional_linmos_suffix
 
     # linmos co-adds a cube channel-by-channel serially, so split the beam cubes
     # into planes and co-add each channel in parallel instead. Splitting before

@@ -14,10 +14,11 @@ from flint.exceptions import NamingException
 from flint.logging import logger
 from flint.naming import (
     ProcessedNameComponents,
+    Suffix,
     extract_components_from_name,
-    pol_name_token,
-    replace_name_field,
+    processed_ms_format,
     split_images,
+    update_name_fields,
 )
 from flint.options import BaseOptions, FitsCubeOptions
 
@@ -225,7 +226,7 @@ def combine_image_set_to_cube(
         output_cube_name = combine_images_to_cube(
             images=subband_images,
             prefix=str(image_set.prefix),
-            mode=mode,
+            suffix_spec=Suffix(**{mode: True}),
             fitscube_options=fitscube_options,
         )
 
@@ -281,9 +282,9 @@ def form_stokes_i(image_set: ImageSet) -> ImageSet:
             continue
 
         pairs = [
-            (image, replace_name_field(path=image, old="xx", new="yy"))
+            (image, update_name_fields(image, pol="yy"))
             for image in images
-            if "xx" in image.name.split(".")
+            if (components := processed_ms_format(image)) and components.pol == "xx"
         ]
         paired = {path for pair in pairs for path in pair}
         if paired != set(images):
@@ -296,17 +297,15 @@ def form_stokes_i(image_set: ImageSet) -> ImageSet:
             write_stokes_i(
                 xx_path=xx_path,
                 yy_path=yy_path,
-                i_path=replace_name_field(path=xx_path, old="xx", new="i"),
+                i_path=update_name_fields(xx_path, pol="i"),
             )
             for xx_path, yy_path in pairs
         ]
 
-    linear_token = pol_name_token(pol="xx,yy")
     if image_set.psf:
         stokes_i["psf"] = [
-            psf.rename(replace_name_field(path=psf, old=linear_token, new="i"))
-            for psf in image_set.psf
+            psf.rename(update_name_fields(psf, pol="i")) for psf in image_set.psf
         ]
 
-    prefix = replace_name_field(path=Path(image_set.prefix), old=linear_token, new="i")
+    prefix = update_name_fields(Path(image_set.prefix), pol="i")
     return image_set.with_options(prefix=str(prefix), **stokes_i)

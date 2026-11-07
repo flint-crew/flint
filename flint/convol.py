@@ -275,7 +275,7 @@ def convolve_plane_to_beam(
     plane: Path,
     beam_shape: BeamShape,
     cutoff: float | None = None,
-    convol_suffix: str = "conv",
+    suffix_spec: Suffix | None = None,
 ) -> Path:
     """Convolve a single channel plane to ``beam_shape``, writing a new image
     alongside it and leaving the input in place.
@@ -288,7 +288,7 @@ def convolve_plane_to_beam(
         plane (Path): The channel image to convolve
         beam_shape (BeamShape): The resolution to convolve to
         cutoff (float | None, optional): Planes whose major axis exceeds this, in arcsec, are blanked. Defaults to no cutoff.
-        convol_suffix (str, optional): The suffix added to .fits to indicate a smoothed image. Defaults to 'conv'.
+        suffix_spec (Suffix | None, optional): The suffix fields added to the flint name of a smoothed image. If None ``Suffix(conv=True)`` is used. Defaults to None.
 
     Returns:
         Path: The convolved (or blanked) image
@@ -297,7 +297,7 @@ def convolve_plane_to_beam(
         image_paths=[plane],
         beam_shape=beam_shape,
         cutoff=cutoff,
-        convol_suffix=convol_suffix,
+        suffix_spec=suffix_spec,
     )[0]
 
     header = fits.getheader(plane)
@@ -547,7 +547,7 @@ def convolve_images(
 
 
 def blank_images(
-    image_paths: Collection[Path], convol_suffix: str = "conv"
+    image_paths: Collection[Path], suffix_spec: Suffix | None = None
 ) -> list[Path]:
     """Write an all-NaN copy of each image, marked with a zero beam.
 
@@ -559,17 +559,16 @@ def blank_images(
 
     Args:
         image_paths (Collection[Path]): The images to blank
-        convol_suffix (str, optional): The suffix added to .fits, matching the convolved images these stand in for. Defaults to 'conv'.
+        suffix_spec (Suffix | None, optional): The suffix fields added to the flint name, matching the convolved images these stand in for. If None ``Suffix(conv=True)`` is used. Defaults to None.
 
     Returns:
         list[Path]: The blanked images
     """
+    suffix_spec = suffix_spec if suffix_spec is not None else Suffix(conv=True)
     blank_image_paths: list[Path] = []
 
     for image_path in image_paths:
-        blank_image_path = Path(
-            str(image_path).replace(".fits", f".{convol_suffix}.fits")
-        )
+        blank_image_path = Path(image_path) + suffix_spec
         logger.info(f"Blanking {image_path} into {blank_image_path=}")
 
         with fits.open(image_path) as open_fits:
@@ -589,7 +588,7 @@ def convolve_images_or_blank(
     image_paths: Collection[Path],
     beam_shape: BeamShape,
     cutoff: float | None = None,
-    convol_suffix: str = "conv",
+    suffix_spec: Suffix | None = None,
 ) -> list[Path]:
     """Convolve images to ``beam_shape``, or blank them when it does not describe
     a beam.
@@ -604,7 +603,7 @@ def convolve_images_or_blank(
         image_paths (Collection[Path]): The images to convolve
         beam_shape (BeamShape): The resolution to convolve to
         cutoff (float | None, optional): Images whose major axis exceeds this, in arcsec, are blanked. Defaults to no cutoff.
-        convol_suffix (str, optional): The suffix added to .fits to indicate a smoothed image. Defaults to 'conv'.
+        suffix_spec (Suffix | None, optional): The suffix fields added to the flint name of a smoothed image. If None ``Suffix(conv=True)`` is used. Defaults to None.
 
     Returns:
         list[Path]: The convolved (or blanked) images
@@ -614,14 +613,14 @@ def convolve_images_or_blank(
             image_paths=image_paths,
             beam_shape=beam_shape,
             cutoff=cutoff,
-            convol_suffix=convol_suffix,
+            suffix_spec=suffix_spec,
         )
 
     logger.info(
         f"No common beam over {len(image_paths)} images, likely all beyond "
         f"{cutoff=}. Blanking them rather than copying them through."
     )
-    return blank_images(image_paths=image_paths, convol_suffix=convol_suffix)
+    return blank_images(image_paths=image_paths, suffix_spec=suffix_spec)
 
 
 def get_parser() -> ArgumentParser:

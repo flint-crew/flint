@@ -61,7 +61,9 @@ def _channel_groups(
         stokes: [
             [
                 _write_image_with_beam(
-                    tmp_path / f"{stokes}.ch{channel}.beam{beam}.fits", bmaj_arcsec
+                    tmp_path
+                    / f"SB1.F.beam{beam:02d}.{stokes}.ch{channel:04d}-{channel + 1:04d}.image.fits",
+                    bmaj_arcsec,
                 )
                 for beam, bmaj_arcsec in enumerate(channel_beams)
             ]
@@ -200,7 +202,8 @@ def test_mfs_products_share_one_beam(tmp_path: Path) -> None:
         stokes: {
             product_type: [
                 _write_image_with_beam(
-                    tmp_path / f"{stokes}.{product_type}.beam{beam}.fits", bmaj_arcsec
+                    tmp_path / f"SB1.F.beam{beam:02d}.{stokes}.MFS.{product_type}.fits",
+                    bmaj_arcsec,
                 )
                 for beam, bmaj_arcsec in enumerate(majors)
             ]

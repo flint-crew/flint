@@ -382,7 +382,10 @@ def test_form_stokes_i_needs_pairs(tmp_path: Path):
     )
     with pytest.raises(NamingException):
         form_stokes_i(
-            image_set=ImageSet(prefix=str(tmp_path / "x.xxyy"), image=[xx, xx_channel])
+            image_set=ImageSet(
+                prefix=str(tmp_path / "SB56289.RACS_1041+18.beam15.round1.xxyy"),
+                image=[xx, xx_channel],
+            )
         )
 
 
@@ -395,7 +398,10 @@ def test_form_stokes_i_blank_planes(tmp_path: Path):
             fits.setval(path, key, value=0.0)
 
     image_set = form_stokes_i(
-        image_set=ImageSet(prefix=str(tmp_path / "x.xxyy"), image=[xx, yy])
+        image_set=ImageSet(
+            prefix=str(tmp_path / "SB56289.RACS_1041+18.beam15.round1.xxyy"),
+            image=[xx, yy],
+        )
     )
 
     assert fits.getheader(image_set.image[0])["BMAJ"] == 0.0
@@ -408,5 +414,8 @@ def test_form_stokes_i_needs_one_beam(tmp_path: Path):
     )
     with pytest.raises(ValueError, match="BMAJ"):
         form_stokes_i(
-            image_set=ImageSet(prefix=str(tmp_path / "x.xxyy"), image=[xx, yy])
+            image_set=ImageSet(
+                prefix=str(tmp_path / "SB56289.RACS_1041+18.beam15.round1.xxyy"),
+                image=[xx, yy],
+            )
         )

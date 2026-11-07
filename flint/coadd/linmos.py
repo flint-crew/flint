@@ -14,7 +14,12 @@ from capn_crunch import BaseOptions, add_options_to_parser, create_options_from_
 
 from flint.exceptions import ShapeMismatchError
 from flint.logging import logger
-from flint.naming import LinmosNames, create_linmos_names, extract_beam_from_name
+from flint.naming import (
+    LinmosNames,
+    create_linmos_names,
+    extract_beam_from_name,
+    processed_ms_format,
+)
 from flint.sclient import run_singularity_command
 from flint.utils import remove_files_folders
 
@@ -662,8 +667,9 @@ def generate_linmos_parameter_set(
     # have this second pass flagging to be turned off to ensure the entire 'in beam' region is returned.
 
     # Construct the holography section of the linmos parset
+    first_image = processed_ms_format(in_name=next(iter(images)))
     remove_leakage = (linmos_options.holofile is not None) and (
-        ".i." not in str(next(iter(images)))
+        first_image is None or first_image.pol != "i"
     )
     if linmos_options.force_remove_leakage is not None:
         logger.info(

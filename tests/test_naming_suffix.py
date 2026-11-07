@@ -213,10 +213,10 @@ def test_suffix_operators_preserve_ext() -> None:
 
     conv_path = file_path + Suffix(optimal=True, conv=True)
     assert conv_path == Path(
-        "/jack/SB1234.Jack-Sparrow.beam00.round1.i.optimal.conv.MFS.image.fits"
+        "/jack/SB1234.Jack-Sparrow.beam00.round1.i.MFS.image.optimal.conv.fits"
     )
     assert conv_path - Suffix(optimal=True) + Suffix(fixed=True) == Path(
-        "/jack/SB1234.Jack-Sparrow.beam00.round1.i.fixed.conv.MFS.image.fits"
+        "/jack/SB1234.Jack-Sparrow.beam00.round1.i.MFS.image.fixed.conv.fits"
     )
     assert conv_path - Suffix(optimal=True, conv=True) == file_path
 
