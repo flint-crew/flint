@@ -27,15 +27,20 @@ def pol_name_token(pol: str) -> str:
     return pol.lower().replace(",", "")
 
 
-def update_name_fields(path: Path, **fields: Any) -> Path:
-    """Rebuild a flint format path with some of its name fields changed, keeping its suffixes and extension"""
+def require_processed_name(path: str | Path) -> ProcessedNameComponents:
+    """The components of a flint format name, raising ``NamingException`` if it is not one"""
     components = processed_ms_format(in_name=path)
     if components is None:
         msg = f"{path=} does not follow the flint processed name format"
         raise NamingException(msg)
 
+    return components
+
+
+def update_name_fields(path: Path, **fields: Any) -> Path:
+    """Rebuild a flint format path with some of its name fields changed, keeping its suffixes and extension"""
     return create_path_from_processed_name_components(
-        processed_name_components=components.with_options(**fields),
+        processed_name_components=require_processed_name(path).with_options(**fields),
         parent_path=path.parent,
     )
 
@@ -214,15 +219,12 @@ def create_name_from_common_fields(
 
     if suffix_spec:
         logger.info(f"Adding {suffix_spec=}")
-        processed_name_components = processed_name_components.with_options(
-            **merge_suffix_spec(
-                spec_1=processed_name_components, spec_2=suffix_spec, how="or"
-            )._asdict()
-        )
+        suffix_spec = processed_name_components.suffix_spec + suffix_spec
 
     return create_path_from_processed_name_components(
         processed_name_components=processed_name_components,
         parent_path=parent,
+        suffix_spec=suffix_spec,
     )
 
 
@@ -247,10 +249,7 @@ def create_image_cube_name(
         Path: The final path and file name
     """
     image_prefix = Path(image_prefix)
-    components = processed_ms_format(in_name=image_prefix)
-    if components is None:
-        msg = f"{image_prefix=} does not follow the flint processed name format"
-        raise NamingException(msg)
+    components = require_processed_name(image_prefix)
 
     return create_path_from_processed_name_components(
         processed_name_components=components,
@@ -277,12 +276,17 @@ def create_imaging_name_prefix(
         scan_range (Optional[Tuple[int,int]], optional): The scan range that is going to be imaged. Defaults to none.
         project (Optional[str], optional): The project name to include in the naming. Defaults to None.
 
+    Raises:
+        NamingException: The measurement set name is not in the flint format, or carries something the format does not recognise
+
     Returns:
         str: The constructed string name
     """
-    ms_components = processed_ms_format(in_name=ms_path)
-    if ms_components is None:
-        msg = f"{ms_path=} does not follow the flint processed name format"
+    ms_components = require_processed_name(ms_path)
+    # Anything unrecognised would be dropped from the prefix, and two measurement
+    # sets differing only there would then image to the same files
+    if ms_components.ext not in (None, ".ms"):
+        msg = f"{ms_path=} has {ms_components.ext=} that the flint name format does not recognise"
         raise NamingException(msg)
 
     updates: dict[str, Any] = dict(
@@ -514,8 +518,7 @@ class Suffix(BaseOptions):
 
     def _apply_to_path(self, path: Path, how: SuffixMergeModes) -> Path:
         """Merge these suffix flags into an existing flint format path"""
-        pcn = processed_ms_format(in_name=path)
-        assert pcn is not None, f"{path=} is not a Flint format name"
+        pcn = require_processed_name(path)
 
         return create_path_from_processed_name_components(
             processed_name_components=pcn,
@@ -597,11 +600,6 @@ def merge_suffix_spec(spec_1: Suffix, spec_2: Suffix, how: SuffixMergeModes) -> 
     return Suffix(**out_spec)
 
 
-_SUFFIX_REGEX = "".join(
-    rf"((\.(?P<{field}>{field}))?)" for field in Suffix.model_fields
-)
-
-
 def get_string_for_suffix(
     suffix_spec: Suffix | ProcessedNameComponents,
 ) -> str | None:
@@ -668,9 +666,12 @@ def processed_ms_format(
         Union[FormattedNameComponents,None': A structure container the sbid, field, beam and spw. None is returned if can not be parsed.
     """
 
-    in_name = in_name.name if isinstance(in_name, Path) else in_name
+    in_name = Path(in_name).name
 
     logger.debug(f"Matching {in_name}")
+    suffix_regex = "".join(
+        rf"((\.(?P<{field}>{field}))?)" for field in Suffix.model_fields
+    )
     # TODO: Should the Beam and field items be relaxed and allowed to be optional?
     # TODO: At very least I think the beam should become options
     # A raw string is used to avoid bad unicode escaping
@@ -687,7 +688,7 @@ def processed_ms_format(
         # index (e.g. ``.0003``, as older flint versions named them), or MFS
         r"((\.ch(?P<chl>[0-9]+)-(?P<chh>[0-9]+))|(\.(?P<chidx>[0-9]{4}))|(\.(?P<mfs>MFS)))?"
         r"((\.scan(?P<scanl>([0-9]+))-(?P<scanh>([0-9]+)))?)"
-        + _SUFFIX_REGEX
+        + suffix_regex
         # Anything unrecognised is kept as the extension, e.g. .pirate.fits or _bkg.fits
         + r"((?P<ext>[._-].*)?)$"
     )
@@ -728,38 +729,30 @@ def processed_ms_format(
 
 
 def create_path_from_processed_name_components(
-    processed_name_components: ProcessedNameComponents | Path | str,
+    processed_name_components: ProcessedNameComponents,
     parent_path: Path | None = None,
     suffix_spec: Suffix | None = None,
     ext: str | None = None,
 ) -> Path:
     """Given an input ProcessedNameComponents create the corresponding path
 
-    If a ``Path`` instance is provided then the recognised name components are first extracted.
-
     If a ``suffix_spec`` is provided these will be used in favour of any specified by ``processed_name_components``.
 
     Args:
-        processed_name_components (ProcessedNameComponents | Path | str): The naming specification to create. If of type Path the existing name fields are used as a base.
+        processed_name_components (ProcessedNameComponents): The naming specification to create.
         parent_path (Path | None, optional): The parent directory of the output path. Defaults to None.
         suffix_spec (Suffix | None, optional): Additional suffix field indicators to use. If provided they overwrite any described by ``processed_name_components``. Defaults to None.
         ext (str | None, optional): The trailing extension of the name, e.g. ``.fits``. If provided it overwrites the ``ext`` of ``processed_name_components``. An empty string removes it. Defaults to None.
 
+    Raises:
+        NamingException: Both ``mfs`` and a ``channel_range`` are set, which share one place in a name
+
     Returns:
         Path: A directory with following the specification of the input ProcessedNameComponents
     """
-    _processed_name_components = (
-        processed_ms_format(in_name=processed_name_components)
-        if isinstance(processed_name_components, (Path, str))
-        else processed_name_components
-    )
-    assert _processed_name_components is not None, (
-        "Failure to resolve to name components"
-    )
-    processed_name_components = _processed_name_components
-    assert isinstance(processed_name_components, ProcessedNameComponents), (
-        f"{ type(processed_name_components)=}, which is bad"
-    )
+    if processed_name_components.mfs and processed_name_components.channel_range:
+        msg = f"A name holds either MFS or a channel range, not both: {processed_name_components=}"
+        raise NamingException(msg)
 
     components = []
 
@@ -778,11 +771,6 @@ def create_path_from_processed_name_components(
         components.append(f"round{int(processed_name_components.round)}")
     if processed_name_components.pol is not None:
         components.append(f"{processed_name_components.pol}")
-    assert not (
-        processed_name_components.mfs and processed_name_components.channel_range
-    ), (
-        f"A name holds either MFS or a channel range, not both: {processed_name_components=}"
-    )
     if processed_name_components.mfs:
         components.append("MFS")
     if processed_name_components.channel_range is not None:
@@ -1074,12 +1062,11 @@ def create_linmos_names(
         LinmosNames: Collection of expected filenames
     """
     name_prefix = Path(name_prefix)
+    name_components = require_processed_name(name_prefix)
 
     logger.info(f"Linmos name prefix is: {name_prefix}")
 
     def _linmos_name(suffix_spec: Suffix) -> Path:
-        name_components = processed_ms_format(in_name=name_prefix)
-        assert name_components is not None, f"{name_prefix=} is not a flint format name"
         return create_path_from_processed_name_components(
             processed_name_components=name_components,
             parent_path=name_prefix.parent,
@@ -1120,10 +1107,8 @@ def create_linmos_base_path(
     # Unless something has been specified, we make it up
     logger.info(f"Combining images {input_images}")
     output_name = create_name_from_common_fields(
-        in_paths=tuple(input_images), keep_suffix=False
+        in_paths=tuple(input_images), suffix_spec=suffix_spec, keep_suffix=False
     )
-    if suffix_spec is not None:
-        output_name = output_name + suffix_spec
     logger.info(f"Base output image name will be: {output_name}")
 
     return output_name.absolute()

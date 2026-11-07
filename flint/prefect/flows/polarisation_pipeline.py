@@ -31,6 +31,7 @@ from flint.ms import MSsByBeam, find_mss
 from flint.naming import (
     CASDANameComponents,
     ProcessedNameComponents,
+    Suffix,
     add_timestamp_to_path,
     extract_components_from_name,
     get_sbid_from_path,
@@ -563,6 +564,7 @@ def process_science_fields_pol(
                             cleanup=True,
                         ),
                         field_summary=field_summary,
+                        linmos_suffix=Suffix(**{product_type: True}),
                         holofile=pol_field_options.holofile,
                     )
                     mfs_image_path = task_getattr.submit(

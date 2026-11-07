@@ -48,7 +48,7 @@ from flint.naming import (
     create_imaging_name_prefix,
     create_path_from_processed_name_components,
     pol_name_token,
-    processed_ms_format,
+    require_processed_name,
     update_name_fields,
 )
 from flint.options import (
@@ -404,10 +404,7 @@ def flint_output_path(
 ) -> Path:
     """The flint name of a wsclean image. Its polarisation, if tagged, replaces
     ``pol_token`` in ``prefix``, and its channel becomes a ``ch<lo>-<hi>`` field."""
-    components = processed_ms_format(in_name=Path(prefix))
-    if components is None:
-        msg = f"{prefix=} does not follow the flint processed name format"
-        raise NamingException(msg)
+    components = require_processed_name(prefix)
     if output.pol is not None:
         if components.pol != pol_token:
             msg = f"Expected {pol_token=} in {prefix=}, found {components.pol=}"

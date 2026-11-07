@@ -1292,7 +1292,7 @@ def test_mfs_takes_the_channel_slot():
         processed_name_components=components
     ) == Path("SB1.F.beam00.round1.i.MFS.image.fits")
 
-    with pytest.raises(AssertionError):
+    with pytest.raises(NamingException):
         create_path_from_processed_name_components(
             processed_name_components=components.with_options(channel_range=(0, 1))
         )
@@ -1380,3 +1380,24 @@ def test_create_linmos_base_path_from_convolved_mfs_images():
         )
         == Path("SB1.F.round2.i.MFS.residual.optimal.linmos").absolute()
     )
+
+
+def test_create_imaging_name_prefix_refuses_unknown_tokens():
+    """A token the format does not know would be dropped from the prefix, and two
+    measurement sets differing only there would image to the same files"""
+    name = create_imaging_name_prefix(
+        ms_path=Path("/data/SB39400.RACS_0635-31.beam0.ms"), pol="i"
+    )
+    assert name == "SB39400.RACS_0635-31.beam00.i"
+
+    with pytest.raises(NamingException, match="small"):
+        create_imaging_name_prefix(
+            ms_path=Path("/data/SB39400.RACS_0635-31.beam0.small.ms"), pol="i"
+        )
+
+
+def test_processed_ms_format_takes_a_str_with_a_directory():
+    """The directory is stripped whether the name comes as a str or a Path"""
+    components = processed_ms_format("/data/SB1.F.beam00.round1.i.MFS.image.fits")
+    assert components is not None
+    assert components.beam == "00" and components.mfs

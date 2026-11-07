@@ -184,7 +184,7 @@ def task_archive_sbid(
     if max_round is not None:
         updated_file_patterns = (
             *tuple(archive_options.tar_file_re_patterns),
-            f".*beam[0-9]+\\.round{max_round}\\..*\\.image\\.fits",
+            f".*beam[0-9]+\\.round{max_round}\\..*\\.MFS\\.image\\.fits",
             f".*beam[0-9]+\\.round{max_round}\\.ms\\.(zip|tar)",
         )
         archive_options = archive_options.with_options(

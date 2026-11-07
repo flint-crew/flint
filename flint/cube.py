@@ -19,13 +19,14 @@ from fitscube.extract import (
     find_target_axis,
 )
 
-from flint.exceptions import NamingException, NotSupportedError, ShapeMismatchError
+from flint.exceptions import NotSupportedError, ShapeMismatchError
 from flint.logging import logger
 from flint.naming import (
     Suffix,
     create_image_cube_name,
     create_path_from_processed_name_components,
-    processed_ms_format,
+    require_processed_name,
+    update_name_fields,
 )
 from flint.options import FitsCubeOptions
 from flint.utils import remove_files_folders
@@ -97,11 +98,7 @@ def combine_images_to_cube(
     if beam_shape is not None:
         set_cube_beam(cube=output_cube_name, beam_shape=beam_shape)
 
-    output_freqs_name = create_path_from_processed_name_components(
-        processed_name_components=output_cube_name,
-        parent_path=output_cube_name.parent,
-        ext=".freqs_Hz.txt",
-    )
+    output_freqs_name = update_name_fields(output_cube_name, ext=".freqs_Hz.txt")
     np.savetxt(output_freqs_name, freqs.to("Hz").value)
 
     if fitscube_options.remove_original_images:
@@ -153,10 +150,7 @@ def split_cube_into_planes(
         )
         raise NotSupportedError(msg)
 
-    components = processed_ms_format(in_name=cube)
-    if components is None:
-        msg = f"Expected a flint named cube. Got {cube=}"
-        raise NamingException(msg)
+    components = require_processed_name(cube)
 
     if output_path is not None:
         output_path.mkdir(parents=True, exist_ok=True)

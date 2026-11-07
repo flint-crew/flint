@@ -77,7 +77,10 @@ def ms_example(tmpdir):
 
     shutil.unpack_archive(ms_zip, outpath)
 
-    ms_path = Path(outpath) / "SB39400.RACS_0635-31.beam0.small.ms"
+    # The packaged name carries a token the flint name format does not know
+    ms_path = (Path(outpath) / "SB39400.RACS_0635-31.beam0.small.ms").rename(
+        Path(outpath) / "SB39400.RACS_0635-31.beam0.ms"
+    )
 
     return ms_path
 

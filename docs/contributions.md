@@ -104,6 +104,26 @@ b = a.parent / "but/level"
 b.mkdir(parent=True, exist_ok=True)  # make parent directories if need
 ```
 
+## Naming files
+
+Names of files that `flint` writes are built and read through `flint.naming`,
+not by joining strings. A flint name is a fixed set of fields
+(`SB<sbid>.<field>[.project-<x>][.beamNN][.spwNN][.roundN][.<pol>][.chNNNN-NNNN|.MFS][.scanNNNN-NNNN]`)
+followed by suffix flags from `Suffix` in a fixed order, then the extension.
+
+- To mark what a product is, add `Suffix` flags: `image_path + Suffix(conv=True)`.
+  To take them away, subtract them. Only flags that are set appear in the name.
+- To change a field, use `update_name_fields(path, pol="i")`.
+- To build a name from a set of inputs, use `create_name_from_common_fields`,
+  `create_linmos_base_path` or `create_image_cube_name`.
+- To read a name, use `processed_ms_format` (returns `None` for a name that is
+  not in the format) or `require_processed_name` (raises `NamingException`).
+
+If a product needs a marker that does not exist yet, add a field to `Suffix` in
+the position it should take in a name. The parser and builder pick it up from
+the field list. Do not append the marker as a string: the next piece of code to
+read that name will not know it is there.
+
 ## Docstrings
 
 Do attempt to provide doc-strings for all functions. Should a function be sufficiently small and not intended for public consumption a short message may be placed as a string instead.

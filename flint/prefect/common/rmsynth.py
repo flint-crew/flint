@@ -19,7 +19,7 @@ from flint.logging import logger
 from flint.naming import (
     Suffix,
     create_path_from_processed_name_components,
-    processed_ms_format,
+    require_processed_name,
 )
 from flint.options import (
     CubesForRMSynth,
@@ -166,11 +166,9 @@ def convolve_cubes_to_common_resolution(
         plane_slice = slice(plane_idx, plane_idx + len(planes))
         # The new cubes are named from the fields of the input alone, so its own
         # resolution and product markers do not carry over
-        components = processed_ms_format(in_name=cubes[key])
-        assert components is not None, f"{cubes[key]=} is not a flint format name"
         prefix = str(
             create_path_from_processed_name_components(
-                processed_name_components=components,
+                processed_name_components=require_processed_name(cubes[key]),
                 parent_path=cube_parent[key],
                 suffix_spec=Suffix(),
                 ext="",
