@@ -30,6 +30,7 @@ from flint.convol import (
     header_beam_is_usable,
     usable_beam_mask,
 )
+from flint.exceptions import NamingException
 from flint.naming import Suffix
 from flint.utils import get_packaged_resource_path
 
@@ -580,6 +581,17 @@ def test_blank_images(tmp_path: Path) -> None:
         assert np.all(np.isnan(fits.getdata(blank)))
         assert fits.getdata(blank).shape == fits.getdata(plane).shape
         assert not header_beam_is_usable(header=fits.getheader(blank))
+
+
+def test_convolution_refuses_to_overwrite_its_input(tmp_path: Path) -> None:
+    """An image that already carries the suffix would be convolved over itself"""
+    plane = _write_plane_with_beam(tmp_path / "SB1.F.q.ch0000-0000.conv.fits", 10.0)
+
+    with pytest.raises(NamingException, match="already carries"):
+        blank_images(image_paths=[plane])
+    with pytest.raises(NamingException, match="already carries"):
+        convolve_images(image_paths=[plane], beam_shape=BeamShape(20.0, 20.0, 0.0))
+    assert fits.getdata(plane).size, "the input was touched"
 
 
 def test_convolve_images_or_blank(tmp_path: Path) -> None:

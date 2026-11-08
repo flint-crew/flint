@@ -398,7 +398,9 @@ def test_prepare_potato_options(tmp_path, ms_example, monkeypatch):
 
     assert isinstance(config_options, PotatoConfigOptions)
     assert isinstance(peel_options, PotatoPeelOptions)
-    assert peel_options.c == ms.path.parent / "SB39400.RACS_0635-31.beam0.potato.config"
+    assert (
+        peel_options.c == ms.path.parent / "SB39400.RACS_0635-31.beam00.potato.config"
+    )
 
     new_config = Path(tmp_path) / "JackieBoy.config"
     update_peel_options = {"c": new_config}

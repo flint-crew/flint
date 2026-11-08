@@ -21,6 +21,7 @@ from radio_beam import Beam, Beams
 from radio_beam.beam import NoBeamException
 from radio_beam.utils import BeamError
 
+from flint.exceptions import NamingException
 from flint.logging import logger
 from flint.naming import Suffix
 
@@ -275,7 +276,7 @@ def convolve_plane_to_beam(
     plane: Path,
     beam_shape: BeamShape,
     cutoff: float | None = None,
-    suffix_spec: Suffix | None = None,
+    suffix_spec: Suffix = Suffix(conv=True),
 ) -> Path:
     """Convolve a single channel plane to ``beam_shape``, writing a new image
     alongside it and leaving the input in place.
@@ -288,7 +289,7 @@ def convolve_plane_to_beam(
         plane (Path): The channel image to convolve
         beam_shape (BeamShape): The resolution to convolve to
         cutoff (float | None, optional): Planes whose major axis exceeds this, in arcsec, are blanked. Defaults to no cutoff.
-        suffix_spec (Suffix | None, optional): The suffix fields added to the flint name of a smoothed image. If None ``Suffix(conv=True)`` is used. Defaults to None.
+        suffix_spec (Suffix, optional): The suffix fields added to the flint name of a smoothed image. Defaults to ``Suffix(conv=True)``.
 
     Returns:
         Path: The convolved (or blanked) image
@@ -366,14 +367,23 @@ def get_cube_common_beam(
     return beam_shape_list
 
 
+def refuse_output_over_input(input_path: Path, output_path: Path) -> None:
+    """Raise ``NamingException`` if the two paths are the same file.
+
+    Adding a suffix an image already carries leaves its name unchanged, and the
+    convolution would then be written over the image it reads from."""
+    if Path(input_path) == Path(output_path):
+        msg = f"{input_path=} already carries the requested suffix, so the convolved image would overwrite it"
+        raise NamingException(msg)
+
+
 def convolve_cubes(
     cube_paths: Collection[Path],
     beam_shapes: list[BeamShape],
     cutoff: float | None = None,
-    suffix_spec: Suffix | None = None,
+    suffix_spec: Suffix = Suffix(conv=True),
     executor_type: Literal["thread", "process", "mpi"] = "thread",
 ) -> Collection[Path]:
-    suffix_spec = suffix_spec if suffix_spec is not None else Suffix(conv=True)
     logger.info(f"Will attempt to convol {len(cube_paths)} cubes")
     if cutoff:
         logger.info(f"Supplied cutoff {cutoff}")
@@ -385,6 +395,11 @@ def convolve_cubes(
 
     # Sanity test
     assert len(beam_major_list) == len(beam_minor_list) == len(beam_pa_list)
+
+    for cube_path in cube_paths:
+        refuse_output_over_input(
+            input_path=cube_path, output_path=cube_path + suffix_spec
+        )
 
     logger.info("Convoling cubes")
     cube_data_list, _, _ = beamcon_3D.smooth_fits_cube(
@@ -458,7 +473,7 @@ def convolve_images(
     image_paths: Collection[Path],
     beam_shape: BeamShape,
     cutoff: float | None = None,
-    suffix_spec: Suffix | None = None,
+    suffix_spec: Suffix = Suffix(conv=True),
     output_paths: list[Path] | None = None,
 ) -> list[Path]:
     """Convolve a set of input images to a common resolution as specified
@@ -475,7 +490,7 @@ def convolve_images(
         image_paths (Collection[Path]): Set of image paths to FITS images to convol
         beam_shape (BeamShape): The specification of the desired final resolution
         cutoff (Optional[float], optional): Images whose major-axis is larger than this will be blank. Expected in arcseconds. Defaults to None.
-        suffix_spec (Suffix | None, optional): The suffix fields added to the flint name of each input image to indicate it is smoothed. If None ``Suffix(conv=True)`` is used. Defaults to None.
+        suffix_spec (Suffix, optional): The suffix fields added to the flint name of each input image to indicate it is smoothed. Defaults to ``Suffix(conv=True)``.
         output_paths (list[Path] | None, optional): The final output file names for each input image. If provided these are used instead of names formed with ``suffix_spec``. Defaults to None.
 
     Returns:
@@ -494,8 +509,9 @@ def convolve_images(
             f"Mismatch collection lengths of image_paths ({len(image_paths)}) and output_paths ({len(output_paths)})"
         )
     else:
-        suffix_spec = suffix_spec if suffix_spec is not None else Suffix(conv=True)
         output_paths = [Path(image_path) + suffix_spec for image_path in image_paths]
+        for image_path, output_path in zip(image_paths, output_paths):
+            refuse_output_over_input(input_path=image_path, output_path=output_path)
 
     if not np.isfinite(beam_shape.bmaj_arcsec):
         logger.info("Beam shape is not defined. Copying files into place. ")
@@ -547,7 +563,7 @@ def convolve_images(
 
 
 def blank_images(
-    image_paths: Collection[Path], suffix_spec: Suffix | None = None
+    image_paths: Collection[Path], suffix_spec: Suffix = Suffix(conv=True)
 ) -> list[Path]:
     """Write an all-NaN copy of each image, marked with a zero beam.
 
@@ -559,16 +575,16 @@ def blank_images(
 
     Args:
         image_paths (Collection[Path]): The images to blank
-        suffix_spec (Suffix | None, optional): The suffix fields added to the flint name, matching the convolved images these stand in for. If None ``Suffix(conv=True)`` is used. Defaults to None.
+        suffix_spec (Suffix, optional): The suffix fields added to the flint name, matching the convolved images these stand in for. Defaults to ``Suffix(conv=True)``.
 
     Returns:
         list[Path]: The blanked images
     """
-    suffix_spec = suffix_spec if suffix_spec is not None else Suffix(conv=True)
     blank_image_paths: list[Path] = []
 
     for image_path in image_paths:
         blank_image_path = Path(image_path) + suffix_spec
+        refuse_output_over_input(input_path=image_path, output_path=blank_image_path)
         logger.info(f"Blanking {image_path} into {blank_image_path=}")
 
         with fits.open(image_path) as open_fits:
@@ -588,7 +604,7 @@ def convolve_images_or_blank(
     image_paths: Collection[Path],
     beam_shape: BeamShape,
     cutoff: float | None = None,
-    suffix_spec: Suffix | None = None,
+    suffix_spec: Suffix = Suffix(conv=True),
 ) -> list[Path]:
     """Convolve images to ``beam_shape``, or blank them when it does not describe
     a beam.
@@ -603,7 +619,7 @@ def convolve_images_or_blank(
         image_paths (Collection[Path]): The images to convolve
         beam_shape (BeamShape): The resolution to convolve to
         cutoff (float | None, optional): Images whose major axis exceeds this, in arcsec, are blanked. Defaults to no cutoff.
-        suffix_spec (Suffix | None, optional): The suffix fields added to the flint name of a smoothed image. If None ``Suffix(conv=True)`` is used. Defaults to None.
+        suffix_spec (Suffix, optional): The suffix fields added to the flint name of a smoothed image. Defaults to ``Suffix(conv=True)``.
 
     Returns:
         list[Path]: The convolved (or blanked) images

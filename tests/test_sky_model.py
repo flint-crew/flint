@@ -39,7 +39,7 @@ def ms_example_and_nvss(tmpdir):
     ms_zip = Path(
         get_packaged_resource_path(
             package="flint.data.tests",
-            filename="SB39400.RACS_0635-31.beam0.small.ms.zip",
+            filename="SB39400.RACS_0635-31.beam00.ms.zip",
         )
     )
     outpath = Path(tmpdir) / "39400"
@@ -55,7 +55,7 @@ def ms_example_and_nvss(tmpdir):
 
     shutil.unpack_archive(nvss_zip, outpath)
 
-    ms_path = Path(outpath) / "SB39400.RACS_0635-31.beam0.small.ms"
+    ms_path = Path(outpath) / "SB39400.RACS_0635-31.beam00.ms"
     nvss_path = Path(outpath) / "NVSS.fits"
 
     return ms_path, nvss_path

@@ -13,6 +13,7 @@ from flint.configuration import Strategy, get_options_from_strategy
 from flint.exceptions import NoFieldSourceError
 from flint.logging import logger
 from flint.ms import MS
+from flint.naming import create_imaging_name_prefix
 from flint.options import AddModelSubtractFieldOptions, FieldOptions, RACSAllOptions
 from flint.predict.crystalball import CrystalBallOptions
 from flint.prefect.caching import task
@@ -87,7 +88,7 @@ def task_addmodel_to_ms(
     logger.info(f"Searching for wsclean source list for {ms.path}")
     for idx, pol in enumerate(addmodel_subtract_options.wsclean_pol_mode):
         wsclean_source_list_path = get_wsclean_output_source_list_path(
-            name_path=ms.path, pol=pol
+            name_path=ms.path.parent / create_imaging_name_prefix(ms.path, pol=pol)
         )
         assert wsclean_source_list_path.exists(), (
             f"{wsclean_source_list_path=} was requested, but does not exist"

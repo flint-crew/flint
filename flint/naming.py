@@ -702,6 +702,16 @@ def processed_ms_format(
 
     logger.debug(f"Matched groups are: {groups}")
 
+    # A known marker out of its declared order lands in the extension, where a
+    # rebuild of the name would drop it without a word
+    misplaced = [
+        field for field in Suffix.model_fields if f".{field}." in f"{groups['ext']}."
+    ]
+    if misplaced:
+        logger.warning(
+            f"{in_name} has {misplaced} outside the suffix order, in {groups['ext']=}"
+        )
+
     if groups["chl"]:
         channel_range = (int(groups["chl"]), int(groups["chh"]))
     elif groups["chidx"]:
@@ -991,7 +1001,7 @@ def create_ms_name(
         if format_components.beam is not None:
             ms_name_list.append(f"beam{int(format_components.beam):02d}")
         if format_components.spw:
-            ms_name_list.append(f"spw{format_components.spw}")
+            ms_name_list.append(f"spw{int(format_components.spw):02d}")
 
     ms_name_list.append("ms")
     ms_name = ".".join(ms_name_list)

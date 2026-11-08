@@ -27,7 +27,7 @@ def test_expect_asserts():
     # This one is testing to make sure we catch cases where guessing of the
     # wsclean source list name points to something that doesn't exist
     crystalball_options = CrystalBallOptions()
-    ms = MS(path=Path("JackNotHere.ms"))
+    ms = MS(path=Path("SB1.JackNotHere.beam00.ms"))
     with pytest.raises(FileNotFoundError):
         crystalball_predict(ms=ms, crystalball_options=crystalball_options)
 
@@ -35,7 +35,7 @@ def test_expect_asserts():
     crystalball_options = CrystalBallOptions(
         crystallball_wsclean_pol_mode=["i", "q", "u", "v"]
     )
-    ms = MS(path=Path("JackNotHere.ms"))
+    ms = MS(path=Path("SB1.JackNotHere.beam00.ms"))
     with pytest.raises(AssertionError):
         crystalball_predict(ms=ms, crystalball_options=crystalball_options)
 

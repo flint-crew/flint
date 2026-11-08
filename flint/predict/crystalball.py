@@ -13,6 +13,7 @@ from dask.distributed import Client
 from flint.imager.wsclean import get_wsclean_output_source_list_path
 from flint.logging import logger
 from flint.ms import MS
+from flint.naming import create_imaging_name_prefix
 
 
 class CrystalBallOptions(BaseOptions):
@@ -66,8 +67,9 @@ def crystalball_predict(
 
         pol = crystalball_options.crystallball_wsclean_pol_mode[0]
         logger.info(f"Using {pol=}")
+        # Spelt the way wsclean's -name was, which need not match the MS stem
         wsclean_source_list_path = get_wsclean_output_source_list_path(
-            name_path=ms.path, pol=pol
+            name_path=ms.path.parent / create_imaging_name_prefix(ms.path, pol=pol)
         )
 
     assert isinstance(wsclean_source_list_path, Path), (

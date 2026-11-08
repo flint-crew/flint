@@ -603,7 +603,7 @@ def convolve_image_set(
     cutoff: float = 60,
     mode: str = "image",
     filter_str: str | None = None,
-    convol_suffix: Suffix | None = None,
+    convol_suffix: Suffix = Suffix(conv=True),
     remove_original_images: bool = False,
 ) -> list[Path]:
     """Convolve images to a specified resolution
@@ -613,7 +613,7 @@ def convolve_image_set(
         beam_shape (BeamShape): The shape images will be convolved to
         cutoff (float, optional): Maximum major beam axis an image is allowed to have before it will not be convolved. Defaults to 60.
         filter_str (Optional[str], optional): This string must be contained in the image path for it to be convolved. Defaults to None.
-        convol_suffix (Suffix | None, optional): The suffix fields added to the convolved images. If None ``Suffix(conv=True)`` is used. Defaults to None.
+        convol_suffix (Suffix, optional): The suffix fields added to the convolved images. Defaults to ``Suffix(conv=True)``.
         remove_original_images (bool, optional): If True remove the original image after they have been convolved. Defaults to False.
 
     Returns:
@@ -686,7 +686,7 @@ def task_convolve_image(
     cutoff: float = 60,
     mode: str = "image",
     filter_str: str | None = None,
-    convol_suffix: Suffix | None = None,
+    convol_suffix: Suffix = Suffix(conv=True),
     remove_original_images: bool = False,
 ) -> Collection[Path]:
     """Convolve images to a specified resolution
@@ -696,7 +696,7 @@ def task_convolve_image(
         beam_shape (BeamShape): The shape images will be convolved to
         cutoff (float, optional): Maximum major beam axis an image is allowed to have before it will not be convolved. Defaults to 60.
         filter_str (Optional[str], optional): This string must be contained in the image path for it to be convolved. Defaults to None.
-        convol_suffix (Suffix | None, optional): The suffix fields added to the convolved images. If None ``Suffix(conv=True)`` is used. Defaults to None.
+        convol_suffix (Suffix, optional): The suffix fields added to the convolved images. Defaults to ``Suffix(conv=True)``.
         remove_original_images (bool, optional): If True remove the original image after they have been convolved. Defaults to False.
 
     Returns:
@@ -783,7 +783,7 @@ def convolve_then_linmos(
     field_summary: FieldSummary | None = None,
     convol_mode: str = "image",
     convol_filter: str = ".MFS.",
-    convol_suffix: Suffix | None = None,
+    convol_suffix: Suffix = Suffix(conv=True),
     trim_linmos_fits: bool = True,
     remove_original_images: bool = False,
     cleanup_linmos: bool = False,
@@ -800,7 +800,7 @@ def convolve_then_linmos(
         field_summary (Optional[FieldSummary], optional): The summary of the field, including (importantly) to orientation of the third-axis. Defaults to None.
         convol_mode (str, optional): The mode passed to the convol task to describe the images to extract. Support image or residual.  Defaults to image.
         convol_filter (str, optional): A text file applied when assessing images to co-add. Defaults to '.MFS.'.
-        convol_suffix (Suffix | None, optional): The suffix fields added to the convolved images. If None ``Suffix(conv=True)`` is used. Defaults to None.
+        convol_suffix (Suffix, optional): The suffix fields added to the convolved images. Defaults to ``Suffix(conv=True)``.
         trim_linmos_fits (bool, optional): Attempt to trim the output linmos files of as much empty space as possible. Defaults to True.
         remove_original_images (bool, optional): If True remove the original image after they have been convolved. Defaults to False.
         cleanup_linmos (bool, optional): Clean up items created throughout linmos, including the per-channel weight text files for each input image. Defaults to False.
@@ -847,7 +847,7 @@ def task_common_beam_convolve_linmos(
     field_options: SubtractFieldOptions,
     convol_mode: str,
     convol_filter: str | None = None,
-    convol_suffix: Suffix | None = None,
+    convol_suffix: Suffix = Suffix(conv=True),
     remove_original_images: bool = False,
     trim_linmos_fits: bool = False,
     cleanup_linmos: bool = False,

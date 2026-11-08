@@ -76,7 +76,7 @@ def convolve_cubes_to_common_resolution(
     beam_shape: BeamShape,
     output_path: Path | None = None,
     beam_cutoff: float | None = None,
-    suffix_spec: Suffix | None = None,
+    suffix_spec: Suffix = Suffix(conv=True),
     fft_bane_options: FFTBANEOptions | None = None,
 ) -> CommonResolutionCubes:
     """Bring a set of FITS cubes to the one resolution described by
@@ -95,13 +95,12 @@ def convolve_cubes_to_common_resolution(
         beam_shape (BeamShape): The resolution every channel is brought to
         output_path (Path | None, optional): Directory the new cubes are written into. Defaults to alongside each input cube.
         beam_cutoff (float | None, optional): Channels coarser than this, in arcsec, are blanked rather than convolved to. Defaults to no cutoff.
-        suffix_spec (Suffix | None, optional): The suffix fields added to the name of a smoothed plane, and of the cube they are stacked into, on top of those the input cube already carries. If None ``Suffix(conv=True)`` is used. Defaults to None.
+        suffix_spec (Suffix, optional): The suffix fields added to the name of a smoothed plane, and of the cube they are stacked into, on top of those the input cube already carries. Defaults to ``Suffix(conv=True)``.
         fft_bane_options (FFTBANEOptions | None, optional): When given, each convolved plane also gets a BANE background and RMS map, stacked into their own cubes. Measured after the convolution, so they describe the resolution rm-synthesis actually builds the FDF at. Defaults to None.
 
     Returns:
         CommonResolutionCubes: The convolved cube for each key of ``cubes``, and the BANE cubes when asked for
     """
-    suffix_spec = suffix_spec if suffix_spec is not None else Suffix(conv=True)
     fitscube_options = FitsCubeOptions(
         # The weight cubes are not convolved, so the convolved image cubes have
         # to stay on the pixel and channel grid of the cubes they came from

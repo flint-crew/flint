@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from pathlib import Path, PosixPath
 
@@ -781,6 +782,15 @@ def test_create_ms_name_no_sbid():
     assert isinstance(ms_path_3, str)
     assert ms_path_3 == expected_3
 
+    # Padded like the beam, so the name reads back the way the imaging prefix writes it
+    assert (
+        create_ms_name(ms_path="2022-04-14_100122_0_1.ms") == "SB0000.beam00.spw01.ms"
+    )
+    assert (
+        create_imaging_name_prefix(Path("SB0000.beam00.spw01.ms"))
+        == "SB0000.beam00.spw01"
+    )
+
 
 def test_formatted_name_components_withpol():
     """Tests around the pol field in a file name"""
@@ -1326,6 +1336,21 @@ def test_names_outside_the_scheme_still_parse():
     assert components is not None
     assert components.round == "1"
     assert components.ext == ".caltable.ch0000-0143"
+
+
+def test_markers_out_of_order_are_warned_about(caplog):
+    """A known marker in the wrong place is kept as the extension, and a rebuild
+    would drop it, so the parser says so"""
+    with caplog.at_level(logging.WARNING, logger="flint"):
+        components = processed_ms_format("SB1.F.round1.i.MFS.image.conv.optimal.fits")
+    assert components is not None
+    assert not components.optimal and components.ext == ".optimal.fits"
+    assert "['optimal'] outside the suffix order" in caplog.text
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="flint"):
+        processed_ms_format("SB1.F.round1.i.MFS.image.optimal.conv.fits")
+    assert caplog.text == ""
 
 
 def test_create_name_from_common_fields_without_suffixes():

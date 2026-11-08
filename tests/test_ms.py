@@ -438,14 +438,14 @@ def ms_remove_example(tmpdir):
     ms_zip = Path(
         get_packaged_resource_path(
             package="flint.data.tests",
-            filename="SB39400.RACS_0635-31.beam0.small.ms.zip",
+            filename="SB39400.RACS_0635-31.beam00.ms.zip",
         )
     )
     outpath = Path(tmpdir) / "Removecols_39400"
 
     shutil.unpack_archive(ms_zip, outpath)
 
-    ms_path = Path(outpath) / "SB39400.RACS_0635-31.beam0.small.ms"
+    ms_path = Path(outpath) / "SB39400.RACS_0635-31.beam00.ms"
 
     return ms_path
 

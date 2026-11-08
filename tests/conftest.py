@@ -70,19 +70,14 @@ def ms_example(tmpdir):
     ms_zip = Path(
         get_packaged_resource_path(
             package="flint.data.tests",
-            filename="SB39400.RACS_0635-31.beam0.small.ms.zip",
+            filename="SB39400.RACS_0635-31.beam00.ms.zip",
         )
     )
     outpath = Path(tmpdir) / "39400"
 
     shutil.unpack_archive(ms_zip, outpath)
 
-    # The packaged name carries a token the flint name format does not know
-    ms_path = (Path(outpath) / "SB39400.RACS_0635-31.beam0.small.ms").rename(
-        Path(outpath) / "SB39400.RACS_0635-31.beam0.ms"
-    )
-
-    return ms_path
+    return Path(outpath) / "SB39400.RACS_0635-31.beam00.ms"
 
 
 @pytest.fixture(scope="session")
@@ -109,7 +104,7 @@ def ms_example_with_name(tmpdir):
         ms_zip = Path(
             get_packaged_resource_path(
                 package="flint.data.tests",
-                filename="SB39400.RACS_0635-31.beam0.small.ms.zip",
+                filename="SB39400.RACS_0635-31.beam00.ms.zip",
             )
         )
         outpath = Path(tmpdir) / output_name
@@ -119,6 +114,6 @@ def ms_example_with_name(tmpdir):
 
         shutil.unpack_archive(ms_zip, outpath)
 
-        return Path(outpath) / "SB39400.RACS_0635-31.beam0.small.ms"
+        return Path(outpath) / "SB39400.RACS_0635-31.beam00.ms"
 
     return _ms_example
