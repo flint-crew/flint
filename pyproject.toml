@@ -100,8 +100,12 @@ rmsynth = [
 dp3 = [
     "dp3>=6.6.0",
 ]
+iono = [
+    "spinifex>=2.0",
+    "askap-flint[casa,dp3]",
+]
 all = [
-    "askap-flint[dev,casa,rmsynth,dp3]",
+    "askap-flint[dev,casa,rmsynth,dp3,iono]",
 ]
 
 [project.scripts]
@@ -116,6 +120,7 @@ flint_ms = "flint.ms:cli"
 flint_wsclean = "flint.imager.wsclean:cli"
 flint_gaincal = "flint.selfcal.casa:cli"
 flint_dp3 = "flint.dp3:cli"
+flint_ionosphere = "flint.ionosphere:cli"
 flint_convol = "flint.convol:cli"
 flint_yandalinmos = "flint.coadd.linmos:cli"
 flint_config = "flint.configuration:cli"

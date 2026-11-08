@@ -249,6 +249,8 @@ class PolFieldOptions(BaseOptions):
     """Desired width, in Hz, of each plane of the polarisation cubes. The wsclean channel division is solved for this target so the cubes have a single linear frequency axis, overriding the strategy ``channels_out``. Deliberately separate from ``RACSAllOptions.cube_channel_width``, as the continuum and polarisation cubes need not share a channelisation. See ``flint.imager.channel_division``"""
     sbid_copy_path: Path | None = None
     """Path that final processed products will be copied into. If None no copying of file products is performed. See ArchiveOptions. """
+    ionex_directory: Path | None = None
+    """Directory of IONEX maps fetched beforehand with ``flint_ionosphere download``. If set, ionospheric Faraday rotation is corrected with spinifex before imaging"""
 
 
 class FFTBANEOptions(BaseOptions):
