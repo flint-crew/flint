@@ -316,10 +316,13 @@ def process_racs_all(
             if rms_cubes
             else WeightCubesForRMSynth.from_mapping(pol_result.weight_cubes)
         )
+        # The stage's own copy reads an SBID from its folder name, which is
+        # "rmsynth" here, so it is left to the archive stage
         resolved_rmsynth_field_options = rmsynth_field_options.with_options(
             stokes_cubes=CubesForRMSynth.from_mapping(stokes_cubes),
             error_cubes=error_cubes,
             output_path=rmsynth_field_options.output_path or output_root / "rmsynth",
+            sbid_copy_path=None,
         )
         assert pipeline_options.rmsynth_cluster_config is not None
         rmsynth_result = process_rmsynth.with_options(
@@ -357,6 +360,7 @@ def process_racs_all(
             ],
             reference_image=resolved_reference_image,
             output_path=spice_field_options.output_path or output_root / "spice",
+            sbid_copy_path=None,
         )
         assert pipeline_options.spice_cluster_config is not None
         spice_results = process_spice_compression.with_options(
