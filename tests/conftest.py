@@ -106,3 +106,16 @@ def ms_example_with_name(tmpdir):
         return Path(outpath) / "SB39400.RACS_0635-31.beam0.small.ms"
 
     return _ms_example
+
+
+@pytest.fixture(scope="session")
+def rclone_image(tmp_path_factory) -> Path:
+    """The real rclone container, pulled once for the session"""
+    from flint.containers import rclone_container
+    from flint.sclient import pull_container
+
+    return pull_container(
+        container_directory=tmp_path_factory.mktemp("rclone"),
+        uri=f"{rclone_container.uri}:{rclone_container.tag}",
+        file_name=rclone_container.file_name,
+    )

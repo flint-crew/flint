@@ -509,7 +509,11 @@ def check_archive(
 
     A manifest that is not sealed, or lists no destination, has archived nothing.
     """
-    complete = manifest.sealed is not None and bool(manifest.destinations)
+    if manifest.sealed is None or not manifest.destinations:
+        logger.info(f"Nothing of {manifest.field} is archived yet")
+        return False
+
+    complete = True
     for destination in manifest.destinations:
         marker = read_marker(
             manifest=manifest,

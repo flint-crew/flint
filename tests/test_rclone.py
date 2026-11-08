@@ -138,19 +138,6 @@ def test_a_marker_round_trips(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     )
 
 
-@pytest.fixture(scope="session")
-def rclone_image(tmp_path_factory) -> Path:
-    """The real rclone container, pulled once for the session"""
-    from flint.containers import rclone_container
-    from flint.sclient import pull_container
-
-    return pull_container(
-        container_directory=tmp_path_factory.mktemp("rclone"),
-        uri=f"{rclone_container.uri}:{rclone_container.tag}",
-        file_name=rclone_container.file_name,
-    )
-
-
 @pytest.mark.slow
 @pytest.mark.require_singularity
 def test_rclone_to_a_local_remote(rclone_image: Path, tmp_path: Path) -> None:

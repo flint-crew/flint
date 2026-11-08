@@ -135,6 +135,7 @@ flint_flow_racs_all_continuum_pipeline = "flint.prefect.flows.racs_all_continuum
 flint_flow_rmsynth_pipeline = "flint.prefect.flows.rmsynth_pipeline:cli"
 flint_flow_spice_compression_pipeline = "flint.prefect.flows.spice_compression_pipeline:cli"
 flint_flow_racs_all_pipeline = "flint.prefect.flows.racs_all_pipeline:cli"
+flint_flow_archive = "flint.prefect.flows.archive_pipeline:cli"
 
 [tool.mypy]
 python_version = "3.11"
