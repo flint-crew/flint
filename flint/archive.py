@@ -2,24 +2,44 @@
 
 from __future__ import annotations
 
+import hashlib
+import io
+import os
 import re
 import shlex
 import shutil
 import subprocess
 import tarfile
 from argparse import ArgumentParser, Namespace
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO, get_args
 
 from capn_crunch import BaseOptions, add_options_to_parser, create_options_from_parser
 
 from flint.configuration import get_options_from_strategy
 from flint.exceptions import TarArchiveError
 from flint.logging import logger
+from flint.manifest import (
+    MANIFEST_NAME,
+    ArchiveDestination,
+    ArchiveManifest,
+    destination_products,
+    marker_matches,
+    read_manifest,
+    write_manifest,
+)
 from flint.options import (
     ArchiveOptions,
+    ArchiveRemote,
+    ProductKind,
     exclude_fields_cli_class,
+)
+from flint.rclone import (
+    config_remotes,
+    rclone_copy,
+    rclone_read_marker,
+    rclone_write_marker,
 )
 
 
@@ -237,6 +257,273 @@ def get_archive_options_from_yaml(strategy_yaml_path: Path) -> dict[str, Any]:
     logger.info(f"{archive_options=}")
 
     return archive_options
+
+
+def archive_destinations(
+    copy_path: Path | None,
+    tar_path: Path | None,
+    remote_names: Collection[str],
+    remotes: Mapping[str, ArchiveRemote],
+) -> tuple[ArchiveDestination, ...]:
+    """The destinations a run enables, each with the kinds of product it takes.
+
+    Raises:
+        ValueError: A remote is not defined, or takes a name kept for the copy or tar
+    """
+    missing = set(remote_names) - set(remotes)
+    if missing:
+        raise ValueError(f"No archive remote is defined for {sorted(missing)}")
+    reserved = {"copy", "tar"} & set(remote_names)
+    if reserved:
+        raise ValueError(f"{sorted(reserved)} are kept for the hot copy and tarball")
+
+    destinations = []
+    if copy_path:
+        destinations.append(
+            ArchiveDestination(
+                name="copy",
+                location=str(Path(copy_path).absolute()),
+                kinds=("image", "catalogue", "report"),
+            )
+        )
+    if tar_path:
+        destinations.append(
+            ArchiveDestination(
+                name="tar",
+                location=str(Path(tar_path).absolute()),
+                kinds=get_args(ProductKind),
+            )
+        )
+    destinations.extend(
+        ArchiveDestination(
+            name=name, location=remotes[name].remote, kinds=remotes[name].kinds
+        )
+        for name in remote_names
+    )
+
+    return tuple(destinations)
+
+
+def check_archive_prerequisites(
+    destinations: Collection[ArchiveDestination],
+    rclone_container: Path | None,
+    rclone_config: Path | None,
+) -> None:
+    """Check what the destinations need, before anything is processed or copied.
+
+    Raises:
+        ValueError: A container, config or remote is missing, or a root is not writable
+    """
+    if any(destination.name != "tar" for destination in destinations):
+        if rclone_container is None or not rclone_container.exists():
+            raise ValueError(
+                f"The archive needs the rclone container, {rclone_container=}"
+            )
+
+    remotes = {
+        d.location.split(":")[0] for d in destinations if d.name not in ("copy", "tar")
+    }
+    if remotes:
+        if rclone_config is None or not rclone_config.exists():
+            raise ValueError(f"Archive remotes need an rclone config, {rclone_config=}")
+        missing = remotes - config_remotes(rclone_config)
+        if missing:
+            raise ValueError(f"{rclone_config} defines no remote {sorted(missing)}")
+
+    for destination in destinations:
+        if destination.name in ("copy", "tar") and not os.access(
+            destination.location, os.W_OK
+        ):
+            raise ValueError(f"The archive cannot write to {destination.location}")
+
+
+class _Md5File:
+    """A file that hashes what is read from or written to it"""
+
+    def __init__(self, file: BinaryIO) -> None:
+        self.file = file
+        self.md5 = hashlib.md5()
+
+    def read(self, size: int = -1) -> bytes:
+        data = self.file.read(size)
+        self.md5.update(data)
+        return data
+
+    def write(self, data: bytes) -> int:
+        self.md5.update(data)
+        return self.file.write(data)
+
+
+def tarball_path(manifest: ArchiveManifest, destination: ArchiveDestination) -> Path:
+    """Where a field's tarball goes, named by when its manifest was sealed"""
+    assert manifest.sealed is not None, "Only a sealed manifest is archived"
+    return (
+        Path(destination.location)
+        / f"{manifest.field}.{manifest.sealed:%Y%m%d-%H%M%S}.tar"
+    )
+
+
+def write_tarball(manifest: ArchiveManifest, destination: ArchiveDestination) -> Path:
+    """Write the tarball of a destination's products, checking each one as it goes.
+
+    The tar is written under a temporary name and renamed once it is complete and on
+    disk, so a tar under its final name is whole. Its MD5 goes in a ``.md5`` file
+    beside it, and nothing is read back, as reading tape-backed storage can trigger
+    a recall.
+
+    Raises:
+        ValueError: A product no longer has the MD5 the manifest gives it
+    """
+    tar_path = tarball_path(manifest=manifest, destination=destination)
+    if tar_path.exists():
+        logger.info(f"{tar_path} is complete already")
+        return tar_path
+
+    tar_path.parent.mkdir(parents=True, exist_ok=True)
+    partial = tar_path.with_name(f"{tar_path.name}.partial")
+    block = 16 * 1024 * 1024
+    try:
+        with open(partial, "wb") as out_file:
+            tar_stream = _Md5File(out_file)
+            # A stream only writes, so the hashing file needs no tell or seek
+            with tarfile.open(  # type: ignore[call-overload]
+                fileobj=tar_stream, mode="w|", bufsize=block
+            ) as tar:
+                for product in destination_products(manifest, destination):
+                    path = manifest.root / product.path
+                    logger.info(f"Adding {path} to {tar_path}")
+                    info = tar.gettarinfo(
+                        path, arcname=f"{manifest.field}/{product.path}"
+                    )
+                    with open(path, "rb") as in_file:
+                        member = _Md5File(in_file)
+                        tar.addfile(info, fileobj=member)
+                    if member.md5.hexdigest() != product.md5:
+                        raise ValueError(
+                            f"{path} changed after the manifest was sealed"
+                        )
+
+                # Carried inside, so the MD5s travel with the products on tape
+                contents = manifest.model_dump_json(indent=2).encode()
+                info = tarfile.TarInfo(name=f"{manifest.field}/{MANIFEST_NAME}")
+                info.size = len(contents)
+                info.mtime = int(manifest.sealed.timestamp()) if manifest.sealed else 0
+                tar.addfile(info, fileobj=io.BytesIO(contents))
+            out_file.flush()
+            os.fsync(out_file.fileno())
+    except Exception:
+        partial.unlink(missing_ok=True)
+        raise
+
+    Path(f"{tar_path}.md5").write_text(
+        f"{tar_stream.md5.hexdigest()}  {tar_path.name}\n"
+    )
+    os.replace(partial, tar_path)
+    folder = os.open(tar_path.parent, os.O_RDONLY)
+    try:
+        os.fsync(folder)
+    finally:
+        os.close(folder)
+
+    return tar_path
+
+
+def read_marker(
+    manifest: ArchiveManifest,
+    destination: ArchiveDestination,
+    rclone_container: Path | None = None,
+    rclone_config: Path | None = None,
+) -> ArchiveManifest | None:
+    """The marker a destination holds for this field, or None without one"""
+    if destination.name == "tar":
+        marker = tarball_path(manifest, destination).with_suffix(".manifest.json")
+    elif destination.name == "copy":
+        marker = Path(destination.location) / manifest.field / MANIFEST_NAME
+    else:
+        assert rclone_container is not None, "Reading a remote marker needs rclone"
+        return rclone_read_marker(
+            container=rclone_container,
+            config=rclone_config,
+            location=f"{destination.location}/{manifest.field}",
+        )
+
+    return read_manifest(marker) if marker.exists() else None
+
+
+def archive_to(
+    manifest: ArchiveManifest,
+    destination: ArchiveDestination,
+    rclone_container: Path | None = None,
+    rclone_config: Path | None = None,
+) -> ArchiveDestination:
+    """Copy a field to one destination and verify it, writing its marker last.
+
+    A destination whose marker matches the manifest already is left alone.
+    """
+    marker = read_marker(
+        manifest=manifest,
+        destination=destination,
+        rclone_container=rclone_container,
+        rclone_config=rclone_config,
+    )
+    if marker_matches(marker=marker, manifest=manifest, destination=destination):
+        logger.info(f"{destination.name} holds {manifest.field} already")
+        return destination
+
+    if destination.name == "tar":
+        tar_path = write_tarball(manifest=manifest, destination=destination)
+        write_manifest(manifest=manifest, path=tar_path.with_suffix(".manifest.json"))
+        return destination
+
+    assert rclone_container is not None, (
+        f"{destination.name} needs the rclone container"
+    )
+    location = f"{destination.location}/{manifest.field}"
+    is_copy = destination.name == "copy"
+    rclone_copy(
+        container=rclone_container,
+        config=None if is_copy else rclone_config,
+        root=manifest.root,
+        products=destination_products(manifest, destination),
+        location=location,
+    )
+    if is_copy:
+        write_manifest(manifest=manifest, path=Path(location) / MANIFEST_NAME)
+    else:
+        rclone_write_marker(
+            container=rclone_container,
+            config=rclone_config,
+            manifest=manifest,
+            location=location,
+        )
+
+    return destination
+
+
+def check_archive(
+    manifest: ArchiveManifest,
+    rclone_container: Path | None = None,
+    rclone_config: Path | None = None,
+) -> bool:
+    """Whether every destination the manifest lists holds a matching marker.
+
+    A manifest that is not sealed, or lists no destination, has archived nothing.
+    """
+    complete = manifest.sealed is not None and bool(manifest.destinations)
+    for destination in manifest.destinations:
+        marker = read_marker(
+            manifest=manifest,
+            destination=destination,
+            rclone_container=rclone_container,
+            rclone_config=rclone_config,
+        )
+        matches = marker_matches(
+            marker=marker, manifest=manifest, destination=destination
+        )
+        logger.info(f"{destination.name}: {'complete' if matches else 'incomplete'}")
+        complete = complete and matches
+
+    return complete
 
 
 def _archive_cli_options() -> type[BaseOptions]:
