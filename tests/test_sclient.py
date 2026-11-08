@@ -73,3 +73,44 @@ def test_positive_max_retries() -> None:
         run_singularity_command(
             image=no_exists_container, command="PiratesbeHere", max_retries=111
         )
+
+
+def test_read_only_binds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A read-only bind takes the :ro form, and wins over a read-write bind"""
+    from flint import sclient
+
+    image = tmp_path / "image.sif"
+    image.touch()
+    shared, writable = tmp_path / "shared", tmp_path / "writable"
+    calls: list[dict] = []
+
+    def fake_execute(**kwargs) -> list[str]:
+        calls.append(kwargs)
+        return []
+
+    monkeypatch.setattr(sclient.sclient, "execute", fake_execute)
+    monkeypatch.setattr(sclient, "sleep", lambda seconds: None)
+
+    run_singularity_command(
+        image=image,
+        command="ls",
+        bind_dirs=[shared, writable],
+        read_only_bind_dirs=[shared],
+    )
+
+    assert sorted(calls[0]["bind"]) == [
+        f"{shared}:{shared}:ro",
+        str(writable),
+    ]
+
+
+@pytest.mark.require_singularity
+def test_read_only_bind_cannot_be_written(hello_world_container, tmp_path: Path):
+    from subprocess import CalledProcessError
+
+    with pytest.raises(CalledProcessError):
+        run_singularity_command(
+            image=hello_world_container,
+            command=f"touch {tmp_path}/written",
+            read_only_bind_dirs=[tmp_path],
+        )

@@ -56,6 +56,7 @@ def run_singularity_command(
     stream_callback_func: Callable | None = None,
     ignore_logging_output: bool = False,
     max_retries: int = 2,
+    read_only_bind_dirs: Collection[Path] = (),
 ) -> None:
     """Executes a command within the context of a nominated singularity
     container
@@ -64,6 +65,7 @@ def run_singularity_command(
         image (Path): The singularity container image to use
         command (str): The command to execute
         bind_dirs (Optional[Union[Path,Collection[Path]]], optional): Specifies a Path, or list of Paths, to bind to in the container. Defaults to None.
+        read_only_bind_dirs (Collection[Path], optional): Paths bound so the container cannot change them. One also in ``bind_dirs`` is bound read-only. Defaults to ().
         stream_callback_func (Optional[Callable], optional): Provide a function that is applied to each line of output text when singularity is running and `stream=True`. IF provide it should accept a single (string) parameter. If None, nothing happens. Defaultds to None.
         ignore_logging_output (bool, optional): If `True` output from the executed singularity command is not logged. Defaults to False.
         max_retries (int, optional): If a callback handler is specified which raised an `AttemptRerunException`, this signifies how many attempts should be made. Each rerun will recall `run_singularity_command` lowering this value. Defaults to 2.
@@ -81,20 +83,14 @@ def run_singularity_command(
     logger.info(f"Running {command} in {image}")
 
     job_info = log_job_environment()
-    bind: None | list[str] = None
-    if bind_dirs:
-        logger.info("Preparing bind directories")
-        if isinstance(bind_dirs, Path):
-            bind_dirs = [bind_dirs]
+    if isinstance(bind_dirs, Path):
+        bind_dirs = [bind_dirs]
 
-        # Get only unique paths to avoid duplication in bindstring.
-        # bind_str = ",".join(set([str(p.absolute().resolve()) for p in bind_dirs]))
-        bind = (
-            list(set([str(Path(p).absolute().resolve()) for p in bind_dirs]))
-            if len(bind_dirs) > 0
-            else None
-        )
-
+    # Unique paths avoid a duplicated bind string
+    read_only = {str(Path(p).absolute().resolve()) for p in read_only_bind_dirs}
+    read_write = {str(Path(p).absolute().resolve()) for p in bind_dirs or ()}
+    bind = [*(read_write - read_only), *(f"{p}:{p}:ro" for p in read_only)] or None
+    if bind:
         logger.info(f"Constructed singularity bindings: {bind}")
 
     try:
@@ -127,6 +123,7 @@ def run_singularity_command(
             stream_callback_func=stream_callback_func,
             ignore_logging_output=ignore_logging_output,
             max_retries=max_retries - 1,
+            read_only_bind_dirs=read_only_bind_dirs,
         )
 
     except CalledProcessError as e:
@@ -161,6 +158,7 @@ def singularity_wrapper(
         bind_dirs: Path | Collection[Path] | None = None,
         stream_callback_func: Callable | None = None,
         ignore_logging_output: bool = False,
+        read_only_bind_dirs: Collection[Path] = (),
         **kwargs,
     ) -> str:
         """Function that can be used as a decorator on an input function. This function
@@ -172,6 +170,7 @@ def singularity_wrapper(
             bind_dirs (Optional[Union[Path,Collection[Path]]], optional): Specifies a Path, or list of Paths, to bind to in the container. Defaults to None.
             stream_callback_func (Optional[Callable], optional): Provide a function that is applied to each line of output text when singularity is running and `stream=True`. IF provide it should accept a single (string) parameter. If None, nothing happens. Defaults to None.
             ignore_logging_output (bool, optional): If `True` output from the executed singularity command is not logged. Defaults to False.
+            read_only_bind_dirs (Collection[Path], optional): Paths bound so the container cannot change them. Defaults to ().
 
         Returns:
             str: The command that was executed
@@ -190,6 +189,7 @@ def singularity_wrapper(
             bind_dirs=bind_dirs,
             ignore_logging_output=ignore_logging_output,
             stream_callback_func=stream_callback_func,
+            read_only_bind_dirs=read_only_bind_dirs,
         )
 
         return task_str
