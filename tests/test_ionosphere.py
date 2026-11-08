@@ -168,3 +168,39 @@ def test_pol_flow_needs_ionex_directory(tmp_path: Path):
             ),
             mss_by_beam=((MS(path=tmp_path / "a.ms", column="DATA"),),),
         )
+
+
+def test_pol_flow_passes_ionex_source(ms_example: Path, tmp_path: Path, monkeypatch):
+    from prefect.logging import disable_run_logger
+    from prefect.testing.utilities import prefect_test_harness
+
+    from flint.prefect.flows.polarisation_pipeline import process_science_fields_pol
+
+    used_options = []
+
+    class FakeTask:
+        def submit(self, ms: MS, options: IonosphereOptions) -> MS:
+            used_options.append(options)
+            return ms
+
+    monkeypatch.setattr(
+        "flint.prefect.flows.polarisation_pipeline.task_correct_ionosphere",
+        FakeTask(),
+    )
+    strategy = get_packaged_resource_path(
+        package="flint.data.tests", filename="test_config_pol.yaml"
+    )
+    with prefect_test_harness(), disable_run_logger():
+        process_science_fields_pol(
+            flint_ms_directory=tmp_path,
+            pol_field_options=PolFieldOptions(
+                imaging_strategy=strategy,
+                ionex_directory=tmp_path,
+                ionex_server="cddis",
+                ionex_prefix="cod",
+            ),
+            mss_by_beam=((MS(path=ms_example, column="DATA"),),),
+        )
+
+    assert [(o.server, o.prefix) for o in used_options] == [("cddis", "cod")]
+    assert used_options[0].ionex_directory == tmp_path

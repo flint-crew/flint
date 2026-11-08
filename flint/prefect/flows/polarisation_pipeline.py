@@ -263,7 +263,9 @@ def process_science_fields_pol(
             msg = f"IONEX directory {pol_field_options.ionex_directory} does not exist. Fill it with flint_ionosphere download"
             raise FileNotFoundError(msg)
         ionosphere_options = IonosphereOptions(
-            ionex_directory=pol_field_options.ionex_directory
+            ionex_directory=pol_field_options.ionex_directory,
+            server=pol_field_options.ionex_server,
+            prefix=pol_field_options.ionex_prefix,
         )
         resolved_mss_by_beam = tuple(
             tuple(

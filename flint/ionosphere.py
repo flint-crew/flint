@@ -20,7 +20,7 @@ from capn_crunch import add_options_to_parser, create_options_from_parser
 from flint.dp3 import DP3ApplyCalOptions, dp3_applycal
 from flint.logging import logger
 from flint.ms import HistoryEntry, add_history_entry
-from flint.options import MS, BaseOptions
+from flint.options import MS, BaseOptions, IonexServer
 
 if TYPE_CHECKING:
     from spinifex.ionospheric.tec_data import IonexOptions
@@ -31,7 +31,7 @@ class IonosphereOptions(BaseOptions):
 
     ionex_directory: Path
     """Directory holding the IONEX maps, downloaded beforehand with ``flint_ionosphere download``"""
-    server: Literal["chapman", "cddis", "igsiono"] = "chapman"
+    server: IonexServer = "chapman"
     """Server the IONEX maps come from"""
     prefix: str = "uqr"
     """Analysis centre of the IONEX maps"""

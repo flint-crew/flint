@@ -55,11 +55,11 @@ Spinifex reads the day after an observation as well as its own day, to smooth ov
 
 Then point flint at the directory, as below. `flint_ionosphere download` is not needed: a missing map still fails straight away, and the error names the command to fetch it.
 
-The pipeline uses the `chapman` `uqr` maps. A mirror of another server or analysis centre can be used with `flint_ionosphere correct --server ... --prefix ...`. The file names must match the server's, e.g. `COD0OPSFIN_*_GIM.INX.gz` or `codg*.Z` for `--server cddis --prefix cod`.
+A mirror of another server or analysis centre works the same way: pass `--ionex-server` and `--ionex-prefix` to the pipeline, or `--server` and `--prefix` to `flint_ionosphere`. The file names must match the server's, e.g. `COD0OPSFIN_*_GIM.INX.gz` or `codg*.Z` for `--ionex-server cddis --ionex-prefix cod`.
 
 ## In the polarisation pipeline
 
-Pass the directory to the polarisation pipeline (or the RACS-All pipeline) with `--ionex-directory`. Every measurement set is then corrected before it is imaged. Without it, nothing is corrected.
+Pass the directory to the polarisation pipeline (or the RACS-All pipeline) with `--ionex-directory`, and choose the maps with `--ionex-server` and `--ionex-prefix` (by default `chapman` and `uqr`). Every measurement set is then corrected before it is imaged. Without it, nothing is corrected.
 
 ## Accessing via the CLI
 
