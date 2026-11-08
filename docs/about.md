@@ -59,3 +59,6 @@ tasks together (outlined above) into a single data-processing pipeline.
 - `flint_flow_subtract_cube_pipeline`: Subtract a continuum model and image the
   residual data.
 - `flint_flow_polarisation_pipeline`: Perform Stokes I/Q/U imaging of an existing set of calibrated (and self-calibrated) measurement sets.
+- `flint_flow_archive`: Archive a field's products to its hot copy, tarball and
+  object stores from the manifest of its run, or check that every one holds
+  the field. See [Archiving](archive.md).

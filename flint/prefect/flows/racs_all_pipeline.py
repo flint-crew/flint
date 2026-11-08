@@ -6,6 +6,7 @@ handed from one stage to the next in-memory rather than rediscovered on disk.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -13,17 +14,27 @@ from capn_crunch import BaseOptions, add_options_to_parser, create_options_from_
 from configargparse import ArgumentParser
 from prefect import flow
 
+from flint.archive import archive_destinations, check_archive_prerequisites
 from flint.configuration import (
     POLARISATION_MAPPING,
     get_options_from_strategy,
     load_strategy_yaml,
 )
+from flint.manifest import (
+    MANIFEST_NAME,
+    ArchiveDestination,
+    draft_manifest,
+    field_name,
+    write_manifest,
+)
 from flint.naming import get_sbid_from_path
 from flint.options import (
+    ArchiveOptions,
     CubesForRMSynth,
     ErrorCubesForRMSynth,
     NoiseCubesForRMSynth,
     PolFieldOptions,
+    ProductKind,
     RACSAllOptions,
     RACSAllPipelineOptions,
     RMSynthFieldOptions,
@@ -34,12 +45,16 @@ from flint.options import (
 )
 from flint.prefect.clusters import get_dask_runner
 from flint.prefect.common.utils import raise_on_failed_stage
-from flint.prefect.flows.polarisation_pipeline import process_science_fields_pol
+from flint.prefect.flows.archive_pipeline import process_archive
+from flint.prefect.flows.polarisation_pipeline import (
+    PolPipelineResult,
+    process_science_fields_pol,
+)
 from flint.prefect.flows.racs_all_continuum_selfcal import (
     RACSContinuumResult,
     process_racs_all_continuum,
 )
-from flint.prefect.flows.rmsynth_pipeline import process_rmsynth
+from flint.prefect.flows.rmsynth_pipeline import RMSynthPipelineResult, process_rmsynth
 from flint.prefect.flows.spice_compression_pipeline import process_spice_compression
 from flint.source_finding.aegean import AegeanOutputs
 
@@ -71,6 +86,158 @@ def _racs_all_result(
         output_science_path=continuum_result.output_science_path,
         final_linmos_image=continuum_result.final_linmos_image,
         final_aegean_outputs=continuum_result.final_aegean_outputs,
+    )
+
+
+def _archive_options(racs_all_options: RACSAllOptions) -> ArchiveOptions:
+    """The archive options of the run's strategy file"""
+    return ArchiveOptions(
+        **get_options_from_strategy(
+            strategy=racs_all_options.imaging_strategy,
+            operation="selfcal",
+            mode="archive",
+            round_info=0,
+        )
+    )
+
+
+def _archive_destinations(
+    pipeline_options: RACSAllPipelineOptions,
+    racs_all_options: RACSAllOptions,
+) -> tuple[ArchiveDestination, ...]:
+    """The destinations the run archives the field to, none when archiving is off"""
+    return archive_destinations(
+        copy_path=racs_all_options.sbid_copy_path,
+        tar_path=racs_all_options.sbid_archive_path,
+        remote_names=pipeline_options.archive_remotes,
+        remotes=_archive_options(racs_all_options).remotes,
+    )
+
+
+def _check_archive_prerequisites(
+    pipeline_options: RACSAllPipelineOptions,
+    racs_all_options: RACSAllOptions,
+) -> None:
+    """What the archive stage needs, checked before any stage runs
+
+    Raises:
+        ValueError: The archive cannot run as set up
+    """
+    destinations = _archive_destinations(
+        pipeline_options=pipeline_options, racs_all_options=racs_all_options
+    )
+    if not destinations:
+        return
+    if pipeline_options.skip_imaging:
+        raise ValueError("archiving needs the imaging stage, which makes the products")
+
+    check_archive_prerequisites(
+        destinations=destinations,
+        rclone_container=pipeline_options.rclone_container,
+        rclone_config=pipeline_options.rclone_config,
+    )
+
+    # As _check_create_output_science_path names it, the archive root
+    science_path = (Path.cwd() / racs_all_options.low_data.name).absolute().resolve()
+    output_path = pipeline_options.output_path
+    if output_path is not None and not output_path.absolute().resolve().is_relative_to(
+        science_path
+    ):
+        raise ValueError(
+            f"archiving needs every product under {science_path}, but "
+            f"--output-path is {output_path}"
+        )
+
+
+def _result_products(
+    continuum_result: RACSContinuumResult,
+    zip_ms: bool,
+    pol_result: PolPipelineResult | None = None,
+    rmsynth_result: RMSynthPipelineResult | None = None,
+    spice_outputs: Mapping[Path, Path] | None = None,
+) -> dict[Path, ProductKind]:
+    """The products the stages handed over, each with the kind it is"""
+    products: dict[Path, ProductKind] = {}
+    if continuum_result.final_linmos_image is not None:
+        products[continuum_result.final_linmos_image] = "image"
+    aegean = continuum_result.final_aegean_outputs
+    if aegean is not None:
+        products |= {aegean.comp: "catalogue", aegean.bkg: "noise", aegean.rms: "noise"}
+    if zip_ms:
+        # The archive stage zips each one into this before sealing
+        products |= {
+            Path(f"{ms.path}.tar"): "visibilities"
+            for beam_mss in continuum_result.mss_by_beam
+            for ms in beam_mss
+        }
+
+    if pol_result is not None:
+        products |= {
+            path: "image"
+            for stokes_products in pol_result.mfs_products.values()
+            for path in stokes_products.values()
+        }
+        pol_kinds: tuple[tuple[ProductKind, dict[str, Path]], ...] = (
+            ("cube", pol_result.stokes_cubes),
+            ("cube", pol_result.total_stokes_cubes),
+            ("weight", pol_result.weight_cubes),
+            ("noise", pol_result.bkg_cubes),
+            ("noise", pol_result.rms_cubes),
+            ("noise", pol_result.total_bkg_cubes),
+            ("noise", pol_result.total_rms_cubes),
+        )
+        for kind, cubes in pol_kinds:
+            products |= {path: kind for path in cubes.values()}
+
+    if rmsynth_result is not None:
+        products |= {path: "rm" for path in rmsynth_result.written_paths}
+        products |= {path: "cube" for path in rmsynth_result.convolved_cubes}
+        products |= {path: "noise" for path in rmsynth_result.convolved_noise_cubes}
+
+    # SPICE deletes the cubes it trims, leaving its outputs in their place
+    spice_outputs = spice_outputs or {}
+    return {spice_outputs.get(path, path): kind for path, kind in products.items()}
+
+
+def _archive_field(
+    pipeline_options: RACSAllPipelineOptions,
+    racs_all_options: RACSAllOptions,
+    continuum_result: RACSContinuumResult,
+    products: Mapping[Path, ProductKind],
+) -> None:
+    """Archive the field to the destinations the run enables, if it enables any"""
+    destinations = _archive_destinations(
+        pipeline_options=pipeline_options, racs_all_options=racs_all_options
+    )
+    if not destinations:
+        return
+
+    root = continuum_result.output_science_path
+    manifest = draft_manifest(
+        root=root,
+        field=field_name(get_sbid_from_path(path=racs_all_options.low_data)),
+        sbids={
+            band: int(get_sbid_from_path(path=path))
+            for band, path in (
+                ("low", racs_all_options.low_data),
+                ("mid", racs_all_options.mid_data),
+                ("high", racs_all_options.high_data),
+            )
+        },
+        products=products,
+        destinations=destinations,
+        sweep_patterns=_archive_options(racs_all_options).sweep_patterns,
+    )
+    manifest_path = write_manifest(manifest=manifest, path=root / MANIFEST_NAME)
+
+    assert pipeline_options.archive_cluster_config is not None
+    process_archive.with_options(
+        task_runner=get_dask_runner(cluster=pipeline_options.archive_cluster_config),
+        name="RACS All -- archive",
+    )(
+        manifest_path=manifest_path,
+        rclone_container=pipeline_options.rclone_container,
+        rclone_config=pipeline_options.rclone_config,
     )
 
 
@@ -120,6 +287,10 @@ def _check_stage_prerequisites(
     for name, path in paths.items():
         if path is not None and not path.exists():
             raise ValueError(f"{name} is set to {path}, which does not exist")
+
+    _check_archive_prerequisites(
+        pipeline_options=pipeline_options, racs_all_options=racs_all_options
+    )
 
 
 def _check_racs_all_pipeline_options(pipeline_options: RACSAllPipelineOptions) -> None:
@@ -259,6 +430,16 @@ def process_racs_all(
         cleanup_states = continuum_result.cleanup_futures
 
     if pipeline_options.skip_polarisation:
+        # Before the clean-up failures are raised, as the clean-ups never touch products
+        if continuum_result is not None:
+            _archive_field(
+                pipeline_options=pipeline_options,
+                racs_all_options=racs_all_options,
+                continuum_result=continuum_result,
+                products=_result_products(
+                    continuum_result=continuum_result, zip_ms=racs_all_options.zip_ms
+                ),
+            )
         raise_on_failed_stage(stage="continuum clean-up", futures=cleanup_states)
         return _racs_all_result(terminal_results, continuum_result)
     # _check_racs_all_pipeline_options: polarisation needs the imaging stage
@@ -300,6 +481,7 @@ def process_racs_all(
     # --output-path, which would put both stages in the root itself.
     output_root = pipeline_options.output_path or continuum_result.output_science_path
 
+    rmsynth_result: RMSynthPipelineResult | None = None
     rmsynth_convolved_cubes: list[Path] = []
     rmsynth_noise_cubes: list[Path] = []
     if not pipeline_options.skip_rmsynth:
@@ -337,6 +519,7 @@ def process_racs_all(
         rmsynth_convolved_cubes = rmsynth_result.convolved_cubes
         rmsynth_noise_cubes = rmsynth_result.convolved_noise_cubes
 
+    spice_outputs: dict[Path, Path] = {}
     if not pipeline_options.skip_spice:
         resolved_reference_image = (
             spice_field_options.reference_image
@@ -365,12 +548,24 @@ def process_racs_all(
             sbid_copy_path=None,
         )
         assert pipeline_options.spice_cluster_config is not None
-        spice_results = process_spice_compression.with_options(
+        spice_outputs = process_spice_compression.with_options(
             task_runner=get_dask_runner(cluster=pipeline_options.spice_cluster_config),
             name="RACS All -- spice compression",
         )(spice_field_options=resolved_spice_field_options)
-        terminal_results.extend(spice_results.values())
+        terminal_results.extend(spice_outputs.values())
 
+    _archive_field(
+        pipeline_options=pipeline_options,
+        racs_all_options=racs_all_options,
+        continuum_result=continuum_result,
+        products=_result_products(
+            continuum_result=continuum_result,
+            zip_ms=racs_all_options.zip_ms,
+            pol_result=pol_result,
+            rmsynth_result=rmsynth_result,
+            spice_outputs=spice_outputs,
+        ),
+    )
     raise_on_failed_stage(stage="continuum clean-up", futures=cleanup_states)
     return _racs_all_result(terminal_results, continuum_result)
 
@@ -470,6 +665,7 @@ def options_from_argv(argv: list[str] | None = None) -> dict[str, BaseOptions]:
         "polarisation_cluster_config",
         "rmsynth_cluster_config",
         "spice_cluster_config",
+        "archive_cluster_config",
     ):
         if getattr(pipeline_options, cluster_config_attr) is None:
             pipeline_options = pipeline_options.with_options(

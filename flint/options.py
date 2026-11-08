@@ -644,8 +644,10 @@ class RACSAllPipelineOptions(BaseOptions):
     """Options controlling the ``racs-all`` flow-of-flows.
 
     Execution order: imaging -> polarisation -> rm-synth/clean -> spice-compression
+    -> archive
 
-    with each stage individually skippable.
+    with each stage individually skippable. The archive runs when at least one
+    destination is set: ``sbid_copy_path``, ``sbid_archive_path`` or a remote.
     """
 
     output_path: Path | None = None
@@ -666,6 +668,14 @@ class RACSAllPipelineOptions(BaseOptions):
     """Specify a new cluster configuration file for the rm-synth/clean stage, different to the preferred one. If None, drawn from the preferred cluster config"""
     spice_cluster_config: Path | None = None
     """Specify a new cluster configuration file for the spice-compression stage, different to the preferred one. If None, drawn from the preferred cluster config"""
+    archive_cluster_config: Path | None = None
+    """Cluster configuration file for the archive stage, best on a data-mover partition. If None, drawn from the preferred cluster config"""
+    archive_remotes: list[str] = []
+    """Remotes to upload the field to, as named under defaults.archive.remotes in the strategy file"""
+    rclone_container: Path | None = None
+    """The rclone container, needed by the hot copy and the remotes"""
+    rclone_config: Path | None = None
+    """rclone config file defining the remotes and holding their credentials. Keep it readable by you alone"""
 
 
 def dump_field_options_to_yaml(

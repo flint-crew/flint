@@ -430,6 +430,7 @@ def _run_racs_all(
     pipeline_options: RACSAllPipelineOptions | None = None,
     rmsynth_field_options: RMSynthFieldOptions | None = None,
     spice_field_options: SpiceFieldOptions | None = None,
+    racs_all_options: RACSAllOptions | None = None,
 ) -> Any:
     container = tmp_path / "container.sif"
     container.touch()
@@ -445,10 +446,10 @@ def _run_racs_all(
                 polarisation_cluster_config=tmp_path,
                 rmsynth_cluster_config=tmp_path,
                 spice_cluster_config=tmp_path,
+                archive_cluster_config=tmp_path,
             ),
-            racs_all_options=RACSAllOptions(
-                low_data=tmp_path, mid_data=tmp_path, high_data=tmp_path
-            ),
+            racs_all_options=racs_all_options
+            or RACSAllOptions(low_data=tmp_path, mid_data=tmp_path, high_data=tmp_path),
             pol_field_options=PolFieldOptions(
                 wsclean_container=container, yandasoft_container=container
             ),
@@ -974,6 +975,7 @@ def test_options_from_argv(tmp_path: Path) -> None:
     pipeline_options = options["pipeline_options"]
     assert pipeline_options.imaging_cluster_config == Path("petrichor_main.yaml")
     assert pipeline_options.spice_cluster_config == Path("petrichor_main.yaml")
+    assert pipeline_options.archive_cluster_config == Path("petrichor_main.yaml")
 
 
 def test_continuum_result_final_products_default_to_none(tmp_path: Path) -> None:
@@ -987,3 +989,192 @@ def test_continuum_result_final_products_default_to_none(tmp_path: Path) -> None
     )
     assert result.final_linmos_image is None
     assert result.final_aegean_outputs is None
+
+
+def _archived_run_options(tmp_path: Path, **kwargs) -> RACSAllOptions:
+    """Options of a run that archives to a tarball"""
+    (tmp_path / "tape").mkdir(exist_ok=True)
+    return RACSAllOptions(
+        low_data=tmp_path / "60001",
+        mid_data=tmp_path / "60002",
+        high_data=tmp_path / "60003",
+        sbid_archive_path=tmp_path / "tape",
+        **kwargs,
+    )
+
+
+def _mock_archive(monkeypatch: pytest.MonkeyPatch):
+    from unittest.mock import MagicMock
+
+    archive_flow = MagicMock()
+    monkeypatch.setattr(
+        "flint.prefect.flows.racs_all_pipeline.process_archive", archive_flow
+    )
+    return archive_flow
+
+
+def _drafted_products(archive_flow) -> dict[Path, str]:
+    from flint.manifest import read_manifest
+
+    kwargs = archive_flow.with_options.return_value.call_args.kwargs
+    manifest = read_manifest(kwargs["manifest_path"])
+    return {product.path: product.kind for product in manifest.products}
+
+
+def test_the_draft_lists_what_the_stages_left(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SPICE deletes the cubes it trims, so its outputs stand in their place"""
+    _, spice_stage, _ = _stage_mocks(
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        convolved_cubes=[tmp_path / "q.conv.fits"],
+        bane_cubes=True,
+    )
+    spice_stage.with_options.return_value.return_value = {
+        tmp_path / "q.fits": tmp_path / "spice" / "q.fits.fz"
+    }
+    archive_flow = _mock_archive(monkeypatch)
+
+    _run_racs_all(tmp_path=tmp_path, racs_all_options=_archived_run_options(tmp_path))
+
+    products = _drafted_products(archive_flow)
+    assert Path("q.fits") not in products
+    assert products[Path("spice/q.fits.fz")] == "cube"
+    assert products[Path("u.fits")] == "cube"
+    assert products[Path("q.weight.fits")] == "weight"
+    assert products[Path("q_rms.fits")] == "noise"
+    assert products[Path("fdf.fits")] == "rm"
+    assert products[Path("q.conv.fits")] == "cube"
+
+
+def test_a_continuum_only_run_archives_its_zipped_measurement_sets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    from flint.prefect.flows import racs_all_pipeline
+
+    _stage_mocks(monkeypatch=monkeypatch, tmp_path=tmp_path, convolved_cubes=[])
+    continuum_result = racs_all_pipeline.process_racs_all_continuum.with_options.return_value.return_value
+    continuum_result.mss_by_beam = (
+        (SimpleNamespace(path=tmp_path / "SB60001.beam00.round2.ms"),),
+    )
+    archive_flow = _mock_archive(monkeypatch)
+
+    _run_racs_all(
+        tmp_path=tmp_path,
+        pipeline_options=RACSAllPipelineOptions(
+            skip_polarisation=True, skip_rmsynth=True, skip_spice=True
+        ),
+        racs_all_options=_archived_run_options(tmp_path, zip_ms=True),
+    )
+
+    products = _drafted_products(archive_flow)
+    assert products[Path("SB60001.beam00.round2.ms.tar")] == "visibilities"
+
+
+def test_the_archive_runs_before_cleanup_failures_are_raised(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from prefect.states import Failed
+
+    from flint.prefect.flows import racs_all_pipeline
+
+    _stage_mocks(monkeypatch=monkeypatch, tmp_path=tmp_path, convolved_cubes=[])
+    continuum_stage = racs_all_pipeline.process_racs_all_continuum.with_options
+    continuum_stage.return_value.return_value.cleanup_futures = [
+        Failed(message="Stale file handle")
+    ]
+    archive_flow = _mock_archive(monkeypatch)
+
+    with pytest.raises(RuntimeError, match="continuum clean-up stage did not complete"):
+        _run_racs_all(
+            tmp_path=tmp_path, racs_all_options=_archived_run_options(tmp_path)
+        )
+
+    archive_flow.with_options.return_value.assert_called_once()
+
+
+def test_nothing_is_archived_without_a_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stage_mocks(monkeypatch=monkeypatch, tmp_path=tmp_path, convolved_cubes=[])
+    archive_flow = _mock_archive(monkeypatch)
+
+    _run_racs_all(tmp_path=tmp_path)
+
+    archive_flow.with_options.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "pipeline_options, racs_all_kwargs, match",
+    [
+        (
+            RACSAllPipelineOptions(
+                skip_imaging=True,
+                skip_polarisation=True,
+                skip_rmsynth=True,
+                skip_spice=True,
+            ),
+            {},
+            "archiving needs the imaging stage",
+        ),
+        (
+            RACSAllPipelineOptions(skip_spice=True, archive_remotes=["acacia"]),
+            {},
+            "No archive remote",
+        ),
+        (
+            RACSAllPipelineOptions(skip_spice=True, output_path=Path("/elsewhere")),
+            {},
+            "--output-path",
+        ),
+        (
+            RACSAllPipelineOptions(skip_spice=True),
+            {"sbid_copy_path": Path("/hot")},
+            "rclone container",
+        ),
+    ],
+)
+def test_archive_prerequisites(
+    tmp_path: Path, pipeline_options, racs_all_kwargs, match
+) -> None:
+    container = tmp_path / "container.sif"
+    container.touch()
+
+    with pytest.raises(ValueError, match=match):
+        _check_stage_prerequisites(
+            pipeline_options=pipeline_options,
+            racs_all_options=_archived_run_options(tmp_path, **racs_all_kwargs),
+            pol_field_options=PolFieldOptions(
+                wsclean_container=container, yandasoft_container=container
+            ),
+            spice_field_options=SpiceFieldOptions(),
+        )
+
+
+def test_archive_flags_parse(tmp_path: Path) -> None:
+    from flint.prefect.flows.racs_all_pipeline import options_from_argv
+
+    data = [tmp_path / str(sbid) for sbid in (60001, 60002, 60003)]
+    options = options_from_argv(
+        [
+            *map(str, data),
+            "--archive-remotes",
+            "acacia",
+            "dap",
+            "--rclone-container",
+            "rclone.sif",
+            "--rclone-config",
+            "rclone.conf",
+            "--archive-cluster-config",
+            "datamover.yaml",
+        ]
+    )
+
+    pipeline_options = options["pipeline_options"]
+    assert pipeline_options.archive_remotes == ["acacia", "dap"]
+    assert pipeline_options.rclone_container == Path("rclone.sif")
+    assert pipeline_options.rclone_config == Path("rclone.conf")
+    assert pipeline_options.archive_cluster_config == Path("datamover.yaml")
