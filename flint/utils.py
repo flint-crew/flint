@@ -641,24 +641,44 @@ def zip_folder(
 ) -> Path:
     """Zip a directory and remove the original.
 
+    The archive is written under a temporary name and renamed once complete, so an
+    archive that already exists was finished by an earlier call, and only the
+    removal of the directory is left to do.
+
     Args:
         in_path (Path): The path that will be zipped up.
         out_zip (Path, optional): Name of the output file. A `archive_format` extension will be added by `shutil.make_archive`. Defaults to None.
         archive_format (str, optional): The format of the archive. See `shutil.make_archive`. Defaults to "tar".
     Returns:
-        Path: the path of the compressed zipped folder
+        Path: the path of the archive
     """
     in_path = Path(in_path)
-    out_zip = in_path if out_zip is None else out_zip
+    out_zip = Path(in_path if out_zip is None else out_zip).absolute()
+    extension = {
+        "tar": ".tar",
+        "gztar": ".tar.gz",
+        "bztar": ".tar.bz2",
+        "xztar": ".tar.xz",
+        "zip": ".zip",
+    }[archive_format]
+    archive = Path(f"{out_zip}{extension}")
 
-    if in_path.exists():
-        logger.info(f"Zipping {in_path}.")
-        shutil.make_archive(str(out_zip), format=archive_format, base_dir=str(in_path))
-        remove_files_folders(in_path)
-    else:
+    if not in_path.exists():
         logger.warning(f"{in_path=} does not exist... Not archiving. ")
+        return archive
 
-    return out_zip
+    if not archive.exists():
+        logger.info(f"Zipping {in_path}.")
+        partial = shutil.make_archive(
+            f"{out_zip}.partial",
+            format=archive_format,
+            root_dir=in_path.absolute().parent,
+            base_dir=in_path.name,
+        )
+        os.replace(partial, archive)
+    remove_files_folders(in_path)
+
+    return archive
 
 
 def rsync_copy_directory(target_path: Path, out_path: Path) -> Path:

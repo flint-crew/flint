@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import os
+import tarfile
 import time
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,7 @@ from flint.utils import (
     parse_environment_variables,
     temporarily_move_into,
     timelimit_on_context,
+    zip_folder,
 )
 
 
@@ -700,3 +702,35 @@ def test_estimate_skycoord_centre_wrap():
 
     assert np.isclose(mean_pos.ra.deg, 359.54349533)
     assert np.isclose(mean_pos.dec.deg, -40.51255648)
+
+
+def _make_ms_folder(tmp_path: Path) -> Path:
+    ms = tmp_path / "SB1234.beam00.round2.ms"
+    (ms / "table").mkdir(parents=True)
+    (ms / "table" / "data").write_text("visibilities")
+    return ms
+
+
+def test_zip_folder_returns_the_archive(tmp_path: Path) -> None:
+    ms = _make_ms_folder(tmp_path)
+
+    archive = zip_folder(in_path=ms)
+
+    assert archive == tmp_path / "SB1234.beam00.round2.ms.tar"
+    assert not ms.exists()
+    assert not list(tmp_path.glob("*.partial*"))
+    with tarfile.open(archive) as tar:
+        assert "SB1234.beam00.round2.ms/table/data" in tar.getnames()
+
+
+def test_zip_folder_finishes_an_interrupted_removal(tmp_path: Path) -> None:
+    """An archive beside its folder means the removal, not the archive, was cut short"""
+    ms = _make_ms_folder(tmp_path)
+    archive = zip_folder(in_path=ms)
+    contents = archive.read_bytes()
+    _make_ms_folder(tmp_path)
+
+    assert zip_folder(in_path=ms) == archive
+
+    assert not ms.exists()
+    assert archive.read_bytes() == contents
