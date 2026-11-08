@@ -161,8 +161,6 @@ def correct_ionosphere(ms: MS | Path, options: IonosphereOptions) -> MS:
         MS: The measurement set tracking the corrected column
     """
     ms = MS.cast(ms)
-    if ms.column is None:
-        ms = ms.with_options(column="DATA")
     if ms.column == options.output_column:
         raise ValueError(
             f"{ms.path} already tracks {options.output_column}. "
