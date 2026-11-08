@@ -442,7 +442,9 @@ def test_resolve_common_resolution_cubes_convolves(tmp_path: Path) -> None:
     for stokes, resolved_cube in resolved.items():
         components = processed_ms_format(resolved_cube)
         assert components is not None and components.pol == stokes
-        assert components.total and components.image and components.cube
+        assert components.conv and components.image and components.cube
+        # The input's markers are kept, so these can never take its name
+        assert components.linmos
     # The weight cubes are untouched, so the convolved cubes must stay on the
     # input pixel and channel grid
     assert fits.getdata(resolved["q"]).shape == fits.getdata(cubes["q"]).shape
