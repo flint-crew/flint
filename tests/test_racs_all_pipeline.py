@@ -484,6 +484,32 @@ def test_stages_never_copy_under_racs_all(
     assert spice_options.sbid_copy_path is None
 
 
+def test_stage_outputs_go_in_subfolders_of_the_output_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The shared CLI fills every stage's output_path with --output-path"""
+    _, spice_stage, rmsynth_stage = _stage_mocks(
+        monkeypatch=monkeypatch, tmp_path=tmp_path, convolved_cubes=[]
+    )
+    output_path = tmp_path / "out"
+
+    _run_racs_all(
+        tmp_path=tmp_path,
+        pipeline_options=RACSAllPipelineOptions(output_path=output_path),
+        rmsynth_field_options=RMSynthFieldOptions(output_path=output_path),
+        spice_field_options=SpiceFieldOptions(output_path=output_path),
+    )
+
+    rmsynth_options = rmsynth_stage.with_options.return_value.call_args.kwargs[
+        "rmsynth_field_options"
+    ]
+    spice_options = spice_stage.with_options.return_value.call_args.kwargs[
+        "spice_field_options"
+    ]
+    assert rmsynth_options.output_path == output_path / "rmsynth"
+    assert spice_options.output_path == output_path / "spice"
+
+
 def test_rmsynth_convolved_cubes_are_spiced(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
