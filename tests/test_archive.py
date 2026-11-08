@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from flint.archive import (
+    cli,
     copy_files_into,
     create_sbid_tar_archive,
     get_archive_options_from_yaml,
@@ -182,6 +183,26 @@ def test_create_sbid_archive(glob_files):
     )
 
     assert tarfile.is_tarfile(tar_out_path)
+
+
+def test_cli_create_without_a_strategy(glob_files):
+    """The patterns come from the command line when no strategy file is given"""
+    base_dir, files = glob_files
+    tar_out_path = Path(base_dir) / "from_the_cli.tar"
+
+    cli(
+        [
+            "create",
+            str(tar_out_path),
+            "--base-path",
+            str(base_dir),
+            "--tar-file-re-patterns",
+            ".*png",
+        ]
+    )
+
+    with tarfile.open(tar_out_path) as tar:
+        assert tar.getnames() == ["a_validation.png"]
 
 
 def test_archive_sbid_round0(tmp_path):
