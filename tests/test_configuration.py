@@ -714,3 +714,15 @@ def test_dp3_options_from_strategy():
     strategy["selfcal"][1]["dp3ddecal"]["mode"] = "scalarphse"
     with pytest.raises(ValueError):
         verify_configuration(input_strategy=strategy)
+
+
+def test_verify_configuration_archive_remotes(strategy):
+    """Remotes sit under defaults, each an rclone remote with the kinds it takes"""
+    strategy["defaults"]["archive"]["remotes"] = {
+        "acacia": {"remote": "acacia:racs-all", "kinds": ["image", "cube"]}
+    }
+    assert verify_configuration(input_strategy=strategy)
+
+    strategy["defaults"]["archive"]["remotes"]["acacia"]["kinds"] = ["holograms"]
+    with pytest.raises(ValueError):
+        verify_configuration(input_strategy=strategy)

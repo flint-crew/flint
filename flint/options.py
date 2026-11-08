@@ -726,6 +726,39 @@ DEFAULT_TAR_RE_PATTERNS = (
 DEFAULT_COPY_RE_PATTERNS = (r".*linmos.*fits", r".*weight\.fits", r".*png", r".*csv")
 
 
+ProductKind: TypeAlias = Literal[
+    "image",
+    "cube",
+    "weight",
+    "noise",
+    "catalogue",
+    "rm",
+    "visibilities",
+    "calibration",
+    "report",
+    "config",
+]
+"""What an archived product is. Each destination takes the kinds it lists."""
+
+
+class ArchiveRemote(BaseOptions):
+    """An rclone remote a field can be uploaded to"""
+
+    remote: str
+    """rclone remote and bucket, e.g. ``acacia:racs-all``"""
+    kinds: tuple[ProductKind, ...] = (
+        "image",
+        "cube",
+        "weight",
+        "noise",
+        "catalogue",
+        "rm",
+        "report",
+        "config",
+    )
+    """The kinds of product uploaded to it"""
+
+
 class ArchiveOptions(BaseOptions):
     """Container for options related to archiving products from flint workflows"""
 
@@ -733,6 +766,21 @@ class ArchiveOptions(BaseOptions):
     """Regular-expressions to use to collect files that should be tarballed"""
     copy_file_re_patterns: tuple[str, ...] = DEFAULT_COPY_RE_PATTERNS
     """Regular-expressions used to identify files to copy into a final location (not tarred)"""
+    remotes: dict[str, ArchiveRemote] = {}
+    """Object stores a run may upload to, by name. A run picks them with ``--archive-remotes``"""
+    sweep_patterns: dict[str, ProductKind] = {
+        r"(?!.*\.beam\d+\.).*\.cube\..*weight.*\.fits(\.fz|\.gz)?": "weight",
+        r"(?!.*\.beam\d+\.).*\.cube\..*\.fits(\.fz|\.gz)?": "cube",
+        r".*weight.*\.fits": "weight",
+        r".*\.linmos\.fits": "image",
+        r".*_comp\.fits": "catalogue",
+        r".*_(bkg|rms)\.fits": "noise",
+        r".*\.(png|csv)": "report",
+        r".*\.ya?ml": "config",
+        r".*\.caltable(\.ch\d{4}-\d{4})?\.tar": "calibration",
+        r".*\.ms\.flagversions\.tar": "calibration",
+    }
+    """Regular expressions matched against the whole name of a file no stage result lists, each giving the kind of product it is. The first match wins"""
 
 
 class FitsCubeOptions(BaseOptions):

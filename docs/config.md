@@ -173,6 +173,35 @@ and honours `compress: true` set under
 round) as normal. If you set `compress: true` for the final round's per-beam
 cube, it is ignored and a warning is logged.
 
+### `archive`
+
+Besides the regular expressions the continuum flow's tarball and copy use,
+`defaults.archive` holds what the RACS-all archive stage reads. `archive` must
+sit under `defaults`, as the strategy check rejects any other top-level section.
+
+- `remotes`: the object stores a run may upload to, by name. Each names an rclone
+  remote and bucket, and the kinds of product it takes. A run uploads to the ones
+  it names with `--archive-remotes`, and credentials stay in the rclone config.
+- `sweep_patterns`: regular expressions, matched against the whole file name, for
+  products that no stage hands over, each mapped to its kind. The first match
+  wins.
+
+```yaml
+defaults:
+  archive:
+    remotes:
+      acacia:
+        remote: acacia:racs-all
+        kinds: [image, cube, weight, noise, catalogue, rm, report, config]
+      dap:
+        remote: dap:racs-all
+        kinds: [image, catalogue]
+```
+
+The kinds are `image`, `cube`, `weight`, `noise`, `catalogue`, `rm`,
+`visibilities`, `calibration`, `report` and `config`. A remote that lists no
+kinds takes all but `visibilities` and `calibration`.
+
 ## Configuration based settings in Python API
 
 Most settings within `flint` are stored in immutable option classes, e.g.

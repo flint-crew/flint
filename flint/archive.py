@@ -7,18 +7,19 @@ import shlex
 import shutil
 import subprocess
 import tarfile
-from argparse import ArgumentParser
+from argparse import ArgumentParser, Namespace
 from collections.abc import Collection
 from pathlib import Path
 from typing import Any
 
-from capn_crunch import add_options_to_parser, create_options_from_parser
+from capn_crunch import BaseOptions, add_options_to_parser, create_options_from_parser
 
 from flint.configuration import get_options_from_strategy
 from flint.exceptions import TarArchiveError
 from flint.logging import logger
 from flint.options import (
     ArchiveOptions,
+    exclude_fields_cli_class,
 )
 
 
@@ -238,6 +239,23 @@ def get_archive_options_from_yaml(strategy_yaml_path: Path) -> dict[str, Any]:
     return archive_options
 
 
+def _archive_cli_options() -> type[BaseOptions]:
+    """ArchiveOptions without the fields a command line cannot express"""
+    return exclude_fields_cli_class(ArchiveOptions, {"remotes", "sweep_patterns"})
+
+
+def _archive_options_from_args(args: Namespace) -> ArchiveOptions:
+    """The archive options from a strategy file if one is given, else the command line"""
+    if args.strategy_yaml_path:
+        return ArchiveOptions(
+            **get_archive_options_from_yaml(strategy_yaml_path=args.strategy_yaml_path)
+        )
+    cli_options = create_options_from_parser(
+        parser_namespace=args, options_class=_archive_cli_options()
+    )
+    return ArchiveOptions(**cli_options._asdict())
+
+
 def get_parser() -> ArgumentParser:
     parser = ArgumentParser(
         description="Operations around archiving. Patterns are specified as regular expressions (not globs). "
@@ -269,7 +287,7 @@ def get_parser() -> ArgumentParser:
         help="Which set of RE patterns to present, those for the tarball (create) or those for copy",
     )
     list_parser = add_options_to_parser(
-        parser=list_parser, options_class=ArchiveOptions
+        parser=list_parser, options_class=_archive_cli_options()
     )
     create_parser = subparser.add_parser("create", help="Create a tarfile archive")
     create_parser.add_argument(
@@ -283,7 +301,7 @@ def get_parser() -> ArgumentParser:
     )
 
     create_parser = add_options_to_parser(
-        parser=create_parser, options_class=ArchiveOptions
+        parser=create_parser, options_class=_archive_cli_options()
     )
     create_parser.add_argument(
         "--strategy-yaml-path",
@@ -308,7 +326,7 @@ def get_parser() -> ArgumentParser:
     )
 
     copy_parser = add_options_to_parser(
-        parser=copy_parser, options_class=ArchiveOptions
+        parser=copy_parser, options_class=_archive_cli_options()
     )
     copy_parser.add_argument(
         "--strategy-yaml-path",
@@ -326,17 +344,7 @@ def cli(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     if args.mode == "list":
-        archive_options = (
-            ArchiveOptions(
-                **get_archive_options_from_yaml(
-                    strategy_yaml_path=args.strategy_yaml_path
-                )
-            )
-            if args.strategy_yaml_path
-            else create_options_from_parser(
-                parser_namespace=args, options_class=ArchiveOptions
-            )
-        )
+        archive_options = _archive_options_from_args(args=args)
 
         files = resolve_glob_expressions(
             base_path=args.base_path,
@@ -351,17 +359,7 @@ def cli(argv: list[str] | None = None) -> None:
         logger.info(f"{len(files)} for mode={args.list_mode}")
 
     elif args.mode == "create":
-        archive_options = (
-            ArchiveOptions(
-                **get_archive_options_from_yaml(
-                    strategy_yaml_path=args.strategy_yaml_path
-                )
-            )
-            if args.strategy_yaml_path
-            else create_options_from_parser(
-                parser_namespace=args, options_class=ArchiveOptions
-            )
-        )
+        archive_options = _archive_options_from_args(args=args)
 
         create_sbid_tar_archive(
             tar_out_path=args.tar_out_path,
@@ -369,17 +367,7 @@ def cli(argv: list[str] | None = None) -> None:
             archive_options=archive_options,
         )
     elif args.mode == "copy":
-        archive_options = (
-            ArchiveOptions(
-                **get_archive_options_from_yaml(
-                    strategy_yaml_path=args.strategy_yaml_path
-                )
-            )
-            if args.strategy_yaml_path
-            else create_options_from_parser(
-                parser_namespace=args, options_class=ArchiveOptions
-            )
-        )
+        archive_options = _archive_options_from_args(args=args)
         copy_sbid_files_archive(
             copy_out_path=args.copy_out_path,
             base_path=args.base_path,
