@@ -296,6 +296,8 @@ def process_racs_all(
     )
 
     # One root for every downstream stage, split into a subdirectory per stage.
+    # The stages' own output_path is ignored: the shared CLI fills it with
+    # --output-path, which would put both stages in the root itself.
     output_root = pipeline_options.output_path or continuum_result.output_science_path
 
     rmsynth_convolved_cubes: list[Path] = []
@@ -319,7 +321,7 @@ def process_racs_all(
         resolved_rmsynth_field_options = rmsynth_field_options.with_options(
             stokes_cubes=CubesForRMSynth.from_mapping(stokes_cubes),
             error_cubes=error_cubes,
-            output_path=rmsynth_field_options.output_path or output_root / "rmsynth",
+            output_path=output_root / "rmsynth",
         )
         assert pipeline_options.rmsynth_cluster_config is not None
         rmsynth_result = process_rmsynth.with_options(
@@ -356,7 +358,7 @@ def process_racs_all(
                 *rmsynth_noise_cubes,
             ],
             reference_image=resolved_reference_image,
-            output_path=spice_field_options.output_path or output_root / "spice",
+            output_path=output_root / "spice",
         )
         assert pipeline_options.spice_cluster_config is not None
         spice_results = process_spice_compression.with_options(

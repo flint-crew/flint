@@ -425,7 +425,12 @@ def _stage_mocks(
     return pol_result, spice_stage, rmsynth_stage
 
 
-def _run_racs_all(tmp_path: Path) -> Any:
+def _run_racs_all(
+    tmp_path: Path,
+    pipeline_options: RACSAllPipelineOptions | None = None,
+    rmsynth_field_options: RMSynthFieldOptions | None = None,
+    spice_field_options: SpiceFieldOptions | None = None,
+) -> Any:
     container = tmp_path / "container.sif"
     container.touch()
     catalogue = tmp_path / "components.fits"
@@ -433,7 +438,9 @@ def _run_racs_all(tmp_path: Path) -> Any:
 
     with prefect_test_harness(), disable_run_logger():
         return process_racs_all(
-            pipeline_options=RACSAllPipelineOptions(
+            pipeline_options=(
+                pipeline_options or RACSAllPipelineOptions()
+            ).with_options(
                 imaging_cluster_config=tmp_path,
                 polarisation_cluster_config=tmp_path,
                 rmsynth_cluster_config=tmp_path,
@@ -445,9 +452,37 @@ def _run_racs_all(tmp_path: Path) -> Any:
             pol_field_options=PolFieldOptions(
                 wsclean_container=container, yandasoft_container=container
             ),
-            rmsynth_field_options=RMSynthFieldOptions(),
-            spice_field_options=SpiceFieldOptions(catalogue=catalogue),
+            rmsynth_field_options=rmsynth_field_options or RMSynthFieldOptions(),
+            spice_field_options=(
+                spice_field_options or SpiceFieldOptions()
+            ).with_options(catalogue=catalogue),
         )
+
+
+def test_stage_outputs_go_in_subfolders_of_the_output_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The shared CLI fills every stage's output_path with --output-path"""
+    _, spice_stage, rmsynth_stage = _stage_mocks(
+        monkeypatch=monkeypatch, tmp_path=tmp_path, convolved_cubes=[]
+    )
+    output_path = tmp_path / "out"
+
+    _run_racs_all(
+        tmp_path=tmp_path,
+        pipeline_options=RACSAllPipelineOptions(output_path=output_path),
+        rmsynth_field_options=RMSynthFieldOptions(output_path=output_path),
+        spice_field_options=SpiceFieldOptions(output_path=output_path),
+    )
+
+    rmsynth_options = rmsynth_stage.with_options.return_value.call_args.kwargs[
+        "rmsynth_field_options"
+    ]
+    spice_options = spice_stage.with_options.return_value.call_args.kwargs[
+        "spice_field_options"
+    ]
+    assert rmsynth_options.output_path == output_path / "rmsynth"
+    assert spice_options.output_path == output_path / "spice"
 
 
 def test_rmsynth_convolved_cubes_are_spiced(
