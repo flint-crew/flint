@@ -237,12 +237,16 @@ def pulled_uris(monkeypatch):
     ],
 )
 def test_download_tag_selection(tmp_path, pulled_uris, kwargs, suffix):
-    """Every known container is pulled with the tag for the chosen CPU level"""
+    """Every known container is pulled with the tag for the chosen CPU level,
+    except those that keep a fixed upstream tag"""
     paths = download_known_containers(container_directory=tmp_path, **kwargs)
 
     assert len(paths) == len(LIST_OF_KNOWN_CONTAINERS)
     assert sorted(pulled_uris) == sorted(
-        f"{container.uri}{suffix}" for container in LIST_OF_KNOWN_CONTAINERS
+        f"{container.uri}:{container.tag}"
+        if container.fixed_tag
+        else f"{container.uri}{suffix}"
+        for container in LIST_OF_KNOWN_CONTAINERS
     )
 
 
@@ -253,8 +257,22 @@ def test_download_tag_selection_auto(tmp_path, pulled_uris, monkeypatch):
         container_directory=tmp_path, new_tag="v2.0.0", cpu="auto"
     )
 
+    fixed = {
+        f"{container.uri}:{container.tag}"
+        for container in LIST_OF_KNOWN_CONTAINERS
+        if container.fixed_tag
+    }
     assert pulled_uris
-    assert all(uri.endswith(":v2.0.0-x86-64-v3") for uri in pulled_uris)
+    assert all(uri.endswith(":v2.0.0-x86-64-v3") for uri in set(pulled_uris) - fixed)
+
+
+def test_rclone_keeps_its_upstream_tag(tmp_path, pulled_uris):
+    """The upstream rclone image has no flint release or CPU tags"""
+    download_known_containers(
+        container_directory=tmp_path, new_tag="v2.0.0", cpu="x86-64-v4"
+    )
+
+    assert "docker://rclone/rclone:1.75.2" in pulled_uris
 
 
 def test_download_bad_cpu(tmp_path, pulled_uris):
