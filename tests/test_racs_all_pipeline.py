@@ -397,7 +397,7 @@ def _stage_mocks(
         mfs_products={},
         terminal_futures=[],
     )
-    spice_stage = _stage([])
+    spice_stage = _stage({})
     rmsynth_stage = _stage(
         RMSynthPipelineResult(
             written_paths=[tmp_path / "fdf.fits"], convolved_cubes=convolved_cubes

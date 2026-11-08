@@ -36,7 +36,14 @@ task_run_bane_and_aegean = task(run_bane_and_aegean)
 
 
 @flow(name="Flint SPICE Compression Pipeline")
-def process_spice_compression(spice_field_options: SpiceFieldOptions) -> list[Path]:
+def process_spice_compression(
+    spice_field_options: SpiceFieldOptions,
+) -> dict[Path, Path]:
+    """Trim and compress every cube, returning the file each input became.
+
+    Spicing deletes an input once it is written elsewhere, so the mapping is how a
+    caller swaps the inputs it holds for what now stands on disk.
+    """
     if not spice_field_options.cubes:
         raise ValueError(
             "``cubes`` is required. The racs-all flow sets it from the polarisation stage."
@@ -132,7 +139,8 @@ def process_spice_compression(spice_field_options: SpiceFieldOptions) -> list[Pa
             copy_path=spice_field_options.sbid_copy_path,
         ).result()
 
-    return written_paths
+    # Mapped results keep the order of their inputs
+    return dict(zip(cubes, written_paths, strict=True))
 
 
 def setup_run_spice_compression(

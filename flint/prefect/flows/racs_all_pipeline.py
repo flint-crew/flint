@@ -369,7 +369,7 @@ def process_racs_all(
             task_runner=get_dask_runner(cluster=pipeline_options.spice_cluster_config),
             name="RACS All -- spice compression",
         )(spice_field_options=resolved_spice_field_options)
-        terminal_results.extend(spice_results)
+        terminal_results.extend(spice_results.values())
 
     raise_on_failed_stage(stage="continuum clean-up", futures=cleanup_states)
     return _racs_all_result(terminal_results, continuum_result)
