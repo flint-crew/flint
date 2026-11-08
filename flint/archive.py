@@ -320,10 +320,10 @@ def get_parser() -> ArgumentParser:
     return parser
 
 
-def cli() -> None:
+def cli(argv: list[str] | None = None) -> None:
     parser = get_parser()
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if args.mode == "list":
         archive_options = (
@@ -362,13 +362,6 @@ def cli() -> None:
                 parser_namespace=args, options_class=ArchiveOptions
             )
         )
-
-        update_options_create: dict[str, Any] = (
-            get_archive_options_from_yaml(strategy_yaml_path=args.strategy_yaml_path)
-            if args.strategy_yaml_path
-            else dict(tar_file_re_patterhs=args.file_patterns)
-        )
-        archive_options = ArchiveOptions(**update_options_create)
 
         create_sbid_tar_archive(
             tar_out_path=args.tar_out_path,
