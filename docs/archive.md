@@ -49,10 +49,12 @@ To retry a field, or to send one archived earlier to a destination added since,
 run the stage by itself:
 
 ```bash
-flint_flow_archive 60001 --strategy-yaml-path strategy.yaml \
+flint_flow_archive --field-path 60001 --imaging-strategy strategy.yaml \
     --rclone-container rclone.sif --rclone-config ~/.config/rclone/rclone.conf \
     --cluster-config datamover.yaml
 ```
+
+The flags are the same ones the RACS-all flow takes for its archive stage.
 
 The strategy file only needs `version: 0.2` and the `defaults.archive`
 section. Nothing else in it is read.

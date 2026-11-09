@@ -6,11 +6,12 @@ import tarfile
 from pathlib import Path
 
 import pytest
+from capn_crunch import create_options_from_parser
 from prefect.logging import disable_run_logger
 from prefect.testing.utilities import prefect_test_harness
 
 from flint import archive
-from flint.options import ArchiveDestination, ArchiveOptions
+from flint.options import ArchiveDestination, ArchiveFieldOptions, ArchiveOptions
 from flint.prefect.flows.archive_pipeline import cli, get_parser, process_archive
 
 
@@ -46,7 +47,10 @@ def test_every_destination_gets_the_field(
 
     with prefect_test_harness(), disable_run_logger():
         process_archive(
-            field_path=field, archive_options=options, rclone_container=tmp_path
+            archive_field_options=ArchiveFieldOptions(
+                field_path=field, rclone_container=tmp_path
+            ),
+            archive_options=options,
         )
 
     (call,) = calls
@@ -83,7 +87,10 @@ def test_a_failed_destination_fails_the_flow_after_the_others_ran(
         ),
     ):
         # No rclone container, so the copy fails
-        process_archive(field_path=field, archive_options=options)
+        process_archive(
+            archive_field_options=ArchiveFieldOptions(field_path=field),
+            archive_options=options,
+        )
 
     assert (tmp_path / "tape" / "SB60001.tar").exists()
 
@@ -93,15 +100,40 @@ def test_cli_refuses_a_missing_field_folder(tmp_path: Path) -> None:
     strategy.write_text("version: 0.2\ndefaults: {}\n")
 
     with pytest.raises(FileNotFoundError, match="does not exist"):
-        cli([str(tmp_path / "60002"), "--strategy-yaml-path", str(strategy)])
+        cli(
+            [
+                "--field-path",
+                str(tmp_path / "60002"),
+                "--imaging-strategy",
+                str(strategy),
+            ]
+        )
+
+
+def test_cli_needs_a_field_and_a_strategy() -> None:
+    with pytest.raises(ValueError, match="both required"):
+        cli(["--field-path", "60001"])
 
 
 def test_parser() -> None:
     args = get_parser().parse_args(
-        ["60001", "--strategy-yaml-path", "s.yaml", "--rclone-container", "r.sif"]
+        [
+            "--field-path",
+            "60001",
+            "--imaging-strategy",
+            "s.yaml",
+            "--rclone-container",
+            "r.sif",
+        ]
     )
 
-    assert args.field_path == Path("60001")
-    assert args.rclone_container == Path("r.sif")
-    assert args.rclone_config is None
+    options = create_options_from_parser(
+        parser_namespace=args, options_class=ArchiveFieldOptions
+    )
+
+    assert options == ArchiveFieldOptions(
+        field_path=Path("60001"),
+        imaging_strategy=Path("s.yaml"),
+        rclone_container=Path("r.sif"),
+    )
     assert args.cluster_config == "petrichor"

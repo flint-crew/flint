@@ -21,6 +21,7 @@ from flint.configuration import (
 )
 from flint.naming import get_sbid_from_path
 from flint.options import (
+    ArchiveFieldOptions,
     ArchiveOptions,
     CubesForRMSynth,
     ErrorCubesForRMSynth,
@@ -46,13 +47,15 @@ from flint.prefect.flows.spice_compression_pipeline import process_spice_compres
 from flint.source_finding.aegean import AegeanOutputs
 
 # Fields of the stage options classes that process_racs_all sets itself: the cubes
-# from the polarisation stage's output, and the stages' own copying, which the
-# archive stage replaces. Excluded from the combined CLI.
+# from the polarisation stage's output, the field folder the archive takes, and
+# the stages' own copying, which the archive stage replaces. Excluded from the
+# combined CLI.
 COMPUTED_FIELDS = {
     "stokes_cubes",
     "error_cubes",
     "cubes",
     "weight_cubes",
+    "field_path",
     "sbid_copy_path",
 }
 
@@ -83,12 +86,12 @@ def _racs_all_result(
     )
 
 
-def _archive_options(racs_all_options: RACSAllOptions) -> ArchiveOptions:
+def _archive_options(archive_field_options: ArchiveFieldOptions) -> ArchiveOptions:
     """The archive options of the strategy file, with no destinations without one"""
-    if racs_all_options.imaging_strategy is None:
+    if archive_field_options.imaging_strategy is None:
         return ArchiveOptions()
     return archive_options_from_strategy(
-        strategy_yaml_path=racs_all_options.imaging_strategy
+        strategy_yaml_path=archive_field_options.imaging_strategy
     )
 
 
@@ -97,6 +100,7 @@ def _check_stage_prerequisites(
     racs_all_options: RACSAllOptions,
     pol_field_options: PolFieldOptions,
     spice_field_options: SpiceFieldOptions,
+    archive_field_options: ArchiveFieldOptions | None = None,
     archive_options: ArchiveOptions | None = None,
 ) -> None:
     """Prerequisites of every enabled stage, checked before the first stage runs.
@@ -141,10 +145,11 @@ def _check_stage_prerequisites(
             raise ValueError(f"{name} is set to {path}, which does not exist")
 
     if archive_options is not None:
+        archive_field_options = archive_field_options or ArchiveFieldOptions()
         check_archive_prerequisites(
             destinations=archive_options.destinations.values(),
-            rclone_container=pipeline_options.rclone_container,
-            rclone_config=pipeline_options.rclone_config,
+            rclone_container=archive_field_options.rclone_container,
+            rclone_config=archive_field_options.rclone_config,
         )
 
 
@@ -261,8 +266,9 @@ def process_racs_all(
     pol_field_options: PolFieldOptions,
     rmsynth_field_options: RMSynthFieldOptions,
     spice_field_options: SpiceFieldOptions,
+    archive_field_options: ArchiveFieldOptions = ArchiveFieldOptions(),
 ) -> RACSAllResult:
-    archive_options = _archive_options(racs_all_options)
+    archive_options = _archive_options(archive_field_options)
     _check_racs_all_pipeline_options(
         pipeline_options=pipeline_options, archive_options=archive_options
     )
@@ -276,6 +282,7 @@ def process_racs_all(
         racs_all_options=racs_all_options,
         pol_field_options=pol_field_options,
         spice_field_options=spice_field_options,
+        archive_field_options=archive_field_options,
         archive_options=archive_options,
     )
     _check_rmsynth_has_linear_stokes(
@@ -303,7 +310,9 @@ def process_racs_all(
 
     if pipeline_options.skip_polarisation:
         raise_on_failed_stage(stage="continuum clean-up", futures=cleanup_states)
-        _archive_field(pipeline_options, archive_options, continuum_result)
+        _archive_field(
+            pipeline_options, archive_field_options, archive_options, continuum_result
+        )
         return _racs_all_result(terminal_results, continuum_result)
     # _check_racs_all_pipeline_options: polarisation needs the imaging stage
     assert continuum_result is not None
@@ -412,12 +421,15 @@ def process_racs_all(
         terminal_results.extend(spice_results)
 
     raise_on_failed_stage(stage="continuum clean-up", futures=cleanup_states)
-    _archive_field(pipeline_options, archive_options, continuum_result)
+    _archive_field(
+        pipeline_options, archive_field_options, archive_options, continuum_result
+    )
     return _racs_all_result(terminal_results, continuum_result)
 
 
 def _archive_field(
     pipeline_options: RACSAllPipelineOptions,
+    archive_field_options: ArchiveFieldOptions,
     archive_options: ArchiveOptions,
     continuum_result: RACSContinuumResult | None,
 ) -> None:
@@ -431,10 +443,10 @@ def _archive_field(
         task_runner=get_dask_runner(cluster=pipeline_options.archive_cluster_config),
         name="RACS All -- archive",
     )(
-        field_path=continuum_result.output_science_path,
+        archive_field_options=archive_field_options.with_options(
+            field_path=continuum_result.output_science_path
+        ),
         archive_options=archive_options,
-        rclone_container=pipeline_options.rclone_container,
-        rclone_config=pipeline_options.rclone_config,
     )
 
 
@@ -444,6 +456,7 @@ def setup_run_racs_all(
     pol_field_options: PolFieldOptions,
     rmsynth_field_options: RMSynthFieldOptions,
     spice_field_options: SpiceFieldOptions,
+    archive_field_options: ArchiveFieldOptions,
 ) -> None:
     low_sbid = get_sbid_from_path(path=racs_all_options.low_data)
 
@@ -453,6 +466,7 @@ def setup_run_racs_all(
         pol_field_options=pol_field_options,
         rmsynth_field_options=rmsynth_field_options,
         spice_field_options=spice_field_options,
+        archive_field_options=archive_field_options,
     )
 
 
@@ -496,6 +510,13 @@ def get_parser() -> ArgumentParser:
         options_class=exclude_fields_cli_class(SpiceFieldOptions, seen_fields),
         description="SPICE compression processing options",
     )
+    seen_fields |= set(SpiceFieldOptions.model_fields)
+
+    parser = add_options_to_parser(
+        parser=parser,
+        options_class=exclude_fields_cli_class(ArchiveFieldOptions, seen_fields),
+        description="Archive options",
+    )
 
     return parser
 
@@ -527,6 +548,9 @@ def options_from_argv(argv: list[str] | None = None) -> dict[str, BaseOptions]:
     spice_field_options = create_options_from_parser(
         parser_namespace=args, options_class=SpiceFieldOptions
     )
+    archive_field_options = create_options_from_parser(
+        parser_namespace=args, options_class=ArchiveFieldOptions
+    )
 
     for cluster_config_attr in (
         "imaging_cluster_config",
@@ -546,6 +570,7 @@ def options_from_argv(argv: list[str] | None = None) -> dict[str, BaseOptions]:
         "pol_field_options": pol_field_options,
         "rmsynth_field_options": rmsynth_field_options,
         "spice_field_options": spice_field_options,
+        "archive_field_options": archive_field_options,
     }
 
 

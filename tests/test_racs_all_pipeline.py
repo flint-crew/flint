@@ -13,6 +13,7 @@ from prefect.testing.utilities import prefect_test_harness
 
 from flint.options import (
     ArchiveDestination,
+    ArchiveFieldOptions,
     ArchiveOptions,
     CubesForRMSynth,
     NoiseCubesForRMSynth,
@@ -438,6 +439,7 @@ def _run_racs_all(
     pipeline_options: RACSAllPipelineOptions | None = None,
     rmsynth_field_options: RMSynthFieldOptions | None = None,
     spice_field_options: SpiceFieldOptions | None = None,
+    archive_field_options: ArchiveFieldOptions | None = None,
     imaging_strategy: Path | None = None,
 ) -> Any:
     container = tmp_path / "container.sif"
@@ -469,6 +471,9 @@ def _run_racs_all(
             spice_field_options=(
                 spice_field_options or SpiceFieldOptions()
             ).with_options(catalogue=catalogue),
+            archive_field_options=(
+                archive_field_options or ArchiveFieldOptions()
+            ).with_options(imaging_strategy=imaging_strategy),
         )
 
 
@@ -497,7 +502,7 @@ def test_the_archive_stage_runs_last_over_the_field_folder(
 
     _run_racs_all(
         tmp_path=tmp_path,
-        pipeline_options=RACSAllPipelineOptions(rclone_container=container),
+        archive_field_options=ArchiveFieldOptions(rclone_container=container),
         imaging_strategy=strategy,
     )
     _run_racs_all(
@@ -512,10 +517,11 @@ def test_the_archive_stage_runs_last_over_the_field_folder(
     assert archive.call_args.kwargs["name"] == "RACS All -- archive"
     assert archive.return_value.call_count == 2
     first, second = archive.return_value.call_args_list
-    assert first.kwargs["field_path"] == tmp_path
+    assert first.kwargs["archive_field_options"] == ArchiveFieldOptions(
+        field_path=tmp_path, imaging_strategy=strategy, rclone_container=container
+    )
     assert first.kwargs["archive_options"].destinations["tape"].method == "tar"
-    assert first.kwargs["rclone_container"] == container
-    assert second.kwargs["field_path"] == tmp_path
+    assert second.kwargs["archive_field_options"].field_path == tmp_path
 
 
 def test_no_archive_stage_without_destinations(
@@ -1045,6 +1051,7 @@ def test_options_from_argv(tmp_path: Path) -> None:
         "pol_field_options",
         "rmsynth_field_options",
         "spice_field_options",
+        "archive_field_options",
     }
     racs_all_options = options["racs_all_options"]
     assert [
@@ -1075,7 +1082,7 @@ def test_the_stages_own_copying_is_off_the_command_line(tmp_path: Path) -> None:
     assert options["pol_field_options"].sbid_copy_path is None
     assert options["rmsynth_field_options"].sbid_copy_path is None
     assert options["spice_field_options"].sbid_copy_path is None
-    assert options["pipeline_options"].rclone_container == Path("rclone.sif")
+    assert options["archive_field_options"].rclone_container == Path("rclone.sif")
 
 
 def test_continuum_result_final_products_default_to_none(tmp_path: Path) -> None:

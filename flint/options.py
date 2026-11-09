@@ -666,10 +666,6 @@ class RACSAllPipelineOptions(BaseOptions):
     """Specify a new cluster configuration file for the spice-compression stage, different to the preferred one. If None, drawn from the preferred cluster config"""
     archive_cluster_config: Path | None = None
     """Cluster configuration file for the archive stage, best on a data-mover partition. If None, drawn from the preferred cluster config"""
-    rclone_container: Path | None = None
-    """The rclone container, needed by every copy destination"""
-    rclone_config: Path | None = None
-    """rclone config file defining the remotes and holding their credentials. Keep it readable by you alone"""
 
 
 def dump_field_options_to_yaml(
@@ -780,6 +776,21 @@ class ArchiveOptions(BaseOptions):
     """Regular-expressions used to identify files to copy into a final location (not tarred)"""
     destinations: dict[str, ArchiveDestination] = {}
     """Where the RACS-all archive stage sends a field, by name"""
+
+
+class ArchiveFieldOptions(BaseOptions):
+    """Options for archiving one field's folder, standalone or as the last stage
+    of the racs-all flow. The destinations come from the strategy file, see
+    ``ArchiveOptions``."""
+
+    field_path: Path | None = None
+    """The field folder to archive, named by its SBID. Computed by the racs-all flow, so required only when running this pipeline standalone"""
+    imaging_strategy: Path | None = None
+    """Path to a FLINT imaging yaml file whose defaults.archive.destinations say where the field goes"""
+    rclone_container: Path | None = None
+    """The rclone container, needed by every copy destination"""
+    rclone_config: Path | None = None
+    """rclone config file defining the remotes and holding their credentials. Keep it readable by you alone"""
 
 
 class FitsCubeOptions(BaseOptions):
