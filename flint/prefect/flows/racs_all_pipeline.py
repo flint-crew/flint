@@ -13,6 +13,7 @@ from capn_crunch import BaseOptions, add_options_to_parser, create_options_from_
 from configargparse import ArgumentParser
 from prefect import flow
 
+from flint.archive import check_archive_prerequisites, get_archive_options_from_yaml
 from flint.configuration import (
     POLARISATION_MAPPING,
     get_options_from_strategy,
@@ -20,6 +21,7 @@ from flint.configuration import (
 )
 from flint.naming import get_sbid_from_path
 from flint.options import (
+    ArchiveOptions,
     CubesForRMSynth,
     ErrorCubesForRMSynth,
     NoiseCubesForRMSynth,
@@ -30,10 +32,10 @@ from flint.options import (
     SpiceFieldOptions,
     WeightCubesForRMSynth,
     exclude_fields_cli_class,
-    pol_field_options_cli_class,
 )
 from flint.prefect.clusters import get_dask_runner
 from flint.prefect.common.utils import raise_on_failed_stage
+from flint.prefect.flows.archive_pipeline import process_archive
 from flint.prefect.flows.polarisation_pipeline import process_science_fields_pol
 from flint.prefect.flows.racs_all_continuum_selfcal import (
     RACSContinuumResult,
@@ -43,9 +45,16 @@ from flint.prefect.flows.rmsynth_pipeline import process_rmsynth
 from flint.prefect.flows.spice_compression_pipeline import process_spice_compression
 from flint.source_finding.aegean import AegeanOutputs
 
-# Fields on the rm-synth/spice options classes that process_racs_all always recomputes
-# from the polarisation stage's output. Excluded from the combined CLI.
-COMPUTED_FIELDS = {"stokes_cubes", "error_cubes", "cubes", "weight_cubes"}
+# Fields of the stage options classes that process_racs_all sets itself: the cubes
+# from the polarisation stage's output, and the stages' own copying, which the
+# archive stage replaces. Excluded from the combined CLI.
+COMPUTED_FIELDS = {
+    "stokes_cubes",
+    "error_cubes",
+    "cubes",
+    "weight_cubes",
+    "sbid_copy_path",
+}
 
 
 class RACSAllResult(BaseOptions):
@@ -74,11 +83,23 @@ def _racs_all_result(
     )
 
 
+def _archive_options(racs_all_options: RACSAllOptions) -> ArchiveOptions:
+    """The archive options of the strategy file, with no destinations without one"""
+    if racs_all_options.imaging_strategy is None:
+        return ArchiveOptions()
+    return ArchiveOptions(
+        **get_archive_options_from_yaml(
+            strategy_yaml_path=racs_all_options.imaging_strategy
+        )
+    )
+
+
 def _check_stage_prerequisites(
     pipeline_options: RACSAllPipelineOptions,
     racs_all_options: RACSAllOptions,
     pol_field_options: PolFieldOptions,
     spice_field_options: SpiceFieldOptions,
+    archive_options: ArchiveOptions | None = None,
 ) -> None:
     """Prerequisites of every enabled stage, checked before the first stage runs.
 
@@ -121,13 +142,33 @@ def _check_stage_prerequisites(
         if path is not None and not path.exists():
             raise ValueError(f"{name} is set to {path}, which does not exist")
 
+    if archive_options is not None:
+        check_archive_prerequisites(
+            destinations=archive_options.destinations.values(),
+            rclone_container=pipeline_options.rclone_container,
+            rclone_config=pipeline_options.rclone_config,
+        )
 
-def _check_racs_all_pipeline_options(pipeline_options: RACSAllPipelineOptions) -> None:
+
+def _check_racs_all_pipeline_options(
+    pipeline_options: RACSAllPipelineOptions,
+    archive_options: ArchiveOptions | None = None,
+) -> None:
     """Enforce the fixed stage order for RACS-all
 
     A downstream stage may not be enabled while the upstream stage it depends on
     (for its in-memory input) is skipped.
     """
+    if (
+        archive_options
+        and archive_options.destinations
+        and pipeline_options.skip_imaging
+    ):
+        raise ValueError(
+            "the archive stage takes the imaging stage's folder, so a strategy with "
+            "archive destinations cannot set skip_imaging. To archive a folder on "
+            "its own, use flint_flow_archive."
+        )
     if not pipeline_options.skip_polarisation and pipeline_options.skip_imaging:
         raise ValueError(
             "polarisation stage requires the imaging stage (cannot set skip_imaging "
@@ -223,7 +264,10 @@ def process_racs_all(
     rmsynth_field_options: RMSynthFieldOptions,
     spice_field_options: SpiceFieldOptions,
 ) -> RACSAllResult:
-    _check_racs_all_pipeline_options(pipeline_options=pipeline_options)
+    archive_options = _archive_options(racs_all_options)
+    _check_racs_all_pipeline_options(
+        pipeline_options=pipeline_options, archive_options=archive_options
+    )
     _check_spice_mfs_dependency(
         pipeline_options=pipeline_options,
         racs_all_options=racs_all_options,
@@ -234,6 +278,7 @@ def process_racs_all(
         racs_all_options=racs_all_options,
         pol_field_options=pol_field_options,
         spice_field_options=spice_field_options,
+        archive_options=archive_options,
     )
     _check_rmsynth_has_linear_stokes(
         pipeline_options=pipeline_options, pol_field_options=pol_field_options
@@ -260,6 +305,7 @@ def process_racs_all(
 
     if pipeline_options.skip_polarisation:
         raise_on_failed_stage(stage="continuum clean-up", futures=cleanup_states)
+        _archive_field(pipeline_options, archive_options, continuum_result)
         return _racs_all_result(terminal_results, continuum_result)
     # _check_racs_all_pipeline_options: polarisation needs the imaging stage
     assert continuum_result is not None
@@ -368,7 +414,30 @@ def process_racs_all(
         terminal_results.extend(spice_results)
 
     raise_on_failed_stage(stage="continuum clean-up", futures=cleanup_states)
+    _archive_field(pipeline_options, archive_options, continuum_result)
     return _racs_all_result(terminal_results, continuum_result)
+
+
+def _archive_field(
+    pipeline_options: RACSAllPipelineOptions,
+    archive_options: ArchiveOptions,
+    continuum_result: RACSContinuumResult | None,
+) -> None:
+    """Run the archive stage over the field folder, once everything else is done"""
+    if not archive_options.destinations:
+        return
+    # _check_racs_all_pipeline_options: destinations need the imaging stage
+    assert continuum_result is not None
+    assert pipeline_options.archive_cluster_config is not None
+    process_archive.with_options(
+        task_runner=get_dask_runner(cluster=pipeline_options.archive_cluster_config),
+        name="RACS All -- archive",
+    )(
+        field_path=continuum_result.output_science_path,
+        archive_options=archive_options,
+        rclone_container=pipeline_options.rclone_container,
+        rclone_config=pipeline_options.rclone_config,
+    )
 
 
 def setup_run_racs_all(
@@ -412,7 +481,7 @@ def get_parser() -> ArgumentParser:
 
     parser = add_options_to_parser(
         parser=parser,
-        options_class=pol_field_options_cli_class(RACSAllOptions),
+        options_class=exclude_fields_cli_class(PolFieldOptions, seen_fields),
         description="Polarisation processing options",
     )
     seen_fields |= set(PolFieldOptions.model_fields)
@@ -466,6 +535,7 @@ def options_from_argv(argv: list[str] | None = None) -> dict[str, BaseOptions]:
         "polarisation_cluster_config",
         "rmsynth_cluster_config",
         "spice_cluster_config",
+        "archive_cluster_config",
     ):
         if getattr(pipeline_options, cluster_config_attr) is None:
             pipeline_options = pipeline_options.with_options(

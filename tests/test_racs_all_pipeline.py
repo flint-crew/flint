@@ -12,6 +12,8 @@ from prefect.logging import disable_run_logger
 from prefect.testing.utilities import prefect_test_harness
 
 from flint.options import (
+    ArchiveDestination,
+    ArchiveOptions,
     CubesForRMSynth,
     NoiseCubesForRMSynth,
     PolFieldOptions,
@@ -57,6 +59,7 @@ def test_get_parser_excludes_computed_stage_outputs() -> None:
     args.error_cubes = None
     args.cubes = []
     args.weight_cubes = []
+    args.sbid_copy_path = None
 
     rmsynth_field_options = create_options_from_parser(
         parser_namespace=args, options_class=RMSynthFieldOptions
@@ -242,6 +245,8 @@ def test_get_parser_pol_cube_channel_width_is_independent() -> None:
             "2e6",
         ]
     )
+    # Excluded from the parser, as the archive stage copies for every stage
+    args.sbid_copy_path = None
 
     pol_field_options = create_options_from_parser(
         parser_namespace=args, options_class=PolFieldOptions
@@ -421,6 +426,9 @@ def _stage_mocks(
     monkeypatch.setattr(
         "flint.prefect.flows.racs_all_pipeline.process_spice_compression", spice_stage
     )
+    monkeypatch.setattr(
+        "flint.prefect.flows.racs_all_pipeline.process_archive", _stage(None)
+    )
 
     return pol_result, spice_stage, rmsynth_stage
 
@@ -430,6 +438,7 @@ def _run_racs_all(
     pipeline_options: RACSAllPipelineOptions | None = None,
     rmsynth_field_options: RMSynthFieldOptions | None = None,
     spice_field_options: SpiceFieldOptions | None = None,
+    imaging_strategy: Path | None = None,
 ) -> Any:
     container = tmp_path / "container.sif"
     container.touch()
@@ -445,9 +454,13 @@ def _run_racs_all(
                 polarisation_cluster_config=tmp_path,
                 rmsynth_cluster_config=tmp_path,
                 spice_cluster_config=tmp_path,
+                archive_cluster_config=tmp_path,
             ),
             racs_all_options=RACSAllOptions(
-                low_data=tmp_path, mid_data=tmp_path, high_data=tmp_path
+                low_data=tmp_path,
+                mid_data=tmp_path,
+                high_data=tmp_path,
+                imaging_strategy=imaging_strategy,
             ),
             pol_field_options=PolFieldOptions(
                 wsclean_container=container, yandasoft_container=container
@@ -456,6 +469,101 @@ def _run_racs_all(
             spice_field_options=(
                 spice_field_options or SpiceFieldOptions()
             ).with_options(catalogue=catalogue),
+        )
+
+
+def _archive_strategy(tmp_path: Path) -> Path:
+    strategy = tmp_path / "strategy.yaml"
+    strategy.write_text(
+        "version: 0.2\n"
+        "defaults:\n"
+        "  archive:\n"
+        "    destinations:\n"
+        "      tape: {method: tar, location: /tape, patterns: ['.*']}\n"
+        "selfcal:\n"
+        "  0: {}\n"
+    )
+    return strategy
+
+
+def test_the_archive_stage_runs_last_over_the_field_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Whatever the strategy lists as destinations gets the continuum stage's
+    folder once every other stage is done, however many of them run"""
+    from flint.prefect.flows import racs_all_pipeline
+
+    _stage_mocks(monkeypatch=monkeypatch, tmp_path=tmp_path, convolved_cubes=[])
+    strategy = _archive_strategy(tmp_path)
+    container = tmp_path / "rclone.sif"
+
+    _run_racs_all(
+        tmp_path=tmp_path,
+        pipeline_options=RACSAllPipelineOptions(rclone_container=container),
+        imaging_strategy=strategy,
+    )
+    _run_racs_all(
+        tmp_path=tmp_path,
+        pipeline_options=RACSAllPipelineOptions(
+            skip_polarisation=True, skip_rmsynth=True, skip_spice=True
+        ),
+        imaging_strategy=strategy,
+    )
+
+    archive = racs_all_pipeline.process_archive.with_options
+    assert archive.call_args.kwargs["name"] == "RACS All -- archive"
+    assert archive.return_value.call_count == 2
+    first, second = archive.return_value.call_args_list
+    assert first.kwargs["field_path"] == tmp_path
+    assert first.kwargs["archive_options"].destinations["tape"].method == "tar"
+    assert first.kwargs["rclone_container"] == container
+    assert second.kwargs["field_path"] == tmp_path
+
+
+def test_no_archive_stage_without_destinations(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from flint.prefect.flows import racs_all_pipeline
+
+    _stage_mocks(monkeypatch=monkeypatch, tmp_path=tmp_path, convolved_cubes=[])
+
+    _run_racs_all(tmp_path=tmp_path)
+
+    assert not racs_all_pipeline.process_archive.with_options.called
+
+
+def test_archive_destinations_need_the_imaging_stage() -> None:
+    everything_skipped = RACSAllPipelineOptions(
+        skip_imaging=True, skip_polarisation=True, skip_rmsynth=True, skip_spice=True
+    )
+    tape = ArchiveDestination(method="tar", location="/tape", patterns=(".*",))
+
+    _check_racs_all_pipeline_options(
+        everything_skipped, archive_options=ArchiveOptions()
+    )
+    with pytest.raises(ValueError, match="flint_flow_archive"):
+        _check_racs_all_pipeline_options(
+            everything_skipped,
+            archive_options=ArchiveOptions(destinations={"tape": tape}),
+        )
+
+
+def test_stage_prerequisites_cover_the_archive(
+    racs_all_options: RACSAllOptions,
+) -> None:
+    hot = ArchiveDestination(method="copy", location="/hot", patterns=(".*",))
+    with pytest.raises(ValueError, match="rclone container"):
+        _check_stage_prerequisites(
+            pipeline_options=RACSAllPipelineOptions(
+                skip_imaging=True,
+                skip_polarisation=True,
+                skip_rmsynth=True,
+                skip_spice=True,
+            ),
+            racs_all_options=racs_all_options,
+            pol_field_options=PolFieldOptions(),
+            spice_field_options=SpiceFieldOptions(),
+            archive_options=ArchiveOptions(destinations={"hot": hot}),
         )
 
 
@@ -949,6 +1057,25 @@ def test_options_from_argv(tmp_path: Path) -> None:
     pipeline_options = options["pipeline_options"]
     assert pipeline_options.imaging_cluster_config == Path("petrichor_main.yaml")
     assert pipeline_options.spice_cluster_config == Path("petrichor_main.yaml")
+    assert pipeline_options.archive_cluster_config == Path("petrichor_main.yaml")
+
+
+def test_the_stages_own_copying_is_off_the_command_line(tmp_path: Path) -> None:
+    """The archive stage copies for every stage, so no stage's sbid_copy_path is
+    offered, and the shared namespace leaves them None"""
+    from flint.prefect.flows.racs_all_pipeline import options_from_argv
+
+    data = [str(tmp_path / str(sbid)) for sbid in (56289, 67042, 35212)]
+
+    for flag in ("--sbid-copy-path", "--sbid-archive-path"):
+        with pytest.raises(SystemExit):
+            options_from_argv([*data, flag, str(tmp_path)])
+
+    options = options_from_argv([*data, "--rclone-container", "rclone.sif"])
+    assert options["pol_field_options"].sbid_copy_path is None
+    assert options["rmsynth_field_options"].sbid_copy_path is None
+    assert options["spice_field_options"].sbid_copy_path is None
+    assert options["pipeline_options"].rclone_container == Path("rclone.sif")
 
 
 def test_continuum_result_final_products_default_to_none(tmp_path: Path) -> None:
