@@ -332,7 +332,8 @@ def write_tarball(root: Path, files: Collection[Path], tar_path: Path) -> Path:
     tar_path.parent.mkdir(parents=True, exist_ok=True)
     partial = tar_path.with_name(f"{tar_path.name}.partial")
     logger.info(f"Writing {len(files)} files to {tar_path}")
-    with tarfile.open(partial, "w") as tar:
+    # tarfile copies members in 16 KiB pieces by default, too small for lustre
+    with tarfile.TarFile(partial, "w", copybufsize=16 * 1024 * 1024) as tar:
         for file in files:
             tar.add(Path(root) / file, arcname=f"{tar_path.stem}/{file}")
     with open(partial, "rb") as handle:
