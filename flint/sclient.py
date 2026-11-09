@@ -51,7 +51,7 @@ def pull_container(container_directory: Path, uri: str, file_name: str) -> Path:
 
 def run_singularity_command(
     image: Path,
-    command: str,
+    command: str | list[str],
     bind_dirs: Path | Collection[Path] | None = None,
     stream_callback_func: Callable | None = None,
     ignore_logging_output: bool = False,
@@ -63,7 +63,7 @@ def run_singularity_command(
 
     Args:
         image (Path): The singularity container image to use
-        command (str): The command to execute
+        command (str | list[str]): The command to execute, split on whitespace when a string
         bind_dirs (Optional[Union[Path,Collection[Path]]], optional): Specifies a Path, or list of Paths, to bind to in the container. Defaults to None.
         read_only_bind_dirs (Collection[Path], optional): Paths bound so the container cannot change them. One also in ``bind_dirs`` is bound read-only. Defaults to ().
         stream_callback_func (Optional[Callable], optional): Provide a function that is applied to each line of output text when singularity is running and `stream=True`. IF provide it should accept a single (string) parameter. If None, nothing happens. Defaultds to None.
@@ -96,7 +96,7 @@ def run_singularity_command(
     try:
         output = sclient.execute(
             image=image.resolve(strict=True).as_posix(),
-            command=command.split(),
+            command=command.split() if isinstance(command, str) else command,
             bind=bind,
             return_result=True,
             quiet=False,

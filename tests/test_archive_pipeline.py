@@ -50,9 +50,10 @@ def test_every_destination_gets_the_field(
         )
 
     (call,) = calls
-    assert call["command"].endswith(
-        f" {field.resolve()} {tmp_path / 'hot' / 'SB60001'}"
-    )
+    assert call["command"][-2:] == [
+        str(field.resolve()),
+        str(tmp_path / "hot" / "SB60001"),
+    ]
     with tarfile.open(tmp_path / "tape" / "SB60001.tar") as tar:
         assert tar.getnames() == [
             "SB60001/SB60001.i.linmos.fits",
@@ -77,7 +78,9 @@ def test_a_failed_destination_fails_the_flow_after_the_others_ran(
     with (
         prefect_test_harness(),
         disable_run_logger(),
-        pytest.raises(RuntimeError, match="SB60001 did not reach acacia"),
+        pytest.raises(
+            RuntimeError, match="SB60001 did not reach .*acacia: .*rclone container"
+        ),
     ):
         # No rclone container, so the copy fails
         process_archive(field_path=field, archive_options=options)

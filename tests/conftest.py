@@ -15,6 +15,9 @@ def pytest_addoption(parser):
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "slow: mark test as slow to run")
+    config.addinivalue_line(
+        "markers", "require_singularity: mark test as needing singularity installed"
+    )
 
 
 # Stolen from: https://stackoverflow.com/questions/377017/test-if-executable-exists-in-python

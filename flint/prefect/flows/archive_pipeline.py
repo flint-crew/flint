@@ -59,12 +59,14 @@ def process_archive(
     wait(futures)
 
     failed = [
-        name
+        f"{name}: {future.state.message}"
         for name, future in zip(archive_options.destinations, futures)
         if not future.state.is_completed()
     ]
     if failed:
-        raise RuntimeError(f"{field} did not reach {', '.join(failed)}")
+        raise RuntimeError(
+            f"{field} did not reach every destination. " + " ".join(failed)
+        )
 
 
 def get_parser() -> ArgumentParser:

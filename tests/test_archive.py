@@ -354,7 +354,8 @@ def test_rclone_copy_to_a_local_folder(
     field: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls = _rclone_calls(monkeypatch)
-    hot = tmp_path / "hot" / "SB60001"
+    # A space in the path has to survive, so the command is a list, not a line
+    hot = tmp_path / "hot copy" / "SB60001"
 
     rclone_copy(
         container=tmp_path / "rclone.sif",
@@ -365,8 +366,9 @@ def test_rclone_copy_to_a_local_folder(
     )
 
     (call,) = calls
-    command = call["command"].split()
+    command = call["command"]
     assert command[:2] == ["rclone", "copy"]
+    assert "--files-from-raw" in command
     assert command[-2:] == [str(field.resolve()), str(hot)]
     assert {"--checksum", "--immutable"} <= set(command)
     assert hot.is_dir()
@@ -389,8 +391,8 @@ def test_rclone_copy_to_a_remote_binds_the_config_read_only(
     )
 
     (call,) = calls
-    assert call["command"].startswith(f"rclone --config {config.resolve()} copy ")
-    assert call["command"].endswith(" acacia:racs-all/SB60001")
+    assert call["command"][:4] == ["rclone", "--config", str(config.resolve()), "copy"]
+    assert call["command"][-1] == "acacia:racs-all/SB60001"
     assert config.resolve() in call["read_only_bind_dirs"]
     assert len(call["bind_dirs"]) == 1  # the file listing only
 
@@ -414,7 +416,7 @@ def test_archive_to_each_method(
 
     assert (tmp_path / "tape" / "SB60001.tar").exists()
     assert (tmp_path / "tape" / "SB60001.ms.tar").exists()
-    assert calls[0]["command"].endswith(" acacia:racs-all/SB60001")
+    assert calls[0]["command"][-1] == "acacia:racs-all/SB60001"
     with pytest.raises(ValueError, match="rclone container"):
         archive_to(root=field, field="SB60001", destination=acacia)
 

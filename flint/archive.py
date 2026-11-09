@@ -283,16 +283,27 @@ def rclone_copy(
     if local:
         local.mkdir(parents=True, exist_ok=True)
         location = str(local)
-    config_flag = f"--config {config} " if config else ""
+    config_flags = ["--config", str(config)] if config else []
 
     with TemporaryDirectory() as work_dir:
         work = Path(work_dir).resolve()
         listing = work / "files"
         listing.write_text("".join(f"{file}\n" for file in files))
+        # The list is passed as the command's own arguments, not a shell line,
+        # so paths with spaces survive; --files-from-raw reads names literally
         run_singularity_command(
             image=container,
-            command=f"rclone {config_flag}copy --files-from {listing} --checksum "
-            f"--immutable {root} {location}",
+            command=[
+                "rclone",
+                *config_flags,
+                "copy",
+                "--files-from-raw",
+                str(listing),
+                "--checksum",
+                "--immutable",
+                str(root),
+                location,
+            ],
             bind_dirs=[work, *([local] if local else [])],
             read_only_bind_dirs=[root, *([config] if config else [])],
         )
