@@ -1,37 +1,52 @@
 # Archiving
 
-The RACS-all flow ends with an archive stage, which sends each field's folder to
-the destinations the strategy file defines under `defaults.archive.destinations`
-(see [Configuration](config.md#archive)). Each destination says how it is
-reached and which files it takes:
+The last stage of the RACS-all flow archives each field. Where the files go,
+and which files, is set in the strategy file under
+`defaults.archive.destinations` (see [Configuration](config.md#archive)). If no
+destinations are set, nothing is archived.
 
-| Method | Location | What it does |
+Each destination has a method and a location:
+
+| Method | Location | What happens |
 | --- | --- | --- |
-| `copy` | an absolute folder path, or an rclone remote and bucket such as `acacia:racs-all` | `rclone copy` of the matching files to `<location>/SB<sbid>/`, keeping their paths. rclone checks the hash of every copy, and refuses to overwrite a file that differs |
-| `tar` | an absolute folder path | one `<location>/SB<sbid>.tar` of the matching files, with its MD5 in `SB<sbid>.tar.md5` beside it. A tarball already there is kept |
+| `copy` | an absolute folder path, or an rclone remote and bucket such as `acacia:racs-all` | `rclone copy` of the matching files to `<location>/SB<sbid>/`, keeping their paths under the field folder. rclone checks the hash of each file after copying, and will not overwrite a file that is already there and differs |
+| `tar` | an absolute folder path | one `<location>/SB<sbid>.tar` of the matching files, with its MD5 in `SB<sbid>.tar.md5` next to it. If the tarball is already there it is left alone |
 
-Files are picked by regular expressions matched whole against their path
-relative to the field folder, so `rmsynth/.*` takes the rm-synthesis products
-and `.*\.ms\.tar` the measurement sets `--zip-ms` zipped. A zarr store is just
-its files. A destination whose patterns match nothing fails the stage, so a typo
-cannot leave a product behind quietly. With no destination defined, nothing is
-archived.
+Files are chosen by regular expressions. Each is matched against the whole of
+a file's path relative to the field folder, so `rmsynth/.*` takes everything
+under the rm-synthesis folder and `.*\.ms\.tar` takes the measurement sets
+`--zip-ms` zipped. A zarr store is treated as the files inside it. File names
+are passed to rclone as they are, so a name with `*` or `[` in it is not read
+as a pattern.
 
-A destination's optional `suffix` is added to the field name, so `suffix: .ms`
-gives `SB<sbid>.ms.tar` or `SB<sbid>.ms/`. That is how two destinations share a
-folder: the stage refuses a strategy in which two would write the same target.
+If a pattern matches nothing, a warning is logged. If a whole destination
+matches nothing, the stage fails, so a typo in the strategy cannot quietly leave
+a product behind.
+
+A destination can also have a `suffix`, which is added to the field name. With
+`suffix: .ms` the tarball is `SB<sbid>.ms.tar` instead of `SB<sbid>.tar`, and a
+copy goes to `SB<sbid>.ms/`. This is how two destinations can share a folder.
+Two destinations that would write to the same place are refused before the run
+starts.
 
 ## Running it
 
-The stage runs on its own cluster, from `--archive-cluster-config`, which should
-sit on a data-mover partition. Every `copy` destination needs
+The stage runs on its own cluster, given by `--archive-cluster-config`. On
+Petrichor that should be a data-mover partition. A `copy` destination needs
 `--rclone-container` (`flint_containers download` fetches it), and a remote
-needs `--rclone-config`. Keep credentials in that rclone config file, readable
-by you alone, rather than in options, strategy files or job scripts.
+also needs `--rclone-config`. Put credentials in that rclone config file, and
+nowhere else: not in options, strategy files or job scripts. Make it readable
+by you alone.
 
-Each destination runs as its own task. One that fails does not stop the others,
-but fails the run once all have finished. To retry, or to send a field archived
-earlier to a destination added since, run the stage on its own:
+Before the run starts, the stage checks that it will be able to write to every
+local location, and that the container and config it needs exist.
+
+Each destination runs as its own task. If one fails the others still run, and
+the stage fails afterwards with a message naming each destination that failed
+and why.
+
+To retry a field, or to send one archived earlier to a destination added since,
+run the stage by itself:
 
 ```bash
 flint_flow_archive 60001 --strategy-yaml-path strategy.yaml \
@@ -39,8 +54,8 @@ flint_flow_archive 60001 --strategy-yaml-path strategy.yaml \
     --cluster-config datamover.yaml
 ```
 
-The strategy file need only hold `version: 0.2` and the `defaults.archive`
-section; the stage reads nothing else from it.
+The strategy file only needs `version: 0.2` and the `defaults.archive`
+section. Nothing else in it is read.
 
-Files already at a destination are compared, not copied again, and a finished
-tarball is left as it is.
+Running the stage again on an archived field is safe. Files already at a `copy`
+destination are compared and not copied again, and a finished tarball is kept.
