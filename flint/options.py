@@ -577,10 +577,6 @@ class RACSAllOptions(BaseOptions):
     """Construct beam masks from MFS images to use for the next round of imaging. """
     imaging_strategy: Path | None = None
     """Path to a FLINT imaging yaml file that contains settings to use throughout imaging"""
-    sbid_archive_path: Path | None = None
-    """Path that SBID archive tarballs will be created under. If None no archive tarballs are created. See ArchiveOptions. """
-    sbid_copy_path: Path | None = None
-    """Path that final processed products will be copied into. If None no copying of file products is performed. See ArchiveOptions. """
     rename_ms: bool = False
     """Rename MSs throughout rounds of imaging and self-cal instead of creating copies. This will delete data-columns throughout. """
     coadd_cubes: bool = False
@@ -644,8 +640,10 @@ class RACSAllPipelineOptions(BaseOptions):
     """Options controlling the ``racs-all`` flow-of-flows.
 
     Execution order: imaging -> polarisation -> rm-synth/clean -> spice-compression
+    -> archive
 
-    with each stage individually skippable.
+    with each stage individually skippable. The archive runs when the strategy file
+    defines destinations under ``defaults.archive.destinations``.
     """
 
     output_path: Path | None = None
@@ -666,6 +664,12 @@ class RACSAllPipelineOptions(BaseOptions):
     """Specify a new cluster configuration file for the rm-synth/clean stage, different to the preferred one. If None, drawn from the preferred cluster config"""
     spice_cluster_config: Path | None = None
     """Specify a new cluster configuration file for the spice-compression stage, different to the preferred one. If None, drawn from the preferred cluster config"""
+    archive_cluster_config: Path | None = None
+    """Cluster configuration file for the archive stage, best on a data-mover partition. If None, drawn from the preferred cluster config"""
+    rclone_container: Path | None = None
+    """The rclone container, needed by every copy destination"""
+    rclone_config: Path | None = None
+    """rclone config file defining the remotes and holding their credentials. Keep it readable by you alone"""
 
 
 def dump_field_options_to_yaml(
@@ -726,6 +730,17 @@ DEFAULT_TAR_RE_PATTERNS = (
 DEFAULT_COPY_RE_PATTERNS = (r".*linmos.*fits", r".*weight\.fits", r".*png", r".*csv")
 
 
+class ArchiveDestination(BaseOptions):
+    """One place a field's products go"""
+
+    method: Literal["copy", "tar"]
+    """``copy`` runs rclone, to a folder or an object store. ``tar`` writes one tarball"""
+    location: str
+    """A folder, or an rclone remote and bucket such as ``acacia:racs-all``"""
+    patterns: tuple[str, ...]
+    """Regular expressions matched whole against each file's path relative to the field folder"""
+
+
 class ArchiveOptions(BaseOptions):
     """Container for options related to archiving products from flint workflows"""
 
@@ -733,6 +748,8 @@ class ArchiveOptions(BaseOptions):
     """Regular-expressions to use to collect files that should be tarballed"""
     copy_file_re_patterns: tuple[str, ...] = DEFAULT_COPY_RE_PATTERNS
     """Regular-expressions used to identify files to copy into a final location (not tarred)"""
+    destinations: dict[str, ArchiveDestination] = {}
+    """Where the RACS-all archive stage sends a field, by name"""
 
 
 class FitsCubeOptions(BaseOptions):
