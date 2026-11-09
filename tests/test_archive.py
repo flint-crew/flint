@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import tarfile
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from flint import archive
 from flint.archive import (
+    archive_options_from_strategy,
     archive_to,
     check_archive_prerequisites,
     cli,
@@ -367,7 +370,7 @@ def test_rclone_copy_to_a_local_folder(
     assert command[-2:] == [str(field.resolve()), str(hot)]
     assert {"--checksum", "--immutable"} <= set(command)
     assert hot.is_dir()
-    assert hot in call["bind_dirs"]
+    assert hot.resolve() in call["bind_dirs"]
     assert call["read_only_bind_dirs"] == [field.resolve()]
 
 
@@ -386,9 +389,9 @@ def test_rclone_copy_to_a_remote_binds_the_config_read_only(
     )
 
     (call,) = calls
-    assert call["command"].startswith(f"rclone --config {config} copy ")
+    assert call["command"].startswith(f"rclone --config {config.resolve()} copy ")
     assert call["command"].endswith(" acacia:racs-all/SB60001")
-    assert config in call["read_only_bind_dirs"]
+    assert config.resolve() in call["read_only_bind_dirs"]
     assert len(call["bind_dirs"]) == 1  # the file listing only
 
 
@@ -404,32 +407,58 @@ def test_archive_to_each_method(
     )
 
     archive_to(root=field, field="SB60001", destination=tape)
+    archive_to(root=field, field="SB60001", destination=tape.with_options(suffix=".ms"))
     archive_to(
         root=field, field="SB60001", destination=acacia, rclone_container=tmp_path
     )
 
     assert (tmp_path / "tape" / "SB60001.tar").exists()
+    assert (tmp_path / "tape" / "SB60001.ms.tar").exists()
     assert calls[0]["command"].endswith(" acacia:racs-all/SB60001")
     with pytest.raises(ValueError, match="rclone container"):
         archive_to(root=field, field="SB60001", destination=acacia)
 
 
-def test_archive_to_nothing_matching_does_nothing(
+def test_archive_to_refuses_a_missing_root_or_nothing_matching(
     field: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """A run must not pass with a product left behind"""
     calls = _rclone_calls(monkeypatch)
     nothing = ArchiveDestination(method="copy", location="a:b", patterns=(r".*\.nope",))
 
-    archive_to(root=field, field="SB60001", destination=nothing)
+    with pytest.raises(FileNotFoundError, match="does not exist"):
+        archive_to(root=tmp_path / "missing", field="SB1", destination=nothing)
+    with pytest.raises(ValueError, match="No file under"):
+        archive_to(root=field, field="SB60001", destination=nothing)
 
     assert calls == []
 
 
+def test_destination_locations_and_targets() -> None:
+    """A tar needs a folder; a copy takes a folder or a remote; the suffix keeps
+    destinations sharing a location apart"""
+    tape = ArchiveDestination(method="tar", location="/tape", patterns=(".*",))
+    remote = ArchiveDestination(method="copy", location="acacia:a", patterns=(".*",))
+
+    assert tape.target("SB1") == "/tape/SB1.tar"
+    assert tape.with_options(suffix=".ms").target("SB1") == "/tape/SB1.ms.tar"
+    assert remote.target("SB1") == "acacia:a/SB1"
+    assert remote.remote and not tape.remote
+    with pytest.raises(ValidationError, match="absolute folder path"):
+        ArchiveDestination(method="tar", location="acacia:a", patterns=(".*",))
+    with pytest.raises(ValidationError, match="rclone remote"):
+        ArchiveDestination(method="copy", location="relative/hot", patterns=(".*",))
+
+
 def test_check_archive_prerequisites(tmp_path: Path) -> None:
     container, config = tmp_path / "rclone.sif", tmp_path / "rclone.conf"
-    hot = ArchiveDestination(method="copy", location="/hot", patterns=(".*",))
+    hot = ArchiveDestination(
+        method="copy", location=str(tmp_path / "hot"), patterns=(".*",)
+    )
     remote = ArchiveDestination(method="copy", location="acacia:a", patterns=(".*",))
-    tape = ArchiveDestination(method="tar", location="/tape", patterns=(".*",))
+    tape = ArchiveDestination(
+        method="tar", location=str(tmp_path / "tape"), patterns=(".*",)
+    )
 
     check_archive_prerequisites([tape], rclone_container=None, rclone_config=None)
     with pytest.raises(ValueError, match="rclone container"):
@@ -446,6 +475,55 @@ def test_check_archive_prerequisites(tmp_path: Path) -> None:
     check_archive_prerequisites(
         [remote], rclone_container=container, rclone_config=config
     )
+
+
+def test_prerequisites_refuse_destinations_sharing_a_target(tmp_path: Path) -> None:
+    tape = ArchiveDestination(
+        method="tar", location=str(tmp_path), patterns=(r".*\.fits",)
+    )
+    tape_ms = tape.with_options(patterns=(r".*\.ms\.tar",))
+
+    with pytest.raises(ValueError, match="2 destinations would all write"):
+        check_archive_prerequisites(
+            [tape, tape_ms], rclone_container=None, rclone_config=None
+        )
+    check_archive_prerequisites(
+        [tape, tape_ms.with_options(suffix=".ms")],
+        rclone_container=None,
+        rclone_config=None,
+    )
+
+
+def test_prerequisites_refuse_a_location_that_cannot_be_written(tmp_path: Path) -> None:
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    locked.chmod(0o500)
+    if os.access(locked, os.W_OK):
+        pytest.skip("running as a user who can write anywhere")
+    tape = ArchiveDestination(
+        method="tar", location=str(locked / "deeper" / "tape"), patterns=(".*",)
+    )
+
+    with pytest.raises(ValueError, match="cannot be written to"):
+        check_archive_prerequisites([tape], rclone_container=None, rclone_config=None)
+
+
+def test_archive_options_from_a_strategy_without_selfcal(tmp_path: Path) -> None:
+    """flint_flow_archive takes a strategy that only says where things go"""
+    strategy = tmp_path / "archive.yaml"
+    strategy.write_text(
+        "version: 0.2\n"
+        "defaults:\n"
+        "  archive:\n"
+        "    destinations:\n"
+        f"      tape: {{method: tar, location: {tmp_path}, patterns: ['.*']}}\n"
+    )
+
+    options = archive_options_from_strategy(strategy_yaml_path=strategy)
+
+    assert options.destinations["tape"].method == "tar"
+    (tmp_path / "bare.yaml").write_text("version: 0.2\ndefaults: {}\n")
+    assert archive_options_from_strategy(tmp_path / "bare.yaml").destinations == {}
 
 
 @pytest.fixture(scope="session")

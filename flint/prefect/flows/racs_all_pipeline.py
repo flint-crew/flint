@@ -13,7 +13,7 @@ from capn_crunch import BaseOptions, add_options_to_parser, create_options_from_
 from configargparse import ArgumentParser
 from prefect import flow
 
-from flint.archive import check_archive_prerequisites, get_archive_options_from_yaml
+from flint.archive import archive_options_from_strategy, check_archive_prerequisites
 from flint.configuration import (
     POLARISATION_MAPPING,
     get_options_from_strategy,
@@ -87,10 +87,8 @@ def _archive_options(racs_all_options: RACSAllOptions) -> ArchiveOptions:
     """The archive options of the strategy file, with no destinations without one"""
     if racs_all_options.imaging_strategy is None:
         return ArchiveOptions()
-    return ArchiveOptions(
-        **get_archive_options_from_yaml(
-            strategy_yaml_path=racs_all_options.imaging_strategy
-        )
+    return archive_options_from_strategy(
+        strategy_yaml_path=racs_all_options.imaging_strategy
     )
 
 

@@ -17,7 +17,7 @@ from typing import Any
 
 from capn_crunch import BaseOptions, add_options_to_parser, create_options_from_parser
 
-from flint.configuration import get_options_from_strategy
+from flint.configuration import get_options_from_strategy, load_strategy_yaml
 from flint.exceptions import TarArchiveError
 from flint.logging import logger
 from flint.options import ArchiveDestination, ArchiveOptions, exclude_fields_cli_class
@@ -223,15 +223,33 @@ def copy_sbid_files_archive(
 
 
 def matching_files(root: Path, patterns: Collection[str]) -> list[Path]:
-    """The files under ``root`` whose path relative to it a pattern matches whole"""
+    """Find the files under a folder that a pattern matches.
+
+    Each pattern is matched whole against the file's path relative to ``root``, in
+    POSIX form. A pattern that matches nothing is logged as a warning, as it is
+    often a typo.
+
+    Args:
+        root (Path): The folder to walk
+        patterns (Collection[str]): Regular expressions, any of which may match
+
+    Returns:
+        list[Path]: The matching files, relative to ``root``, in sorted order
+    """
     root = Path(root)
     compiled = [re.compile(pattern) for pattern in patterns]
     files = []
+    unmatched = set(compiled)
     for folder, _, names in os.walk(root):
         for name in names:
-            relative = (Path(folder) / name).relative_to(root)
-            if any(pattern.fullmatch(relative.as_posix()) for pattern in compiled):
-                files.append(relative)
+            relative = (Path(folder) / name).relative_to(root).as_posix()
+            matches = [pattern for pattern in compiled if pattern.fullmatch(relative)]
+            if matches:
+                files.append(Path(relative))
+                unmatched.difference_update(matches)
+
+    for pattern in unmatched:
+        logger.warning(f"No file under {root} matches {pattern.pattern!r}")
 
     return sorted(files)
 
@@ -243,35 +261,57 @@ def rclone_copy(
     files: Collection[Path],
     location: str,
 ) -> None:
-    """Copy ``files`` under ``root`` to ``location`` with rclone, which checks the
-    hash of every copy. A file already there that differs is an error, not
-    overwritten. A local ``location`` is an absolute folder path.
+    """Copy files with rclone, run from its container.
+
+    rclone checks the hash of every copy, compares rather than copies a file
+    already there, and treats one that differs as an error rather than
+    overwriting it. Every path is resolved, as the container binds are.
+
+    Args:
+        container (Path): The rclone container image
+        config (Path | None): The rclone config file, needed for a remote
+        root (Path): The folder the files are relative to
+        files (Collection[Path]): The files to copy, relative to ``root``
+        location (str): An absolute folder path, or ``remote:bucket/folder``
 
     Raises:
         CalledProcessError: rclone failed
     """
     root = Path(root).resolve()
-    local = Path(location) if Path(location).is_absolute() else None
+    config = Path(config).resolve() if config else None
+    local = Path(location).resolve() if Path(location).is_absolute() else None
     if local:
         local.mkdir(parents=True, exist_ok=True)
+        location = str(local)
     config_flag = f"--config {config} " if config else ""
 
-    with TemporaryDirectory() as work:
-        listing = Path(work) / "files"
+    with TemporaryDirectory() as work_dir:
+        work = Path(work_dir).resolve()
+        listing = work / "files"
         listing.write_text("".join(f"{file}\n" for file in files))
         run_singularity_command(
             image=container,
             command=f"rclone {config_flag}copy --files-from {listing} --checksum "
             f"--immutable {root} {location}",
-            bind_dirs=[Path(work), *([local] if local else [])],
+            bind_dirs=[work, *([local] if local else [])],
             read_only_bind_dirs=[root, *([config] if config else [])],
         )
 
 
 def write_tarball(root: Path, files: Collection[Path], tar_path: Path) -> Path:
-    """Write ``files`` under ``root`` to one tarball, with its MD5 beside it.
+    """Write files to one tarball, with its MD5 beside it.
 
-    Members are named ``<tarball stem>/<file>``. A tarball already there is kept.
+    Members are named ``<tarball stem>/<file>``. The tarball is written under a
+    ``.partial`` name and renamed once complete, so one already at ``tar_path``
+    is finished and is kept as it is.
+
+    Args:
+        root (Path): The folder the files are relative to
+        files (Collection[Path]): The files to add, relative to ``root``
+        tar_path (Path): The tarball to write
+
+    Returns:
+        Path: ``tar_path``
     """
     tar_path = Path(tar_path)
     if tar_path.exists():
@@ -299,34 +339,49 @@ def archive_to(
     rclone_container: Path | None = None,
     rclone_config: Path | None = None,
 ) -> None:
-    """Send the files of a field folder that a destination's patterns match to it,
-    as ``<location>/<field>.tar`` or under ``<location>/<field>``.
+    """Send the files of a field folder that a destination's patterns match to it.
+
+    Args:
+        root (Path): The field folder
+        field (str): The field's name at the destination, such as ``SB60001``
+        destination (ArchiveDestination): Where the files go, and which they are
+        rclone_container (Path | None, optional): The rclone container, needed by
+            a ``copy`` destination. Defaults to None.
+        rclone_config (Path | None, optional): The rclone config, needed by a
+            remote. Defaults to None.
 
     Raises:
-        ValueError: A copy destination is given with no rclone container
+        FileNotFoundError: ``root`` is not a folder
+        ValueError: No file matches, or a copy destination has no rclone container
     """
+    root = Path(root)
+    if not root.is_dir():
+        raise FileNotFoundError(f"The field folder {root} does not exist")
     files = matching_files(root=root, patterns=destination.patterns)
     if not files:
-        logger.warning(f"No file under {root} matches a pattern of {destination}")
-        return
+        raise ValueError(f"No file under {root} matches a pattern of {destination}")
 
+    target = destination.target(field)
     if destination.method == "tar":
-        write_tarball(
-            root=root, files=files, tar_path=Path(destination.location) / f"{field}.tar"
-        )
+        write_tarball(root=root, files=files, tar_path=Path(target))
         return
 
     if rclone_container is None:
-        raise ValueError(
-            f"Copying to {destination.location} needs the rclone container"
-        )
+        raise ValueError(f"Copying to {target} needs the rclone container")
     rclone_copy(
         container=rclone_container,
         config=rclone_config,
         root=root,
         files=files,
-        location=f"{destination.location}/{field}",
+        location=target,
     )
+
+
+def _writable(folder: Path) -> bool:
+    """Whether a folder, or the nearest parent that exists, can be written to"""
+    while not folder.exists():
+        folder = folder.parent
+    return os.access(folder, os.W_OK)
 
 
 def check_archive_prerequisites(
@@ -334,22 +389,57 @@ def check_archive_prerequisites(
     rclone_container: Path | None,
     rclone_config: Path | None,
 ) -> None:
-    """Fail before any stage runs if a copy destination lacks what rclone needs.
+    """Check what the destinations need, so a run fails before its imaging rather
+    than after.
+
+    Args:
+        destinations (Collection[ArchiveDestination]): Every destination of the run
+        rclone_container (Path | None): The rclone container, needed by ``copy``
+        rclone_config (Path | None): The rclone config, needed by a remote
 
     Raises:
-        ValueError: The rclone container, or the config a remote needs, is unset or missing
+        ValueError: Two destinations share a target, a local location cannot be
+            written to, or the rclone container or config is unset or missing
     """
+    targets = [d.target("<field>") for d in destinations]
+    for target in sorted(set(targets)):
+        if targets.count(target) > 1:
+            raise ValueError(
+                f"{targets.count(target)} destinations would all write {target}. "
+                "Give each its own location or suffix"
+            )
+
+    for destination in destinations:
+        if not destination.remote and not _writable(Path(destination.location)):
+            raise ValueError(f"{destination.location} cannot be written to")
+
     copies = [d for d in destinations if d.method == "copy"]
     if copies and not (rclone_container and rclone_container.exists()):
         raise ValueError(
             f"Copying to {copies[0].location} needs an rclone container, "
             f"not {rclone_container}"
         )
-    remotes = [d for d in copies if not Path(d.location).is_absolute()]
+    remotes = [d for d in copies if d.remote]
     if remotes and not (rclone_config and rclone_config.exists()):
         raise ValueError(
             f"The remote {remotes[0].location} needs an rclone config, not {rclone_config}"
         )
+
+
+def archive_options_from_strategy(strategy_yaml_path: Path) -> ArchiveOptions:
+    """Read the archive options from a strategy file's ``defaults.archive``.
+
+    Only the defaults are read, so a strategy with no self-calibration section,
+    such as one written for ``flint_flow_archive`` alone, serves as well.
+
+    Args:
+        strategy_yaml_path (Path): The strategy file
+
+    Returns:
+        ArchiveOptions: Its archive options, with none set where it has no section
+    """
+    strategy = load_strategy_yaml(input_yaml=strategy_yaml_path)
+    return ArchiveOptions(**strategy["defaults"].get("archive", {}))
 
 
 def get_archive_options_from_yaml(strategy_yaml_path: Path) -> dict[str, Any]:

@@ -11,7 +11,7 @@ from prefect.testing.utilities import prefect_test_harness
 
 from flint import archive
 from flint.options import ArchiveDestination, ArchiveOptions
-from flint.prefect.flows.archive_pipeline import get_parser, process_archive
+from flint.prefect.flows.archive_pipeline import cli, get_parser, process_archive
 
 
 @pytest.fixture
@@ -83,6 +83,14 @@ def test_a_failed_destination_fails_the_flow_after_the_others_ran(
         process_archive(field_path=field, archive_options=options)
 
     assert (tmp_path / "tape" / "SB60001.tar").exists()
+
+
+def test_cli_refuses_a_missing_field_folder(tmp_path: Path) -> None:
+    strategy = tmp_path / "s.yaml"
+    strategy.write_text("version: 0.2\ndefaults: {}\n")
+
+    with pytest.raises(FileNotFoundError, match="does not exist"):
+        cli([str(tmp_path / "60002"), "--strategy-yaml-path", str(strategy)])
 
 
 def test_parser() -> None:

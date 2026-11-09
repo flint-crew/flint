@@ -13,9 +13,9 @@ from prefect import flow, task
 from prefect.futures import wait
 
 from flint.archive import (
+    archive_options_from_strategy,
     archive_to,
     check_archive_prerequisites,
-    get_archive_options_from_yaml,
 )
 from flint.naming import get_sbid_from_path
 from flint.options import ArchiveOptions
@@ -33,6 +33,14 @@ def process_archive(
 ) -> None:
     """Send a field folder to every destination, each in its own task, and fail
     once all have had their go.
+
+    Args:
+        field_path (Path): The field folder, named by its SBID
+        archive_options (ArchiveOptions): The destinations, from the strategy file
+        rclone_container (Path | None, optional): The rclone container, needed by
+            a ``copy`` destination. Defaults to None.
+        rclone_config (Path | None, optional): The rclone config, needed by a
+            remote. Defaults to None.
 
     Raises:
         RuntimeError: A destination was not reached
@@ -95,8 +103,12 @@ def get_parser() -> ArgumentParser:
 def cli(argv: list[str] | None = None) -> None:
     args = get_parser().parse_args(argv)
 
-    archive_options = ArchiveOptions(
-        **get_archive_options_from_yaml(strategy_yaml_path=args.strategy_yaml_path)
+    # The tasks run on another node, so the path has to stand on its own there
+    field_path = args.field_path.resolve()
+    if not field_path.is_dir():
+        raise FileNotFoundError(f"The field folder {field_path} does not exist")
+    archive_options = archive_options_from_strategy(
+        strategy_yaml_path=args.strategy_yaml_path
     )
     check_archive_prerequisites(
         destinations=archive_options.destinations.values(),
@@ -105,9 +117,9 @@ def cli(argv: list[str] | None = None) -> None:
     )
     process_archive.with_options(
         task_runner=get_dask_runner(cluster=args.cluster_config),
-        name=f"Flint Archive -- {args.field_path.name}",
+        name=f"Flint Archive -- {field_path.name}",
     )(
-        field_path=args.field_path,
+        field_path=field_path,
         archive_options=archive_options,
         rclone_container=args.rclone_container,
         rclone_config=args.rclone_config,

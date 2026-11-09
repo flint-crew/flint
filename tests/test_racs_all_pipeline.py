@@ -479,9 +479,7 @@ def _archive_strategy(tmp_path: Path) -> Path:
         "defaults:\n"
         "  archive:\n"
         "    destinations:\n"
-        "      tape: {method: tar, location: /tape, patterns: ['.*']}\n"
-        "selfcal:\n"
-        "  0: {}\n"
+        f"      tape: {{method: tar, location: {tmp_path / 'tape'}, patterns: ['.*']}}\n"
     )
     return strategy
 
@@ -549,9 +547,11 @@ def test_archive_destinations_need_the_imaging_stage() -> None:
 
 
 def test_stage_prerequisites_cover_the_archive(
-    racs_all_options: RACSAllOptions,
+    tmp_path: Path, racs_all_options: RACSAllOptions
 ) -> None:
-    hot = ArchiveDestination(method="copy", location="/hot", patterns=(".*",))
+    hot = ArchiveDestination(
+        method="copy", location=str(tmp_path / "hot"), patterns=(".*",)
+    )
     with pytest.raises(ValueError, match="rclone container"):
         _check_stage_prerequisites(
             pipeline_options=RACSAllPipelineOptions(

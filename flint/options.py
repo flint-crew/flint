@@ -18,7 +18,7 @@ import yaml
 from astropy.coordinates import EarthLocation, SkyCoord
 from astropy.time import Time
 from capn_crunch import BaseOptions
-from pydantic import Field, create_model
+from pydantic import Field, create_model, model_validator
 
 from flint.exceptions import MSError, NamingException
 from flint.logging import logger
@@ -731,14 +731,44 @@ DEFAULT_COPY_RE_PATTERNS = (r".*linmos.*fits", r".*weight\.fits", r".*png", r".*
 
 
 class ArchiveDestination(BaseOptions):
-    """One place a field's products go"""
+    """One place a field's products go.
+
+    A field lands at ``<location>/<field><suffix>``, as a folder for ``copy`` and
+    with ``.tar`` added for ``tar``, so two destinations may share a location when
+    their suffixes differ.
+    """
 
     method: Literal["copy", "tar"]
     """``copy`` runs rclone, to a folder or an object store. ``tar`` writes one tarball"""
     location: str
-    """A folder, or an rclone remote and bucket such as ``acacia:racs-all``"""
+    """An absolute folder path, or for ``copy`` an rclone remote and bucket such as ``acacia:racs-all``"""
     patterns: tuple[str, ...]
     """Regular expressions matched whole against each file's path relative to the field folder"""
+    suffix: str = ""
+    """Added to the field name at this destination: ``.ms`` gives ``SB60001.ms.tar`` or ``SB60001.ms``"""
+
+    @model_validator(mode="after")
+    def check_location(self) -> Self:
+        if Path(self.location).is_absolute() or (self.method == "copy" and self.remote):
+            return self
+        wanted = "an absolute folder path"
+        if self.method == "copy":
+            wanted += " or an rclone remote such as acacia:racs-all"
+        raise ValueError(f"location {self.location!r} is not {wanted}")
+
+    @property
+    def remote(self) -> bool:
+        """Whether the location is an rclone remote rather than a local folder"""
+        return (
+            not Path(self.location).is_absolute()
+            and ":" in self.location.split("/", 1)[0]
+        )
+
+    def target(self, field: str) -> str:
+        """Where a field lands at this destination: a folder for ``copy``, a
+        tarball for ``tar``."""
+        name = f"{self.location}/{field}{self.suffix}"
+        return f"{name}.tar" if self.method == "tar" else name
 
 
 class ArchiveOptions(BaseOptions):
