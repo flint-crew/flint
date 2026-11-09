@@ -173,6 +173,40 @@ and honours `compress: true` set under
 round) as normal. If you set `compress: true` for the final round's per-beam
 cube, it is ignored and a warning is logged.
 
+### `archive`
+
+Besides the regular expressions the standalone continuum flow's tarball and copy
+use, `defaults.archive` holds the destinations of the RACS-all archive stage
+(see [Archiving](archive.md)). Each is named, and gives:
+
+- `method`: `copy`, which runs rclone to a folder or an object store, or `tar`,
+  which writes one tarball.
+- `location`: a folder, or an rclone remote and bucket such as `acacia:racs-all`.
+  A remote's credentials stay in the rclone config file.
+- `patterns`: regular expressions matched whole against each file's path relative
+  to the field folder. A file any pattern matches is taken.
+
+```yaml
+defaults:
+  archive:
+    destinations:
+      hot:
+        method: copy
+        location: /scratch/racs/hot
+        patterns: [".*\\.linmos\\.fits", ".*\\.(png|csv)"]
+      tape:
+        method: tar
+        location: /datastore/racs/tape
+        patterns: [".*"]
+      acacia:
+        method: copy
+        location: acacia:racs-all
+        patterns: [".*\\.fits(\\.fz)?", "rmsynth/.*", "spice/.*"]
+```
+
+`archive` must sit under `defaults`, as the strategy check rejects any other
+top-level section.
+
 ## Configuration based settings in Python API
 
 Most settings within `flint` are stored in immutable option classes, e.g.

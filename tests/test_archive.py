@@ -446,3 +446,59 @@ def test_check_archive_prerequisites(tmp_path: Path) -> None:
     check_archive_prerequisites(
         [remote], rclone_container=container, rclone_config=config
     )
+
+
+@pytest.fixture(scope="session")
+def rclone_image(tmp_path_factory) -> Path:
+    """Pull the rclone container once for the session"""
+    from flint.containers import rclone_container
+    from flint.sclient import pull_container
+
+    return pull_container(
+        container_directory=Path(tmp_path_factory.mktemp("rclone")),
+        uri=f"{rclone_container.uri}:{rclone_container.tag}",
+        file_name=rclone_container.file_name,
+    )
+
+
+@pytest.mark.require_singularity
+def test_rclone_copies_to_a_folder_and_a_remote(
+    field: Path, tmp_path: Path, rclone_image: Path
+) -> None:
+    """A ``type = local`` remote stands in for an object store. Its folder is under
+    /tmp, which the container sees without a bind of its own."""
+    from subprocess import CalledProcessError
+
+    files = matching_files(root=field, patterns=[r".*\.fits", r"rmsynth/.*"])
+    config = tmp_path / "rclone.conf"
+    config.write_text("[store]\ntype = local\n")
+    hot = tmp_path / "hot" / "SB60001"
+    remote = f"store:{tmp_path / 'store'}/SB60001"
+
+    rclone_copy(
+        container=rclone_image, config=None, root=field, files=files, location=str(hot)
+    )
+    rclone_copy(
+        container=rclone_image, config=config, root=field, files=files, location=remote
+    )
+
+    for copied in (hot, tmp_path / "store" / "SB60001"):
+        assert (
+            copied / "SB60001.i.linmos.fits"
+        ).read_text() == "contents of SB60001.i.linmos.fits"
+        assert (copied / "rmsynth" / "fdf.dirty.zarr" / "c" / "0" / "0").exists()
+        assert not (copied / "scratch.txt").exists()
+
+    # A rerun compares and copies nothing; a source that changed is refused
+    rclone_copy(
+        container=rclone_image, config=None, root=field, files=files, location=str(hot)
+    )
+    (field / "SB60001.i.linmos.fits").write_text("reprocessed")
+    with pytest.raises(CalledProcessError):
+        rclone_copy(
+            container=rclone_image,
+            config=None,
+            root=field,
+            files=files,
+            location=str(hot),
+        )
