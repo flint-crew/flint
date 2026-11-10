@@ -26,6 +26,7 @@ from flint.imager.channel_division import (
 )
 from flint.imager.wsclean import WSCleanResult
 from flint.imageset import ImageSet
+from flint.ionosphere import IonosphereOptions
 from flint.logging import logger
 from flint.ms import MSsByBeam, find_mss
 from flint.naming import (
@@ -57,6 +58,7 @@ from flint.prefect.common.imaging import (
     task_wsclean_imager,
     total_beam_from_channel_groups,
 )
+from flint.prefect.common.ms import task_correct_ionosphere
 from flint.prefect.common.utils import (
     raise_on_failed_stage,
     task_create_field_summary,
@@ -256,8 +258,23 @@ def process_science_fields_pol(
         # Each beam is a single MS when discovered this way (one SBID/band per directory)
         resolved_mss_by_beam = tuple((ms,) for ms in science_mss)
 
-    # TODO: Correct ionospheric Faraday rotation here, before imaging: Spinifex
-    # writes an RM h5parm per MS which dp3_applycal applies to a new column
+    if pol_field_options.ionex_directory is not None:
+        if not pol_field_options.ionex_directory.is_dir():
+            msg = f"IONEX directory {pol_field_options.ionex_directory} does not exist. Fill it with flint_ionosphere download"
+            raise FileNotFoundError(msg)
+        ionosphere_options = IonosphereOptions(
+            ionex_directory=pol_field_options.ionex_directory,
+            server=pol_field_options.ionex_server,
+            prefix=pol_field_options.ionex_prefix,
+        )
+        resolved_mss_by_beam = tuple(
+            tuple(
+                task_correct_ionosphere.submit(ms=ms, options=ionosphere_options)
+                for ms in beam_mss
+            )
+            for beam_mss in resolved_mss_by_beam
+        )
+
     science_mss = [ms for beam_mss in resolved_mss_by_beam for ms in beam_mss]
 
     field_summary = task_create_field_summary.submit(

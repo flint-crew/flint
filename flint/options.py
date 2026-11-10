@@ -207,6 +207,9 @@ class FieldOptions(BaseOptions):
     """Whether to run a phase-only self-calibration round (round 0) against a sky-model predicted from a reference catalogue before imaging. The holofile, if set, weights the model by the measured primary beam. Requires calibrate_container, casa_container and reference_catalogue_directory to be set."""
 
 
+IonexServer: TypeAlias = Literal["chapman", "cddis", "igsiono"]
+
+
 class PolFieldOptions(BaseOptions):
     """Container that represents the flint related options that
     might be used throughout components related to the actual
@@ -249,6 +252,12 @@ class PolFieldOptions(BaseOptions):
     """Desired width, in Hz, of each plane of the polarisation cubes. The wsclean channel division is solved for this target so the cubes have a single linear frequency axis, overriding the strategy ``channels_out``. Deliberately separate from ``RACSAllOptions.cube_channel_width``, as the continuum and polarisation cubes need not share a channelisation. See ``flint.imager.channel_division``"""
     sbid_copy_path: Path | None = None
     """Path that final processed products will be copied into. If None no copying of file products is performed. See ArchiveOptions. """
+    ionex_directory: Path | None = None
+    """Directory of IONEX maps fetched beforehand with ``flint_ionosphere download``. If set, ionospheric Faraday rotation is corrected with spinifex before imaging"""
+    ionex_server: IonexServer = "chapman"
+    """Server the IONEX maps come from"""
+    ionex_prefix: str = "uqr"
+    """Analysis centre of the IONEX maps"""
 
 
 class FFTBANEOptions(BaseOptions):

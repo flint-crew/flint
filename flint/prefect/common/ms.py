@@ -8,6 +8,7 @@ from typing import Any, ParamSpec, TypeVar
 from prefect import Task
 
 from flint.imager.wsclean import WSCleanResult
+from flint.ionosphere import correct_ionosphere
 from flint.logging import logger
 from flint.ms import describe_ms, subtract_model_from_data_column
 from flint.options import MS
@@ -20,6 +21,7 @@ R = TypeVar("R")
 
 task_subtract_model_from_ms = task(subtract_model_from_data_column)
 task_describe_ms = task(describe_ms)
+task_correct_ionosphere = task(correct_ionosphere)
 
 
 @task
