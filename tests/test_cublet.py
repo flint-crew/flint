@@ -16,6 +16,7 @@ from flint.cublet.islands import (
     find_cublet_regions,
     island_cutout,
     label_islands,
+    masked_peak,
     round_threshold,
 )
 from flint.cublet.reordered import link_reordered_files
@@ -93,12 +94,40 @@ def test_create_cublet_regions(mask, image, header) -> None:
     faint = regions[-1]
     assert faint.centre == (55, 115)
     assert faint.size == 60
-    assert faint.super_weight == pytest.approx(60 / SIZE)
+    # wsclean pads both images before it sizes the weight grid
+    assert faint.super_weight == pytest.approx(72 / 480)
 
     # The shift is the sky position of the centre pixel
     position = SkyCoord(*faint.shift)
     x, y = WCS(header).world_to_pixel(position)
     assert (x, y) == pytest.approx((115, 55), abs=1e-3)
+
+
+def test_create_cublet_regions_padding(mask, image, header) -> None:
+    """The weighting follows the padded sizes, which need not scale as the sizes do"""
+    labels = label_islands(mask=mask)
+    regions = create_cublet_regions(
+        labels=labels, image=image, header=header, min_size=130, padding=1.25
+    )
+    # ceil(130 * 1.25) over ceil(400 * 1.25)
+    assert regions[0].super_weight == pytest.approx(163 / 500)
+
+
+def test_masked_peak(tmp_path) -> None:
+    """Only pixels inside the mask count, in every plane of the image"""
+    mask = np.zeros((16, 16), dtype=np.float32)
+    mask[4:8, 4:8] = 2
+    image = np.full((1, 3, 16, 16), 9.0, dtype=np.float32)
+    image[..., 4:8, 4:8] = -1.0
+    image[0, 1, 5, 5] = 0.5
+    image[0, 2, 6, 6] = np.nan
+    fits.writeto(tmp_path / "mask.fits", data=mask)
+    fits.writeto(tmp_path / "image.fits", data=image)
+
+    peak = masked_peak(
+        image_fits=tmp_path / "image.fits", mask_fits=tmp_path / "mask.fits"
+    )
+    assert peak == 0.5
 
 
 def test_create_cublet_regions_limits(mask, image, header) -> None:

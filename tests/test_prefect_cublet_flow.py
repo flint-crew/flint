@@ -6,13 +6,17 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import numpy as np
 import pytest
+from astropy.io import fits
+from eye_patch.naming import FITSMaskNames
 
 import flint.prefect.flows.beam_cublet_image_pipeline as cublet_flow
 from flint.cublet.islands import CubletRegion
 from flint.ms import MS
 from flint.prefect.flows.beam_cublet_image_pipeline import (
     BeamCubletOptions,
+    IslandImage,
     flow_beam_cublet_image,
     get_parser,
 )
@@ -70,7 +74,7 @@ class FakeTask:
         return FakeFuture(self.fn(*map(_resolve, args), **kwargs))
 
 
-def _region(idx: int, peak: float) -> CubletRegion:
+def _region(idx: int, peak: float, **kwargs) -> CubletRegion:
     return CubletRegion(
         idx=idx,
         centre=(10 * idx, 10 * idx),
@@ -78,17 +82,21 @@ def _region(idx: int, peak: float) -> CubletRegion:
         shift=("12h00m00s", "-30d00m00s"),
         super_weight=0.125,
         peak=peak,
+        **kwargs,
     )
 
 
-def _image_island(name_suffix: str, temp_dir: Path, **kwargs) -> SimpleNamespace:
-    """Stands in for wsclean, with each island finding one component"""
+def _image_island(
+    region: CubletRegion, threshold: float, name_suffix: str, temp_dir: Path, **kwargs
+) -> IslandImage:
+    """Stands in for wsclean. Each island gives one component, and is cleaned to the threshold"""
     temp_dir.mkdir(parents=True, exist_ok=True)
     source_list = temp_dir.parent / f"{name_suffix}-sources.txt"
     source_list.write_text("Format = Name, Type\ns0c0,POINT\n")
-    return SimpleNamespace(
-        image_set=SimpleNamespace(source_list=source_list),
-        options=SimpleNamespace(flint_name_suffix=name_suffix),
+    return IslandImage(
+        region=region.with_options(peak=threshold),
+        tag=name_suffix,
+        source_list=source_list,
     )
 
 
@@ -131,8 +139,12 @@ def _options(tmp_path: Path, **kwargs) -> BeamCubletOptions:
     )
 
 
+def _component_count(source_list: Path) -> int:
+    return len(source_list.read_text().splitlines()) - 1
+
+
 def test_flow_rounds(fake_tasks, tmp_path) -> None:
-    """Islands are imaged in rounds, with all components subtracted in between"""
+    """Islands are imaged in rounds, with their new components subtracted in between"""
     options = _options(tmp_path, rounds=2, round_gain=0.8)
     flow_beam_cublet_image.fn(beam_cublet_options=options)
 
@@ -163,25 +175,27 @@ def test_flow_rounds(fake_tasks, tmp_path) -> None:
     assert linked["seed_dir"] == work_dir / "round1"
     assert linked["wait_for"] is not None
 
-    # Round 1 images the data, and round 2 what is left of it
-    assert island_calls[0]["ms"].column == "CORRECTED_DATA"
-    assert island_calls[2]["ms"].column == "CUBLET_RESIDUAL"
-
-    # Each round predicts every component so far into the original data
+    # Each round images, predicts into and subtracts from what the last round left
+    columns = ["CORRECTED_DATA", "CUBLET_RESIDUAL", "CUBLET_RESIDUAL_ALT"]
+    assert island_calls[0]["ms"].column == columns[0]
+    assert island_calls[2]["ms"].column == columns[1]
     predict_calls = fake_tasks["task_crystalball_to_ms"].calls
-    assert [call["ms"].column for call in predict_calls] == ["CORRECTED_DATA"] * 2
-    component_counts = [
-        len(call["wsclean_source_list_path"].read_text().splitlines()) - 1
-        for call in predict_calls
-    ]
-    assert component_counts == [2, 5]
+    assert [call["ms"].column for call in predict_calls] == columns[:2]
     subtract_calls = fake_tasks["task_subtract_model_from_ms"].calls
-    assert all(call["data_column"] == "CORRECTED_DATA" for call in subtract_calls)
+    assert [call["ms"].column for call in subtract_calls] == columns[:2]
+    assert [call["output_column"] for call in subtract_calls] == columns[1:]
+
+    # Only the components of a round are predicted, and all are kept on record
+    assert [
+        _component_count(call["wsclean_source_list_path"]) for call in predict_calls
+    ] == [2, 3]
+    all_components = work_dir / "SB1234.RACS_0000+00.beam00.rounds1to2-sources.txt"
+    assert _component_count(all_components) == 5
 
     # The MFS image, then the image of what is left
     mfs_call, residual_call = fake_tasks["task_wsclean_imager"].calls
     assert mfs_call["update_wsclean_options"]["channels_out"] == 4
-    assert residual_call["in_ms"].column == "CUBLET_RESIDUAL"
+    assert residual_call["in_ms"].column == columns[2]
     assert residual_call["update_wsclean_options"]["niter"] == 0
     assert not residual_call["update_wsclean_options"]["save_source_list"]
 
@@ -189,6 +203,28 @@ def test_flow_rounds(fake_tasks, tmp_path) -> None:
     assert fake_tasks["task_run_bane_and_aegean"].calls == []
     mask_call = fake_tasks["task_create_image_mask_model"].calls[0]
     assert mask_call["update_masking_options"] == {"use_mac": True}
+
+
+def test_flow_skips_finished_islands(fake_tasks, tmp_path) -> None:
+    """An island with nothing left above the level of a round is not imaged in it"""
+
+    def image_island(region, **kwargs) -> IslandImage:
+        island_image = _image_island(region=region, **kwargs)
+        left = 0.0 if region.idx == 1 else island_image.region.peak
+        return island_image.with_options(region=region.with_options(peak=left))
+
+    fake_tasks["task_image_island"].fn = image_island
+    flow_beam_cublet_image.fn(beam_cublet_options=_options(tmp_path, rounds=2))
+
+    island_calls = fake_tasks["task_image_island"].calls
+    assert [call["name_suffix"] for call in island_calls] == [
+        "r1i00001",
+        "r1i00002",
+        "r2i00002",
+        "r2i00003",
+    ]
+    # The next brightest island reorders the visibilities in its place
+    assert island_calls[2]["save_reordered"]
 
 
 def test_flow_without_reordered_reuse(fake_tasks, tmp_path) -> None:
@@ -214,13 +250,25 @@ def test_flow_no_islands(fake_tasks, tmp_path) -> None:
     assert len(fake_tasks["task_wsclean_imager"].calls) == 1
 
 
-def test_image_island_options(monkeypatch, tmp_path) -> None:
+def test_image_island(monkeypatch, tmp_path) -> None:
     """An island image is shifted, weighted as the full image and keeps the reordered files apart from its images"""
+    mask_fits = tmp_path / "island.mask.fits"
+    residual_fits = tmp_path / "island.residual.fits"
+    mask = np.zeros((128, 128), dtype=np.float32)
+    mask[60:70, 60:70] = 1
+    residual = np.full((1, 1, 128, 128), 9.0, dtype=np.float32)
+    residual[..., 60:70, 60:70] = 0.25
+    fits.writeto(mask_fits, data=mask)
+    fits.writeto(residual_fits, data=residual)
+    source_list = tmp_path / "island-sources.txt"
+
     captured: dict[str, Any] = {}
 
     def fake_imager(**kwargs):
         captured.update(kwargs)
-        return "result"
+        return SimpleNamespace(
+            image_set=SimpleNamespace(residual=[residual_fits], source_list=source_list)
+        )
 
     monkeypatch.setattr(cublet_flow.task_wsclean_imager, "fn", fake_imager)
 
@@ -228,12 +276,11 @@ def test_image_island_options(monkeypatch, tmp_path) -> None:
     seed_dir = tmp_path / "round1"
     seed_dir.mkdir()
     (seed_dir / f"{ms.path.name}-part0000-I.tmp").write_bytes(b"data")
-    (seed_dir / f"{ms.path.name}-part0000-I-m.tmp").write_bytes(b"model")
     island_dir = seed_dir / "island00002"
 
-    result = cublet_flow.task_image_island.fn(
+    island_image = cublet_flow.task_image_island.fn(
         ms=ms,
-        region=_region(idx=2, peak=3.0),
+        region=_region(idx=2, peak=3.0, fits_mask=FITSMaskNames(mask_fits=mask_fits)),
         wsclean_container=tmp_path / "wsclean.sif",
         update_wsclean_options={"channels_out": 72},
         threshold=0.5,
@@ -241,10 +288,14 @@ def test_image_island_options(monkeypatch, tmp_path) -> None:
         temp_dir=island_dir,
         seed_dir=seed_dir,
     )
-    assert result == "result"
+    # What is left of the island is the brightest residual inside its mask
+    assert island_image.region.peak == 0.25
+    assert island_image.tag == "r1i00002"
+    assert island_image.source_list == source_list
 
     options = captured["update_wsclean_options"]
     assert options["channels_out"] == 72
+    assert options["mgain"] == 1.0
     assert options["size"] == 128
     assert options["shift"] == ("12h00m00s", "-30d00m00s")
     assert options["super_weight"] == 0.125
@@ -258,4 +309,16 @@ def test_image_island_options(monkeypatch, tmp_path) -> None:
 
     # The linked files are removed with the island, and the seed is left alone
     assert not island_dir.exists()
-    assert len(list(seed_dir.iterdir())) == 2
+    assert len(list(seed_dir.iterdir())) == 1
+
+    # The strategy may still ask wsclean for major cycles of its own
+    cublet_flow.task_image_island.fn(
+        ms=ms,
+        region=_region(idx=2, peak=3.0),
+        wsclean_container=tmp_path / "wsclean.sif",
+        update_wsclean_options={"mgain": 0.8},
+        threshold=0.5,
+        name_suffix="r1i00002",
+        temp_dir=island_dir,
+    )
+    assert captured["update_wsclean_options"]["mgain"] == 0.8

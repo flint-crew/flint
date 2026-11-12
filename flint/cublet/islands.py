@@ -29,7 +29,7 @@ class CubletRegion(BaseOptions):
     shift: tuple[str, str]
     """RA and Dec of the centre pixel, as wsclean reads them"""
     super_weight: float
-    """Window size over the size of the larger image, which keeps its weighting"""
+    """Padded window size over the padded size of the larger image, which keeps its weighting"""
     peak: float
     """Brightest pixel of the island"""
     fits_mask: FITSMaskNames | None = None
@@ -41,6 +41,14 @@ def round_threshold(
 ) -> float:
     """The level every island is cleaned to in a round, so none outruns the rest"""
     return max(peak * (1.0 - round_gain) ** round_number, floor)
+
+
+def masked_peak(image_fits: Path, mask_fits: Path) -> float:
+    """The brightest pixel of an image inside a mask"""
+    with fits.open(image_fits) as image, fits.open(mask_fits) as mask:
+        data = np.nan_to_num(np.squeeze(image[0].data))
+        masked = np.squeeze(mask[0].data) != 0
+    return float(np.max(data[..., masked], initial=0.0))
 
 
 def label_islands(mask: NDArray, merge_pixels: int = 0) -> NDArray[np.int32]:
@@ -69,8 +77,13 @@ def create_cublet_regions(
     pad_factor: float = 2.5,
     min_size: int = 128,
     max_islands: int | None = None,
+    padding: float = 1.2,
 ) -> list[CubletRegion]:
-    """Make the window of each island, brightest first"""
+    """Make the window of each island, brightest first.
+
+    ``padding`` is the wsclean ``-padding`` both images are made with, as wsclean
+    sizes its weight grid from the padded image.
+    """
     assert labels.shape == image.shape, f"{labels.shape=} differs from {image.shape=}"
     assert image.shape[0] == image.shape[1], f"Image is not square, {image.shape=}"
 
@@ -103,7 +116,8 @@ def create_cublet_regions(
                     position.ra.to_string(unit=u.hourangle, sep="hms", precision=6),
                     position.dec.to_string(unit=u.deg, sep="dms", precision=5),
                 ),
-                super_weight=size / image.shape[0],
+                super_weight=np.ceil(size * padding)
+                / np.ceil(image.shape[0] * padding),
                 peak=float(peak),
             )
         )

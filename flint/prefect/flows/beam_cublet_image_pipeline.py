@@ -18,7 +18,12 @@ from eye_patch.naming import FITSMaskNames
 from prefect import flow
 
 from flint.configuration import get_options_from_strategy, load_strategy_yaml
-from flint.cublet.islands import CubletRegion, find_cublet_regions, round_threshold
+from flint.cublet.islands import (
+    CubletRegion,
+    find_cublet_regions,
+    masked_peak,
+    round_threshold,
+)
 from flint.cublet.reordered import link_reordered_files
 from flint.cublet.sourcelist import concatenate_source_lists
 from flint.imager.wsclean import WSCleanResult
@@ -54,7 +59,7 @@ class BeamCubletOptions(BaseOptions):
     column: str = "CORRECTED_DATA"
     """The column to image"""
     residual_column: str = "CUBLET_RESIDUAL"
-    """The column the data less the components of all islands is written to"""
+    """The column the data less the components of all islands is written to. Even rounds write to a second column with an ``_ALT`` suffix, so that no round subtracts from the column it reads"""
     rounds: int = 2
     """Number of times every island is imaged, with the components subtracted in between"""
     round_gain: float = 0.8
@@ -73,6 +78,17 @@ class BeamCubletOptions(BaseOptions):
     """Reorder the visibilities once a round, and share them between the islands"""
     work_dir: Path | None = None
     """Where island masks, component lists and reordered visibilities are kept. It has to be seen by every worker, and inside the wsclean container. Defaults to a ``cublet`` folder beside the measurement set"""
+
+
+class IslandImage(BaseOptions):
+    """What a round of imaging an island gives"""
+
+    region: CubletRegion
+    """The island, with its peak set to what is left of it"""
+    tag: str
+    """Name of the image, which is unique to the island and round"""
+    source_list: Path | None = None
+    """The clean components found"""
 
 
 @task
@@ -107,12 +123,13 @@ def task_image_island(
     temp_dir: Path,
     save_reordered: bool = False,
     seed_dir: Path | None = None,
-) -> WSCleanResult:
+) -> IslandImage:
     """Image one island. With a ``seed_dir`` its reordered visibilities are used."""
     if seed_dir is not None:
         link_reordered_files(seed_dir=seed_dir, target_dir=temp_dir, ms_path=ms.path)
 
-    island_options = dict(update_wsclean_options)
+    # The rounds are the major cycles, so wsclean need not predict its own model
+    island_options = {"mgain": 1.0, **update_wsclean_options}
     island_options.update(
         size=region.size,
         shift=region.shift,
@@ -129,36 +146,51 @@ def task_image_island(
         reuse_reordered=seed_dir is not None,
     )
     try:
-        return task_wsclean_imager.fn(
+        wsclean_result = task_wsclean_imager.fn(
             in_ms=ms,
             wsclean_container=wsclean_container,
             update_wsclean_options=island_options,
             fits_mask=region.fits_mask,
         )
     finally:
-        # Each island writes a model the size of the visibilities
         if seed_dir is not None:
             shutil.rmtree(temp_dir, ignore_errors=True)
+
+    image_set = wsclean_result.image_set
+    assert image_set is not None, "No images from wsclean"
+
+    # The MFS residual is the last, and the only one flint keeps
+    peak = region.peak
+    if image_set.residual and region.fits_mask:
+        peak = masked_peak(
+            image_fits=image_set.residual[-1],
+            mask_fits=region.fits_mask.mask_fits or region.fits_mask.scale_mask_fits,
+        )
+
+    return IslandImage(
+        region=region.with_options(peak=peak),
+        tag=name_suffix,
+        source_list=image_set.source_list,
+    )
 
 
 @task
 def task_concatenate_source_lists(
-    wsclean_results: list[WSCleanResult],
+    island_images: list[IslandImage],
     output: Path,
     earlier_source_list: Path | None = None,
 ) -> Path | None:
-    """Add the components of a round of island images to those of earlier rounds"""
+    """Join the components of a round of island images, after those of earlier rounds if given"""
     source_lists = []
     tags = []
     if earlier_source_list is not None:
         source_lists.append(earlier_source_list)
         tags.append("")
-    for wsclean_result in wsclean_results:
-        image_set = wsclean_result.image_set
-        if image_set is None or image_set.source_list is None:
+    for island_image in island_images:
+        if island_image.source_list is None:
             continue
-        source_lists.append(image_set.source_list)
-        tags.append(f"{wsclean_result.options.flint_name_suffix}")
+        source_lists.append(island_image.source_list)
+        tags.append(island_image.tag)
 
     return concatenate_source_lists(source_lists=source_lists, tags=tags, output=output)
 
@@ -209,6 +241,10 @@ def flow_beam_cublet_image(beam_cublet_options: BeamCubletOptions) -> None:
         strategy=strategy, operation="cubletisland", mode="wsclean"
     )
     peak = regions[0].peak
+    residual_columns = (
+        beam_cublet_options.residual_column,
+        f"{beam_cublet_options.residual_column}_ALT",
+    )
     round_ms: Any = ms
     source_list: Path | None = None
 
@@ -251,27 +287,38 @@ def flow_beam_cublet_image(beam_cublet_options: BeamCubletOptions) -> None:
             )
 
         round_source_list = task_concatenate_source_lists.submit(
-            wsclean_results=island_results,  # type: ignore[arg-type]
+            island_images=island_results,  # type: ignore[arg-type]
             output=work_dir / f"{ms.path.stem}.round{round_number}-sources.txt",
-            earlier_source_list=source_list,
         ).result()
         task_remove_files_folders.submit(round_dir, wait_for=island_results)
         if round_source_list is None:
             logger.warning(f"No components found in round {round_number}, stopping")
             break
-        source_list = round_source_list
 
-        # Always the sum of all components from the original data, so that the
-        # errors of a round are not carried into the next
+        # Kept for the record. Only the components of this round are predicted
+        source_list = task_concatenate_source_lists.submit(
+            island_images=island_results,  # type: ignore[arg-type]
+            output=work_dir / f"{ms.path.stem}.rounds1to{round_number}-sources.txt",
+            earlier_source_list=source_list,
+        ).result()
+
+        # What is left of each island decides whether a later round images it
+        imaged = {
+            island_image.region.idx: island_image.region
+            for island_image in (future.result() for future in island_results)
+        }
+        regions = [imaged.get(region.idx, region) for region in regions]
+
         predicted_ms = task_crystalball_to_ms.submit(
-            ms=ms,
+            ms=round_ms,
             crystalball_options=CrystalBallOptions(),
-            wsclean_source_list_path=source_list,
+            wsclean_source_list_path=round_source_list,
         )
+        # A rerun of the subtraction must not subtract twice, so it never
+        # writes to the column it reads
         round_ms = task_subtract_model_from_ms.submit(
             ms=predicted_ms,
-            data_column=beam_cublet_options.column,
-            output_column=beam_cublet_options.residual_column,
+            output_column=residual_columns[(round_number - 1) % 2],
             update_tracked_column=True,
             chunk_size=1000,
         )
