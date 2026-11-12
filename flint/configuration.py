@@ -57,6 +57,7 @@ KNOWN_OPERATIONS = (
     "polarisation",
     "rmsynth",
     "cubletimage",
+    "cubletisland",
 )
 FORMAT_VERSION = 0.2
 MODE_OPTIONS_MAPPING = {

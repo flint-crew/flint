@@ -610,6 +610,34 @@ def test_flint_name_suffix_accepts_letters_and_digits():
     assert WSCleanOptions().flint_name_suffix is None
 
 
+def test_island_options_to_cli():
+    """The options a small shifted image needs reach the wsclean command"""
+    options = WSCleanOptions(
+        shift=("12h00m00.000000s", "-30d00m00.00000s"),
+        super_weight=0.125,
+        save_reordered=True,
+        reuse_reordered=True,
+    )
+    cmds = [
+        _resolve_wsclean_key_value_to_cli_str(key, getattr(options, key)).cmd
+        for key in ("shift", "super_weight", "save_reordered", "reuse_reordered")
+    ]
+    assert cmds == [
+        "-shift 12h00m00.000000s -30d00m00.00000s",
+        "-super-weight 0.125",
+        "-save-reordered",
+        "-reuse-reordered",
+    ]
+
+    # None are passed unless asked for
+    defaults = WSCleanOptions()
+    for key in ("shift", "super_weight", "save_reordered", "reuse_reordered"):
+        assert (
+            _resolve_wsclean_key_value_to_cli_str(key, getattr(defaults, key)).cmd
+            is None
+        )
+
+
 def test_resolve_key_value_to_cli():
     """The wsclean command generation operates over keys and values, and
     the formatting is partly based on the type a value has. This goes through

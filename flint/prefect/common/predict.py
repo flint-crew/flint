@@ -21,7 +21,11 @@ from flint.sky_model import SkyModel, SkyModelOptions, create_sky_model
 
 
 @task
-def task_crystalball_to_ms(ms: MS, crystalball_options: CrystalBallOptions) -> MS:
+def task_crystalball_to_ms(
+    ms: MS,
+    crystalball_options: CrystalBallOptions,
+    wsclean_source_list_path: Path | None = None,
+) -> MS:
     """Predict model visibilities into a measurement set using a previously constructed
     blackboard sky model. See ``wsclean -save-source-list`. This used the ``crystalball``
     python package, which under the hood taps into the same dask task runner running
@@ -32,6 +36,7 @@ def task_crystalball_to_ms(ms: MS, crystalball_options: CrystalBallOptions) -> M
     Args:
         ms (MS): The measurement set where model visibilities will be predicted into.
         crystalball_options (CrystalBallOptions): Options around the crystal ball operation
+        wsclean_source_list_path (Path | None, optional): The source list to predict. If None it is found from the name of the MS. Defaults to None.
 
     Returns:
         MS: An updated MS with the model column set
@@ -49,6 +54,7 @@ def task_crystalball_to_ms(ms: MS, crystalball_options: CrystalBallOptions) -> M
         return crystalball_predict(
             ms=ms,
             crystalball_options=crystalball_options,
+            wsclean_source_list_path=wsclean_source_list_path,
             dask_client=client,
             output_column="MODEL_DATA",
         )

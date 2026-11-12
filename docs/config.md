@@ -40,6 +40,8 @@ An 'operation' refers to flow context in which a particular tool is being usef. 
 - `stokesv`
 - `subtractcube`
 - `polarisation`
+- `rmsynth`
+- `cubletimage` and `cubletisland` (see [Cublet imaging](cublet.md))
 
 A 'mode' refers to a set of options for a given tool. As of version 0.2, the following 'modes' are supported:
 

@@ -172,6 +172,14 @@ class WSCleanOptions(BaseOptions):
     """Image a set of scans between a lower (inclusive) and upper (exclusive) bound"""
     no_reorder: bool = False
     """If True turn off the reordering of the MS at the beginning of wsclean"""
+    save_reordered: bool = False
+    """Keep the reordered files in ``temp_dir`` when wsclean finishes"""
+    reuse_reordered: bool = False
+    """Read reordered files already in ``temp_dir`` rather than reordering the MS"""
+    shift: tuple[str, str] | None = None
+    """The RA and Dec to centre the image on, which stays on the projection of the phase centre"""
+    super_weight: float | None = None
+    """Factor the weight gridding box is enlarged by. Below one it is shrunk, as needed to weight a small image like a larger one"""
     no_mf_weighting: bool = False
     """Opposite of -ms-weighting; can be used to turn off MF weighting in -join-channels mode"""
     verbose: bool = False

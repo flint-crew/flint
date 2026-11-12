@@ -20,6 +20,7 @@ ionosphere.md
 masking.md
 source_finding.md
 predict.md
+cublet.md
 contributions.md
 ```
 
