@@ -49,13 +49,13 @@ defaults:
     gaintype: G
     nspw: 1
   masking:
-    base_snr_clip: 4
+    base_clip: 4
     flood_fill: true
-    flood_fill_positive_seed_clip: 4.5
-    flood_fill_positive_flood_clip: 1.5
+    seed_clip: 4.5
+    flood_clip: 1.5
     grow_low_snr_island: true
     grow_low_snr_island_clip: 1.75
-    grow_low_snr_island_size: 768
+    grow_low_snr_island_min_pixels: 768
   archive:
     tar_file_re_patterns:
       - .*MFS.*image\.fits
@@ -70,6 +70,11 @@ defaults:
       - .*png
       - .*csv
       - testing_for_sparrow.csv
+  fitscube:
+    bounding_box: true
+    remove_original_images: true
+    compress: true
+    compress_method: pgzip
 
 selfcal:
   0:
@@ -79,8 +84,8 @@ selfcal:
       data_column: "EXAMPLE"
     gaincal: {}
     masking:
-      flood_fill_positive_seed_clip: 40
-      flood_fill_positive_flood_clip: 1.5
+      seed_clip: 40
+      flood_clip: 1.5
   2:
     wsclean:
       multiscale: false
@@ -102,9 +107,19 @@ polarisation:
   total:
     wsclean:
       squared_channel_joining: false
+      flint_save_mfs_products: true
   linear:
     wsclean:
       join_polarizations: true
       squared_channel_joining: true
   circular:
     wsclean: {}
+
+rmsynth:
+  rmsynth:
+    phi_max_radm2: 1000.0
+    # 'auto', 'per_pixel', or a lambda^2 in m^2
+    lam_sq_0_m2: auto
+  rmclean:
+    auto_mask: 7
+    auto_threshold: 1

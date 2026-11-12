@@ -4,8 +4,11 @@ containers required for flint"""
 from __future__ import annotations
 
 import asyncio
+import platform
 from argparse import ArgumentParser
+from collections.abc import Iterable
 from pathlib import Path
+from typing import Literal, TypeAlias, get_args
 
 from capn_crunch import BaseOptions
 
@@ -82,6 +85,9 @@ LIST_OF_KNOWN_CONTAINERS = (
 KNOWN_CONTAINER_LOOKUP: dict[str, FlintContainer] = {
     v.name: v for v in LIST_OF_KNOWN_CONTAINERS
 }
+
+CpuLevel: TypeAlias = Literal["portable", "x86-64-v3", "x86-64-v4"]
+"""CPU level the containers are built for. Each non-portable level is a tag suffix."""
 
 
 def _sanity_check_containers(
@@ -173,6 +179,73 @@ def verify_known_containers(container_directory: Path | str) -> bool:
     return all(container_valid.values())
 
 
+def parse_cpuinfo_flags(cpuinfo: str) -> set[str]:
+    """Return the CPU flags from the text of ``/proc/cpuinfo``, or an empty set if it has none."""
+    for line in cpuinfo.splitlines():
+        key, _, value = line.partition(":")
+        if key.strip() == "flags":
+            return set(value.split())
+    return set()
+
+
+def cpu_level_from_flags(flags: Iterable[str]) -> CpuLevel:
+    """Return the highest CPU level that a set of ``/proc/cpuinfo`` flags supports."""
+    flags = set(flags)
+    # x86-64-v2 and v3 features as /proc/cpuinfo names them (LZCNT shows up as abm)
+    v3_flags = {
+        *("cx16", "lahf_lm", "popcnt", "sse4_1", "sse4_2", "ssse3"),
+        *("avx", "avx2", "bmi1", "bmi2", "f16c", "fma", "abm", "movbe", "xsave"),
+    }
+    v4_flags = {"avx512f", "avx512bw", "avx512cd", "avx512dq", "avx512vl"}
+
+    if not v3_flags <= flags:
+        return "portable"
+    if not v4_flags <= flags:
+        return "x86-64-v3"
+    return "x86-64-v4"
+
+
+def detect_cpu_level(
+    cpuinfo_path: Path = Path("/proc/cpuinfo"), machine: str | None = None
+) -> CpuLevel:
+    """Return the highest CPU level this machine supports, or ``portable`` if unsure.
+
+    Args:
+        cpuinfo_path (Path, optional): File to read the CPU flags from. Defaults to ``/proc/cpuinfo``.
+        machine (str | None, optional): Machine architecture. Defaults to ``platform.machine()``.
+
+    Returns:
+        CpuLevel: The detected CPU level
+    """
+    machine = machine or platform.machine()
+    if machine.lower() not in ("x86_64", "amd64"):
+        return "portable"
+
+    try:
+        cpuinfo = Path(cpuinfo_path).read_text()
+    except OSError as error:
+        logger.warning(f"Could not read {cpuinfo_path}, using portable: {error}")
+        return "portable"
+
+    return cpu_level_from_flags(parse_cpuinfo_flags(cpuinfo))
+
+
+def resolve_cpu_level(cpu: CpuLevel | Literal["auto"]) -> CpuLevel:
+    """Turn a ``--cpu`` choice into a CPU level, detecting it when ``cpu`` is ``auto``."""
+    if cpu == "auto":
+        cpu_level = detect_cpu_level()
+        logger.info(f"Detected CPU level {cpu_level}")
+        return cpu_level
+    if cpu not in get_args(CpuLevel):
+        raise ValueError(f"{cpu=} is not known. See {get_args(CpuLevel)} or 'auto'")
+    return cpu
+
+
+def get_container_tag(tag: str, cpu_level: CpuLevel) -> str:
+    """Return the container tag for a release ``tag`` built for ``cpu_level``."""
+    return tag if cpu_level == "portable" else f"{tag}-{cpu_level}"
+
+
 async def _pull_and_check_container(
     container_directory: Path,
     known_container: FlintContainer,
@@ -203,18 +276,25 @@ async def _pull_and_check_container(
 
 
 async def download_known_containers_coro(
-    container_directory: Path | str, new_tag: str | None = None
+    container_directory: Path | str,
+    new_tag: str | None = None,
+    cpu: CpuLevel | Literal["auto"] = "portable",
 ) -> tuple[Path, ...]:
     """Download known containers for use throughout flint.
 
     Args:
         container_directory (Path | str): Output directory to store containers. Will be created if necessary.
         new_tag (str, optional): The tag associated with the containers to download. If None the latest image will be downloaded. Defaults to None.
+        cpu (str, optional): CPU level to download the containers for, a ``CpuLevel`` or ``auto``. Defaults to "portable".
 
     Returns:
         tuple[Path, ...]: Paths to all containers downloaded
     """
     container_directory = Path(container_directory)
+    cpu_level = resolve_cpu_level(cpu)
+    cpu_levels = get_args(CpuLevel)
+    if cpu_levels.index(cpu_level) > cpu_levels.index(detect_cpu_level()):
+        logger.warning(f"{cpu_level} containers will not run on this machine's CPU")
 
     if not container_directory.exists():
         logger.info(f"Creating {container_directory=}")
@@ -223,8 +303,11 @@ async def download_known_containers_coro(
     containers_downloaded = []
     coros = []
     for idx, known_container in enumerate(LIST_OF_KNOWN_CONTAINERS):
-        if new_tag is not None:
-            known_container = known_container.with_options(tag=new_tag)
+        known_container = known_container.with_options(
+            tag=get_container_tag(
+                tag=new_tag or known_container.tag, cpu_level=cpu_level
+            )
+        )
         logger.info(
             f"Downloading {idx + 1} of {len(LIST_OF_KNOWN_CONTAINERS)}, container {known_container.name}, tag {known_container.tag}"
         )
@@ -251,7 +334,9 @@ async def download_known_containers_coro(
 
 
 def download_known_containers(
-    container_directory: Path | str, new_tag: str | None = None
+    container_directory: Path | str,
+    new_tag: str | None = None,
+    cpu: CpuLevel | Literal["auto"] = "portable",
 ) -> tuple[Path, ...]:
     """Download known containers for use throughout flint. This
     calls the async enabled download function and blocks until results
@@ -260,13 +345,14 @@ def download_known_containers(
     Args:
         container_directory (Path | str): Output directory to store containers. Will be created if necessary.
         new_tag (str, optional): The tag associated with the containers to download. If None the latest image will be downloaded. Defaults to None.
+        cpu (str, optional): CPU level to download the containers for, a ``CpuLevel`` or ``auto``. Defaults to "portable".
 
     Returns:
         tuple[Path, ...]: Paths to all containers downloaded
     """
     return asyncio.run(
         download_known_containers_coro(
-            container_directory=container_directory, new_tag=new_tag
+            container_directory=container_directory, new_tag=new_tag, cpu=cpu
         )
     )
 
@@ -294,6 +380,17 @@ def get_parser() -> ArgumentParser:
     download_parser.add_argument(
         "--tag", type=str, help="Tag of the containers to download", default=None
     )
+    download_parser.add_argument(
+        "--cpu",
+        choices=(*get_args(CpuLevel), "auto"),
+        default="portable",
+        help=(
+            "CPU level to download the containers for. 'portable' runs on any 64-bit x86 or ARM CPU, "
+            "'x86-64-v3' needs AVX2 and 'x86-64-v4' needs AVX-512. 'auto' picks the highest level "
+            "the machine running this command supports, so on a cluster run it on a compute node, "
+            "not the login node. Existing container files are not replaced."
+        ),
+    )
 
     verify_parser = subparsers.add_parser(
         name="verify", help="Pull each of the known containers"
@@ -315,7 +412,9 @@ def cli() -> None:
         log_known_containers()
     elif args.mode == "download":
         download_known_containers(
-            container_directory=args.container_directory, new_tag=args.tag
+            container_directory=args.container_directory,
+            new_tag=args.tag,
+            cpu=args.cpu,
         )
 
     elif args.mode == "verify":

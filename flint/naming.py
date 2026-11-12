@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
+from enum import StrEnum
 from pathlib import Path
-from typing import Any, Literal, NamedTuple, TypeVar
+from typing import Any, NamedTuple, TypeVar
 
 from flint.exceptions import NamingException
 from flint.logging import logger
@@ -48,7 +49,7 @@ def get_fits_cube_from_paths(paths: list[Path]) -> list[Path]:
     Returns:
         List[Path]: Set of paths matching the search criteria
     """
-    cube_expression = re.compile(r"\.cube\..*fits$")
+    cube_expression = re.compile(r"\.cube\..*fits(\.gz|\.fz)?$")
 
     cube_files = [path for path in paths if bool(cube_expression.search(str(path)))]
 
@@ -270,11 +271,36 @@ def create_image_cube_name(
     return Path(output_cube_name)
 
 
+def pol_name_token(pol: str) -> str:
+    """The field naming the polarisations in file names, e.g. ``xxyy`` for ``xx,yy``"""
+    return pol.lower().replace(",", "")
+
+
+def replace_name_field(path: Path, old: str, new: str) -> Path:
+    """Swap the last dot separated field ``old`` in the name of ``path`` for ``new``.
+
+    The last, as in a flint name only ranges, ``MFS`` and the type follow the
+    polarisation. Raises ``NamingException`` if ``old`` is not a field.
+    """
+    # TODO: Swap fields through ProcessedNameComponents once naming is redeveloped to
+    # funnel all creation and parsing through one place (see the suffixspecrejig
+    # branch). That needs the parser to keep the rest of the name and to rebuild
+    # exactly, and to settle names carrying two channel ranges.
+    fields = path.name.split(".")
+    if old not in fields:
+        msg = f"{old=} is not a field of {path.name}"
+        raise NamingException(msg)
+    index = max(i for i, field in enumerate(fields) if field == old)
+    fields[index] = new
+    return path.with_name(".".join(fields))
+
+
 def create_imaging_name_prefix(
     ms_path: Path,
     pol: str | None = None,
     channel_range: tuple[int, int] | None = None,
     scan_range: tuple[int, int] | None = None,
+    project: str | None = None,
 ) -> str:
     """Given a measurement set and a polarisation, create the naming prefix to be used
     by some imager
@@ -284,14 +310,27 @@ def create_imaging_name_prefix(
         pol (Optional[str], optional): Whether a polarsation is being considered. Defaults to None.
         channel_range (Optional[Tuple[int,int]], optional): The channel range that is going to be imaged. Defaults to none.
         scan_range (Optional[Tuple[int,int]], optional): The scan range that is going to be imaged. Defaults to none.
+        project (Optional[str], optional): The project name to include in the naming. Defaults to None.
 
     Returns:
         str: The constructed string name
     """
 
-    names = [ms_path.stem]
+    name = ms_path.stem
+    processed_name_components = processed_ms_format(in_name=name)
+    if project is not None:
+        assert processed_name_components is not None, (
+            f"Processed name format failed for {name=}"
+        )
+        processed_name_components = processed_name_components._replace(project=project)
+        name = create_path_from_processed_name_components(
+            processed_name_components=processed_name_components
+        ).name
+
+    names = [name]
+
     if pol is not None:
-        names.append(f"{pol.lower()}")
+        names.append(pol_name_token(pol=pol))
     if channel_range is not None:
         names.append(f"ch{channel_range[0]:04}-{channel_range[1]:04}")
     if scan_range is not None:
@@ -300,37 +339,40 @@ def create_imaging_name_prefix(
     return ".".join(names)
 
 
-ResolutionModes = Literal["optimal", "fixed"]
+class ResolutionModes(StrEnum):
+    """The resolution a product is at, as it appears in its file name"""
+
+    OPTIMAL = "optimal"
+    """A single beam solved over the images"""
+    FIXED = "fixed"
+    """A single beam the user asked for"""
+    RAW = "raw"
+    """No common resolution imposed"""
+    NATURAL = "natural"
+    """One beam per channel, so resolution follows frequency"""
+    TOTAL = "total"
+    """One beam covering the whole band"""
 
 
 def get_beam_resolution_str(mode: ResolutionModes, marker: str | None = None) -> str:
-    """Map a beam resolution mode to an appropriate suffix. This
-    is located her in anticipation of other imaging modes.
+    """The filename suffix marking a product at ``mode`` resolution.
 
-    Supported modes are: 'optimal', 'fixed', 'raw'
+    A ``ResolutionModes`` is already its own suffix, so this is only needed to
+    append a ``marker`` or to accept a mode that is still a loose string.
 
     Args:
-        mode (Literal["fixed","optimal"]): The mode of image resolution to use.
-        marker (Optional[str], optional): Append the marker to the end of the returned mode string. If None mode string is returned. Defaults to None.
+        mode (ResolutionModes): The resolution the product is at
+        marker (str | None, optional): Appended to the suffix when given. Defaults to None.
 
     Raises:
         ValueError: Raised when an unrecognised mode is supplied
 
     Returns:
-        str: The appropriate string for mapped mode
+        str: The suffix to use
     """
-    # NOTE: Arguably this is a trash and needless function. Adding it
-    # in case other modes are ever needed or referenced. No idea whether
-    # it will ever been needed and could be removed in future.
-    supported_modes: dict[str, str] = dict(optimal="optimal", fixed="fixed", raw="raw")
-    if mode.lower() not in supported_modes.keys():
-        raise ValueError(
-            f"Received {mode=}, supported modes are {supported_modes.keys()}"
-        )
+    resolution = ResolutionModes(str(mode).lower())
 
-    mode_str = supported_modes[mode.lower()]
-
-    return mode_str + marker if marker else mode_str
+    return f"{resolution}{marker}" if marker else str(resolution)
 
 
 def update_beam_resolution_field_in_path(
@@ -541,6 +583,8 @@ class ProcessedNameComponents(NamedTuple):
     """The sbid of the observation"""
     field: str
     """The name of the field extracted"""
+    project: str | None = None
+    """A specialised project name that might be encoded in the file name. This is not always present. """
     beam: str | None = None
     """The beam of the observation processed"""
     spw: str | None = None
@@ -577,11 +621,13 @@ def processed_ms_format(
     regex = re.compile(
         r"^SB(?P<sbid>[0-9]+)"
         r"\.(?P<field>[^.]+)"
+        r"((\.project-(?P<project>[a-zA-Z0-9]+))?)"
         r"((\.beam(?P<beam>[0-9]+))?)"
         r"((\.spw(?P<spw>[0-9]+))?)"
         r"((\.round(?P<round>[0-9]+))?)"
         r"((\.(?P<pol>(i|q|u|v|xx|yy|xy|yx)+))?)"
         r"((\.ch(?P<chl>([0-9]+))-(?P<chh>([0-9]+)))?)"
+        r"((\.(?P<chidx>[0-9]{4}))?)"
         r"((\.scan(?P<scanl>([0-9]+))-(?P<scanh>([0-9]+)))?)"
     )
     results = regex.match(in_name)
@@ -594,7 +640,15 @@ def processed_ms_format(
 
     logger.debug(f"Matched groups are: {groups}")
 
-    channel_range = (int(groups["chl"]), int(groups["chh"])) if groups["chl"] else None
+    # chidx catches wsclean's own bare per-channel index (e.g. ``.0000``), used
+    # when channels are imaged individually without being grouped into a flint
+    # ch<lo>-<hi> range, as older versions of flint named them
+    if groups["chl"]:
+        channel_range = (int(groups["chl"]), int(groups["chh"]))
+    elif groups["chidx"]:
+        channel_range = (int(groups["chidx"]), int(groups["chidx"]))
+    else:
+        channel_range = None
     scan_range = (
         (int(groups["scanl"]), int(groups["scanh"])) if groups["scanl"] else None
     )
@@ -602,6 +656,7 @@ def processed_ms_format(
     return ProcessedNameComponents(
         sbid=groups["sbid"],
         field=groups["field"],
+        project=groups["project"],
         beam=groups["beam"],
         spw=groups["spw"],
         round=groups["round"],
@@ -631,6 +686,8 @@ def create_path_from_processed_name_components(
         components.append(f"SB{processed_name_components.sbid}")
     if processed_name_components.field is not None:
         components.append(processed_name_components.field)
+    if processed_name_components.project is not None:
+        components.append(f"project-{processed_name_components.project}")
     if processed_name_components.beam is not None:
         components.append(f"beam{int(processed_name_components.beam):02d}")
     if processed_name_components.spw is not None:
@@ -1052,41 +1109,3 @@ def get_aocalibrate_output_path(
     logger.info(f"Constructed {output_path}")
 
     return output_path
-
-
-class FITSMaskNames(NamedTuple):
-    """Contains the names of the FITS images created when creating a mask image/
-    These are only the names, and do not mean that they are necessarily created.
-    """
-
-    mask_fits: Path
-    """Name of the mask FITS file"""
-    signal_fits: Path | None = None
-    """Name of the signal FITS file"""
-    scale_mask_fits: Path | None = None
-    """Path to a FITS file that describes per-scale clean masks. Scales are represented with a bit-mapped values,"""
-
-
-def create_fits_mask_names(
-    fits_image: str | Path, include_signal_path: bool = False
-) -> FITSMaskNames:
-    """Create the names that will be used when generate FITS mask products
-
-    Args:
-        fits_image (Union[str,]Path): Base name of the output files
-        include_signal_path (bool, optional): If True, also include ``signal_fits`` in the output. Defaults to False.
-
-    Returns:
-        FITSMaskNames: collection of names used for the signal and mask FITS images
-    """
-    fits_image = Path(fits_image)
-
-    fits_signal = (
-        fits_image.with_suffix(".signal.fits") if include_signal_path else None
-    )
-    fits_mask = fits_image.with_suffix(".mask.fits")
-    fits_scale_mask = fits_image.with_suffix(".scalemask.fits")
-
-    return FITSMaskNames(
-        signal_fits=fits_signal, mask_fits=fits_mask, scale_mask_fits=fits_scale_mask
-    )

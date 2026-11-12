@@ -10,13 +10,11 @@ import pytest
 from flint.exceptions import NamingException
 from flint.naming import (
     CASDANameComponents,
-    FITSMaskNames,
     ProcessedNameComponents,
     RawNameComponents,
     _rename_linear_to_stokes,
     add_timestamp_to_path,
     casda_ms_format,
-    create_fits_mask_names,
     create_image_cube_name,
     create_imaging_name_prefix,
     create_largest_common_field_name,
@@ -33,9 +31,11 @@ from flint.naming import (
     get_potato_output_base_path,
     get_sbid_from_path,
     get_selfcal_ms_name,
+    pol_name_token,
     processed_ms_format,
     raw_ms_format,
     rename_linear_to_stokes,
+    replace_name_field,
     split_images,
     update_beam_resolution_field_in_path,
 )
@@ -234,6 +234,45 @@ def test_create_path_from_process_named_components_with_scan_range():
     assert ex == out
 
 
+def test_create_path_from_process_named_components_with_project() -> None:
+    """Make sure we can create a name that includes a project field.
+    The one makes sure we can go full circle"""
+    parent = Path("Jacccckkkk/Sparrow")
+    ex = parent / Path(
+        "SB39400.RACS_0000-123.project-pirates.beam33.spw234.round3.i.ch0123-567444.scan0000-0123"
+    )
+    pcn = processed_ms_format(in_name=ex)
+    assert pcn is not None
+    assert pcn.project == "pirates"
+    out = create_path_from_processed_name_components(
+        processed_name_components=pcn, parent_path=parent
+    )
+    assert ex == out
+
+    parent = Path("Jacccckkkk/Sparrow")
+    ex = parent / Path(
+        "SB39400.RACS_0000-123.project-pirates.round3.i.ch0123-0444.scan1234-1236"
+    )
+    pcn = processed_ms_format(in_name=ex)
+    assert pcn is not None
+    assert pcn.project == "pirates"
+    out = create_path_from_processed_name_components(
+        processed_name_components=pcn, parent_path=parent
+    )
+    assert ex == out
+
+    parent = Path("Jacccckkkk/Sparrow")
+    ex = parent / Path("SB39400.RACS_0000-123.project-pirates.round3.scan1234-1236")
+    pcn = processed_ms_format(in_name=ex)
+    assert pcn is not None
+    assert pcn.project == "pirates"
+
+    out = create_path_from_processed_name_components(
+        processed_name_components=pcn, parent_path=parent
+    )
+    assert ex == out
+
+
 def test_processed_name_components_with_scan():
     """See if the scan regex for the processed name behaves"""
     parent = Path("Jacccckkkk/Sparrow")
@@ -281,12 +320,48 @@ def test_create_imaging_name_prefix():
     name = create_imaging_name_prefix(ms_path=ms.path, scan_range=(234, 2345))
     assert name == "SB63789.EMU_1743-51.beam03.round4.scan0234-2345"
 
+    name = create_imaging_name_prefix(ms_path=ms.path, pol="i", project="pol")
+    assert name == "SB63789.EMU_1743-51.project-pol.beam03.round4.i"
+
+
+def test_create_imaging_name_prefix_linear_feeds():
+    """The comma of a list of polarisations does not make it into the name, and
+    the name parses back"""
+    assert pol_name_token(pol="xx,yy") == "xxyy"
+    assert pol_name_token(pol="QU") == "qu"
+
+    ms_path = Path("/Jack/Sparrow/SB63789.EMU_1743-51.beam03.round4.ms")
+    name = create_imaging_name_prefix(ms_path=ms_path, pol="xx,yy")
+    assert name == "SB63789.EMU_1743-51.beam03.round4.xxyy"
+
+    components = processed_ms_format(in_name=name)
+    assert components is not None
+    assert components.pol == "xxyy"
+
+
+def test_replace_name_field():
+    """The last matching field is replaced, which in a flint name is the
+    polarisation rather than any part of the MS name before it"""
+    path = Path("/scratch/SB1.xx.beam00.round1.xx.ch0000-0001.image.fits")
+    assert replace_name_field(path=path, old="xx", new="i") == Path(
+        "/scratch/SB1.xx.beam00.round1.i.ch0000-0001.image.fits"
+    )
+
+
+def test_replace_name_field_missing():
+    path = Path("SB1.F.beam00.round1.i.MFS.image.fits")
+    with pytest.raises(NamingException, match="xx"):
+        replace_name_field(path=path, old="xx", new="yy")
+
 
 def test_get_cube_fits_from_paths():
-    """Identify the files that contain the cube field and are fits"""
+    """Identify the files that contain the cube field and are fits, including
+    compressed cubes produced when FitsCubeOptions.compress is set"""
     files = [
         "SB63789.EMU_1743-51.beam03.round4.i.image.cube.fits",
         "SB63789.EMU_1743-51.beam03.round4.i.image.cube.other.fields.fits",
+        "SB63789.EMU_1743-51.beam03.round4.i.image.cube.compressed.fits.gz",
+        "SB63789.EMU_1743-51.beam03.round4.i.image.cube.tiled.fits.fz",
         "SB63789.EMU_1743-51.beam03.round4.i.MFS.image.optimal.conv.fits",
         "SB63789.EMU_1743-51.beam03.round4.i.MFS.residual.optimal.conv.fits",
         "SB63789.EMU_1743-51.beam03.round4.i.MFS.image.fits",
@@ -296,10 +371,13 @@ def test_get_cube_fits_from_paths():
 
     cube_files = get_fits_cube_from_paths(paths=files)
 
-    assert len(cube_files) == 2
+    assert len(cube_files) == 4
     assert cube_files[0] == Path("SB63789.EMU_1743-51.beam03.round4.i.image.cube.fits")
     assert cube_files[1] == Path(
         "SB63789.EMU_1743-51.beam03.round4.i.image.cube.other.fields.fits"
+    )
+    assert cube_files[2] == Path(
+        "SB63789.EMU_1743-51.beam03.round4.i.image.cube.compressed.fits.gz"
     )
 
 
@@ -359,12 +437,45 @@ def test_get_beam_resolution_str():
     assert "optimal" == get_beam_resolution_str(mode="optimal")
     assert "fixed" == get_beam_resolution_str(mode="fixed")
 
+    # How a cube's beam behaves across the band, rather than how a single beam
+    # was chosen
+    assert "natural" == get_beam_resolution_str(mode="natural")
+    assert "total" == get_beam_resolution_str(mode="total")
+
     assert "raw!" == get_beam_resolution_str(mode="raw", marker="!")
     assert "optimal?" == get_beam_resolution_str(mode="optimal", marker="?")
     assert "fixed." == get_beam_resolution_str(mode="fixed", marker=".")
 
     with pytest.raises(ValueError):
         _ = get_beam_resolution_str("Jack")
+
+
+def test_every_resolution_mode_is_supported():
+    """``ResolutionModes`` is the vocabulary, so nothing in it may be rejected"""
+    from flint.naming import ResolutionModes
+
+    for mode in ResolutionModes:
+        assert get_beam_resolution_str(mode=mode) == mode
+        # A member is already its own suffix, which is the point of the StrEnum
+        assert f"{mode}" == mode.value
+
+
+def test_create_image_cube_name_carries_the_resolution():
+    """The natural and total cubes of one Stokes differ only by resolution, so
+    that has to be in the name or they would collide"""
+    from flint.naming import ResolutionModes
+
+    prefix = Path("SB59058.RACS_1626-84.pol")
+
+    natural = create_image_cube_name(
+        image_prefix=Path(f"{prefix}.{ResolutionModes.NATURAL}"), mode="image"
+    )
+    total = create_image_cube_name(
+        image_prefix=Path(f"{prefix}.{ResolutionModes.TOTAL}"), mode="image"
+    )
+
+    assert natural == Path("SB59058.RACS_1626-84.pol.natural.image.cube.fits")
+    assert total == Path("SB59058.RACS_1626-84.pol.total.image.cube.fits")
 
 
 def test_update_beam_resolution_mode_in_path():
@@ -507,33 +618,6 @@ def test_add_timestamp_to_path():
 
     now_path = add_timestamp_to_path(input_path=example_path)
     assert now_path != expected
-
-
-def test_create_fits_mask_names_no_signal():
-    fits_image = Path("38960/SB38960.RACS_1418-12.noselfcal_linmos.fits")
-
-    result = create_fits_mask_names(fits_image=fits_image, include_signal_path=False)
-    assert isinstance(result, FITSMaskNames)
-    assert isinstance(result.mask_fits, Path)
-    assert result.signal_fits is None
-    assert result.mask_fits == Path(
-        "38960/SB38960.RACS_1418-12.noselfcal_linmos.mask.fits"
-    )
-
-
-def test_create_fits_mask_names():
-    fits_image = Path("38960/SB38960.RACS_1418-12.noselfcal_linmos.fits")
-
-    result = create_fits_mask_names(fits_image=fits_image, include_signal_path=True)
-    assert isinstance(result, FITSMaskNames)
-    assert isinstance(result.signal_fits, Path)
-    assert isinstance(result.mask_fits, Path)
-    assert result.signal_fits == Path(
-        "38960/SB38960.RACS_1418-12.noselfcal_linmos.signal.fits"
-    )
-    assert result.mask_fits == Path(
-        "38960/SB38960.RACS_1418-12.noselfcal_linmos.mask.fits"
-    )
 
 
 def test_aocalibrate_into_process_ms_format():
@@ -821,6 +905,23 @@ def test_formatted_name_components_wchannelrange():
     assert components.round == "1"
     assert components.pol is None
     assert components.channel_range == (100, 1009)
+
+
+def test_formatted_name_components_wchannelidx():
+    """wsclean's own bare per-channel index (e.g. produced when channels are
+    imaged individually without a flint ch<lo>-<hi> range) should still resolve
+    to a usable channel_range - regression test for the "No channel range in
+    path" crash in transpose_and_sort_channel_images."""
+    ex = "SB56289.RACS_1041+18.beam00.round1.i.0000.image.conv.fits"
+
+    components = processed_ms_format(in_name=ex)
+    assert isinstance(components, ProcessedNameComponents)
+    assert components.sbid == "56289"
+    assert components.field == "RACS_1041+18"
+    assert components.beam == "00"
+    assert components.round == "1"
+    assert components.pol == "i"
+    assert components.channel_range == (0, 0)
 
 
 def test_formatted_name_components_wround():

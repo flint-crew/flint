@@ -81,16 +81,16 @@ defaults:
     gaintype: G
     nspw: 1
   masking:
-    base_snr_clip: 4
+    base_clip: 4
     flood_fill: true
-    flood_fill_positive_seed_clip: 6
-    flood_fill_positive_flood_clip: 1.25
-    flood_fill_use_mac_adaptive_max_depth: 4
-    flood_fill_use_mac_adaptive_skew_delta: 0.025
-    flood_fill_use_mac_adaptive_step_factor: 4
+    seed_clip: 6
+    flood_clip: 1.25
+    mac_adaptive_max_depth: 4
+    mac_adaptive_skew_delta: 0.025
+    mac_adaptive_step_factor: 4
     grow_low_snr_island: false
     grow_low_snr_island_clip: 1.75
-    grow_low_snr_island_size: 12046
+    grow_low_snr_island_min_pixels: 12046
   archive:
     tar_file_re_patterns: !!python/tuple
     - .*round4.*MFS.*(image|residual|model,cube)\.fits
@@ -132,10 +132,10 @@ selfcal:
       uvrange: '>400m'
       nspw: 2
     masking:
-      flood_fill_use_mac: true
-      flood_fill_positive_seed_clip: 1.5
-      flood_fill_positive_flood_clip: 1.2
-      flood_fill_use_mac_box_size: 400
+      use_mac: true
+      seed_clip: 1.5
+      flood_clip: 1.2
+      mac_box_size: 400
   2:
     wsclean:
       auto_mask: 2
@@ -148,10 +148,10 @@ selfcal:
       uvrange: '>400m'
       nspw: 4
     masking:
-      flood_fill_use_mac: true
-      flood_fill_positive_seed_clip: 1.2
-      flood_fill_positive_flood_clip: 1.1
-      flood_fill_use_mac_box_size: 300
+      use_mac: true
+      seed_clip: 1.2
+      flood_clip: 1.1
+      mac_box_size: 300
   3:
     wsclean:
       auto_mask: 2.0
@@ -164,10 +164,10 @@ selfcal:
       uvrange: '>400m'
       nspw: 2
     masking:
-      flood_fill_use_mac: true
-      flood_fill_positive_seed_clip: 1.2
-      flood_fill_positive_flood_clip: 0.8
-      flood_fill_use_mac_box_size: 60
+      use_mac: true
+      seed_clip: 1.2
+      flood_clip: 0.8
+      mac_box_size: 60
   4:
     wsclean:
       auto_mask: 2.0
@@ -179,10 +179,10 @@ selfcal:
       uvrange: '>400m'
       nspw: 2
     masking:
-      flood_fill_use_mac: true
-      flood_fill_positive_seed_clip: 1.2
-      flood_fill_positive_flood_clip: 0.7
-      flood_fill_use_mac_box_size: 60
+      use_mac: true
+      seed_clip: 1.2
+      flood_clip: 0.7
+      mac_box_size: 60
 stokesv:
   wsclean:
     pol: v

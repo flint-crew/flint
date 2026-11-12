@@ -15,17 +15,114 @@ from pydantic import ValidationError
 from flint.calibrate.aocalibrate import ApplySolutions
 from flint.ms import (
     MS,
+    HistoryEntry,
+    add_history_entry,
     check_column_in_ms,
     consistent_channelwise_frequencies,
     copy_and_preprocess_casda_askap_ms,
+    describe_ms,
     find_mss,
     get_phase_dir_from_ms,
     get_times_from_ms,
+    has_history_entry,
+    preprocess_askap_ms,
     remove_columns_from_ms,
     rename_ms_and_columns_for_selfcal,
+    standardise_ms_to_list_ms,
     subtract_model_from_data_column,
 )
 from flint.utils import get_packaged_resource_path
+
+
+def test_standardise_ms_to_list_ms(ms_example) -> None:
+    """Tests around converting a MS to a list of MS"""
+
+    list_ms = standardise_ms_to_list_ms(ms=ms_example)
+    assert isinstance(list_ms, list)
+    assert len(list_ms) == 1
+    assert all(isinstance(_ms, MS) for _ms in list_ms)
+
+    list_ms = standardise_ms_to_list_ms(ms=MS.cast(ms_example))
+    assert isinstance(list_ms, list)
+    assert len(list_ms) == 1
+    assert all(isinstance(_ms, MS) for _ms in list_ms)
+
+
+def test_standardise_ms_to_list_ms_w_has_ms(ms_example) -> None:
+    """A single item carrying an MS, such as an MSSummary, gives back that MS"""
+    ms = MS(path=Path(ms_example), column="DATA")
+    ms_summary = describe_ms(ms=ms, attach_ms=True)
+
+    assert standardise_ms_to_list_ms(ms=ms_summary) == [ms]
+
+
+def test_standardise_ms_to_list_ms_w_list(ms_example) -> None:
+    """Tests around converting a MS to a list of MS. Here input is
+    a list of MSs"""
+
+    list_ms = standardise_ms_to_list_ms(ms=[ms_example, ms_example, ms_example])
+    assert isinstance(list_ms, list)
+    assert len(list_ms) == 3
+    assert all(isinstance(_ms, MS) for _ms in list_ms)
+
+    list_ms = standardise_ms_to_list_ms(
+        ms=[MS.cast(ms_example), ms_example, ms_example]
+    )
+    assert isinstance(list_ms, list)
+    assert len(list_ms) == 3
+    assert all(isinstance(_ms, MS) for _ms in list_ms)
+
+
+def test_standardise_ms_to_list_ms_w_tuple(ms_example) -> None:
+    """Tests around converting a MS to a list of MS. Here input is
+    a list of MSs"""
+
+    list_ms = standardise_ms_to_list_ms(ms=(ms_example, ms_example, ms_example))
+    assert isinstance(list_ms, list)
+    assert len(list_ms) == 3
+    assert all(isinstance(_ms, MS) for _ms in list_ms)
+
+    list_ms = standardise_ms_to_list_ms(
+        ms=(MS.cast(ms_example), ms_example, ms_example)
+    )
+    assert isinstance(list_ms, list)
+    assert len(list_ms) == 3
+    assert all(isinstance(_ms, MS) for _ms in list_ms)
+
+
+def test_mssummary_ms_in_dir(ms_example) -> None:
+    """Make sure that the ms in dir chect in MS.cast continues to trigger"""
+
+    ms = MS.cast(ms_example)
+    summary = describe_ms(ms=ms, attach_ms=True)
+    assert "ms" in dir(summary)
+
+
+def test_mssummary_to_ms_through_cast(ms_example) -> None:
+    """See if the MSSummary with attached ms can be cast to MS"""
+
+    ms = MS.cast(ms_example)
+    summary = describe_ms(ms=ms, attach_ms=True)
+
+    assert summary.ms == ms
+    assert summary.ms is not None
+    ms_new = MS.cast(summary)
+    assert isinstance(ms_new, MS)
+    assert ms == ms_new
+
+
+def test_describe_ms(ms_example) -> None:
+    """Describe the example MS, return a summary with and without the MS attached"""
+
+    ms = MS.cast(ms_example)
+    summary_1 = describe_ms(ms=ms)
+    summary_2 = describe_ms(ms=ms, attach_ms=True)
+
+    assert summary_1.ms is None
+    assert summary_2.ms == ms
+    for summary in (summary_1, summary_2):
+        assert summary.path == ms_example
+        assert summary.beam == 0
 
 
 def test_consistent_channelwise_frequencies():
@@ -65,7 +162,7 @@ def test_find_mss(tmpdir):
         _ = find_mss(mss_parent_path=tmpdir, expected_ms_count=49005)
 
 
-def test_find_mss_withdatacolumn(tmpdir):
+def test_find_mss_withdatacolumn(tmpdir) -> None:
     """Same as above but with setting a data column"""
     tmpdir = Path(tmpdir) / "Another_Pirate"
     for name in range(45):
@@ -141,17 +238,16 @@ def test_copy_preprocess_ms(casda_example, tmpdir, monkeypatch):
     from flint.naming import create_ms_name
     from flint.utils import copy_directory
 
-    # Put the transform MS into place since it is not going to be created
-    # by the skipped singularity run command
-    transform_ms = output_path / (create_ms_name(ms_path=casda_example) + "_transform")
+    # mstransform is not run, so put its output into place instead
+    out_ms = output_path / create_ms_name(ms_path=casda_example)
 
-    runs = []
-    monkeypatch.setattr(
-        "flint.sclient.run_singularity_command",
-        lambda image, command, bind_dirs, *args, **kwargs: runs.append(
-            copy_directory(casda_example, transform_ms)
-        ),
-    )
+    commands = []
+
+    def fake_run(image, command, bind_dirs, *args, **kwargs):
+        commands.append(command)
+        copy_directory(casda_example, out_ms)
+
+    monkeypatch.setattr("flint.sclient.run_singularity_command", fake_run)
 
     new_ms = copy_and_preprocess_casda_askap_ms(
         casda_ms=Path(casda_example),
@@ -159,6 +255,13 @@ def test_copy_preprocess_ms(casda_example, tmpdir, monkeypatch):
         output_directory=output_path,
     )
     _test_the_data(ms=new_ms.path)
+
+    assert new_ms.path == out_ms
+    assert has_history_entry(ms=new_ms, entry=HistoryEntry.ROTATED)
+    assert len(commands) == 1
+    assert f"vis='{casda_example!s}'" in commands[0]
+    assert "INSTRUMENT_DATA" not in _get_columns(ms_path=casda_example)
+    assert not list(output_path.glob("*.ms_transform"))
 
     # When file format not recognised
     with pytest.raises(ValueError):
@@ -169,7 +272,7 @@ def test_copy_preprocess_ms(casda_example, tmpdir, monkeypatch):
         )
 
     # When input directory does not exist
-    with pytest.raises(AssertionError):
+    with pytest.raises(FileNotFoundError):
         copy_and_preprocess_casda_askap_ms(
             casda_ms=Path(
                 "thisdoesnotexist/scienceData.EMU_0529-60.SB50538.EMU_0529-60.beam08_averaged_cal.leakage.ms"
@@ -234,6 +337,60 @@ def test_rename_ms_and_columns_for_selfcal(ms_example, tmpdir):
 
     assert new_ms.path == target
     assert "DATA" in new_colnames
+
+
+def test_preprocess_askap_ms_skip_rotation(ms_example):
+    """Skipping the rotation without transforming the MS returns the MS"""
+    ms = preprocess_askap_ms(ms=ms_example, skip_rotation=True)
+
+    assert ms.path == ms_example
+    assert ms.column == "DATA"
+    assert "INSTRUMENT_DATA" not in _get_columns(ms_path=ms.path)
+
+
+def test_preprocess_askap_ms_does_not_rotate_twice(casda_example):
+    """A rotated MS that has lost INSTRUMENT_DATA, as mstransform does, is not rotated again"""
+    ms = preprocess_askap_ms(ms=casda_example, fix_stokes_factor=True)
+    with table(str(ms.path), ack=False) as tab:
+        rotated_data = tab.getcol("DATA")
+
+    remove_columns_from_ms(ms=ms, columns_to_remove="INSTRUMENT_DATA")
+    ms = preprocess_askap_ms(ms=ms, fix_stokes_factor=True)
+
+    with table(str(ms.path), ack=False) as tab:
+        assert np.array_equal(tab.getcol("DATA"), rotated_data)
+    with table(f"{ms.path!s}/HISTORY", ack=False) as history:
+        assert history.getcol("MESSAGE").count(HistoryEntry.ROTATED) == 1
+
+
+def test_preprocess_askap_ms_not_marked_without_rotation(casda_example, monkeypatch):
+    """The MS is not marked as rotated when fixms writes no corrected column"""
+    monkeypatch.setattr("flint.ms.fix_ms_corrs", lambda **kwargs: None)
+
+    ms = preprocess_askap_ms(ms=casda_example, fix_stokes_factor=True)
+
+    assert not has_history_entry(ms=ms, entry=HistoryEntry.ROTATED)
+
+
+def test_history_entry(casda_example):
+    """Only entries flint added are found, and the table stays readable"""
+    assert not has_history_entry(ms=casda_example, entry=HistoryEntry.ROTATED)
+
+    with table(f"{casda_example!s}/HISTORY", ack=False, readonly=False) as history:
+        history.addrows(1)
+        row = history.nrows() - 1
+        history.putcell("MESSAGE", row, str(HistoryEntry.ROTATED))
+        history.putcell("APPLICATION", row, "another_tool")
+        history.putcell("CLI_COMMAND", row, [""])
+        history.putcell("APP_PARAMS", row, [""])
+    assert not has_history_entry(ms=casda_example, entry=HistoryEntry.ROTATED)
+
+    entry = add_history_entry(ms=casda_example, entry=HistoryEntry.ROTATED)
+    assert entry is HistoryEntry.ROTATED
+    assert has_history_entry(ms=casda_example, entry=HistoryEntry.ROTATED)
+
+    with table(f"{casda_example!s}/HISTORY", ack=False) as history:
+        assert history.getcol("APP_PARAMS")
 
 
 def test_phase_dir(ms_example):

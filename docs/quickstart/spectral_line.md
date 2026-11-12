@@ -71,7 +71,9 @@ In the context of the `subtract_cube_pipeline` context, should multiple `wsclean
 ```{admonition} Caution
 :class: caution
 
-Should configurations like `$MEMDIR` be sure to consider overlapping data and side-effects. For instance, should `wsclean -tmp-dir $SLURM_TEMP_SPACE` be used, be mindful of the clean up operation when the `wsclean` task finishes. Should `$SLURM_TEMP_SPACE` (a imagined variable for this discussion) be used concurrently by many threads in a single `dask-worker` the final move from a single thread will effect data in others still working. Hence, consider `-tmp-dir $SLURM_TEMP_SPACE/$FLINT_UUID`, where `$FLINT_UUID` will trigger a unique identifier to be appended, thus avoiding side-effects.
+Should configurations like `$MEMDIR` be sure to consider overlapping data and side-effects. For instance, should `flint_hold_dir: $SLURM_TEMP_SPACE` be used, be mindful of the clean up operation when the `wsclean` task finishes. The hold directory itself is deleted once its contents have been moved beside the measurement set. Should `$SLURM_TEMP_SPACE` (an imagined variable for this discussion) be used concurrently by many threads in a single `dask-worker` the final move from a single thread will effect data in others still working. Hence, consider `flint_hold_dir: $SLURM_TEMP_SPACE/$FLINT_UUID`, where `$FLINT_UUID` will trigger a unique identifier to be appended, thus avoiding side-effects.
+
+The same applies to `temp_dir`, which falls back to serving as the hold directory when `flint_hold_dir` is not set.
 ```
 
 ## Output data

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import filecmp
+import logging
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
 from flint.configuration import (
+    FORMAT_VERSION,
     Strategy,
     TukeyTractorOptions,
     _create_mode_mapping_defaults,
@@ -15,6 +17,7 @@ from flint.configuration import (
     get_image_options_from_yaml,
     get_options_from_strategy,
     get_selfcal_options_from_yaml,
+    get_selfcal_round_fitscube_options,
     load_strategy_yaml,
     verify_configuration,
     write_strategy_to_yaml,
@@ -154,6 +157,24 @@ def test_copy_and_timestamp(tmpdir):
     assert filecmp.cmp(example, copy_path)
 
 
+@pytest.mark.parametrize(
+    "wsclean_options",
+    [{"pol": "xx"}, {"pol": "xx,xy,yx,yy"}, {"pol": "xx,yy", "save_source_list": True}],
+)
+def test_verify_configuration_unsupported_pol(package_strategy, wsclean_options):
+    """Strategies asking wsclean for products flint can not handle are refused up front"""
+    package_strategy["selfcal"][1]["wsclean"].update(wsclean_options)
+    with pytest.raises(ValueError):
+        verify_configuration(input_strategy=package_strategy)
+
+
+def test_verify_configuration_xx_yy(package_strategy):
+    package_strategy["selfcal"][1]["wsclean"].update(
+        {"pol": "xx,yy", "join_polarizations": True}
+    )
+    assert verify_configuration(input_strategy=package_strategy)
+
+
 def test_verify_options_with_class_operations(package_strategy_operations):
     """Check whether the stokes-v and other operations around the
     verification and extraction of properties"""
@@ -166,6 +187,19 @@ def test_verify_options_with_class_operations(package_strategy_operations):
 
     strategy.pop("ThisOperationDoesNotExists")
     strategy["stokesv"]["wsclean"]["ThisDoesNotExist"] = "123"
+    with pytest.raises(ValueError):
+        verify_configuration(input_strategy=strategy)
+
+
+def test_verify_rejects_a_name_suffix_names_can_not_carry(
+    package_strategy_operations,
+):
+    """A suffix the name parser can not read back is caught when the strategy is
+    loaded, rather than surfacing as missing name fields deep into a run"""
+    strategy = package_strategy_operations
+    verify_configuration(input_strategy=strategy)
+
+    strategy["stokesv"]["wsclean"]["flint_name_suffix"] = "racs_all"
     with pytest.raises(ValueError):
         verify_configuration(input_strategy=strategy)
 
@@ -308,7 +342,7 @@ def test_get_mask_options(package_strategy):
     )
 
     assert isinstance(masking, dict)
-    assert masking["flood_fill_positive_seed_clip"] == 4.5
+    assert masking["seed_clip"] == 4.5
 
     masking2 = get_options_from_strategy(
         strategy=package_strategy, mode="masking", round_info=1, operation="selfcal"
@@ -317,10 +351,10 @@ def test_get_mask_options(package_strategy):
     print(strategy)
 
     assert isinstance(masking2, dict)
-    assert masking2["flood_fill_positive_seed_clip"] == 40
+    assert masking2["seed_clip"] == 40
 
     for k in masking.keys():
-        if k == "flood_fill_positive_seed_clip":
+        if k == "seed_clip":
             continue
 
         assert masking[k] == masking2[k]
@@ -335,17 +369,17 @@ def test_get_mask_options_from_path(package_strategy_path):
     )
 
     assert isinstance(masking, dict)
-    assert masking["flood_fill_positive_seed_clip"] == 4.5
+    assert masking["seed_clip"] == 4.5
 
     masking2 = get_options_from_strategy(
         strategy=package_strategy, mode="masking", round_info=1, operation="selfcal"
     )
 
     assert isinstance(masking2, dict)
-    assert masking2["flood_fill_positive_seed_clip"] == 40
+    assert masking2["seed_clip"] == 40
 
     for k in masking.keys():
-        if k == "flood_fill_positive_seed_clip":
+        if k == "seed_clip":
             continue
 
         assert masking[k] == masking2[k]
@@ -395,6 +429,56 @@ def test_max_round_override(package_strategy):
     )
     assert isinstance(opts, dict)
     assert opts["data_column"] == "TheLastRoundIs3"
+
+
+def test_get_selfcal_round_fitscube_options_final_round(package_strategy):
+    # a final round should honour a configured compress=True as-is
+    opts = get_selfcal_round_fitscube_options(
+        strategy=package_strategy,
+        operation="selfcal",
+        current_round=2,
+        final_round=True,
+    )
+    assert opts["compress"] is False
+
+
+def test_get_selfcal_round_fitscube_options_non_final_round_forces_off(
+    package_strategy, caplog
+):
+    """A final round cube must never be compressed, as it will be split into planes for co-addition.
+    So if a non-final round requests compress=True, it is ignored and a warning is logged."""
+    with caplog.at_level(logging.WARNING, logger="flint"):
+        opts = get_selfcal_round_fitscube_options(
+            strategy=package_strategy,
+            operation="selfcal",
+            current_round=1,
+            final_round=True,
+        )
+    assert opts["compress"] is False
+    assert "compress=True" in caplog.text
+
+    # The early rounds do not need to be disabled, so the value of True does not need
+    # to be modified
+    opts = get_selfcal_round_fitscube_options(
+        strategy=package_strategy,
+        operation="selfcal",
+        current_round=1,
+        final_round=False,
+    )
+    assert opts["compress"] is True
+
+
+def test_get_selfcal_round_fitscube_options_no_compress_no_warning(strategy, caplog):
+    # nothing to warn about if compress was never requested in the first place
+    with caplog.at_level(logging.WARNING, logger="flint"):
+        opts = get_selfcal_round_fitscube_options(
+            strategy=strategy,
+            operation="selfcal",
+            current_round=0,
+            final_round=False,
+        )
+    assert opts.get("compress", False) is False
+    assert "compress=True" not in caplog.text
 
 
 def test_empty_options(package_strategy):
@@ -543,3 +627,90 @@ def test_polarisation_options(package_strategy_polarisation):
         polarisation="circular",
     )
     assert circular_options["pol"] == "v"
+
+
+def test_polarisation_fitscube_sibling_mode(package_strategy_polarisation) -> None:
+    """A mode (e.g. fitscube) may sit directly under the polarisation operation,
+    as a sibling of the total/linear/circular polarisation types, and should
+    verify cleanly rather than being mistaken for an unsupported polarisation."""
+    strategy = package_strategy_polarisation
+    # exercise the sibling-key path directly, not just the defaults-inherited
+    # fitscube options, so a regression to the old "every key is a polarisation"
+    # validation would actually be caught here
+    strategy["polarisation"]["fitscube"] = {
+        "compress": True,
+        "compress_method": "gzip",
+    }
+
+    verify_configuration(input_strategy=strategy)
+
+    fitscube_options = get_options_from_strategy(
+        strategy=strategy,
+        operation="polarisation",
+        mode="fitscube",
+    )
+    assert fitscube_options["compress"]
+    assert fitscube_options["compress_method"] == "gzip"
+
+
+def test_polarisation_spice_sibling_mode(package_strategy_polarisation) -> None:
+    """spice, like fitscube, sits directly under the polarisation operation
+    as a sibling of the total/linear/circular polarisation types."""
+    strategy = package_strategy_polarisation
+    strategy["polarisation"]["spice"] = {
+        "n_beamwidths": 2.0,
+    }
+
+    verify_configuration(input_strategy=strategy)
+
+    spice_options = get_options_from_strategy(
+        strategy=strategy,
+        operation="polarisation",
+        mode="spice",
+    )
+    assert spice_options["n_beamwidths"] == 2.0
+
+
+def test_verify_polarisation_catches_bad_override(
+    package_strategy_polarisation,
+) -> None:
+    """verify_configuration must check the actual per-polarisation override, not
+    just the defaults, else a bad field nested under a polarisation type would
+    silently pass verification."""
+    strategy = package_strategy_polarisation
+    verify_configuration(input_strategy=strategy)
+
+    strategy["polarisation"]["linear"]["wsclean"]["ThisDoesNotExist"] = "123"
+    with pytest.raises(ValueError):
+        verify_configuration(input_strategy=strategy)
+
+    strategy["polarisation"]["linear"]["wsclean"].pop("ThisDoesNotExist")
+    strategy["polarisation"]["ThisIsNotAPolarisationOrMode"] = {}
+    with pytest.raises(ValueError):
+        verify_configuration(input_strategy=strategy)
+
+
+def test_dp3_options_from_strategy():
+    """DP3 modes are verified and looked up per self-calibration round"""
+    strategy = Strategy(
+        {
+            "version": FORMAT_VERSION,
+            "defaults": {"dp3ddecal": {"solint": 6}, "dp3applycal": {}},
+            "selfcal": {1: {"dp3ddecal": {"mode": "diagonal"}}},
+        }
+    )
+    assert verify_configuration(input_strategy=strategy)
+
+    ddecal = get_options_from_strategy(
+        strategy=strategy, mode="dp3ddecal", round_info=1, operation="selfcal"
+    )
+    assert ddecal == {"solint": 6, "mode": "diagonal"}
+
+    strategy["defaults"]["dp3ddecal"]["not_a_dp3_key"] = 1
+    with pytest.raises(ValueError):
+        verify_configuration(input_strategy=strategy)
+
+    del strategy["defaults"]["dp3ddecal"]["not_a_dp3_key"]
+    strategy["selfcal"][1]["dp3ddecal"]["mode"] = "scalarphse"
+    with pytest.raises(ValueError):
+        verify_configuration(input_strategy=strategy)

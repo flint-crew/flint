@@ -7,6 +7,10 @@ logging.captureWarnings(True)
 logger = logging.getLogger("flint")
 logger.setLevel(logging.INFO)
 
+# fitscube leaves its logger level unset, so under prefect it takes the root
+# logger's WARNING and its progress messages are dropped
+logging.getLogger("fitscube").setLevel(logging.INFO)
+
 # Create console handler and set level to debug
 ch = logging.StreamHandler()
 ch.setLevel(logging.DEBUG)

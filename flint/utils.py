@@ -5,6 +5,7 @@ for general usage.
 from __future__ import annotations
 
 import datetime
+import importlib.resources
 import os
 import shutil
 import signal
@@ -14,7 +15,7 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 from socket import gethostname
-from typing import Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import astropy.units as u
 import numpy as np
@@ -22,9 +23,11 @@ from astropy.coordinates import SkyCoord
 from astropy.io import fits
 from astropy.wcs import WCS
 
-from flint.convol import BeamShape
 from flint.exceptions import TimeLimitException
 from flint.logging import logger
+
+if TYPE_CHECKING:
+    from flint.convol import BeamShape
 
 # TODO: This Captain is aware that there is a common fits getheader between
 # a couple of functions that interact with tasks. Perhaps a common FITS properties
@@ -373,6 +376,8 @@ def get_beam_shape(fits_path: Path) -> BeamShape | None:
         Optional[BeamShape]: Shape of the beam stored in the FITS image. None is returned if the beam is not found.
     """
 
+    from flint.convol import BeamShape  # pipeline dependencies; keeps utils core-only
+
     header = fits.getheader(filename=fits_path)
 
     if not all([key in header for key in ("BMAJ", "BMIN", "BPA")]):
@@ -431,12 +436,7 @@ def get_packaged_resource_path(package: str, filename: str) -> Path:
         Path: The absolute path to the packaged resource file
     """
     logger.info(f"Loading {package=} for {filename=}")
-    try:
-        import importlib_resources as importlib_resources
-    except ImportWarning:
-        from importlib import resources as importlib_resources
-
-    p = importlib_resources.files(package)
+    p = importlib.resources.files(package)
     logger.info(f"{p=}")
     full_path = Path(p) / filename  # type: ignore
 
@@ -635,7 +635,9 @@ def estimate_image_centre(image_path: Path) -> SkyCoord:
 
 
 def zip_folder(
-    in_path: Path, out_zip: Path | None = None, archive_format: str = "tar"
+    in_path: Path,
+    out_zip: Path | None = None,
+    archive_format: str = "tar",
 ) -> Path:
     """Zip a directory and remove the original.
 
@@ -643,7 +645,6 @@ def zip_folder(
         in_path (Path): The path that will be zipped up.
         out_zip (Path, optional): Name of the output file. A `archive_format` extension will be added by `shutil.make_archive`. Defaults to None.
         archive_format (str, optional): The format of the archive. See `shutil.make_archive`. Defaults to "tar".
-
     Returns:
         Path: the path of the compressed zipped folder
     """

@@ -12,10 +12,10 @@ from __future__ import annotations
 import shutil
 from argparse import ArgumentParser
 from contextlib import contextmanager
-from curses.ascii import controlnames
+from enum import StrEnum
 from os import PathLike
 from pathlib import Path
-from typing import NamedTuple, cast
+from typing import TypeAlias, cast
 
 import astropy.units as u
 import numpy as np
@@ -25,41 +25,21 @@ from casacore.tables import table, taql
 from fixms.fix_ms_corrs import fix_ms_corrs
 from fixms.fix_ms_dir import fix_ms_dir
 
+from flint import __version__
 from flint.casa import copy_with_mstranform
 from flint.logging import logger
 from flint.naming import create_ms_name
-from flint.options import MS
-from flint.utils import copy_directory, rsync_copy_directory
-
-
-class MSSummary(NamedTuple):
-    """Small structure to contain overview of a MS"""
-
-    unflagged: int
-    """Number of unflagged records"""
-    flagged: int
-    """Number of flagged records"""
-    flag_spectrum: np.ndarray
-    """Flagged spectral channels"""
-    fields: list[str]
-    """Collection of unique field names from the FIELDS table"""
-    ants: list[int]
-    """Collection of unique antennas"""
-    beam: int
-    """The ASKAP beam number of the measurement set"""
-    path: Path
-    """Path to the measurement set that is being represented"""
-    phase_dir: SkyCoord
-    """The phase direction of the measurement set, which will be where the image will be centred"""
-    spw: int | None = None
-    """Intended to be used with ASKAP high-frequency resolution modes, where the MS is divided into SPWs"""
-
+from flint.options import MS, MSSummary, standardise_ms_to_list_ms
+from flint.utils import rsync_copy_directory
 
 # TODO: Some common MS validation functions?
 # - list / number of fields
 # - new name function (using names / beams)
 # - check to see if fix_ms_dir / fix_ms_corrs
 # - delete column/rename column
+
+# Prohibits auto-removal
+_ = (standardise_ms_to_list_ms,)
 
 
 @contextmanager
@@ -269,6 +249,7 @@ def get_telescope_location_from_ms(ms: MS | Path) -> EarthLocation:
     return pos
 
 
+# TODO: Use fixms version for consistency
 def get_pol_axis_from_ms(
     ms: MS | Path, feed_idx: int | None = None, col: str = "RECEPTOR_ANGLE"
 ) -> u.Quantity:
@@ -317,14 +298,53 @@ def get_pol_axis_from_ms(
     return pol_ang
 
 
+def get_pol_axis_as_rad(ms: MS | Path) -> float:
+    """Get the rotation of the third-axis out of the measurement set.
+    It prioritises the information updated by `fixms` to handle
+    instances where data have been rotated to sky-frame. The order
+    of the columns searched from the FEED table are:
+
+    >>> INSTRUMENT_RECEPTOR_ANGLE
+    >>> RECEPTOR_ANGLE
+
+    Further the object returned is in radians and stripped
+    from the astropy units meta-data.
+
+    Args:
+        ms (MS | Path): The MS to examine
+
+    Returns:
+        float: The rotation of the third-axis in radians.
+    """
+    ms = MS.cast(ms=ms)
+
+    # The INSTRUMENT_RECEPTOR_ANGLE comes from fixms and is
+    # inserted to preserve the original orientation.
+
+    try:
+        pol_axis = get_pol_axis_from_ms(ms=ms, col="INSTRUMENT_RECEPTOR_ANGLE")
+
+        logger.info(f"INSTRUMENT_RECEPTOR_ANGLE obtained pol_axis={pol_axis}")
+    except ValueError:
+        pol_axis = get_pol_axis_from_ms(ms=ms, col="RECEPTOR_ANGLE")
+
+        # The prefect logger (or maybe the logger in general) does not render the quantity
+        logger.info(f"RECEPTOR_ANGLE obtained pol_axis={pol_axis}")
+
+    return pol_axis.to(u.rad).value
+
+
 # TODO: Inline with other changing conventions this should be
 # changed to `create_ms_summary`
-def describe_ms(ms: MS | Path, verbose: bool = False) -> MSSummary:
+def describe_ms(
+    ms: MS | Path, verbose: bool = False, attach_ms: bool = False
+) -> MSSummary:
     """Print some basic information from the inpute measurement set.
 
     Args:
         ms (Union[MS,Path]): Measurement set to inspect
         verbose (bool, optional): Log MS options to the flint logger. Defaults to False.
+        attach_ms (bool, optional): If True, attach the input MS that was used to generate the summary. Defaults to False.
 
     Returns:
         MSSummary: Brief overview of the MS.
@@ -350,6 +370,12 @@ def describe_ms(ms: MS | Path, verbose: bool = False) -> MSSummary:
     beam_no = get_beam_from_ms(ms=ms)
     phase_dir = get_phase_dir_from_ms(ms=ms)
 
+    ms_times = get_times_from_ms(ms=ms)
+    ms_times = Time([ms_times.min(), ms_times.max()])
+    integration = ms_times.ptp().to(u.second).value
+    location = get_telescope_location_from_ms(ms=ms)
+    pol_axis = get_pol_axis_as_rad(ms=ms)
+
     if verbose:
         logger.info(f"Inspecting {ms.path}.")
         logger.info(f"Contains: {colnames}")
@@ -368,6 +394,11 @@ def describe_ms(ms: MS | Path, verbose: bool = False) -> MSSummary:
         beam=beam_no,
         path=ms.path,
         phase_dir=phase_dir,
+        ms=ms if attach_ms else None,
+        ms_times=ms_times,
+        integration=integration,
+        location=location,
+        pol_axis=pol_axis,
     )
 
 
@@ -542,7 +573,7 @@ def consistent_channelwise_frequencies(
 
     freqs_are_same = np.all(freqs - freqs[0, None] == 0, axis=1)
     assert len(freqs_are_same.shape) == 1, (
-        f"Channelwise check should be length 1, but have {freqs_are_same.shaope=}"
+        f"Channelwise check should be length 1, but have {freqs_are_same.shape=}"
     )
     return freqs_are_same
 
@@ -719,6 +750,64 @@ def subtract_model_from_data_column(
     return ms
 
 
+class HistoryEntry(StrEnum):
+    """Steps flint records in the HISTORY table of a measurement set"""
+
+    ROTATED = "flint: rotated the visibilities to the sky frame with fixms"
+    """Visibilities rotated from the instrument frame to the sky frame by fixms"""
+    IONOSPHERE_CORRECTED = "flint: corrected ionospheric Faraday rotation with spinifex"
+    """Ionospheric Faraday rotation removed into a separate column"""
+
+
+def add_history_entry(ms: MS | Path, entry: HistoryEntry) -> HistoryEntry:
+    """Add a flint entry to the HISTORY table of a measurement set.
+
+    Args:
+        ms (MS | Path): The measurement set to add the entry to
+        entry (HistoryEntry): The step to record
+
+    Returns:
+        HistoryEntry: The entry that was recorded
+    """
+    ms = MS.cast(ms)
+    row_values = {
+        "TIME": (Time.now().mjd * u.day).to_value(u.s),
+        "OBSERVATION_ID": 0,
+        "MESSAGE": str(entry),
+        "PRIORITY": "NORMAL",
+        "ORIGIN": f"flint-{__version__}",
+        "APPLICATION": "flint",
+        # An empty list would stop casacore reading these columns with getcol
+        "CLI_COMMAND": [""],
+        "APP_PARAMS": [""],
+    }
+    with table(f"{ms.path!s}/HISTORY", ack=False, readonly=False) as history:
+        history.addrows(1)
+        row = history.nrows() - 1
+        for column, value in row_values.items():
+            history.putcell(column, row, value)
+
+    return entry
+
+
+def has_history_entry(ms: MS | Path, entry: HistoryEntry) -> bool:
+    """Whether the HISTORY table of a measurement set holds a flint entry.
+
+    Entries written by other software with the same message are ignored.
+
+    Args:
+        ms (MS | Path): The measurement set to inspect
+        entry (HistoryEntry): The step to look for
+
+    Returns:
+        bool: Whether flint has recorded `entry` in the HISTORY table
+    """
+    ms = MS.cast(ms)
+    with table(f"{ms.path!s}/HISTORY", ack=False) as history:
+        rows = zip(history.getcol("APPLICATION"), history.getcol("MESSAGE"))
+        return ("flint", str(entry)) in rows
+
+
 # TODO: Clean up the usage and description of the argument `instrument_column`
 # as it is currently being used in unclear ways. Specifically there is a renaming
 # of the data_column to instrument_column before the rotation of things
@@ -753,7 +842,7 @@ def preprocess_askap_ms(
         overwrite (bool, optional): If the `instrument_column` and `data_column` both exist and `overwrite=True` the `data_column` will be overwritten. Otherwise, a `ValueError` is raised. Defaults to True.
         skip_rotation (bool, optional): If true, the visibilities are not rotated Defaults to False.
         fix_stokes_factor (bool, optional): Apply the stokes scaling factor (aruses in different definition of Stokes between Ynadasoft and other applications) when rotation visibilities. This should be set to False is the bandpass solutions have already absorded this scaling term. Defaults to False.
-        apply_ms_transform (bool, optional): If True, the MS will be transformed using the `casa_container` provided. Defaults to False.
+        apply_ms_transform (bool, optional): If True, the MS will be rewritten with mstransform using the `casa_container` provided. CASDA MSs need this, as software built against newer casacore (e.g. wsclean) misreads them. Defaults to False.
         casa_container (Path, optional): The path to the CASA container that will be used to transform the MS. Defaults to None.
         rename (bool, optional): If True, the MS will be renamed to a Flint-processed name. Defaults to False.
 
@@ -771,11 +860,14 @@ def preprocess_askap_ms(
             raise ValueError(
                 "apply_ms_transform=True, but no casa_container provided. "
             )
-        corrected_ms_path = copy_with_mstranform(
-            casa_container=casa_container,
-            ms_path=ms.path,
-        )
-        ms = MS.cast(corrected_ms_path)
+        copy_with_mstranform(casa_container=casa_container, ms_path=ms.path)
+
+    # mstransform drops the INSTRUMENT_DATA column that otherwise stops a
+    # second rotation, so the HISTORY table is checked too
+    rotate = not skip_rotation
+    if rotate and has_history_entry(ms=ms, entry=HistoryEntry.ROTATED):
+        logger.warning(f"{ms.path} has already been rotated, not rotating again.")
+        rotate = False
 
     logger.info(f"Will be running ASKAP MS conversion operations against {ms.path!s}.")
     logger.info("Correcting directions. ")
@@ -793,37 +885,30 @@ def preprocess_askap_ms(
             if not overwrite:
                 raise ValueError(msg)
 
-        if (
-            not skip_rotation
-            and data_column in colnames
-            and instrument_column not in colnames
-        ):
+        if rotate and instrument_column not in colnames:
             logger.info(f"Renaming {data_column} to {instrument_column}.")
             tab.renamecol(data_column, instrument_column)
-
-        tab.flush()
 
     logger.info("Correcting the field table. ")
     fix_ms_dir(ms=str(ms.path))
 
-    if skip_rotation:
+    if rotate:
+        logger.info("Applying rotation matrix to correlations. ")
+        logger.info(
+            f"Rotating visibilities for {ms.path} with data_column={instrument_column} and corrected_data_column={data_column}"
+        )
+        fix_ms_corrs(
+            ms=ms.path,
+            data_column=instrument_column,
+            corrected_data_column=data_column,
+            fix_stokes_factor=fix_stokes_factor,
+        )
+        # fix_ms_corrs can return quietly without writing data_column
+        if check_column_in_ms(ms=ms, column=data_column):
+            add_history_entry(ms=ms, entry=HistoryEntry.ROTATED)
+    else:
         # TODO: Should we copy the DATA to INSTRUMENT_DATA?
-        ms = MS.cast(corrected_ms_path)
         logger.info("Skipping the rotation of the visibilities. ")
-        ms = ms.with_options(column=data_column)
-        logger.info(f"Returning {ms=}.")
-        return cast(MS, ms)
-
-    logger.info("Applying rotation matrix to correlations. ")
-    logger.info(
-        f"Rotating visibilities for {ms.path} with data_column={instrument_column} and corrected_data_column={data_column}"
-    )
-    fix_ms_corrs(
-        ms=ms.path,
-        data_column=instrument_column,
-        corrected_data_column=data_column,
-        fix_stokes_factor=fix_stokes_factor,
-    )
 
     if rename:
         logger.info("Renaming the measurement set.")
@@ -858,35 +943,37 @@ def copy_and_preprocess_casda_askap_ms(
 
     Args:
         casda_ms (Union[MS, Path]): The measurement set to preprocess
+        casa_container (Path): Path to the container with CASA tooling, used to run mstransform
         data_column (str, optional): The column with data to preprocess. Defaults to "DATA".
         instrument_column (str, optional): The name of the column to be created with data in the instrument frame. Defaults to "INSTRUMENT_DATA".
-        fix_stokes_factor (bool, optional): Whether to scale the visibilities to account for the factor of 2 error. Defaults to True.
         output_directory (Path, optional): The output directory that the preprocessed MS will be placed into. Defaults to Path("./").
+
+    Raises:
+        FileNotFoundError: Raised if `casa_container` or `casda_ms` does not exist
+        ValueError: Raised if `data_column` is not in `casda_ms`
 
     Returns:
         MS: a corrected and preprocessed measurement set
     """
     ms = MS.cast(casda_ms)
 
-    if casa_container is None:
-        raise TypeError(f"{casa_container=}, which is bad.")
     if not Path(casa_container).exists():
         raise FileNotFoundError(f"{casa_container=} does not exist")
 
-    # TODO: This could probably be replaced with the mstransform?
-    # Save the extra hit to disk later on.
     out_ms_path = output_directory / create_ms_name(ms_path=ms.path)
-    if ms.path != out_ms_path:
-        logger.info(f"New MS name: {out_ms_path}")
-        out_ms_path = copy_directory(
-            input_directory=ms.path, output_directory=out_ms_path
-        )
+    if not ms.path.exists():
+        raise FileNotFoundError(f"{ms.path} does not exist")
+    if not check_column_in_ms(ms=ms, column=data_column):
+        raise ValueError(f"Column {data_column} not found in {ms.path!s}")
 
-        ms = ms.with_options(path=out_ms_path)
-
-    logger.info(
-        f"Will be running CASDA ASKAP MS conversion operations against {ms.path!s}."
+    logger.info(f"New MS name: {out_ms_path}")
+    # CASDA MSs are written by a different casacore version, and software
+    # built against newer casacore (e.g. wsclean) hits odd "bad value" errors
+    # reading them. Rewriting the MS with mstransform avoids this.
+    copy_with_mstranform(
+        casa_container=casa_container, ms_path=ms.path, output_ms_path=out_ms_path
     )
+    ms = ms.with_options(path=out_ms_path)
 
     return preprocess_askap_ms(
         ms=ms,
@@ -895,8 +982,6 @@ def copy_and_preprocess_casda_askap_ms(
         overwrite=True,
         skip_rotation=False,  # CASDA always requires rotation
         fix_stokes_factor=True,  # CASDA always requires fixing the factor of 2
-        apply_ms_transform=True,  # CASDA MSs often need the silly mstranform applied
-        casa_container=casa_container,
         rename=False,  # We have already renamed the MS
     )
 
@@ -959,7 +1044,7 @@ def rename_ms_and_columns_for_selfcal(
             tab.renamecol(oldname=corrected_data, newname=data)
         elif (
             corrected_data in colnames
-            and data not in controlnames
+            and data not in colnames
             and corrected_data != data
         ):
             logger.info(f"Renaming {corrected_data=} to {data=}")
@@ -985,6 +1070,10 @@ def rename_ms_and_columns_for_selfcal(
     )
 
     return ms.with_options(path=target, column=data)
+
+
+MSsByBeam: TypeAlias = tuple[tuple[MS, ...], ...]
+"""Per-beam groups of MS (e.g. one group per beam, each containing the MS/s that make up that beam)"""
 
 
 def find_mss(

@@ -9,8 +9,10 @@ from typing import Literal, NamedTuple
 
 import numpy as np
 from astropy.io import fits
+from astropy.stats import mad_std
 from capn_crunch import BaseOptions, add_options_to_parser, create_options_from_parser
 
+from flint.exceptions import ShapeMismatchError
 from flint.logging import logger
 from flint.naming import LinmosNames, create_linmos_names, extract_beam_from_name
 from flint.sclient import run_singularity_command
@@ -55,21 +57,36 @@ class LinmosOptions(BaseOptions):
     """Overwrite the linmos parset file generated if it exists. Defaults to False."""
     remove_original_images: bool = False
     """Delete the images that were coaddede together. Defaults to False."""
+    regrid_method: Literal["nearest", "linear", "cubic", "lanczos"] = "cubic"
+    """Interpolation linmos regrids the inputs with. Its own default, 'linear', suppresses the peak of a source. Defaults to 'cubic'."""
 
 
-class BoundingBox(NamedTuple):
+class BoundingBox(BaseOptions):
     """Simple container to represent a bounding box"""
 
     xmin: int
     """Minimum x pixel"""
     xmax: int
-    """Maximum x pixel"""
+    """Maximum x pixel, exclusive (i.e. slice ready)"""
     ymin: int
     """Minimum y pixel"""
     ymax: int
-    """Maximum y pixel"""
+    """Maximum y pixel, exclusive (i.e. slice ready)"""
     original_shape: tuple[int, int]
     """The original shape of the image. If constructed against a cube this is the shape of a single plane."""
+
+    def clip(self) -> BoundingBox | None:
+        """Clip to ``original_shape``, or None if the box falls entirely off it
+
+        Returns:
+            BoundingBox | None: The clipped box, or None if nothing remains
+        """
+        ny, nx = self.original_shape
+        xmin, xmax = max(0, self.xmin), min(ny, self.xmax)
+        ymin, ymax = max(0, self.ymin), min(nx, self.ymax)
+        if xmin >= xmax or ymin >= ymax:
+            return None
+        return self.with_options(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax)
 
 
 class LinmosParsetSummary(NamedTuple):
@@ -111,12 +128,17 @@ def _create_bound_box_plane(
     x_valid = np.any(image_valid, axis=1)
     y_valid = np.any(image_valid, axis=0)
 
-    # Now get the first and last index
+    # Now get the first and last index. The maxima are made exclusive so that
+    # slicing with them retains the last valid row/column
     xmin, xmax = np.where(x_valid)[0][[0, -1]]
     ymin, ymax = np.where(y_valid)[0][[0, -1]]
 
     return BoundingBox(
-        xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax, original_shape=image_data.shape[-2:]
+        xmin=int(xmin),
+        xmax=int(xmax) + 1,
+        ymin=int(ymin),
+        ymax=int(ymax) + 1,
+        original_shape=image_data.shape[-2:],
     )
 
 
@@ -140,39 +162,47 @@ def create_bound_box(image_data: np.ndarray, is_masked: bool = False) -> Boundin
     reshaped_image_data = image_data.reshape((-1, *image_data.shape[-2:]))
     logger.info(f"New image shape {reshaped_image_data.shape} from {image_data.shape}")
 
-    bounding_boxes = [
+    maybe_bounding_boxes = [
         _create_bound_box_plane(image_data=image, is_masked=is_masked)
         for image in reshaped_image_data
     ]
-    bounding_boxes = [bb for bb in bounding_boxes if bb is not None]
+    bounding_boxes = [bb for bb in maybe_bounding_boxes if bb is not None]
 
     if len(bounding_boxes) == 0:
         logger.info("No valid bounding box found. Constructing one for all pixels")
         return BoundingBox(
             xmin=0,
-            xmax=image_data.shape[-1] - 1,
+            xmax=image_data.shape[-2],
             ymin=0,
-            ymax=image_data.shape[-2] - 1,
+            ymax=image_data.shape[-1],
             original_shape=tuple(image_data.shape[-2:]),  # type: ignore
         )
-    elif len(bounding_boxes) == 1:
-        assert bounding_boxes[0] is not None, "This should not happen"
-        return bounding_boxes[0]
 
-    assert all([bb is not None for bb in bounding_boxes])
+    return _merge_bound_boxes(bounding_boxes=bounding_boxes)
 
-    logger.info(
-        f"Boounding boxes across {len(bounding_boxes)} constructed. Finsing limits. "
-    )
-    # The type ignores below are to avoid mypy believe bound_boxes could
-    # include None. The above checks should be sufficient
-    xmin = min([bb.xmin for bb in bounding_boxes])  # type: ignore
-    xmax = max([bb.xmax for bb in bounding_boxes])  # type: ignore
-    ymin = min([bb.ymin for bb in bounding_boxes])  # type: ignore
-    ymax = max([bb.ymax for bb in bounding_boxes])  # type: ignore
+
+def _merge_bound_boxes(bounding_boxes: Collection[BoundingBox]) -> BoundingBox:
+    """Construct the bounding box that encloses all input bounding boxes.
+
+    Args:
+        bounding_boxes (Collection[BoundingBox]): The boxes to merge together
+
+    Returns:
+        BoundingBox: The smallest box containing all inputs
+    """
+    logger.info(f"Merging {len(bounding_boxes)} bounding boxes")
+
+    original_shapes = {bb.original_shape[-2:] for bb in bounding_boxes}
+    if len(original_shapes) > 1:
+        msg = f"Bounding boxes constructed against differing shapes: {original_shapes=}"
+        raise ShapeMismatchError(msg)
 
     return BoundingBox(
-        xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax, original_shape=image_data.shape
+        xmin=min([bb.xmin for bb in bounding_boxes]),
+        xmax=max([bb.xmax for bb in bounding_boxes]),
+        ymin=min([bb.ymin for bb in bounding_boxes]),
+        ymax=max([bb.ymax for bb in bounding_boxes]),
+        original_shape=original_shapes.pop(),
     )
 
 
@@ -183,6 +213,42 @@ class TrimImageResult(NamedTuple):
     """The path to the trimmed image"""
     bounding_box: BoundingBox
     """The bounding box that was applied to the image"""
+
+
+def _blank_zeros(data: np.ndarray) -> int:
+    """Blank linmos' 0.0 padding in place, returning how many pixels were blanked"""
+    blank = data == 0.0
+    data[blank] = np.nan
+    return int(np.sum(blank))
+
+
+def blank_zero_pixels(image_path: Path) -> Path:
+    """Blank a linmos image's 0.0 padding, leaving its pixel grid alone.
+
+    linmos writes 0.0 where the primary beam falls below its cutoff, which is a
+    blank rather than a measurement. Left as 0.0 it convolves into the data as
+    though it were one, smearing the mosaic edge into small non-zero values that
+    nothing downstream can separate from real faint pixels; blanked, the
+    convolution carries the mask and the edge stays sharp.
+
+    ``trim_fits_image`` blanks as well, but the cube path turns trimming off to
+    keep every channel on one pixel grid, so the blanking cannot ride with it.
+
+    Args:
+        image_path (Path): The FITS image to blank, modified in place
+
+    Returns:
+        Path: The blanked image
+    """
+    with fits.open(image_path) as fits_image:
+        data = fits_image[0].data  # type: ignore
+        header = fits_image[0].header  # type: ignore
+        n_blanked = _blank_zeros(data)
+
+    logger.info(f"Blanked {n_blanked} pixels with values of 0.0 in {image_path.name}")
+    fits.writeto(filename=image_path, data=data, header=header, overwrite=True)
+
+    return image_path
 
 
 def trim_fits_image(
@@ -206,8 +272,7 @@ def trim_fits_image(
 
         # 0.0 is not a real number, blank them out so the border
         # can be computed and trimmed correctly.
-        logger.info("Blanking pixels with values of 0.0.")
-        data[data == 0.0] = np.nan
+        logger.info(f"Blanked {_blank_zeros(data)} pixels with values of 0.0.")
 
         image_shape = data.shape[-2:]
         logger.info(f"The image dimensions are: {image_shape}")
@@ -251,38 +316,35 @@ def _get_image_weight_plane(
     Args:
         image_data (np.ndarray): Data to consider
         mode (str, optional): Statistic computation mode. Defaults to "mad".
-        stride (int, optional): Include every n'th pixel when computing the weight. '1' includes all pixels. Defaults to 1.
+        stride (int, optional): Include every n'th pixel when computing the weight. '1' includes all pixels. Defaults to 4.
 
     Raises:
-        ValueError: Raised when modes unknown
+        ValueError: Raised when mode is unknown
 
     Returns:
-        float: The inverse variance weight computerd
+        float: The inverse variance weight computed
     """
 
     weight_modes = ("mad", "std")
-    assert mode in weight_modes, (
-        f"Invalid {mode=} specified. Available modes: {weight_modes}"
-    )
+    if mode not in weight_modes:
+        raise ValueError(f"Invalid {mode=} specified. Available modes: {weight_modes}")
 
-    # remove non-finite numbers that would ruin the statistic
-    image_data = image_data[np.isfinite(image_data)][::stride]
+    # Drop non-finite values that would ruin the statistic
+    image_data = image_data[::stride]
+    image_data = image_data[np.isfinite(image_data)]
 
-    if np.all(~np.isfinite(image_data)):
+    if image_data.size == 0:
         return 0.0
 
     if mode == "mad":
-        median = np.median(image_data)
-        mad = np.median(np.abs(image_data - median))
-        weight = 1.0 / mad**2
-    elif mode == "std":
-        std = np.std(image_data)
-        weight = 1.0 / std**2
-    else:
-        raise ValueError(f"Invalid {mode=} specified. Available modes: {weight_modes}")
+        rms = mad_std(image_data, ignore_nan=True)
+    else:  # mode == "std"
+        rms = np.nanstd(image_data)
 
-    float_weight = float(weight)
-    return float_weight if np.isfinite(float_weight) else 0.0
+    # Force RMS to 0 if close
+    rms = 0.0 if np.isclose(rms, 0.0) else rms
+    weight = float(1.0 / (rms**2) if rms > 0.0 else 0.0)
+    return weight if np.isfinite(weight) else 0.0
 
 
 def get_image_weight(
@@ -403,13 +465,42 @@ def generate_weights_list_and_files(
     return tuple(weight_file_list)
 
 
+def compute_pb_rotation_alpha(pol_axis: float) -> float:
+    """Compute the differential rotation, in radians, between a field's
+    third-axis orientation and the frame the holography cube was measured
+    in. The typical holography rotation is -45 degs. Internally the
+    `alpha` term is computed as:
+
+    >>> pol_axis - EXPECTED_HOLOGRAPHY_ROTATION_CONSTANT_RADIANS
+
+    Used both to build linmos's `ASKAP_PB.alpha` option (`_get_alpha_linmos_option`)
+    and to directly sample a holography cube's response for a rotated field
+    (`flint.misc.holo.sample_beam_response`).
+
+    Args:
+        pol_axis (float): The prescribed polarisation axis value described in a MS, in radians.
+
+    Returns:
+        float: The differential rotation, in radians
+    """
+    assert np.abs(pol_axis) <= 2.0 * np.pi, (
+        f"{pol_axis=}, which is outside +/- 2pi radians and seems unreasonable"
+    )
+
+    logger.info(
+        f"The constant assumed holography rotation is: {EXPECTED_HOLOGRAPHY_ROTATION_CONSTANT_RADIANS:.4f} radians"
+    )
+    logger.info(f"The extracted pol_axis of the field: {pol_axis:.4f} radians")
+    alpha = pol_axis - EXPECTED_HOLOGRAPHY_ROTATION_CONSTANT_RADIANS
+    logger.info(f"Differential rotation is: {alpha} rad")
+
+    return alpha
+
+
 def _get_alpha_linmos_option(pol_axis: float | None = None) -> str:
     """Compute the appropriate alpha term for linmos that is used to
     describe the differential rotation of the ASKAP third-axis and the
-    footprint layout. The typical holography rotation is -45 degs. Internally
-    the `alpha` term is computed as:
-
-    >>> pol_axis - EXPECTED_HOLOGRAPHY_ROTATION_CONSTANT_RADIANS
+    footprint layout. See `compute_pb_rotation_alpha`.
 
     Args:
         pol_axis (Optional[float], optional): The prescribed polarisation axis value described in a MS. Defaults to None.
@@ -425,16 +516,7 @@ def _get_alpha_linmos_option(pol_axis: float | None = None) -> str:
     if pol_axis is None:
         return ""
 
-    assert np.abs(pol_axis) <= 2.0 * np.pi, (
-        f"{pol_axis=}, which is outside +/- 2pi radians and seems unreasonable"
-    )
-
-    logger.info(
-        f"The constant assumed holography rotation is: {EXPECTED_HOLOGRAPHY_ROTATION_CONSTANT_RADIANS:.4f} radians"
-    )
-    logger.info(f"The extracted pol_axis of the field: {pol_axis:.4f} radians")
-    alpha = pol_axis - EXPECTED_HOLOGRAPHY_ROTATION_CONSTANT_RADIANS
-    logger.info(f"Differential rotation is: {alpha} rad")
+    alpha = compute_pb_rotation_alpha(pol_axis=pol_axis)
 
     return f"linmos.primarybeam.ASKAP_PB.alpha = {alpha} # in radians\n"
 
@@ -559,6 +641,7 @@ def generate_linmos_parameter_set(
         f"linmos.beams            = {beam_order_list}\n"
         # f"linmos.beamangle        = {beam_angle_list}\n"
         f"linmos.imagetype        = fits\n"
+        f"linmos.regrid.method    = {linmos_options.regrid_method}\n"
         f"linmos.outname          = {parent_dir / linmos_names.image_fits.stem!s}\n"
         f"linmos.outweight        = {parent_dir / linmos_names.weight_fits.stem!s}\n"
         f"# For ASKAPsoft>1.3.0\n"
@@ -688,13 +771,19 @@ def linmos_images(
         weight_fits=linmos_names.weight_fits.absolute(),
     )
 
-    # Trim the fits image to remove empty pixels
+    # The 0.0 padding is blanked before anything convolves or measures a noise
+    # off it. `trim_fits_image` blanks as it finds the box to trim to, but a cube
+    # is built with trimming off, so its planes are blanked on their own. The
+    # untrimmed weights are left alone, since they are never convolved and a
+    # zero weight is a real one.
     if linmos_options.trim_linmos_fits:
         image_trim_results = trim_fits_image(image_path=linmos_names.image_fits)
         trim_fits_image(
             image_path=linmos_names.weight_fits,
             bounding_box=image_trim_results.bounding_box,
         )
+    else:
+        blank_zero_pixels(image_path=linmos_names.image_fits)
 
     if linmos_options.cleanup:
         _linmos_cleanup(linmos_parset_summary=linmos_parset_summary)

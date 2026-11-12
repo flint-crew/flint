@@ -12,15 +12,32 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from eye_patch.options import MaskingOptions
 from jolly_roger.tractor import TukeyTractorOptions
+from pydantic import ValidationError
 
+from flint.dp3 import (
+    DP3AOFlaggerOptions,
+    DP3ApplyCalOptions,
+    DP3DDECalOptions,
+    DP3GainCalOptions,
+    DP3PreFlaggerOptions,
+)
 from flint.imager.wsclean import WSCleanOptions
 from flint.logging import logger
-from flint.masking import MaskingOptions
+from flint.misc.holo import ConcatHoloOptions
 from flint.naming import add_timestamp_to_path
-from flint.options import ArchiveOptions, FitsCubeOptions
+from flint.options import (
+    ArchiveOptions,
+    FFTBANEOptions,
+    FitsCubeOptions,
+    RMCleanOptions,
+    RMSynthOptions,
+    SpiceOptions,
+)
 from flint.peel.potato import PotatoPeelOptions
 from flint.selfcal.casa import GainCalOptions
+from flint.sky_model import SkyModelOptions
 from flint.source_finding.aegean import AegeanOptions, BANEOptions
 
 # TODO: It feels like that the standard of this strategy file should
@@ -33,7 +50,14 @@ from flint.source_finding.aegean import AegeanOptions, BANEOptions
 # Known headers must **always** be present in the strategy file
 KNOWN_HEADERS = ("defaults", "version")
 # Known options are optional, but if present must be in the correct format
-KNOWN_OPERATIONS = ("selfcal", "stokesv", "subtractcube", "polarisation", "cubletimage")
+KNOWN_OPERATIONS = (
+    "selfcal",
+    "stokesv",
+    "subtractcube",
+    "polarisation",
+    "rmsynth",
+    "cubletimage",
+)
 FORMAT_VERSION = 0.2
 MODE_OPTIONS_MAPPING = {
     "wsclean": WSCleanOptions,
@@ -45,6 +69,18 @@ MODE_OPTIONS_MAPPING = {
     "potatopeel": PotatoPeelOptions,
     "fitscube": FitsCubeOptions,
     "tukeytractor": TukeyTractorOptions,
+    "skymodel": SkyModelOptions,
+    "rmsynth": RMSynthOptions,
+    "rmclean": RMCleanOptions,
+    # "bane" is the containerised aegean BANE; this is the FFT one in flint.bane
+    "fftbane": FFTBANEOptions,
+    "concatholo": ConcatHoloOptions,
+    "spice": SpiceOptions,
+    "dp3preflagger": DP3PreFlaggerOptions,
+    "dp3aoflagger": DP3AOFlaggerOptions,
+    "dp3ddecal": DP3DDECalOptions,
+    "dp3gaincal": DP3GainCalOptions,
+    "dp3applycal": DP3ApplyCalOptions,
 }
 POLARISATION_MAPPING = {
     "total": "i",
@@ -353,6 +389,62 @@ def get_options_from_strategy(
         logger.debug(f"Updating options with {update_options=}")
         options.update(update_options)
 
+    if polarisation is not None and mode == "wsclean":
+        # Hardcoded to keep parallel imaging of all Stokes/MSs safe and to
+        # avoid spurious spectral fitting / source lists on Q, U and V.
+        hardcoded_options: dict[str, Any] = {"no_update_model_required": True}
+        if polarisation == "linear":
+            hardcoded_options["fit_spectral_pol"] = None
+        if polarisation in ("linear", "circular"):
+            hardcoded_options["save_source_list"] = False
+
+        for key, value in hardcoded_options.items():
+            if key in options and options[key] != value:
+                logger.warning(
+                    f"Requested {key}={options[key]!r} for {polarisation=} wsclean "
+                    f"options is not supported. Hardcoding to {value!r}."
+                )
+        options.update(hardcoded_options)
+
+    return options
+
+
+def get_selfcal_round_fitscube_options(
+    strategy: Strategy | None | Path,
+    operation: str,
+    current_round: int,
+    final_round: bool,
+) -> dict[str, Any]:
+    """Fetch round-scoped ``fitscube`` options, forcing `compress` off on the
+    final round of self-calibration. These per-beam cubes could be split into
+    individual planes for per-plane linmos, and additional compression breaks
+    the splitting process. So `compress` is only ever honoured for rounds
+    of self-calibration where the per-beam cubes are not combined.
+
+    Args:
+        strategy (Union[Strategy,None,Path]): A loaded strategy file, or None/Path.
+        operation (str): The operation scope to draw from, e.g. "selfcal".
+        current_round (int): The self-calibration round these options are for.
+        final_round (bool): Whether `current_round` is the last round.
+
+    Returns:
+        dict[str, Any]: Fitscube option overrides, with `compress` forced
+            to `False` when `final_round` is `True`.
+    """
+    options = get_options_from_strategy(
+        strategy=strategy,
+        operation=operation,
+        mode="fitscube",
+        round_info=current_round,
+    )
+    if final_round and options.get("compress"):
+        logger.warning(
+            f"{current_round=} requests compress=True, but since {final_round=} "
+            " then these cubes may be split into individual planes for subsequent co-addition. "
+            "Setting compress=False for this round."
+        )
+        options = {**options, "compress": False}
+
     return options
 
 
@@ -387,9 +479,9 @@ def verify_configuration(input_strategy: Strategy, raise_on_error: bool = True) 
                     options = input_strategy["defaults"][default_options]
                     try:
                         _ = MODE_OPTIONS_MAPPING[default_options](**options)
-                    except TypeError as typeerror:
+                    except (TypeError, ValidationError) as error:
                         errors.append(
-                            f"{default_options=} mode in defaults incorrectly formed. {typeerror} "
+                            f"{default_options=} mode in defaults incorrectly formed. {error} "
                         )
                 except Exception as exception:
                     errors.append(f"{exception}")
@@ -427,34 +519,58 @@ def verify_configuration(input_strategy: Strategy, raise_on_error: bool = True) 
                     )
                     try:
                         _ = MODE_OPTIONS_MAPPING[mode](**options)
-                    except TypeError as typeerror:
+                    except (TypeError, ValidationError) as error:
                         errors.append(
-                            f"{mode=} mode in {round_info=} incorrectly formed. {typeerror} "
+                            f"{mode=} mode in {round_info=} incorrectly formed. {error} "
                         )
                 except Exception as exception:
                     errors.append(f"{exception}")
 
     if "polarisation" in input_strategy:
         _supported_polarisations = tuple(POLARISATION_MAPPING.keys())
-        polarisations = input_strategy["polarisation"].keys()
-        for polarisation in polarisations:
-            if polarisation not in _supported_polarisations:
-                errors.append(f"{polarisation=} not in {_supported_polarisations}. ")
-            for mode in input_strategy["polarisation"][polarisation]:
+        for key in input_strategy["polarisation"]:
+            if key in _supported_polarisations:
+                # A polarisation type (e.g. total/linear/circular) containing modes
+                # (e.g. wsclean) that are scoped to that polarisation
+                for mode in input_strategy["polarisation"][key]:
+                    try:
+                        options = get_options_from_strategy(
+                            strategy=input_strategy,
+                            operation="polarisation",
+                            mode=mode,
+                            polarisation=key,
+                        )
+                        try:
+                            _ = MODE_OPTIONS_MAPPING[mode](**options)
+                        except (TypeError, ValidationError) as error:
+                            errors.append(
+                                f"{mode=} mode in polarisation={key!r} incorrectly formed. {error} "
+                            )
+                    except Exception as exception:
+                        errors.append(f"{exception}")
+            elif key in MODE_OPTIONS_MAPPING:
+                # A mode (e.g. fitscube) applied across all polarisations, sitting
+                # directly under the polarisation operation rather than nested
+                # inside a polarisation type
                 try:
                     options = get_options_from_strategy(
                         strategy=input_strategy,
                         operation="polarisation",
-                        mode=mode,
+                        mode=key,
                     )
                     try:
-                        _ = MODE_OPTIONS_MAPPING[mode](**options)
-                    except TypeError as typeerror:
+                        _ = MODE_OPTIONS_MAPPING[key](**options)
+                    except (TypeError, ValidationError) as error:
                         errors.append(
-                            f"{mode=} mode in {round_info=} incorrectly formed. {typeerror} "
+                            f"{key=} mode in operation='polarisation' incorrectly formed. {error} "
                         )
                 except Exception as exception:
                     errors.append(f"{exception}")
+            else:
+                errors.append(
+                    f"{key=} is not a supported polarisation {_supported_polarisations} "
+                    f"or mode {tuple(MODE_OPTIONS_MAPPING.keys())} under 'polarisation'. "
+                )
 
     test_operations = KNOWN_OPERATIONS
     for operation in test_operations:
@@ -469,17 +585,17 @@ def verify_configuration(input_strategy: Strategy, raise_on_error: bool = True) 
                     )
                     try:
                         _ = MODE_OPTIONS_MAPPING[mode](**options)
-                    except TypeError as typeerror:
+                    except (TypeError, ValidationError) as error:
                         errors.append(
-                            f"{mode=} mode in {operation=} incorrectly formed. {typeerror} "
+                            f"{mode=} mode in {operation=} incorrectly formed. {error} "
                         )
                 except Exception as exception:
                     errors.append(f"{exception}")
 
     valid_config = len(errors) == 0
     if not valid_config:
-        for error in errors:
-            logger.warning(error)
+        for message in errors:
+            logger.warning(message)
 
         if raise_on_error:
             raise ValueError("Configuration file not valid. ")

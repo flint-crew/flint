@@ -342,7 +342,8 @@ def get_rms_image_info(rms_path: Path, extract_fraction: float = 0.5) -> RMSImag
 
     with fits.open(rms_path) as rms_image:
         rms_header = rms_image[0].header  # type: ignore
-        rms_data = rms_image[0].data  # type: ignore
+        # flint's FFT BANE keeps the degenerate axes of the image it measured
+        rms_data = np.squeeze(rms_image[0].data)  # type: ignore
 
     logger.info(f"Extracting inner region of {extract_fraction=} for RMS statistics")
     sub_rms_data = extract_inner_image_array_region(
@@ -516,7 +517,7 @@ def plot_rms_map(
     """
 
     # Convert Jy/beam to uJy/beam
-    rms_data = fits.getdata(rms_path) * 1e6  # type: ignore
+    rms_data = np.squeeze(fits.getdata(rms_path)) * 1e6  # type: ignore
 
     # Pirate no believes get below 10uJy/beam mateeey. Percentile a little more
     # robust to outliers but much of a much

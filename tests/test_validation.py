@@ -8,6 +8,7 @@ from typing import NamedTuple
 import matplotlib.pyplot as plt
 import numpy as np
 import pytest
+from astropy.io import fits
 from astropy.table import Table
 
 from flint.utils import get_packaged_resource_path
@@ -19,6 +20,8 @@ from flint.validation import (
     get_parser,
     get_rms_image_info,
     get_source_counts,
+    make_validator_axes_layout,
+    plot_rms_map,
     plot_source_counts,
 )
 
@@ -127,6 +130,30 @@ def test_rms_image_info(rms_path):
     assert np.isclose(0.00015135764, rms_info.minimum, atol=1e-5)
     assert np.isclose(0.0001518184, rms_info.maximum, atol=1e-5)
     assert np.isclose(1.1098655e-07, rms_info.std, atol=1e-5)
+
+
+def test_rms_map_with_degenerate_axes(rms_path, tmp_path):
+    """A map shaped like a wsclean image, as flint's FFT BANE writes it, is read
+    and plotted as the same two-dimensional map"""
+    header = fits.getheader(rms_path)
+    header.update(CTYPE3="FREQ", CRVAL3=1.4e9, CDELT3=1e6, CRPIX3=1.0)
+    header.update(CTYPE4="STOKES", CRVAL4=1.0, CDELT4=1.0, CRPIX4=1.0)
+    degenerate_path = tmp_path / "rms.fits"
+    fits.writeto(degenerate_path, fits.getdata(rms_path)[None, None], header)
+
+    rms_info = get_rms_image_info(rms_path=degenerate_path)
+    flat_info = get_rms_image_info(rms_path=rms_path)
+
+    assert rms_info.shape == flat_info.shape == (10, 15)
+    # A mode per pixel rather than one value is what broke the statistics table
+    assert np.ndim(rms_info.mode) == 0
+    assert rms_info.mode == flat_info.mode
+    assert rms_info.median == flat_info.median
+
+    fig = plt.figure()
+    layout = make_validator_axes_layout(fig=fig, rms_path=degenerate_path)
+    plot_rms_map(fig=fig, ax=layout.ax_rms, rms_path=degenerate_path)
+    plt.close(fig)
 
 
 class Example(NamedTuple):

@@ -15,7 +15,12 @@ from flint.archive import (
     resolve_glob_expressions,
     tar_files_into,
 )
-from flint.options import DEFAULT_TAR_RE_PATTERNS, ArchiveOptions
+from flint.options import (
+    DEFAULT_COPY_RE_PATTERNS,
+    DEFAULT_TAR_RE_PATTERNS,
+    ArchiveOptions,
+)
+from flint.prefect.common.utils import task_archive_sbid
 from flint.utils import get_packaged_resource_path
 
 FILES = [f"some_file_{a:02d}-MFS-image.fits" for a in range(36)] + [
@@ -179,6 +184,24 @@ def test_create_sbid_archive(glob_files):
     assert tarfile.is_tarfile(tar_out_path)
 
 
+def test_archive_sbid_round0(tmp_path):
+    """The products of a round 0, such as a sky-model calibration, are archived when it is the last round"""
+    science_path = tmp_path / "12345"
+    science_path.mkdir()
+    final_ms = science_path / "SB12345.RACS_0000+00.beam00.round0.ms.zip"
+    final_ms.touch()
+    archive_path = tmp_path / "archive"
+    archive_path.mkdir()
+
+    task_archive_sbid.fn(
+        science_folder_path=science_path, archive_path=archive_path, max_round=0
+    )
+
+    (tar_path,) = archive_path.glob("*.tar")
+    with tarfile.open(tar_path) as tar:
+        assert final_ms.name in {Path(name).name for name in tar.getnames()}
+
+
 def test_archive_new_tar_patterns():
     """Some sanity checks around this archive options tuple updating"""
     archive_options = ArchiveOptions()
@@ -207,3 +230,21 @@ def test_archiveoptions_with_options():
 
     new_dict = new_options._asdict()
     assert new_dict["copy_file_re_patterns"] == update_options
+
+
+def test_copy_patterns_match_compressed_cubes(tmp_path):
+    """Compressed linmos and weight cubes are archived like the plain ones"""
+    names = [
+        "SB1.field.i.linmos.fits",
+        "SB1.field.i.linmos.fits.gz",
+        "SB1.field.i.linmos.fits.fz",
+        "SB1.field.i.weight.fits.fz",
+    ]
+    for name in names:
+        (tmp_path / name).touch()
+
+    resolved = resolve_glob_expressions(
+        base_path=tmp_path, file_re_patterns=DEFAULT_COPY_RE_PATTERNS
+    )
+
+    assert sorted(path.name for path in resolved) == sorted(names)

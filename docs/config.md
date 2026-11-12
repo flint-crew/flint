@@ -45,14 +45,16 @@ A 'mode' refers to a set of options for a given tool. As of version 0.2, the fol
 
 - `wsclean` : This corresponds to `flint.imager.wsclean.WSCleanOptions`
 - `gaincal` : This corresponds to `flint.selfcal.casa.GainCalOptions`
-- `masking` : This corresponds to `flint.masking.MaskingOptions`
+- `masking` : This corresponds to `eye_patch.options.MaskingOptions` (see [Creating Clean Masks](masking.md))
 - `archive` : This corresponds to `flint.options.ArchiveOptions`
 - `bane` : This corresponds to `flint.source_finding.aegean.BANEOptions`
 - `aegean` : This corresponds to `flint.source_finding.aegean.AegeanOptions`
 - `potatopeel`: This corresponds to `flint.peel.potato.PotatoPeelOptions`
 - `fitscube`: This correspond to `flint.options.FitsCubeOptions`
+- `dp3preflagger`, `dp3aoflagger`, `dp3ddecal`, `dp3gaincal`, `dp3applycal`: These correspond to the options classes in `flint.dp3` (see [DP3](dp3.md))
 
-To see all the available options you can run `flint_{mode} -h` on the command-line.
+To see all the available options you can run `flint_{mode} -h` on the command-line
+(`eye-patch mask -h` for `masking`).
 All attributes available in the corresponding `Options` class listed above may be
 provided in the strategy YAML file.
 
@@ -66,6 +68,110 @@ As a general rule, the following hierarchy is used to set a value for a given op
 - The default value in the external tool
 
 Note that not all options are available in all of the above locations.
+
+### `wsclean`
+
+#### Imaging XX and YY
+
+Setting `pol: xx,yy` has wsclean deconvolve the XX and YY polarisations
+separately. flint then forms Stokes I = (XX + YY) / 2 from them itself:
+
+```yaml
+selfcal:
+  3:
+    wsclean:
+      pol: xx,yy
+      join_polarizations: true
+    gaincal:
+      calmode: ap
+```
+
+With `pol: i` wsclean predicts the same Stokes I model into both the XX and
+YY correlations of `MODEL_DATA`. That is wrong for bright sources away from
+the beam centre, where the X and Y primary beams differ. Amplitude
+self-calibration then absorbs the difference into the antenna gains. With
+`pol: xx,yy` each correlation is predicted from its own model.
+
+- The Stokes I images are named exactly as a `pol: i` run names them, so every
+  later stage (cubing, convolution, linmos, source finding) is unchanged. The
+  XX and YY images are deleted once Stokes I is formed. Set
+  `flint_keep_linear_images: true` to keep them, for example to inspect the
+  beam's ellipticity.
+- `join_polarizations: true` is recommended. Without it XX and YY are cleaned
+  independently, each with √2 more noise than Stokes I, so each gets a
+  shallower model with its own mask. With it peaks are found in XX² + YY², and
+  the components of both share positions.
+- wsclean grids both polarisations, so expect up to twice the imaging time and
+  temporary disk use.
+- `save_source_list` cannot be used with `pol: xx,yy`. wsclean only saves a
+  source list when a single polarisation is imaged (Stokes I, or a pseudo
+  Stokes I such as XX alone), and refuses to start otherwise. The list would
+  not help in any case: it holds one `I` flux per component, so
+  `update_model_data_with_source_list` would replace the separate XX and YY
+  models with a single unpolarised one.
+- The subtract-cube flow reads the source list from the continuum imaging. If
+  it will be run, keep the final self-cal round at `pol: i` with
+  `save_source_list`, and use `pol: xx,yy` on the earlier rounds.
+- No other feed products are supported. `xx` alone, all four correlations, and
+  circular feeds are refused when the strategy is verified.
+- The `polarisation` operation is unaffected. It always sets `pol` from the
+  polarisation being imaged.
+
+### `fitscube`
+
+In the self-cal flows (`continuum_pipeline`, `racs_all_continuum_selfcal`),
+`fitscube` options are looked up per round like `wsclean`/`gaincal`/
+`masking`: `selfcal.<round>.fitscube` in the strategy file overrides
+`defaults.fitscube` for that round — with one deliberate exception,
+`compress` (see below).
+
+`subtract_cube_pipeline` and `polarisation_pipeline` are not self-cal pipelines so
+a single value from `defaults` (or the `subtractcube`/`polarisation` operation block) is
+used throughout.
+
+#### `compress`
+
+`FitsCubeOptions.compress` compresses a finished cube, in the way set by
+`compress_method`:
+
+- `gzip` / `pgzip` gzip the whole file to `.fits.gz`.
+- `tile-gzip` (lossless) and `tile-rice` (lossy, `compress_quantize_level` steps
+  per noise sigma) write a tile-compressed `.fits.fz`, the format CFITSIO's
+  `fpack` writes. Single channels can be read without decompressing the whole
+  cube, and `tile-rice` is several times smaller than gzip on noise-dominated
+  cubes.
+
+The SPICE stage always compresses, with `SpiceOptions.compress_method`
+(default `tile-gzip`). Under `tile-rice` the weight and background cubes are
+still compressed losslessly, since quantizing smooth cubes makes them bigger.
+
+Compression is only safe for a cube that is never reopened later in the
+pipeline: `astropy` cannot memmap a compressed file (`.gz` or `.fz`), so the
+memmapped reads flint and rm-lite use would decompress the whole cube into
+memory. `split_cube_into_planes` and RM-synthesis refuse compressed cubes for
+exactly this reason (see `flint.cube.split_cube_into_planes`).
+
+How to read, decompress and handle compressed cubes, and the pitfalls of
+quantizing more than once, are covered in
+[fitscube's README](https://github.com/AlecThomson/fitscube#working-with-compressed-cubes).
+In short: read `.fits.fz` cubes with `hdul[1].section[...]` rather than `.data`,
+decompress with `fitscube decompress`, and quantize at most once.
+
+In the self-cal flows, each round reassigns the `wsclean_results` variable to
+that round's own output, so only the **final** round's per-beam cube survives
+the loop and feeds `create_convolve_linmos_cubes`, which splits it into
+planes to co-add across beams. Earlier rounds' per-beam cubes are discarded
+once the next round starts and are never split. So `compress` cannot simply
+follow the usual per-round lookup: `get_selfcal_round_fitscube_options`
+(`flint.configuration`) only forces `compress=False` for the final round's
+per-beam cube; every other round's `fitscube` options, including
+`compress`, are drawn from the strategy file exactly as written, with no
+overriding. The separate, co-added cube produced by
+`create_convolve_linmos_cubes` at the end of the loop is unaffected by this
+and honours `compress: true` set under
+`defaults.fitscube` (or a `selfcal.<round>.fitscube` override for the final
+round) as normal. If you set `compress: true` for the final round's per-beam
+cube, it is ignored and a warning is logged.
 
 ## Configuration based settings in Python API
 
