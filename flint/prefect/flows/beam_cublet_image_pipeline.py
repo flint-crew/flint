@@ -60,10 +60,10 @@ class BeamCubletOptions(BaseOptions):
     """The column to image"""
     residual_column: str = "CUBLET_RESIDUAL"
     """The column the data less the components of all islands is written to. Even rounds write to a second column with an ``_ALT`` suffix, so that no round subtracts from the column it reads"""
-    rounds: int = 2
+    rounds: int = 3
     """Number of times every island is imaged, with the components subtracted in between"""
-    round_gain: float = 0.8
-    """Fraction of the brightest island that each round cleans away"""
+    round_gain: float = 0.97
+    """Fraction of the brightest island that each round cleans away. One less the far sidelobe level of the PSF is as deep as a round can usefully go"""
     threshold_floor: float = 0.0
     """Islands are never cleaned below this, in Jy"""
     merge_pixels: int = 0

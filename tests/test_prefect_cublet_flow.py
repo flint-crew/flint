@@ -214,7 +214,8 @@ def test_flow_skips_finished_islands(fake_tasks, tmp_path) -> None:
         return island_image.with_options(region=region.with_options(peak=left))
 
     fake_tasks["task_image_island"].fn = image_island
-    flow_beam_cublet_image.fn(beam_cublet_options=_options(tmp_path, rounds=2))
+    options = _options(tmp_path, rounds=2, round_gain=0.8)
+    flow_beam_cublet_image.fn(beam_cublet_options=options)
 
     island_calls = fake_tasks["task_image_island"].calls
     assert [call["name_suffix"] for call in island_calls] == [
@@ -229,7 +230,7 @@ def test_flow_skips_finished_islands(fake_tasks, tmp_path) -> None:
 
 def test_flow_without_reordered_reuse(fake_tasks, tmp_path) -> None:
     """Each island reorders for itself when the reordered visibilities are not shared"""
-    options = _options(tmp_path, rounds=1, reuse_reordered=False)
+    options = _options(tmp_path, rounds=1, round_gain=0.8, reuse_reordered=False)
     flow_beam_cublet_image.fn(beam_cublet_options=options)
 
     island_calls = fake_tasks["task_image_island"].calls

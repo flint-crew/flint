@@ -14,11 +14,18 @@ experiment, and images a single measurement set.
 5. Steps 3 and 4 repeat, each round cleaning deeper. A final image of what is
    left is made.
 
-Islands only meet in the visibilities. A round stops every island at the same
-level, `peak * (1 - round_gain) ** round`, so that none cleans the sidelobes of
-a brighter island that has not been subtracted yet. The rounds are therefore
-the major cycles, and `--rounds` sets the depth: the defaults of two rounds and
-a gain of 0.8 stop at 4% of the brightest island.
+Islands only meet in the visibilities, through the sidelobes they put on each
+other. A round stops every island at the same level,
+`peak * (1 - round_gain) ** round`, so the rounds are the major cycles.
+
+The clean mask of an island keeps its components on real emission, so an island
+can not mistake the sidelobe of another for a source. At worst the sidelobe is
+taken into its own flux, which the next round corrects once the other island
+has been subtracted. Rounds can therefore be deep. Stopping a round near the
+far sidelobe level of the PSF, below the brightest island, is as deep as is
+useful: the default `round_gain` of 0.97 with three rounds reaches 0.003% of
+the brightest island. Bright islands are right after the first round, and
+faint ones after the second.
 
 An island is left out of a round when nothing above the level of the round is
 left inside its mask.
@@ -53,10 +60,12 @@ cubletisland:
   wsclean:
     channels_out: 72
     fit_spectral_pol: 3
+    gain: 0.7
+    niter: 1000
     multiscale: true
     multiscale_scales: [0, 8, 16, 32]
     auto_mask: null
-    auto_threshold: null
+    auto_threshold: 0.75
     local_rms: false
 ```
 
@@ -71,6 +80,10 @@ Notes on the island options:
   major cycles of its own within a round.
 - `fit_spectral_pol` is needed, as wsclean saves components as polynomials.
 - The clean mask is the island, so auto-masking is turned off.
+- wsclean stops at the higher of `auto_threshold` and the level of the round,
+  so the noise sets the depth once the rounds have gone below it.
+- A robust mask allows a high `gain` with few iterations. That also keeps the
+  component lists, and so their prediction, small.
 - With a per-scale mask the `multiscale_scales` of the mask and of both wsclean
   blocks should match.
 
