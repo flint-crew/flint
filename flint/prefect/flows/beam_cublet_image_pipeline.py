@@ -74,8 +74,8 @@ class BeamCubletOptions(BaseOptions):
     """Smallest island image, in pixels"""
     max_islands: int | None = None
     """Only image this many of the brightest islands"""
-    reuse_reordered: bool = True
-    """Reorder the visibilities once a round, and share them between the islands"""
+    no_reuse_reordered: bool = False
+    """Have every island reorder the visibilities for itself, rather than share those of the brightest island of the round"""
     work_dir: Path | None = None
     """Where island masks, component lists and reordered visibilities are kept. It has to be seen by every worker, and inside the wsclean container. Defaults to a ``cublet`` folder beside the measurement set"""
 
@@ -264,7 +264,7 @@ def flow_beam_cublet_image(beam_cublet_options: BeamCubletOptions) -> None:
 
         # The brightest island reorders the visibilities for the others
         round_dir = work_dir / f"round{round_number}"
-        reuse = beam_cublet_options.reuse_reordered
+        reuse = not beam_cublet_options.no_reuse_reordered
         island_results = []
         for region in round_regions:
             seed = island_results[0] if reuse and island_results else None

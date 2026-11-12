@@ -89,10 +89,11 @@ Notes on the island options:
 
 ## Reordered visibilities
 
-With `--reuse-reordered` (the default) the brightest island of a round reorders
+By default the brightest island of a round reorders
 the visibilities, and the other islands of the round share its files. This
 needs a `--work-dir` that every worker can see. Do not point it at node-local
-storage.
+storage. With `--no-reuse-reordered` every island reorders for itself, which
+an older wsclean without the reorder options needs.
 
 The island masks are kept in the `--work-dir` too, so it also has to be bound
 into the wsclean container. The default, a `cublet` folder beside the
