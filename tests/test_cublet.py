@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -21,6 +22,7 @@ from flint.cublet.islands import (
 )
 from flint.cublet.reordered import link_reordered_files
 from flint.cublet.sourcelist import concatenate_source_lists
+from flint.utils import get_packaged_resource_path
 
 SIZE = 400
 
@@ -289,6 +291,34 @@ def test_concatenate_source_lists_reference_frequency(tmp_path) -> None:
     lines = output.read_text().splitlines()
     assert lines[0] == SOURCE_LIST_HEADER
     assert len(lines) == 3
+
+
+def test_concatenate_island_source_lists(tmp_path) -> None:
+    """The lists of twelve islands of one round, as wsclean wrote them, are joined"""
+    archive = get_packaged_resource_path(
+        package="flint.data.tests", filename="cublet_source_lists.zip"
+    )
+    shutil.unpack_archive(archive, tmp_path)
+    source_lists = sorted(tmp_path.glob("*-sources.txt"))
+    assert len(source_lists) == 12
+
+    output = concatenate_source_lists(
+        source_lists=source_lists,
+        tags=[source_list.name.split(".")[2][-8:] for source_list in source_lists],
+        output=tmp_path / "all-sources.txt",
+    )
+    assert output is not None
+
+    lines = output.read_text().splitlines()
+    assert lines[0] == source_lists[0].read_text().splitlines()[0]
+
+    components = [line.split(",") for line in lines[1:]]
+    assert len(components) == 44
+    assert len({component[0] for component in components}) == 44
+    assert components[0][0] == "r1i00002s0c0"
+
+    # Islands of the same size share their weights, and so their frequency
+    assert len({component[-4] for component in components}) == 6
 
 
 def test_concatenate_source_lists_column_mismatch(tmp_path) -> None:
