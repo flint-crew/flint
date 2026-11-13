@@ -41,6 +41,7 @@ def task_crystalball_to_ms(
     Returns:
         MS: An updated MS with the model column set
     """
+    from distributed import rejoin, secede
     from prefect_dask import get_dask_client
 
     from flint.predict.crystalball import crystalball_predict
@@ -49,15 +50,29 @@ def task_crystalball_to_ms(
     # crystalball uses loguru. We want to try to attach a handler
     enable_loguru_support()
 
-    with get_dask_client(set_as_default=False) as client:
-        logger.info("Obtained the Client supporting the DaskTaskRunner.")
-        return crystalball_predict(
-            ms=ms,
-            crystalball_options=crystalball_options,
-            wsclean_source_list_path=wsclean_source_list_path,
-            dask_client=client,
-            output_column="MODEL_DATA",
-        )
+    # This task waits on work it gives to its own cluster. Without leaving the
+    # thread pool it holds a worker that work may need, and with one worker
+    # left the prediction never starts.
+    try:
+        secede()
+        seceded = True
+    except (ValueError, AttributeError):
+        logger.warning("Not on a dask worker thread, so not seceding from it")
+        seceded = False
+
+    try:
+        with get_dask_client(set_as_default=False) as client:
+            logger.info("Obtained the Client supporting the DaskTaskRunner.")
+            return crystalball_predict(
+                ms=ms,
+                crystalball_options=crystalball_options,
+                wsclean_source_list_path=wsclean_source_list_path,
+                dask_client=client,
+                output_column="MODEL_DATA",
+            )
+    finally:
+        if seceded:
+            rejoin()
 
 
 @task
