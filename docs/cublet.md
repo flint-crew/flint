@@ -99,6 +99,19 @@ The island masks are kept in the `--work-dir` too, so it also has to be bound
 into the wsclean container. The default, a `cublet` folder beside the
 measurement set, already is.
 
+## Predicting
+
+`crystalball` splits its work into chunks of rows and of components, and only
+chunks can be spread over workers. Left to itself it tends to put a whole beam
+in one chunk, which a single worker then predicts. `--row-chunks` and
+`--model-chunks` set the sizes, and have to be given together.
+
+## Stalls
+
+With `--watch-cluster` the flow logs once a minute what the dask scheduler holds:
+the state of its tasks, those yet to start, what each worker is running and
+when it was last heard from, and where each running task is in its code.
+
 ## Outputs
 
 - Island images, named with a `r<round>i<island>` suffix, beside the

@@ -9,11 +9,13 @@ from typing import Any
 import numpy as np
 import pytest
 from astropy.io import fits
+from capn_crunch import create_options_from_parser
 from eye_patch.naming import FITSMaskNames
 
 import flint.prefect.flows.beam_cublet_image_pipeline as cublet_flow
 from flint.cublet.islands import CubletRegion
 from flint.ms import MS
+from flint.predict.crystalball import CrystalBallOptions
 from flint.prefect.flows.beam_cublet_image_pipeline import (
     BeamCubletOptions,
     IslandImage,
@@ -42,6 +44,19 @@ cubletisland:
 def test_get_parser():
     """Make sure the parser can actually be built"""
     _ = get_parser()
+
+
+def test_parser_crystalball_chunks() -> None:
+    """The chunks crystalball predicts in can be set"""
+    args = get_parser().parse_args(
+        ["a.ms", "strategy.yaml", "wsclean.sif", "cluster.yaml"]
+        + ["--row-chunks", "5000", "--model-chunks", "100"]
+    )
+    crystalball_options = create_options_from_parser(
+        parser_namespace=args, options_class=CrystalBallOptions
+    )
+    assert crystalball_options.row_chunks == 5000
+    assert crystalball_options.model_chunks == 100
 
 
 class FakeFuture:
@@ -181,6 +196,7 @@ def test_flow_rounds(fake_tasks, tmp_path) -> None:
     assert island_calls[2]["ms"].column == columns[1]
     predict_calls = fake_tasks["task_crystalball_to_ms"].calls
     assert [call["ms"].column for call in predict_calls] == columns[:2]
+    assert predict_calls[0]["crystalball_options"] == CrystalBallOptions()
     subtract_calls = fake_tasks["task_subtract_model_from_ms"].calls
     assert [call["ms"].column for call in subtract_calls] == columns[:2]
     assert [call["output_column"] for call in subtract_calls] == columns[1:]
@@ -323,3 +339,17 @@ def test_image_island(monkeypatch, tmp_path) -> None:
         temp_dir=island_dir,
     )
     assert captured["update_wsclean_options"]["mgain"] == 0.8
+
+
+def test_flow_crystalball_options(fake_tasks, tmp_path) -> None:
+    """The crystalball options given are those every round predicts with"""
+    crystalball_options = CrystalBallOptions(row_chunks=5000, model_chunks=100)
+    flow_beam_cublet_image.fn(
+        beam_cublet_options=_options(tmp_path, rounds=2, round_gain=0.8),
+        crystalball_options=crystalball_options,
+    )
+    predict_calls = fake_tasks["task_crystalball_to_ms"].calls
+    assert [call["crystalball_options"] for call in predict_calls] == [
+        crystalball_options,
+        crystalball_options,
+    ]

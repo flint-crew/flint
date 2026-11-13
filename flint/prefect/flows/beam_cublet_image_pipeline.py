@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import shutil
 from argparse import ArgumentParser
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +42,7 @@ from flint.prefect.common.imaging import (
 )
 from flint.prefect.common.ms import task_subtract_model_from_ms
 from flint.prefect.common.predict import task_crystalball_to_ms
+from flint.prefect.helpers import watch_dask_cluster
 
 
 class BeamCubletOptions(BaseOptions):
@@ -76,6 +78,8 @@ class BeamCubletOptions(BaseOptions):
     """Only image this many of the brightest islands"""
     no_reuse_reordered: bool = False
     """Have every island reorder the visibilities for itself, rather than share those of the brightest island of the round"""
+    watch_cluster: bool = False
+    """Log what the dask cluster is doing once a minute, to see where a stall is"""
     work_dir: Path | None = None
     """Where island masks, component lists and reordered visibilities are kept. It has to be seen by every worker, and inside the wsclean container. Defaults to a ``cublet`` folder beside the measurement set"""
 
@@ -196,7 +200,22 @@ def task_concatenate_source_lists(
 
 
 @flow
-def flow_beam_cublet_image(beam_cublet_options: BeamCubletOptions) -> None:
+def flow_beam_cublet_image(
+    beam_cublet_options: BeamCubletOptions,
+    crystalball_options: CrystalBallOptions | None = None,
+) -> None:
+    watch = watch_dask_cluster if beam_cublet_options.watch_cluster else nullcontext
+    with watch():
+        image_beam_cublets(
+            beam_cublet_options=beam_cublet_options,
+            crystalball_options=crystalball_options or CrystalBallOptions(),
+        )
+
+
+def image_beam_cublets(
+    beam_cublet_options: BeamCubletOptions, crystalball_options: CrystalBallOptions
+) -> None:
+    """Image a beam island by island, in rounds"""
     ms = MS(path=beam_cublet_options.ms_path, column=beam_cublet_options.column)
     logger.info(f"Cublet imaging of {ms=}")
 
@@ -311,7 +330,7 @@ def flow_beam_cublet_image(beam_cublet_options: BeamCubletOptions) -> None:
 
         predicted_ms = task_crystalball_to_ms.submit(
             ms=round_ms,
-            crystalball_options=CrystalBallOptions(),
+            crystalball_options=crystalball_options,
             wsclean_source_list_path=round_source_list,
         )
         # A rerun of the subtraction must not subtract twice, so it never
@@ -337,20 +356,27 @@ def flow_beam_cublet_image(beam_cublet_options: BeamCubletOptions) -> None:
     ).result()
 
 
-def setup_beam_cublet_workflow(beam_cublet_options: BeamCubletOptions) -> None:
+def setup_beam_cublet_workflow(
+    beam_cublet_options: BeamCubletOptions,
+    crystalball_options: CrystalBallOptions | None = None,
+) -> None:
     dask_runner = get_dask_runner(cluster=beam_cublet_options.cluster_config)
 
     sbid = get_sbid_from_path(path=beam_cublet_options.ms_path)
 
     flow_beam_cublet_image.with_options(
         name=f"Flint Beam Cublet Image -- {sbid}", task_runner=dask_runner
-    )(beam_cublet_options=beam_cublet_options)
+    )(
+        beam_cublet_options=beam_cublet_options,
+        crystalball_options=crystalball_options,
+    )
 
 
 def get_parser() -> ArgumentParser:
     parser = ArgumentParser(description=__doc__)
 
     parser = add_options_to_parser(parser=parser, options_class=BeamCubletOptions)
+    parser = add_options_to_parser(parser=parser, options_class=CrystalBallOptions)
 
     return parser
 
@@ -364,7 +390,14 @@ def cli() -> None:
         parser_namespace=args, options_class=BeamCubletOptions
     )
 
-    setup_beam_cublet_workflow(beam_cublet_options=beam_cublet_options)
+    crystalball_options = create_options_from_parser(
+        parser_namespace=args, options_class=CrystalBallOptions
+    )
+
+    setup_beam_cublet_workflow(
+        beam_cublet_options=beam_cublet_options,
+        crystalball_options=crystalball_options,
+    )
 
 
 if __name__ == "__main__":
