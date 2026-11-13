@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from flint.logging import logger
@@ -13,7 +14,9 @@ def concatenate_source_lists(
     """Join wsclean source lists into one, or return None if none hold a component.
 
     Each component name is prefixed by the tag of its list, as wsclean names the
-    components of every list alike.
+    components of every list alike. The reference frequency of a list follows its
+    imaging weights, so it may differ between lists. Each component carries its
+    own, and the one in the header is only a default.
     """
     assert len(source_lists) == len(tags), "A tag is needed for each source list"
 
@@ -25,10 +28,11 @@ def concatenate_source_lists(
         lines = [line for line in source_list.read_text().splitlines() if line.strip()]
         if len(lines) < 2:
             continue
+        columns = re.sub(r"ReferenceFrequency='[^']*'", "ReferenceFrequency", lines[0])
         if header is None:
-            header = lines[0]
-        elif lines[0] != header:
-            msg = f"The header of {source_list} differs from the earlier source lists"
+            header, header_columns = lines[0], columns
+        elif columns != header_columns:
+            msg = f"The columns of {source_list} differ from the earlier source lists"
             raise ValueError(msg)
         components.extend(f"{tag}{line}" for line in lines[1:])
 

@@ -272,15 +272,34 @@ def test_concatenate_source_lists_no_components(tmp_path) -> None:
     assert not output.exists()
 
 
-def test_concatenate_source_lists_header_mismatch(tmp_path) -> None:
-    """Lists made at different reference frequencies can not be joined"""
+def test_concatenate_source_lists_reference_frequency(tmp_path) -> None:
+    """Lists whose headers differ only in the reference frequency are joined"""
     first = _write_source_list(tmp_path / "a-sources.txt", components=1)
     second = _write_source_list(
         tmp_path / "b-sources.txt",
         components=1,
-        header=SOURCE_LIST_HEADER.replace("943490740", "1367490740"),
+        header=SOURCE_LIST_HEADER.replace("943490740", "943490741"),
     )
-    with pytest.raises(ValueError, match="header"):
+    output = concatenate_source_lists(
+        source_lists=[first, second],
+        tags=["a", "b"],
+        output=tmp_path / "all-sources.txt",
+    )
+    assert output is not None
+    lines = output.read_text().splitlines()
+    assert lines[0] == SOURCE_LIST_HEADER
+    assert len(lines) == 3
+
+
+def test_concatenate_source_lists_column_mismatch(tmp_path) -> None:
+    """Lists with different columns can not be joined"""
+    first = _write_source_list(tmp_path / "a-sources.txt", components=1)
+    second = _write_source_list(
+        tmp_path / "b-sources.txt",
+        components=1,
+        header=SOURCE_LIST_HEADER.replace(", Orientation", ""),
+    )
+    with pytest.raises(ValueError, match="columns"):
         concatenate_source_lists(
             source_lists=[first, second],
             tags=["a", "b"],
