@@ -83,6 +83,8 @@ class BeamCubletOptions(BaseOptions):
     """Only image this many of the brightest islands"""
     no_reuse_reordered: bool = False
     """Have every island reorder the visibilities for itself, rather than share those of the brightest island of the round"""
+    keep_island_images: bool = False
+    """Keep the FITS images of every island of every round. Otherwise they are deleted once the island is imaged, and only its components are kept"""
     watch_cluster: bool = False
     """Log what the dask cluster is doing once a minute, to see where a stall is"""
     work_dir: Path | None = None
@@ -144,6 +146,7 @@ def task_image_island(
     temp_dir: Path,
     save_reordered: bool = False,
     seed_dir: Path | None = None,
+    keep_images: bool = False,
 ) -> IslandImage:
     """Image one island. With a ``seed_dir`` its reordered visibilities are used."""
     if seed_dir is not None:
@@ -187,6 +190,17 @@ def task_image_island(
             image_fits=image_set.residual[-1],
             mask_fits=region.fits_mask.mask_fits or region.fits_mask.scale_mask_fits,
         )
+
+    if not keep_images:
+        for images in (
+            image_set.image,
+            image_set.psf,
+            image_set.dirty,
+            image_set.model,
+            image_set.residual,
+        ):
+            for image in images or []:
+                image.unlink(missing_ok=True)
 
     return IslandImage(
         region=region.with_options(peak=peak),
@@ -367,6 +381,7 @@ def image_beam_cublets(
                         else round_dir / f"island{region.idx:05d}",
                         save_reordered=is_seed,
                         seed_dir=round_dir if seed else None,
+                        keep_images=beam_cublet_options.keep_island_images,
                         wait_for=[seed] if seed else None,
                     )
                 )

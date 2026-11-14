@@ -294,13 +294,23 @@ def test_image_island(monkeypatch, tmp_path) -> None:
     fits.writeto(mask_fits, data=mask)
     fits.writeto(residual_fits, data=residual)
     source_list = tmp_path / "island-sources.txt"
+    source_list.write_text("components")
+    image_fits = tmp_path / "island-image.fits"
 
     captured: dict[str, Any] = {}
 
     def fake_imager(**kwargs):
         captured.update(kwargs)
+        image_fits.touch()
         return SimpleNamespace(
-            image_set=SimpleNamespace(residual=[residual_fits], source_list=source_list)
+            image_set=SimpleNamespace(
+                image=[image_fits],
+                psf=None,
+                dirty=None,
+                model=None,
+                residual=[residual_fits],
+                source_list=source_list,
+            )
         )
 
     monkeypatch.setattr(cublet_flow.task_wsclean_imager, "fn", fake_imager)
@@ -325,6 +335,11 @@ def test_image_island(monkeypatch, tmp_path) -> None:
     assert island_image.region.peak == 0.25
     assert island_image.tag == "r1i00002"
     assert island_image.source_list == source_list
+
+    # Only the components of the island are kept
+    assert not image_fits.exists()
+    assert not residual_fits.exists()
+    assert source_list.exists()
 
     options = captured["update_wsclean_options"]
     assert options["channels_out"] == 72
@@ -353,8 +368,10 @@ def test_image_island(monkeypatch, tmp_path) -> None:
         threshold=0.5,
         name_suffix="r1i00002",
         temp_dir=island_dir,
+        keep_images=True,
     )
     assert captured["update_wsclean_options"]["mgain"] == 0.8
+    assert image_fits.exists()
 
 
 def test_flow_crystalball_options(fake_tasks, tmp_path) -> None:

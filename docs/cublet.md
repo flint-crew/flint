@@ -165,8 +165,10 @@ when it was last heard from, and where each running task is in its code.
 
 ## Outputs
 
-- Island images, named with a `c<cycle>r<round>i<island>` suffix, beside the
-  measurement set. An island keeps its number only within a cycle.
+- The component list of each island, named with a `c<cycle>r<round>i<island>`
+  suffix, beside the measurement set. An island keeps its number only within a
+  cycle. The FITS images of an island are deleted once it has been imaged. Give
+  `--keep-island-images` to keep them, named the same way.
 - The MFS image of each cycle. Those of later cycles have a `cycle<N>` suffix.
 - `cublet/cycle<N>/masks`, the clean masks of each island, and
   `cublet/cycle<N>`, the joined mask of the cycle.
