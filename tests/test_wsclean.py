@@ -1047,3 +1047,47 @@ def test_collect_wsclean_outputs_keeps_linear_images(tmp_path: Path):
         assert (tmp_path / f"{base}.{pol}.MFS.image.fits").exists()
     for pol in ("xx", "yy"):
         assert (tmp_path / f"{base}.{pol}.MFS.model.fits").exists()
+
+
+def test_restore_source_list(monkeypatch, tmp_path) -> None:
+    """wsclean is asked to restore a source list, with every directory it needs bound"""
+    import flint.imager.wsclean as wsclean_module
+
+    calls = []
+    monkeypatch.setattr(
+        wsclean_module,
+        "run_singularity_command",
+        lambda **kwargs: calls.append(kwargs),
+    )
+    residual = tmp_path / "images" / "residual.fits"
+    residual.parent.mkdir()
+    source_list = tmp_path / "cublet" / "all-sources.txt"
+    output = tmp_path / "images" / "restored.fits"
+    container = tmp_path / "wsclean.sif"
+
+    header = fits.Header()
+    fits.writeto(residual, data=np.zeros((8, 8), dtype=np.float32), header=header)
+    with pytest.raises(ValueError, match="beam"):
+        wsclean_module.restore_source_list(
+            residual_image=residual,
+            source_list=source_list,
+            output_image=output,
+            container=container,
+        )
+    assert calls == []
+
+    header["BMAJ"] = 0.004
+    fits.writeto(
+        residual, data=np.zeros((8, 8), dtype=np.float32), header=header, overwrite=True
+    )
+    restored = wsclean_module.restore_source_list(
+        residual_image=residual,
+        source_list=source_list,
+        output_image=output,
+        container=container,
+    )
+    assert restored == output
+    (call,) = calls
+    assert call["image"] == container
+    assert call["command"] == f"wsclean -restore-list {residual} {source_list} {output}"
+    assert call["bind_dirs"] == {tmp_path / "images", tmp_path / "cublet"}

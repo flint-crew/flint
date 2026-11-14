@@ -141,6 +141,7 @@ def fake_tasks(monkeypatch) -> dict[str, FakeTask]:
             cublet_flow.task_concatenate_source_lists.fn
         ),
         "task_remove_files_folders": FakeTask(lambda *args: None),
+        "task_restore_source_list": FakeTask(lambda **kwargs: "restored"),
         "task_crystalball_to_ms": FakeTask(lambda ms, **kwargs: ms),
         "task_subtract_model_from_ms": FakeTask(
             lambda ms, output_column, **kwargs: ms.with_options(column=output_column)
@@ -224,6 +225,11 @@ def test_flow_rounds(fake_tasks, tmp_path) -> None:
     assert residual_call["update_wsclean_options"]["niter"] == 0
     assert not residual_call["update_wsclean_options"]["save_source_list"]
 
+    # All components found are restored onto the image of what is left
+    (restore_call,) = fake_tasks["task_restore_source_list"].calls
+    assert restore_call["wsclean_result"] == "image"
+    assert restore_call["source_list"] == all_components
+
     # MAC needs no RMS or background images
     assert fake_tasks["task_run_bane_and_aegean"].calls == []
     mask_call = fake_tasks["task_create_image_mask_model"].calls[0]
@@ -274,6 +280,7 @@ def test_flow_no_islands(fake_tasks, tmp_path) -> None:
 
     assert fake_tasks["task_image_island"].calls == []
     assert len(fake_tasks["task_wsclean_imager"].calls) == 1
+    assert fake_tasks["task_restore_source_list"].calls == []
 
 
 def test_image_island(monkeypatch, tmp_path) -> None:
@@ -455,3 +462,28 @@ def test_strategy_keyed_by_cycle(tmp_path) -> None:
     strategy.write_text(flat)
     with pytest.raises(ValueError):
         load_strategy_yaml(input_yaml=strategy, verify=True)
+
+
+def test_task_restore_source_list(monkeypatch, tmp_path) -> None:
+    """The MFS image of what is left is restored, under a name of its own"""
+    calls = []
+    monkeypatch.setattr(
+        cublet_flow, "restore_source_list", lambda **kwargs: calls.append(kwargs)
+    )
+    images = [
+        tmp_path / "SB1234.cubletresidual.i.image.cube.fits",
+        tmp_path / "SB1234.cubletresidual.i.MFS.image.fits",
+    ]
+    cublet_flow.task_restore_source_list.fn(
+        wsclean_result=SimpleNamespace(image_set=SimpleNamespace(image=images)),
+        source_list=tmp_path / "all-sources.txt",
+        wsclean_container=tmp_path / "wsclean.sif",
+    )
+    assert calls == [
+        {
+            "residual_image": images[1],
+            "source_list": tmp_path / "all-sources.txt",
+            "output_image": tmp_path / "SB1234.cubletrestored.i.MFS.image.fits",
+            "container": tmp_path / "wsclean.sif",
+        }
+    ]

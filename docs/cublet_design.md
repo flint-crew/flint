@@ -186,6 +186,14 @@ It also sets the limit of the approach. Anything whose spectrum is not smooth,
 linear polarisation above all, needs a model for each channel, and this flow
 does not make one.
 
+## The restored image
+
+No call of wsclean ever holds the whole model, so no image it writes is a
+finished one. The image of an island from one round only has the components of
+that round. The finished image is put together at the end: wsclean adds every
+component found, over all rounds and cycles, to the MFS image of what is left.
+This reads no visibilities. Only the MFS image is restored for now.
+
 ## Reading the visibilities
 
 Each island call reads all of the visibilities, which is the main cost of the

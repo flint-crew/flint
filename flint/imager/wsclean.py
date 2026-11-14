@@ -23,6 +23,7 @@ from numbers import Number
 from pathlib import Path
 from typing import Any, NamedTuple
 
+from astropy.io import fits
 from capn_crunch import (
     add_options_to_parser,
     create_options_from_parser,
@@ -1011,6 +1012,30 @@ def wsclean_imager(
     )
 
     return wsclean_result.with_options(image_set=image_set)
+
+
+def restore_source_list(
+    residual_image: Path, source_list: Path, output_image: Path, container: Path
+) -> Path:
+    """Add the components of a wsclean source list to an image of what they left.
+
+    wsclean restores with the beam recorded in the image, and evaluates the
+    spectrum of each component over the frequencies of the image.
+    """
+    header = fits.getheader(residual_image)
+    if not header.get("BMAJ"):
+        msg = f"{residual_image} records no beam to restore {source_list} with"
+        raise ValueError(msg)
+
+    run_singularity_command(
+        image=container,
+        command=f"wsclean -restore-list {residual_image} {source_list} {output_image}",
+        bind_dirs={
+            path.absolute().parent
+            for path in (residual_image, source_list, output_image)
+        },
+    )
+    return output_image
 
 
 def get_parser() -> ArgumentParser:

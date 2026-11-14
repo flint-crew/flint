@@ -15,7 +15,8 @@ The reasoning behind it is in [Why cublet imaging works the way it does](cublet_
    subtracted from the data.
 5. Steps 3 and 4 repeat, each round cleaning deeper.
 6. With more than one cycle, steps 1 to 5 repeat on what is left of the data.
-7. A final image of what is left is made.
+7. A final image of what is left is made, and all the components found are
+   restored onto its MFS image.
 
 Islands only meet in the visibilities, through the sidelobes they put on each
 other. A round stops every island at the same level,
@@ -175,3 +176,7 @@ when it was last heard from, and where each running task is in its code.
   suffix. Subtractions alternate between the two, so that a rerun of one can
   not subtract twice. The log of the last subtraction names the column.
 - An image of what is left, with the `cubletresidual` suffix.
+- The MFS image of what is left with every component found restored onto it,
+  with the `cubletrestored` suffix. wsclean does this with `-restore-list`,
+  using the beam recorded in the image. It is not corrected for the primary
+  beam.

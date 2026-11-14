@@ -28,7 +28,7 @@ from flint.cublet.islands import (
 )
 from flint.cublet.reordered import link_reordered_files
 from flint.cublet.sourcelist import concatenate_source_lists
-from flint.imager.wsclean import WSCleanResult
+from flint.imager.wsclean import WSCleanResult, restore_source_list
 from flint.logging import logger
 from flint.ms import MS
 from flint.naming import get_sbid_from_path
@@ -214,6 +214,25 @@ def task_concatenate_source_lists(
         tags.append(island_image.tag)
 
     return concatenate_source_lists(source_lists=source_lists, tags=tags, output=output)
+
+
+@task
+def task_restore_source_list(
+    wsclean_result: WSCleanResult, source_list: Path, wsclean_container: Path
+) -> Path:
+    """Add all components found to the MFS image of what is left"""
+    assert wsclean_result.image_set is not None, "No images from wsclean"
+    # The MFS image is the last
+    residual_image = list(wsclean_result.image_set.image)[-1]
+    assert "cubletresidual" in residual_image.name, f"Unexpected {residual_image=}"
+    return restore_source_list(
+        residual_image=residual_image,
+        source_list=source_list,
+        output_image=residual_image.with_name(
+            residual_image.name.replace("cubletresidual", "cubletrestored")
+        ),
+        container=wsclean_container,
+    )
 
 
 @flow
@@ -402,9 +421,14 @@ def image_beam_cublets(
     residual_wsclean_options.update(
         niter=0, save_source_list=False, flint_name_suffix="cubletresidual"
     )
-    task_wsclean_imager.submit(
+    residual_result = task_wsclean_imager.submit(
         in_ms=round_ms,
         update_wsclean_options=residual_wsclean_options,
+        wsclean_container=beam_cublet_options.wsclean_container,
+    )
+    task_restore_source_list.submit(
+        wsclean_result=residual_result,
+        source_list=source_list,
         wsclean_container=beam_cublet_options.wsclean_container,
     ).result()
 
