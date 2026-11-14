@@ -177,7 +177,10 @@ when it was last heard from, and where each running task is in its code.
 - The `--residual-column` of the measurement set, or the column with an `_ALT`
   suffix. Subtractions alternate between the two, so that a rerun of one can
   not subtract twice. The log of the last subtraction names the column.
-- An image of what is left, with the `cubletresidual` suffix.
+- An image of what is left, with the `cubletresidual` suffix. Nothing is
+  cleaned in it, so the flow sets `make_psf` for wsclean to fit a beam. An MFS
+  image in the strategy with a `niter` of 0 needs `make_psf: true` as well, and
+  with a `channels_out` of 1 also `join_channels: false`.
 - The MFS image of what is left with every component found restored onto it,
   with the `cubletrestored` suffix. wsclean does this with `-restore-list`,
   using the beam recorded in the image. It is not corrected for the primary

@@ -424,6 +424,8 @@ def test_flow_cycles(fake_tasks, tmp_path) -> None:
         for call in wsclean_calls
     ]
     assert suffixes == [None, "cycle2", "cycle3", "cubletresidual"]
+    # The image of what is left needs a beam to be restored with
+    assert wsclean_calls[-1]["update_wsclean_options"]["make_psf"]
     # A cycle past the last in the strategy uses the last
     channels = [
         call["update_wsclean_options"]["channels_out"] for call in wsclean_calls

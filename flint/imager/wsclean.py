@@ -181,6 +181,8 @@ class WSCleanOptions(BaseOptions):
     """The RA and Dec to centre the image on, which stays on the projection of the phase centre"""
     super_weight: float | None = None
     """Factor the weight gridding box is enlarged by. Below one it is shrunk, as needed to weight a small image like a larger one"""
+    make_psf: bool = False
+    """Make the PSF even when nothing is cleaned. Without it an image made with a ``niter`` of 0 records no beam"""
     no_mf_weighting: bool = False
     """Opposite of -ms-weighting; can be used to turn off MF weighting in -join-channels mode"""
     verbose: bool = False

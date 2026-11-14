@@ -433,8 +433,12 @@ def image_beam_cublets(
         return
 
     residual_wsclean_options = dict(mfs_wsclean_options)
+    # wsclean only fits a beam, which the restoring needs, when it makes a PSF
     residual_wsclean_options.update(
-        niter=0, save_source_list=False, flint_name_suffix="cubletresidual"
+        niter=0,
+        make_psf=True,
+        save_source_list=False,
+        flint_name_suffix="cubletresidual",
     )
     residual_result = task_wsclean_imager.submit(
         in_ms=round_ms,
