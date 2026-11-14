@@ -25,6 +25,48 @@ its window costs, not by what the whole field costs.
 The cheap image is the same field with few channels. It is only used to find
 the islands, so it does not have to be cleaned deeply.
 
+## Terms
+
+**Island.** A connected patch of the clean mask. Islands are numbered afresh in
+each cycle, so a number only means something within its cycle.
+
+**Window.** The square image made around one island. It is larger than the
+island by `--pad-factor`, and never smaller than `--min-size`.
+
+**Component.** One entry of the model wsclean makes for an island: a point or
+a Gaussian with a polynomial spectrum.
+
+**Round.** One pass over the islands. Each island that still has something
+above the level of the round is imaged once, all from the same data column.
+The components found are then predicted and subtracted, which writes a new
+data column. The round ends when that subtraction is done. A round reads the
+data once for each island it images.
+
+**Level of a round.** How deep the round cleans. In round `n` of a cycle it is
+`peak * (1 - round_gain) ** n`, where `peak` is the largest that is left of any
+island at the start of the cycle. It is never below `--threshold-floor`.
+wsclean also stops at its own `auto_threshold`, and the higher of the two
+applies.
+
+**Cycle.** One image of the whole beam, the mask made from it, the islands
+found on that mask joined with all earlier masks, and then the rounds. The
+first cycle images the data as given. Each later cycle images the column that
+the last subtraction wrote.
+
+A cycle ends, and the next begins, when one of these happens:
+
+- its last round is done. The first cycle has `--rounds` rounds and each later
+  cycle `--later-rounds`
+- no island has anything left above the level of the next round
+- a round finds no components
+
+The flow ends after `--cycles` cycles. It ends early if a cycle finds no
+islands, or finds no components in any of its rounds. An image of what is left
+is then made.
+
+So a round finds nothing new. It only cleans the islands of its cycle deeper.
+New islands, and wider masks for old ones, come only at the start of a cycle.
+
 ## Why an island can be imaged alone
 
 Three things have to hold for a small image to stand in for part of a large
@@ -94,6 +136,44 @@ it may be negative.
 
 For the same reason, what is left of an island is measured as an absolute
 value.
+
+## Choosing between rounds and cycles
+
+A round costs a read of the data for each island. A cycle costs that and an
+image of the whole beam, but it also renews the mask.
+
+Rounds matter when bright islands sit in each other's sidelobes, as a round is
+what removes the sidelobes of one island from another. Cycles matter when
+there is emission the first mask could not reach.
+
+Both can be traded. With one round in every cycle, cleaned deep, each island is
+cleaned once against the sidelobes of the others, and the error that leaves is
+only put right in the next cycle. It is put right, as old islands stay open,
+but each fix costs an image of the beam. To run that way:
+
+```
+--cycles 4 --rounds 1 --later-rounds 1 --round-gain 0.999
+```
+
+With a `round_gain` that close to 1 the level of the round is below the noise,
+so each island is cleaned until wsclean meets its own `auto_threshold`.
+
+Where each choice is made:
+
+| Choice | Where |
+|---|---|
+| Number of cycles | `--cycles` |
+| Rounds in the first cycle, and in later ones | `--rounds`, `--later-rounds` |
+| How deep a round goes | `--round-gain`, the same for every cycle |
+| A level no round goes below | `--threshold-floor`, the same for every cycle |
+| How deep wsclean cleans an island | `auto_threshold` under `cubletisland`, for each cycle |
+| Loop gain and iterations of an island | `gain` and `niter` under `cubletisland`, for each cycle |
+| How much the mask takes in | `seed_clip` and the other options under `masking` of `cubletimage`, for each cycle |
+| How deep the image of the beam is cleaned before masking | `wsclean` under `cubletimage`, for each cycle |
+
+The options on the command line shape the loop and hold for the whole run.
+Those in the strategy file are keyed by cycle, so they can change from one
+cycle to the next.
 
 ## The model
 
