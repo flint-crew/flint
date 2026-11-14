@@ -11,8 +11,9 @@ experiment, and images a single measurement set.
    its clean components are saved.
 4. The new components of all islands are predicted with `crystalball` and
    subtracted from the data.
-5. Steps 3 and 4 repeat, each round cleaning deeper. A final image of what is
-   left is made.
+5. Steps 3 and 4 repeat, each round cleaning deeper.
+6. With more than one cycle, steps 1 to 5 repeat on what is left of the data.
+7. A final image of what is left is made.
 
 Islands only meet in the visibilities, through the sidelobes they put on each
 other. A round stops every island at the same level,
@@ -28,12 +29,41 @@ the brightest island. Bright islands are right after the first round, and
 faint ones after the second.
 
 An island is left out of a round when nothing above the level of the round is
-left inside its mask.
+left inside its mask. What is left is measured as an absolute value, so an
+island that was cleaned too far counts as unfinished.
+
+## Cycles
+
+`--cycles` sets how many times the whole beam is imaged to find islands. A
+later cycle images the data less the components found so far, and masks that
+image. With the bright islands gone the mask reaches fainter emission.
+
+The mask of a cycle is joined with the masks of the cycles before it, and the
+islands are found again on the result. An island of an earlier cycle is
+therefore never closed. It is imaged again whenever something is left inside
+its mask, be it positive or negative, and it is one island with any new
+emission that touches it.
+
+Each island image starts from an empty model, so what a later cycle finds for
+an island is a correction to its earlier components, and may be negative.
+
+The first cycle has `--rounds` rounds and each later cycle `--later-rounds`,
+which is 1 by default. Faint islands hardly put sidelobes on each other, so
+more are seldom needed. The cycles stop early when one finds no islands, or
+no components.
+
+Set `--threshold-floor`, in Jy, when using cycles. An island with nothing
+above it left inside its mask is not imaged, and without it every island of
+every cycle is imaged in every round. It only stops the cleaning. Where
+components may go is set by the masks alone.
 
 ## Strategy
 
 Two operations are read from the strategy file: `cubletimage` for the MFS image
-and its mask, and `cubletisland` for the island images.
+and its mask, and `cubletisland` for the island images. Both are keyed by
+cycle, as `selfcal` is keyed by round. Each cycle is laid over `defaults` on
+its own, so a later cycle repeats what it shares with an earlier one. A cycle
+past the last one given uses the last.
 
 ```yaml
 version: 0.2
@@ -44,29 +74,45 @@ defaults:
     weight: briggs 0.5
 
 cubletimage:
-  wsclean:
-    size: 8144
-    channels_out: 4
-    fit_spectral_pol: 2
-    multiscale: true
-    multiscale_scales: [0, 8, 16, 32]
-  masking:
-    use_mac: true
-    flood_fill: true
-    beam_shape_erode: true
-    multiscale_scales: [0, 8, 16, 32]
+  1:
+    wsclean:
+      size: 8144
+      channels_out: 4
+      fit_spectral_pol: 2
+      multiscale: true
+      multiscale_scales: [0, 8, 16, 32]
+    masking:
+      use_mac: true
+      flood_fill: true
+      beam_shape_erode: true
+      seed_clip: 1.5
+      multiscale_scales: [0, 8, 16, 32]
+  2:
+    wsclean:
+      size: 8144
+      channels_out: 4
+      fit_spectral_pol: 2
+      multiscale: true
+      multiscale_scales: [0, 8, 16, 32]
+    masking:
+      use_mac: true
+      flood_fill: true
+      beam_shape_erode: true
+      seed_clip: 1.2
+      multiscale_scales: [0, 8, 16, 32]
 
 cubletisland:
-  wsclean:
-    channels_out: 72
-    fit_spectral_pol: 3
-    gain: 0.7
-    niter: 1000
-    multiscale: true
-    multiscale_scales: [0, 8, 16, 32]
-    auto_mask: null
-    auto_threshold: 0.75
-    local_rms: false
+  1:
+    wsclean:
+      channels_out: 72
+      fit_spectral_pol: 3
+      gain: 0.7
+      niter: 1000
+      multiscale: true
+      multiscale_scales: [0, 8, 16, 32]
+      auto_mask: null
+      auto_threshold: 0.75
+      local_rms: false
 ```
 
 Notes on the island options:
@@ -86,10 +132,12 @@ Notes on the island options:
   component lists, and so their prediction, small.
 - With a per-scale mask the `multiscale_scales` of the mask and of both wsclean
   blocks should match.
+- The `size` and `scale` of the MFS image have to be the same in every cycle,
+  as the masks of the cycles are joined pixel by pixel.
 
 ## Reordered visibilities
 
-By default the brightest island of a round reorders
+By default the first island of a round reorders
 the visibilities, and the other islands of the round share its files. This
 needs a `--work-dir` that every worker can see. Do not point it at node-local
 storage. With `--no-reuse-reordered` every island reorders for itself, which
@@ -114,12 +162,14 @@ when it was last heard from, and where each running task is in its code.
 
 ## Outputs
 
-- Island images, named with a `r<round>i<island>` suffix, beside the
-  measurement set.
-- `cublet/masks`, the clean masks of each island.
-- `cublet/*.round<N>-sources.txt`, the components found in that round, and
-  `cublet/*.rounds1to<N>-sources.txt`, all components up to it.
+- Island images, named with a `c<cycle>r<round>i<island>` suffix, beside the
+  measurement set. An island keeps its number only within a cycle.
+- The MFS image of each cycle. Those of later cycles have a `cycle<N>` suffix.
+- `cublet/cycle<N>/masks`, the clean masks of each island, and
+  `cublet/cycle<N>`, the joined mask of the cycle.
+- `cublet/*.c<cycle>r<round>-sources.txt`, the components found in that round,
+  and `cublet/*.to-c<cycle>r<round>-sources.txt`, all components up to it.
 - The `--residual-column` of the measurement set, or the column with an `_ALT`
-  suffix after an even number of rounds. Rounds alternate between the two, so
-  that a rerun of a subtraction can not subtract twice.
+  suffix. Subtractions alternate between the two, so that a rerun of one can
+  not subtract twice. The log of the last subtraction names the column.
 - An image of what is left, with the `cubletresidual` suffix.

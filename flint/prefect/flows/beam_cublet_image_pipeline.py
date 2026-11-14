@@ -24,6 +24,7 @@ from flint.cublet.islands import (
     find_cublet_regions,
     masked_peak,
     round_threshold,
+    union_masks,
 )
 from flint.cublet.reordered import link_reordered_files
 from flint.cublet.sourcelist import concatenate_source_lists
@@ -61,13 +62,17 @@ class BeamCubletOptions(BaseOptions):
     column: str = "CORRECTED_DATA"
     """The column to image"""
     residual_column: str = "CUBLET_RESIDUAL"
-    """The column the data less the components of all islands is written to. Even rounds write to a second column with an ``_ALT`` suffix, so that no round subtracts from the column it reads"""
+    """The column the data less the components of all islands is written to. Every second subtraction writes to a column with an ``_ALT`` suffix, so that none subtracts from the column it reads"""
+    cycles: int = 1
+    """Number of times the whole beam is imaged to find islands. Later cycles image what the earlier ones left, and add the islands they find to those already known"""
     rounds: int = 3
-    """Number of times every island is imaged, with the components subtracted in between"""
+    """Number of times every island is imaged in the first cycle, with the components subtracted in between"""
+    later_rounds: int = 1
+    """Number of rounds in each cycle after the first"""
     round_gain: float = 0.97
     """Fraction of the brightest island that each round cleans away. One less the far sidelobe level of the PSF is as deep as a round can usefully go"""
     threshold_floor: float = 0.0
-    """Islands are never cleaned below this, in Jy"""
+    """Islands are never cleaned below this, in Jy, and one with nothing above it left inside its mask is not imaged. It only stops the cleaning, the masks decide where components go"""
     merge_pixels: int = 0
     """Islands closer than twice this many pixels are imaged as one"""
     pad_factor: float = 2.5
@@ -113,6 +118,18 @@ def task_find_cublet_regions(
         pad_factor=beam_cublet_options.pad_factor,
         min_size=beam_cublet_options.min_size,
         max_islands=beam_cublet_options.max_islands,
+    )
+
+
+@task
+def task_union_masks(
+    mask_names: FITSMaskNames, earlier_mask_names: FITSMaskNames, output_dir: Path
+) -> FITSMaskNames:
+    """Add the islands of the earlier cycles to the mask of a cycle"""
+    return union_masks(
+        mask_names=mask_names,
+        earlier_mask_names=earlier_mask_names,
+        output_dir=output_dir,
     )
 
 
@@ -215,132 +232,168 @@ def flow_beam_cublet_image(
 def image_beam_cublets(
     beam_cublet_options: BeamCubletOptions, crystalball_options: CrystalBallOptions
 ) -> None:
-    """Image a beam island by island, in rounds"""
+    """Image a beam island by island, in cycles of rounds"""
     ms = MS(path=beam_cublet_options.ms_path, column=beam_cublet_options.column)
     logger.info(f"Cublet imaging of {ms=}")
 
     strategy = load_strategy_yaml(input_yaml=beam_cublet_options.strategy)
-
-    mfs_wsclean_options = get_options_from_strategy(
-        strategy=strategy, operation="cubletimage", mode="wsclean"
-    )
-
     work_dir = beam_cublet_options.work_dir or ms.path.parent / "cublet"
-
-    mfs_result = task_wsclean_imager.submit(
-        in_ms=ms,
-        update_wsclean_options=mfs_wsclean_options,
-        wsclean_container=beam_cublet_options.wsclean_container,
-    )
-    aegean_results = (
-        task_run_bane_and_aegean.submit(
-            image=mfs_result, aegean_container=beam_cublet_options.aegean_container
-        )
-        if beam_cublet_options.aegean_container
-        else None
-    )
-    fits_mask = task_create_image_mask_model.submit(
-        image=mfs_result,
-        image_products=aegean_results,
-        update_masking_options=get_options_from_strategy(
-            strategy=strategy, operation="cubletimage", mode="masking"
-        ),
-    )
-    regions = task_find_cublet_regions.submit(
-        wsclean_result=mfs_result,
-        fits_mask=fits_mask,
-        output_dir=work_dir / "masks",
-        beam_cublet_options=beam_cublet_options,
-    ).result()
-    if not regions:
-        logger.warning("No islands found, nothing to image")
-        return
-
-    island_wsclean_options = get_options_from_strategy(
-        strategy=strategy, operation="cubletisland", mode="wsclean"
-    )
-    peak = regions[0].peak
     residual_columns = (
         beam_cublet_options.residual_column,
         f"{beam_cublet_options.residual_column}_ALT",
     )
     round_ms: Any = ms
     source_list: Path | None = None
+    fits_mask: Any = None
+    mfs_wsclean_options: dict[str, Any] = {}
+    subtractions = 0
 
-    for round_number in range(1, beam_cublet_options.rounds + 1):
-        threshold = round_threshold(
-            peak=peak,
-            round_gain=beam_cublet_options.round_gain,
-            round_number=round_number,
-            floor=beam_cublet_options.threshold_floor,
+    for cycle in range(1, beam_cublet_options.cycles + 1):
+        cycle_dir = work_dir / f"cycle{cycle}"
+        mfs_wsclean_options = get_options_from_strategy(
+            strategy=strategy, operation="cubletimage", mode="wsclean", round_info=cycle
         )
-        round_regions = [region for region in regions if region.peak > threshold]
-        logger.info(
-            f"Round {round_number}: {len(round_regions)} islands to {threshold=} Jy"
-        )
-        if not round_regions:
-            break
+        if cycle > 1:
+            mfs_wsclean_options["flint_name_suffix"] = f"cycle{cycle}"
 
-        # The brightest island reorders the visibilities for the others
-        round_dir = work_dir / f"round{round_number}"
-        reuse = not beam_cublet_options.no_reuse_reordered
-        island_results = []
-        for region in round_regions:
-            seed = island_results[0] if reuse and island_results else None
-            is_seed = reuse and not island_results
-            island_results.append(
-                task_image_island.submit(
-                    ms=round_ms,
-                    region=region,
-                    wsclean_container=beam_cublet_options.wsclean_container,
-                    update_wsclean_options=island_wsclean_options,
-                    threshold=threshold,
-                    name_suffix=f"r{round_number}i{region.idx:05d}",
-                    temp_dir=round_dir
-                    if is_seed
-                    else round_dir / f"island{region.idx:05d}",
-                    save_reordered=is_seed,
-                    seed_dir=round_dir if seed else None,
-                    wait_for=[seed] if seed else None,
-                )
+        # Later cycles image what the earlier ones left
+        mfs_result = task_wsclean_imager.submit(
+            in_ms=round_ms,
+            update_wsclean_options=mfs_wsclean_options,
+            wsclean_container=beam_cublet_options.wsclean_container,
+        )
+        aegean_results = (
+            task_run_bane_and_aegean.submit(
+                image=mfs_result, aegean_container=beam_cublet_options.aegean_container
             )
-
-        round_source_list = task_concatenate_source_lists.submit(
-            island_images=island_results,  # type: ignore[arg-type]
-            output=work_dir / f"{ms.path.stem}.round{round_number}-sources.txt",
+            if beam_cublet_options.aegean_container
+            else None
+        )
+        cycle_mask = task_create_image_mask_model.submit(
+            image=mfs_result,
+            image_products=aegean_results,
+            update_masking_options=get_options_from_strategy(
+                strategy=strategy,
+                operation="cubletimage",
+                mode="masking",
+                round_info=cycle,
+            ),
+        )
+        # An island of an earlier cycle stays open to correction
+        fits_mask = (
+            task_union_masks.submit(
+                mask_names=cycle_mask,
+                earlier_mask_names=fits_mask,
+                output_dir=cycle_dir,
+            )
+            if fits_mask is not None
+            else cycle_mask
+        )
+        regions = task_find_cublet_regions.submit(
+            wsclean_result=mfs_result,
+            fits_mask=fits_mask,
+            output_dir=cycle_dir / "masks",
+            beam_cublet_options=beam_cublet_options,
         ).result()
-        task_remove_files_folders.submit(round_dir, wait_for=island_results)
-        if round_source_list is None:
-            logger.warning(f"No components found in round {round_number}, stopping")
+        if not regions:
+            logger.warning(f"No islands found in cycle {cycle}, stopping")
             break
 
-        # Kept for the record. Only the components of this round are predicted
-        source_list = task_concatenate_source_lists.submit(
-            island_images=island_results,  # type: ignore[arg-type]
-            output=work_dir / f"{ms.path.stem}.rounds1to{round_number}-sources.txt",
-            earlier_source_list=source_list,
-        ).result()
-
-        # What is left of each island decides whether a later round images it
-        imaged = {
-            island_image.region.idx: island_image.region
-            for island_image in (future.result() for future in island_results)
-        }
-        regions = [imaged.get(region.idx, region) for region in regions]
-
-        predicted_ms = task_crystalball_to_ms.submit(
-            ms=round_ms,
-            crystalball_options=crystalball_options,
-            wsclean_source_list_path=round_source_list,
+        island_wsclean_options = get_options_from_strategy(
+            strategy=strategy,
+            operation="cubletisland",
+            mode="wsclean",
+            round_info=cycle,
         )
-        # A rerun of the subtraction must not subtract twice, so it never
-        # writes to the column it reads
-        round_ms = task_subtract_model_from_ms.submit(
-            ms=predicted_ms,
-            output_column=residual_columns[(round_number - 1) % 2],
-            update_tracked_column=True,
-            chunk_size=1000,
+        peak = regions[0].peak
+        rounds = (
+            beam_cublet_options.rounds
+            if cycle == 1
+            else beam_cublet_options.later_rounds
         )
+        found_components = False
+
+        for round_number in range(1, rounds + 1):
+            threshold = round_threshold(
+                peak=peak,
+                round_gain=beam_cublet_options.round_gain,
+                round_number=round_number,
+                floor=beam_cublet_options.threshold_floor,
+            )
+            round_regions = [region for region in regions if region.peak > threshold]
+            logger.info(
+                f"Cycle {cycle} round {round_number}: {len(round_regions)} islands to {threshold=} Jy"
+            )
+            if not round_regions:
+                break
+
+            # The brightest island reorders the visibilities for the others
+            round_dir = cycle_dir / f"round{round_number}"
+            round_tag = f"c{cycle}r{round_number}"
+            reuse = not beam_cublet_options.no_reuse_reordered
+            island_results = []
+            for region in round_regions:
+                seed = island_results[0] if reuse and island_results else None
+                is_seed = reuse and not island_results
+                island_results.append(
+                    task_image_island.submit(
+                        ms=round_ms,
+                        region=region,
+                        wsclean_container=beam_cublet_options.wsclean_container,
+                        update_wsclean_options=island_wsclean_options,
+                        threshold=threshold,
+                        name_suffix=f"{round_tag}i{region.idx:05d}",
+                        temp_dir=round_dir
+                        if is_seed
+                        else round_dir / f"island{region.idx:05d}",
+                        save_reordered=is_seed,
+                        seed_dir=round_dir if seed else None,
+                        wait_for=[seed] if seed else None,
+                    )
+                )
+
+            round_source_list = task_concatenate_source_lists.submit(
+                island_images=island_results,  # type: ignore[arg-type]
+                output=work_dir / f"{ms.path.stem}.{round_tag}-sources.txt",
+            ).result()
+            task_remove_files_folders.submit(round_dir, wait_for=island_results)
+            if round_source_list is None:
+                logger.warning(f"No components found in {round_tag}, stopping")
+                break
+            found_components = True
+
+            # Kept for the record. Only the components of this round are predicted
+            source_list = task_concatenate_source_lists.submit(
+                island_images=island_results,  # type: ignore[arg-type]
+                output=work_dir / f"{ms.path.stem}.to-{round_tag}-sources.txt",
+                earlier_source_list=source_list,
+            ).result()
+
+            # What is left of each island decides whether a later round images it
+            imaged = {
+                island_image.region.idx: island_image.region
+                for island_image in (future.result() for future in island_results)
+            }
+            regions = [imaged.get(region.idx, region) for region in regions]
+
+            predicted_ms = task_crystalball_to_ms.submit(
+                ms=round_ms,
+                crystalball_options=crystalball_options,
+                wsclean_source_list_path=round_source_list,
+            )
+            # A rerun of the subtraction must not subtract twice, so it never
+            # writes to the column it reads
+            round_ms = task_subtract_model_from_ms.submit(
+                ms=predicted_ms,
+                output_column=residual_columns[subtractions % 2],
+                update_tracked_column=True,
+                chunk_size=1000,
+            )
+            subtractions += 1
+
+        if not found_components:
+            logger.warning(f"Cycle {cycle} changed nothing, stopping")
+            break
 
     if source_list is None:
         return

@@ -31,7 +31,7 @@ class CubletRegion(BaseOptions):
     super_weight: float
     """Padded window size over the padded size of the larger image, which keeps its weighting"""
     peak: float
-    """Brightest pixel of the island"""
+    """Largest absolute pixel of the island, so that an island cleaned too far counts as unfinished"""
     fits_mask: FITSMaskNames | None = None
     """Clean masks of the window, holding this island alone"""
 
@@ -44,11 +44,47 @@ def round_threshold(
 
 
 def masked_peak(image_fits: Path, mask_fits: Path) -> float:
-    """The brightest pixel of an image inside a mask"""
+    """The largest absolute pixel of an image inside a mask"""
     with fits.open(image_fits) as image, fits.open(mask_fits) as mask:
         data = np.nan_to_num(np.squeeze(image[0].data))
         masked = np.squeeze(mask[0].data) != 0
-    return float(np.max(data[..., masked], initial=0.0))
+    return float(np.max(np.abs(data[..., masked]), initial=0.0))
+
+
+def union_masks(
+    mask_names: FITSMaskNames, earlier_mask_names: FITSMaskNames, output_dir: Path
+) -> FITSMaskNames:
+    """Add the islands of an earlier mask to a mask, so they can still be cleaned.
+
+    Bit n of a scale mask is scale n, so the union is of bits.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    union: dict[str, Path] = {}
+    for field in ("mask_fits", "scale_mask_fits"):
+        mask_path = getattr(mask_names, field)
+        earlier_path = getattr(earlier_mask_names, field)
+        assert (mask_path is None) == (earlier_path is None), (
+            f"Only one of the masks has a {field}"
+        )
+        if mask_path is None:
+            continue
+        with fits.open(mask_path) as mask, fits.open(earlier_path) as earlier:
+            header = mask[0].header
+            data = mask[0].data
+            earlier_data = earlier[0].data
+        assert data.shape == earlier_data.shape, (
+            f"Masks differ in shape, {data.shape=} and {earlier_data.shape=}"
+        )
+        joined = np.nan_to_num(data).astype(np.int64) | np.nan_to_num(
+            earlier_data
+        ).astype(np.int64)
+        union[field] = output_dir / mask_path.name
+        fits.writeto(
+            union[field], data=joined.astype(data.dtype), header=header, overwrite=True
+        )
+
+    return FITSMaskNames(**union)
 
 
 def label_islands(mask: NDArray, merge_pixels: int = 0) -> NDArray[np.int32]:
@@ -92,7 +128,7 @@ def create_cublet_regions(
         return []
 
     indices = np.arange(1, count + 1)
-    peaks = maximum(np.nan_to_num(image), labels=labels, index=indices)
+    peaks = maximum(np.abs(np.nan_to_num(image)), labels=labels, index=indices)
     wcs = WCS(header).celestial
 
     regions = []

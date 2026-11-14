@@ -19,6 +19,7 @@ from flint.cublet.islands import (
     label_islands,
     masked_peak,
     round_threshold,
+    union_masks,
 )
 from flint.cublet.reordered import link_reordered_files
 from flint.cublet.sourcelist import concatenate_source_lists
@@ -116,12 +117,13 @@ def test_create_cublet_regions_padding(mask, image, header) -> None:
 
 
 def test_masked_peak(tmp_path) -> None:
-    """Only pixels inside the mask count, in every plane of the image"""
+    """Only pixels inside the mask count, in every plane of the image, whatever their sign"""
     mask = np.zeros((16, 16), dtype=np.float32)
     mask[4:8, 4:8] = 2
     image = np.full((1, 3, 16, 16), 9.0, dtype=np.float32)
     image[..., 4:8, 4:8] = -1.0
     image[0, 1, 5, 5] = 0.5
+    image[0, 1, 7, 7] = -2.0
     image[0, 2, 6, 6] = np.nan
     fits.writeto(tmp_path / "mask.fits", data=mask)
     fits.writeto(tmp_path / "image.fits", data=image)
@@ -129,7 +131,53 @@ def test_masked_peak(tmp_path) -> None:
     peak = masked_peak(
         image_fits=tmp_path / "image.fits", mask_fits=tmp_path / "mask.fits"
     )
-    assert peak == 0.5
+    assert peak == 2.0
+
+
+def test_create_cublet_regions_negative_peak(mask, image, header) -> None:
+    """An island cleaned too far is ranked by how far"""
+    labels = label_islands(mask=mask)
+    image[300:310, 215:220] = -7.0
+    regions = create_cublet_regions(labels=labels, image=image, header=header)
+    assert [region.peak for region in regions] == [7.0, 5.0, 1.0]
+
+
+def test_union_masks(tmp_path) -> None:
+    """The scales of both masks are kept, and the islands of both are found"""
+    new = np.zeros((1, 1, 32, 32), dtype=np.float32)
+    new[..., 2:6, 2:6] = 1
+    new[..., 20:24, 20:24] = 2
+    earlier = np.zeros((1, 1, 32, 32), dtype=np.float32)
+    earlier[..., 4:8, 4:8] = 4
+    earlier[..., 10:12, 10:12] = 1
+    new_names = FITSMaskNames(scale_mask_fits=tmp_path / "new.scale_mask.fits")
+    earlier_names = FITSMaskNames(scale_mask_fits=tmp_path / "old.scale_mask.fits")
+    fits.writeto(new_names.scale_mask_fits, data=new)
+    fits.writeto(earlier_names.scale_mask_fits, data=earlier)
+
+    union_names = union_masks(
+        mask_names=new_names,
+        earlier_mask_names=earlier_names,
+        output_dir=tmp_path / "cycle2",
+    )
+    assert union_names.scale_mask_fits == tmp_path / "cycle2" / "new.scale_mask.fits"
+    assert union_names.mask_fits is None
+
+    union = fits.getdata(union_names.scale_mask_fits)
+    assert union.shape == new.shape
+    assert union.dtype.kind == "f"
+    assert union[0, 0, 3, 3] == 1
+    assert union[0, 0, 5, 5] == 5
+    assert union[0, 0, 7, 7] == 4
+    # The overlapping islands are now one
+    assert label_islands(mask=np.squeeze(union)).max() == 3
+
+    with pytest.raises(AssertionError, match="mask_fits"):
+        union_masks(
+            mask_names=FITSMaskNames(mask_fits=tmp_path / "new.scale_mask.fits"),
+            earlier_mask_names=earlier_names,
+            output_dir=tmp_path / "cycle2",
+        )
 
 
 def test_create_cublet_regions_limits(mask, image, header) -> None:

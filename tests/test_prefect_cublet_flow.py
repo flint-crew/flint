@@ -29,15 +29,23 @@ defaults:
   wsclean:
     size: 1024
 cubletimage:
-  wsclean:
-    channels_out: 4
-    save_source_list: true
-  masking:
-    use_mac: true
+  1:
+    wsclean:
+      channels_out: 4
+      save_source_list: true
+    masking:
+      use_mac: true
+  2:
+    wsclean:
+      channels_out: 6
+    masking:
+      use_mac: true
+      seed_clip: 1.2
 cubletisland:
-  wsclean:
-    channels_out: 72
-    auto_mask: null
+  1:
+    wsclean:
+      channels_out: 72
+      auto_mask: null
 """
 
 
@@ -126,6 +134,7 @@ def fake_tasks(monkeypatch) -> dict[str, FakeTask]:
         "task_wsclean_imager": FakeTask(lambda **kwargs: "image"),
         "task_run_bane_and_aegean": FakeTask(lambda **kwargs: "aegean"),
         "task_create_image_mask_model": FakeTask(lambda **kwargs: "mask"),
+        "task_union_masks": FakeTask(lambda **kwargs: "union"),
         "task_find_cublet_regions": FakeTask(lambda **kwargs: regions),
         "task_image_island": FakeTask(_image_island),
         "task_concatenate_source_lists": FakeTask(
@@ -167,11 +176,11 @@ def test_flow_rounds(fake_tasks, tmp_path) -> None:
     island_calls = fake_tasks["task_image_island"].calls
     # Round 1 cleans to 1.0 Jy and round 2 to 0.2 Jy, which the faintest island only meets then
     assert [call["name_suffix"] for call in island_calls] == [
-        "r1i00001",
-        "r1i00002",
-        "r2i00001",
-        "r2i00002",
-        "r2i00003",
+        "c1r1i00001",
+        "c1r1i00002",
+        "c1r2i00001",
+        "c1r2i00002",
+        "c1r2i00003",
     ]
     assert [call["threshold"] for call in island_calls] == pytest.approx(
         [1.0, 1.0, 0.2, 0.2, 0.2]
@@ -182,12 +191,12 @@ def test_flow_rounds(fake_tasks, tmp_path) -> None:
 
     # The brightest island of a round reorders the visibilities for the rest
     seed, linked = island_calls[0], island_calls[1]
-    assert seed["temp_dir"] == work_dir / "round1"
+    assert seed["temp_dir"] == work_dir / "cycle1" / "round1"
     assert seed["save_reordered"]
     assert seed["seed_dir"] is None
     assert seed["wait_for"] is None
-    assert linked["temp_dir"] == work_dir / "round1" / "island00002"
-    assert linked["seed_dir"] == work_dir / "round1"
+    assert linked["temp_dir"] == work_dir / "cycle1" / "round1" / "island00002"
+    assert linked["seed_dir"] == work_dir / "cycle1" / "round1"
     assert linked["wait_for"] is not None
 
     # Each round images, predicts into and subtracts from what the last round left
@@ -205,7 +214,7 @@ def test_flow_rounds(fake_tasks, tmp_path) -> None:
     assert [
         _component_count(call["wsclean_source_list_path"]) for call in predict_calls
     ] == [2, 3]
-    all_components = work_dir / "SB1234.RACS_0000+00.beam00.rounds1to2-sources.txt"
+    all_components = work_dir / "SB1234.RACS_0000+00.beam00.to-c1r2-sources.txt"
     assert _component_count(all_components) == 5
 
     # The MFS image, then the image of what is left
@@ -235,10 +244,10 @@ def test_flow_skips_finished_islands(fake_tasks, tmp_path) -> None:
 
     island_calls = fake_tasks["task_image_island"].calls
     assert [call["name_suffix"] for call in island_calls] == [
-        "r1i00001",
-        "r1i00002",
-        "r2i00002",
-        "r2i00003",
+        "c1r1i00001",
+        "c1r1i00002",
+        "c1r2i00002",
+        "c1r2i00003",
     ]
     # The next brightest island reorders the visibilities in its place
     assert island_calls[2]["save_reordered"]
@@ -353,3 +362,96 @@ def test_flow_crystalball_options(fake_tasks, tmp_path) -> None:
         crystalball_options,
         crystalball_options,
     ]
+
+
+def test_flow_cycles(fake_tasks, tmp_path) -> None:
+    """Later cycles image what is left, and add their islands to those already known"""
+    options = _options(tmp_path, cycles=3, rounds=2, later_rounds=1, round_gain=0.8)
+    flow_beam_cublet_image.fn(beam_cublet_options=options)
+
+    work_dir = tmp_path / "cublet"
+    columns = ["CORRECTED_DATA", "CUBLET_RESIDUAL", "CUBLET_RESIDUAL_ALT"]
+
+    # Two rounds in the first cycle, then one in each later cycle
+    island_calls = fake_tasks["task_image_island"].calls
+    rounds = [call["name_suffix"][:4] for call in island_calls]
+    assert sorted(set(rounds)) == ["c1r1", "c1r2", "c2r1", "c3r1"]
+    assert island_calls[-1]["temp_dir"].parent == work_dir / "cycle3" / "round1"
+
+    # Each subtraction writes to the column the last did not
+    subtract_calls = fake_tasks["task_subtract_model_from_ms"].calls
+    assert [call["output_column"] for call in subtract_calls] == [
+        columns[1],
+        columns[2],
+        columns[1],
+        columns[2],
+    ]
+
+    # An image for each cycle, of what the cycle before left, then one of what is left
+    wsclean_calls = fake_tasks["task_wsclean_imager"].calls
+    assert [call["in_ms"].column for call in wsclean_calls] == [
+        columns[0],
+        columns[2],
+        columns[1],
+        columns[2],
+    ]
+    suffixes = [
+        call["update_wsclean_options"].get("flint_name_suffix")
+        for call in wsclean_calls
+    ]
+    assert suffixes == [None, "cycle2", "cycle3", "cubletresidual"]
+    # A cycle past the last in the strategy uses the last
+    channels = [
+        call["update_wsclean_options"]["channels_out"] for call in wsclean_calls
+    ]
+    assert channels == [4, 6, 6, 6]
+    mask_calls = fake_tasks["task_create_image_mask_model"].calls
+    assert [call["update_masking_options"].get("seed_clip") for call in mask_calls] == [
+        None,
+        1.2,
+        1.2,
+    ]
+    assert all(
+        call["update_wsclean_options"]["channels_out"] == 72 for call in island_calls
+    )
+
+    # The mask of a cycle is joined with that of all the cycles before it
+    union_calls = fake_tasks["task_union_masks"].calls
+    assert [call["earlier_mask_names"] for call in union_calls] == ["mask", "union"]
+    assert union_calls[0]["output_dir"] == work_dir / "cycle2"
+    region_calls = fake_tasks["task_find_cublet_regions"].calls
+    assert [call["fits_mask"] for call in region_calls] == ["mask", "union", "union"]
+    assert region_calls[1]["output_dir"] == work_dir / "cycle2" / "masks"
+
+    # The components of every cycle are kept on record together
+    all_components = work_dir / "SB1234.RACS_0000+00.beam00.to-c3r1-sources.txt"
+    assert _component_count(all_components) == len(island_calls)
+
+
+def test_flow_cycles_stop(fake_tasks, tmp_path) -> None:
+    """A cycle that finds no islands is the last"""
+    regions = fake_tasks["task_find_cublet_regions"].fn()
+    found = iter([regions, []])
+    fake_tasks["task_find_cublet_regions"].fn = lambda **kwargs: next(found)
+    options = _options(tmp_path, cycles=4, rounds=1, round_gain=0.8)
+    flow_beam_cublet_image.fn(beam_cublet_options=options)
+
+    # The images of two cycles, then the image of what is left
+    assert len(fake_tasks["task_wsclean_imager"].calls) == 3
+    island_calls = fake_tasks["task_image_island"].calls
+    assert {call["name_suffix"][:4] for call in island_calls} == {"c1r1"}
+
+
+def test_strategy_keyed_by_cycle(tmp_path) -> None:
+    """The cublet operations are keyed by cycle, as selfcal is by round"""
+    from flint.configuration import load_strategy_yaml
+
+    strategy = tmp_path / "strategy.yaml"
+    strategy.write_text(STRATEGY)
+    load_strategy_yaml(input_yaml=strategy, verify=True)
+
+    flat = STRATEGY.replace("  1:\n    wsclean:\n      channels_out: 72", "  wsclean:")
+    assert flat != STRATEGY
+    strategy.write_text(flat)
+    with pytest.raises(ValueError):
+        load_strategy_yaml(input_yaml=strategy, verify=True)

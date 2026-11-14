@@ -59,6 +59,8 @@ KNOWN_OPERATIONS = (
     "cubletimage",
     "cubletisland",
 )
+ROUND_OPERATIONS = ("selfcal", "cubletimage", "cubletisland")
+"""Operations whose options are keyed by round. A round past the last uses the last."""
 FORMAT_VERSION = 0.2
 MODE_OPTIONS_MAPPING = {
     "wsclean": WSCleanOptions,
@@ -341,12 +343,10 @@ def get_options_from_strategy(
         )
 
     # Override the round if requested
-    if (
-        isinstance(round_info, int)
-        and max_round_override
-        and "selfcal" in strategy.keys()
-    ):
-        round_info = min(round_info, max(strategy["selfcal"].keys()))
+    if isinstance(round_info, int) and max_round_override:
+        rounds_of = operation if operation in ROUND_OPERATIONS else "selfcal"
+        if rounds_of in strategy.keys():
+            round_info = min(round_info, max(strategy[rounds_of].keys()))
 
     # step one, get the defaults
     options = dict(**strategy["defaults"][mode]) if mode in strategy["defaults"] else {}
@@ -503,18 +503,21 @@ def verify_configuration(input_strategy: Strategy, raise_on_error: bool = True) 
     if unknown_headers:
         errors.append(f"{unknown_headers=} found. Supported headers: {KNOWN_HEADERS}")
 
-    if "selfcal" in input_strategy:
-        round_keys = input_strategy["selfcal"].keys()
+    for operation in ROUND_OPERATIONS:
+        if operation not in input_strategy:
+            continue
+        round_keys = input_strategy[operation].keys()
 
         if not all([isinstance(i, int) for i in round_keys]):
-            errors.append("The keys into the self-calibration should be ints. ")
+            errors.append(f"The keys into {operation=} should be ints. ")
+            continue
 
         for round_info in round_keys:
-            for mode in input_strategy["selfcal"][round_info]:
+            for mode in input_strategy[operation][round_info]:
                 try:
                     options = get_options_from_strategy(
                         strategy=input_strategy,
-                        operation="selfcal",
+                        operation=operation,
                         mode=mode,
                         round_info=round_info,
                     )
@@ -522,7 +525,7 @@ def verify_configuration(input_strategy: Strategy, raise_on_error: bool = True) 
                         _ = MODE_OPTIONS_MAPPING[mode](**options)
                     except (TypeError, ValidationError) as error:
                         errors.append(
-                            f"{mode=} mode in {round_info=} incorrectly formed. {error} "
+                            f"{mode=} mode in {operation=} {round_info=} incorrectly formed. {error} "
                         )
                 except Exception as exception:
                     errors.append(f"{exception}")
@@ -576,7 +579,7 @@ def verify_configuration(input_strategy: Strategy, raise_on_error: bool = True) 
     test_operations = KNOWN_OPERATIONS
     for operation in test_operations:
         # Already checked above
-        if operation == "selfcal" or operation == "polarisation":
+        if operation in ROUND_OPERATIONS or operation == "polarisation":
             continue
         if operation in input_strategy.keys():
             for mode in input_strategy[operation]:
