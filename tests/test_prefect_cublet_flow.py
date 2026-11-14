@@ -286,7 +286,7 @@ def test_flow_no_islands(fake_tasks, tmp_path) -> None:
 def test_image_island(monkeypatch, tmp_path) -> None:
     """An island image is shifted, weighted as the full image and keeps the reordered files apart from its images"""
     mask_fits = tmp_path / "island.mask.fits"
-    residual_fits = tmp_path / "island.residual.fits"
+    residual_fits = tmp_path / "island.i.MFS.residual.fits"
     mask = np.zeros((128, 128), dtype=np.float32)
     mask[60:70, 60:70] = 1
     residual = np.full((1, 1, 128, 128), 9.0, dtype=np.float32)
@@ -295,19 +295,21 @@ def test_image_island(monkeypatch, tmp_path) -> None:
     fits.writeto(residual_fits, data=residual)
     source_list = tmp_path / "island-sources.txt"
     source_list.write_text("components")
-    image_fits = tmp_path / "island-image.fits"
+    image_fits = tmp_path / "island.i.MFS.image.fits"
+    # flint keeps the MFS PSF, but does not gather it
+    psf_fits = tmp_path / "island.i.MFS.psf.fits"
+    other_fits = tmp_path / "island2.i.MFS.image.fits"
+    other_fits.touch()
 
     captured: dict[str, Any] = {}
 
     def fake_imager(**kwargs):
         captured.update(kwargs)
         image_fits.touch()
+        psf_fits.touch()
         return SimpleNamespace(
             image_set=SimpleNamespace(
-                image=[image_fits],
-                psf=None,
-                dirty=None,
-                model=None,
+                prefix=str(tmp_path / "island.i"),
                 residual=[residual_fits],
                 source_list=source_list,
             )
@@ -338,7 +340,9 @@ def test_image_island(monkeypatch, tmp_path) -> None:
 
     # Only the components of the island are kept
     assert not image_fits.exists()
+    assert not psf_fits.exists()
     assert not residual_fits.exists()
+    assert other_fits.exists()
     assert source_list.exists()
 
     options = captured["update_wsclean_options"]

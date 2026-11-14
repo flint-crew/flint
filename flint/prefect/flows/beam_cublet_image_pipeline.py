@@ -192,15 +192,10 @@ def task_image_island(
         )
 
     if not keep_images:
-        for images in (
-            image_set.image,
-            image_set.psf,
-            image_set.dirty,
-            image_set.model,
-            image_set.residual,
-        ):
-            for image in images or []:
-                image.unlink(missing_ok=True)
+        # By name, as flint leaves images on disk that it does not gather
+        prefix = Path(image_set.prefix)
+        for image in prefix.parent.glob(f"{prefix.name}.*.fits"):
+            image.unlink()
 
     return IslandImage(
         region=region.with_options(peak=peak),
