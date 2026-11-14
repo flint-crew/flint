@@ -3,6 +3,8 @@
 `flint_flow_beam_cublet_pipeline` cleans one beam island by island. It is an
 experiment, and images a single measurement set.
 
+The reasoning behind it is in [Why cublet imaging works the way it does](cublet_design.md).
+
 1. A wide MFS image with few channels is made and masked with
    [eye-patch](masking.md).
 2. The mask is split into islands. Each gets a square window, its own clean

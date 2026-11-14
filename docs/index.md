@@ -21,6 +21,7 @@ masking.md
 source_finding.md
 predict.md
 cublet.md
+cublet_design.md
 contributions.md
 ```
 
