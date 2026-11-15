@@ -48,7 +48,7 @@ dependencies = [
     "prefect-dask>=0.3.7",
     "dask",
     "dask-jobqueue",
-    "bokeh>=3.1,<3.9", # 3.9 renamed the templates the pinned distributed renders reports with
+    "bokeh>=3.1", # dask needs it to render performance reports
     "RACS-tools>=4.4.0,<4.5", # 4.5 refuses a common beam that float32 round-off puts a hair inside a plane's beam
     "radio-beam>=0.3.4",
     "reproject>=0.10",
