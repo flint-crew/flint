@@ -296,7 +296,7 @@ cluster_kwargs:
     ...
 ```
 
-Each flow run then saves a `dask` performance report to that directory as `dask-performance-report-<flow run name>.html` once it finishes, whether it succeeded or not. The report is a standalone HTML page holding the main dashboard plots (task stream, worker profile, bandwidth and so on), and is viewed in a web browser. A link to it is also recorded against the flow run as a `prefect` artifact (key `dask-performance-report`), so it can be found from the `prefect` UI.
+Each flow run then saves a `dask` performance report to that directory as `dask-performance-report-<flow run name>.html` once it finishes, whether it succeeded or not. The report is a standalone HTML page holding the main dashboard plots (task stream, worker profile, bandwidth and so on), and is viewed in a web browser.
 
 Note that there there are many other `dask` cluster types for a variety of platforms. Redeploying to a new platform should be straightforward if there exists a `dask` cluster interface for it.
 

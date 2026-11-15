@@ -54,11 +54,10 @@ def test_example_cluster_no_exists():
         get_cluster_spec(cluster="Jack-be-sneaky")
 
 
-def test_performance_report_saved_as_artifact(tmp_path):
-    """A flow run on a runner with a performance_report_dir saves its report and an artifact"""
+def test_performance_report_saved(tmp_path):
+    """A flow run on a runner with a performance_report_dir saves its report"""
     from prefect import flow, task
     from prefect.client.orchestration import get_client
-    from prefect.client.schemas.filters import ArtifactFilter, ArtifactFilterKey
 
     from flint.prefect.clusters import FlintDaskTaskRunner
 
@@ -77,18 +76,11 @@ def test_performance_report_saved_as_artifact(tmp_path):
     state = a_flow.with_options(task_runner=runner)(return_state=True)
     assert state.result() == 2
 
-    flow_run_id = state.state_details.flow_run_id
     with get_client(sync_client=True) as client:
-        flow_run = client.read_flow_run(flow_run_id)
-        artifacts = client.read_artifacts(
-            artifact_filter=ArtifactFilter(
-                key=ArtifactFilterKey(any_=["dask-performance-report"])
-            )
-        )
+        flow_run = client.read_flow_run(state.state_details.flow_run_id)
 
     report = tmp_path / "reports" / f"dask-performance-report-{flow_run.name}.html"
     assert report.exists()
-    assert any(a.flow_run_id == flow_run_id for a in artifacts)
 
 
 def test_no_performance_report_by_default():
