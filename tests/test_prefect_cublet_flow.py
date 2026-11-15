@@ -308,11 +308,12 @@ def test_image_island(monkeypatch, tmp_path) -> None:
         image_fits.touch()
         psf_fits.touch()
         return SimpleNamespace(
+            options=SimpleNamespace(channels_out=72),
             image_set=SimpleNamespace(
                 prefix=str(tmp_path / "island.i"),
                 residual=[residual_fits],
                 source_list=source_list,
-            )
+            ),
         )
 
     monkeypatch.setattr(cublet_flow.task_wsclean_imager, "fn", fake_imager)
@@ -357,7 +358,10 @@ def test_image_island(monkeypatch, tmp_path) -> None:
     assert options["reuse_reordered"]
     assert options["save_reordered"]
     assert options["temp_dir"] == island_dir
-    assert options["flint_hold_dir"] == ms.path.parent
+    # The images are written apart from the reordered files and from other islands
+    assert options["flint_hold_dir"] == island_dir / "images"
+    assert options["flint_mfs_only"]
+    assert not captured["make_cube_from_subbands"]
 
     # The linked files are removed with the island, and the seed is left alone
     assert not island_dir.exists()
@@ -375,7 +379,26 @@ def test_image_island(monkeypatch, tmp_path) -> None:
         keep_images=True,
     )
     assert captured["update_wsclean_options"]["mgain"] == 0.8
+    assert not captured["update_wsclean_options"]["flint_mfs_only"]
+    assert captured["make_cube_from_subbands"]
     assert image_fits.exists()
+
+    # A temp_dir in the strategy is where the images are written, not the
+    # reordered files
+    monkeypatch.setenv("MEMDIR", str(tmp_path / "ramdisk"))
+    fits.writeto(residual_fits, data=residual, overwrite=True)
+    cublet_flow.task_image_island.fn(
+        ms=ms,
+        region=_region(idx=2, peak=3.0),
+        wsclean_container=tmp_path / "wsclean.sif",
+        update_wsclean_options={"temp_dir": "$MEMDIR/abc"},
+        threshold=0.5,
+        name_suffix="r1i00002",
+        temp_dir=island_dir,
+    )
+    options = captured["update_wsclean_options"]
+    assert options["temp_dir"] == island_dir
+    assert options["flint_hold_dir"] == tmp_path / "ramdisk" / "abc" / "r1i00002"
 
 
 def test_flow_crystalball_options(fake_tasks, tmp_path) -> None:

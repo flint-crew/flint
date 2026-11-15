@@ -44,6 +44,7 @@ from flint.prefect.common.imaging import (
 from flint.prefect.common.ms import task_subtract_model_from_ms
 from flint.prefect.common.predict import task_crystalball_to_ms
 from flint.prefect.helpers import watch_dask_cluster
+from flint.utils import parse_environment_variables
 
 
 class BeamCubletOptions(BaseOptions):
@@ -149,6 +150,14 @@ def task_image_island(
     keep_images: bool = False,
 ) -> IslandImage:
     """Image one island. With a ``seed_dir`` its reordered visibilities are used."""
+    # The reordered files stay in ``temp_dir``, as the islands of a round share
+    # them. A temp_dir in the strategy is where the island writes its images.
+    hold_dir = update_wsclean_options.get(
+        "flint_hold_dir"
+    ) or update_wsclean_options.get("temp_dir")
+    hold_dir = parse_environment_variables(variable=str(hold_dir)) if hold_dir else None
+    hold_dir = Path(hold_dir) / name_suffix if hold_dir else temp_dir / "images"
+
     if seed_dir is not None:
         link_reordered_files(seed_dir=seed_dir, target_dir=temp_dir, ms_path=ms.path)
 
@@ -164,7 +173,9 @@ def task_image_island(
         flint_name_suffix=name_suffix,
         temp_dir=temp_dir,
         # Otherwise the reordered files are moved out of the temp_dir with the images
-        flint_hold_dir=ms.path.parent,
+        flint_hold_dir=hold_dir,
+        # The channel images are then never written beside the measurement set
+        flint_mfs_only=not keep_images,
         # A call that reuses reordered files deletes them unless told to save them
         save_reordered=save_reordered or seed_dir is not None,
         reuse_reordered=seed_dir is not None,
@@ -175,8 +186,11 @@ def task_image_island(
             wsclean_container=wsclean_container,
             update_wsclean_options=island_options,
             fits_mask=region.fits_mask,
+            make_cube_from_subbands=keep_images,
         )
     finally:
+        # A failed call leaves its images behind, which on a ramdisk is memory
+        shutil.rmtree(hold_dir, ignore_errors=True)
         if seed_dir is not None:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
@@ -192,10 +206,11 @@ def task_image_island(
         )
 
     if not keep_images:
-        # By name, as flint leaves images on disk that it does not gather
-        prefix = Path(image_set.prefix)
-        for image in prefix.parent.glob(f"{prefix.name}.*.fits"):
-            image.unlink()
+        # By name, as flint leaves images on disk that it does not gather, and
+        # listing a directory that every island writes to is slow
+        mfs = "MFS." if wsclean_result.options.channels_out > 1 else ""
+        for image_type in ("image", "dirty", "psf", "model", "residual"):
+            Path(f"{image_set.prefix}.{mfs}{image_type}.fits").unlink(missing_ok=True)
 
     return IslandImage(
         region=region.with_options(peak=peak),

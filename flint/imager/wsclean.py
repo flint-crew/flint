@@ -204,6 +204,8 @@ class WSCleanOptions(BaseOptions):
     """Save the MFS image, model and residual products (co-added and leakage-corrected the same way as the science image), rather than just the image"""
     flint_hold_dir: str | Path | None = None
     """Directory images are written to before being moved beside the MS. Takes precedence over ``temp_dir`` for this purpose"""
+    flint_mfs_only: bool = False
+    """Delete every channel image once wsclean finishes, before anything leaves the hold directory, keeping only the MFS images"""
     flint_keep_linear_images: bool = False
     """Keep the XX and YY images when ``pol`` is ``xx,yy``, rather than deleting them once Stokes I is formed"""
 
@@ -394,15 +396,20 @@ def verify_wsclean_outputs(
     prefix: str | Path,
     channels_out: int,
     pols: tuple[str, ...] | None,
+    mfs_only: bool = False,
 ) -> None:
     """Raise ``FileNotFoundError`` if an ``image`` this run should write is not among
-    ``outputs``. Other types are not checked, as cleaning up deletes them."""
+    ``outputs``. Other types are not checked, as cleaning up deletes them. With
+    ``mfs_only`` the channel images are not expected either."""
     found = {output.path.name for output in outputs}
+    expected_outputs = expected_wsclean_outputs(
+        prefix=prefix, channels_out=channels_out, pols=pols
+    )
+    if mfs_only and channels_out > 1:
+        expected_outputs = [expected for expected in expected_outputs if expected.mfs]
     missing = [
         expected.path.name
-        for expected in expected_wsclean_outputs(
-            prefix=prefix, channels_out=channels_out, pols=pols
-        )
+        for expected in expected_outputs
         if expected.path.name not in found
     ]
     if missing:
@@ -751,7 +758,11 @@ def collect_wsclean_outputs(
         prefix=prefix, channels_out=options.channels_out, pols=pols
     )
     verify_wsclean_outputs(
-        outputs=outputs, prefix=prefix, channels_out=options.channels_out, pols=pols
+        outputs=outputs,
+        prefix=prefix,
+        channels_out=options.channels_out,
+        pols=pols,
+        mfs_only=options.flint_mfs_only,
     )
 
     pol_token = pol_name_token(pol=options.pol)
@@ -880,6 +891,9 @@ def run_wsclean_imager(
 
     channels_out = wsclean_result.options.channels_out
     pols = parse_pols(pol_str=wsclean_result.options.pol)
+    remove_types = ["dirty", "psf", "model", "residual"]
+    if wsclean_result.options.flint_mfs_only and channels_out > 1:
+        remove_types.append("image")
 
     # Clear what an earlier attempt left under this name, so every image found
     # after the run is from it. A task rerun after a dask worker death meets its
@@ -909,7 +923,8 @@ def run_wsclean_imager(
                 rm_files = remove_wsclean_outputs(
                     outputs=find_wsclean_outputs(
                         prefix=prefix, channels_out=channels_out, pols=pols
-                    )
+                    ),
+                    image_types=remove_types,
                 )
                 logger.info(f"Removed {len(rm_files)} files")
                 # No need to attempt to clean up again once files have been moved
@@ -938,7 +953,8 @@ def run_wsclean_imager(
         remove_wsclean_outputs(
             outputs=find_wsclean_outputs(
                 prefix=prefix, channels_out=channels_out, pols=pols
-            )
+            ),
+            image_types=remove_types,
         )
 
     image_set = collect_wsclean_outputs(

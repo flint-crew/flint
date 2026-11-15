@@ -120,8 +120,9 @@ cubletisland:
 
 Notes on the island options:
 
-- The flow sets `size`, `shift`, `super_weight`, `threshold`, the mask and the
-  temporary directory of each island. `super_weight` is the padded island size
+- The flow sets `size`, `shift`, `super_weight`, `threshold` and the mask of
+  each island, and where its reordered visibilities go. A `temp_dir` given
+  here is used for its images instead, as described below. `super_weight` is the padded island size
   over the padded MFS image size, which gives the island the weights of the MFS
   image. The default wsclean padding of 1.2 is assumed.
 - `mgain` defaults to 1, as the rounds are the major cycles. Each island is then
@@ -137,6 +138,34 @@ Notes on the island options:
   blocks should match.
 - The `size` and `scale` of the MFS image have to be the same in every cycle,
   as the masks of the cycles are joined pixel by pixel.
+
+## Where an island writes its images
+
+An island writes its images to a directory of its own, and only the MFS images
+and the component list are then moved beside the measurement set. The channel
+images are deleted first. With many islands this matters: a shared file system
+slows to a crawl when hundreds of tasks create and delete files in one
+directory.
+
+By default that directory is inside the `--work-dir`. Give a `temp_dir` under
+`cubletisland` to put it on storage local to the node, such as a ramdisk:
+
+```yaml
+cubletisland:
+  1:
+    wsclean:
+      temp_dir: $MEMDIR/$FLINT_UUID
+```
+
+Environment variables are read on the worker, and `$FLINT_UUID` becomes a
+random name. The flow adds a folder for the island below it and removes that
+folder when the island is done. The reordered visibilities are not written
+there, as the islands of a round share them. If a variable is not set the
+default directory is used.
+
+A ramdisk counts towards the memory of the job. The images of a small island
+are a few MB a channel, but a large island with many channels can take several
+GB before its channel images are deleted.
 
 ## Reordered visibilities
 

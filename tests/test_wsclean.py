@@ -594,6 +594,39 @@ def test_run_wsclean_imager_clears_earlier_outputs(tmp_path: Path, monkeypatch):
     assert other_settings not in image_set.image
 
 
+def test_run_wsclean_imager_mfs_only(tmp_path: Path, monkeypatch):
+    """With flint_mfs_only no channel image leaves the hold directory"""
+    hold_dir, move_dir = tmp_path / "hold", tmp_path / "move"
+    hold_dir.mkdir()
+    move_dir.mkdir()
+    name = "SB56289.RACS_1041+18.beam15.round1.i"
+
+    monkeypatch.setattr(
+        "flint.imager.wsclean.run_singularity_command",
+        lambda **kwargs: _write_wsclean_images(
+            prefix=hold_dir / name, channels_out=2, pols=None
+        ),
+    )
+    ms = MS(path=move_dir / "SB56289.RACS_1041+18.beam15.round1.ms")
+    image_set = run_wsclean_imager(
+        wsclean_result=WSCleanResult(
+            cmd="wsclean",
+            options=WSCleanOptions(channels_out=2, pol="i", flint_mfs_only=True),
+            ms=ms,
+            ms_list=[ms],
+            bind_dirs=(),
+            move_hold_directories=(move_dir, hold_dir),
+            image_prefix_str=str(hold_dir / name),
+        ),
+        container=tmp_path / "wsclean.sif",
+        make_cube_from_subbands=False,
+    )
+
+    assert image_set.image == [move_dir / f"{name}.MFS.image.fits"]
+    moved = sorted(path.name for path in move_dir.iterdir())
+    assert moved and all(".MFS." in path_name for path_name in moved)
+
+
 @pytest.mark.parametrize("suffix", ["racs_all", "pol-v2", "v2.1"])
 def test_flint_name_suffix_must_parse_back(suffix: str):
     """The suffix is written into names as `.project-<suffix>.`, which the name
