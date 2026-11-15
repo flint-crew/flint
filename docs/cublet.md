@@ -139,6 +139,49 @@ Notes on the island options:
 - The `size` and `scale` of the MFS image have to be the same in every cycle,
   as the masks of the cycles are joined pixel by pixel.
 
+## A restored cube
+
+Only the MFS image is restored by default. Give `--cube-channels N` to also
+get a restored cube of the whole beam with `N` channels:
+
+1. What is left is imaged in `N` channels without cleaning, each by a wsclean
+   call of its own, so they run in parallel. The channels of the data are split
+   as evenly as `-channels-out` would.
+2. Every channel image has all components added to it, also in a task of its
+   own. A component is evaluated over the frequencies of its channel, and
+   restored with the beam of that channel. The images wsclean made of the
+   channel are then deleted.
+3. The restored channels are joined into one cube with fitscube, and deleted.
+
+The channels are imaged with the options of the MFS image, as one channel
+each. The channel beams are not made the same. A channel with no data has no
+beam, and goes into the cube as it is.
+
+Each call reorders its channels into a folder of its own in the `--work-dir`,
+or below the `temp_dir` of the MFS image if one is given.
+
+### The weights of the cube are not those of the islands
+
+The islands are imaged with `join_channels`, so wsclean works out one set of
+weights from the whole band and gives it to every channel. A channel of the
+cube is imaged by a call that only sees its own channels, so it is weighted
+from those alone. wsclean has no option to give separate calls the weights of
+the whole band.
+
+What this means:
+
+- The components are not affected. They are a model of the sky and do not
+  depend on the weights.
+- The beam of a cube channel differs from the beam the islands had at that
+  frequency. With a Briggs weighting a single channel is weighted closer to
+  natural than the same channel within the joined band, so expect a somewhat
+  wider beam and a different noise.
+- What is left in a cube channel was not cleaned against the PSF it is now
+  imaged with. This only matters for emission that was not cleaned.
+
+Imaging all channels in one joined call would give the island weights, but it
+makes the channels one after another and takes far longer.
+
 ## Leaving out large islands
 
 `--max-size` ignores every island whose image would be larger than that many
@@ -219,6 +262,8 @@ when it was last heard from, and where each running task is in its code.
 - The `--residual-column` of the measurement set, or the column with an `_ALT`
   suffix. Subtractions alternate between the two, so that a rerun of one can
   not subtract twice. The log of the last subtraction names the column.
+- With `--cube-channels`, the restored cube, with the `cubletrestoredchan`
+  suffix. The channel images of what is left are not kept.
 - An image of what is left, with the `cubletresidual` suffix. Nothing is
   cleaned in it, so the flow sets `make_psf` for wsclean to fit a beam. An MFS
   image in the strategy with a `niter` of 0 needs `make_psf: true` as well, and

@@ -142,6 +142,7 @@ def fake_tasks(monkeypatch) -> dict[str, FakeTask]:
         ),
         "task_remove_files_folders": FakeTask(lambda *args: None),
         "task_restore_source_list": FakeTask(lambda **kwargs: "restored"),
+        "task_combine_restored_channels": FakeTask(lambda **kwargs: "cube"),
         "task_crystalball_to_ms": FakeTask(lambda ms, **kwargs: ms),
         "task_subtract_model_from_ms": FakeTask(
             lambda ms, output_column, **kwargs: ms.with_options(column=output_column)
@@ -297,6 +298,123 @@ def test_flow_saves_settings(fake_tasks, tmp_path) -> None:
     assert "max_size: 512" in options_file.read_text()
     (predict_file,) = tmp_path.glob("cublet_crystalball_options-*.yaml")
     assert "row_chunks: 5000" in predict_file.read_text()
+
+
+def test_flow_restored_cube(fake_tasks, monkeypatch, tmp_path) -> None:
+    """When asked for, each channel of what is left is imaged and restored on its own, then cubed"""
+    monkeypatch.setattr(cublet_flow, "get_freqs_from_ms", lambda ms: np.arange(8))
+    flow_beam_cublet_image.fn(
+        beam_cublet_options=_options(tmp_path, rounds=1, cube_channels=3)
+    )
+
+    # The MFS image, the image of what is left, then one call for each channel
+    channel_calls = fake_tasks["task_wsclean_imager"].calls[2:]
+    assert [call["channel_range"] for call in channel_calls] == [(0, 2), (2, 5), (5, 8)]
+    temp_dirs = set()
+    for call in channel_calls:
+        options = call["update_wsclean_options"]
+        assert options["channels_out"] == 1
+        assert not options["join_channels"]
+        assert options["niter"] == 0
+        assert options["make_psf"]
+        assert options["flint_name_suffix"] == "cubletresidualchan"
+        temp_dirs.add(options["temp_dir"])
+    # Calls that run at once can not share their reordered files
+    assert len(temp_dirs) == 3
+
+    restore_calls = fake_tasks["task_restore_source_list"].calls
+    assert [call.get("channel", False) for call in restore_calls] == [
+        False,
+        True,
+        True,
+        True,
+    ]
+    (combine_call,) = fake_tasks["task_combine_restored_channels"].calls
+    assert combine_call["restored_images"] == ["restored"] * 3
+
+    for cube_channels in (1, 9):
+        with pytest.raises(ValueError, match="cube_channels"):
+            flow_beam_cublet_image.fn(
+                beam_cublet_options=_options(
+                    tmp_path, rounds=1, cube_channels=cube_channels
+                )
+            )
+
+
+def test_flow_no_cube_by_default(fake_tasks, tmp_path) -> None:
+    """Only the MFS image is restored unless a cube is asked for"""
+    flow_beam_cublet_image.fn(beam_cublet_options=_options(tmp_path, rounds=1))
+    assert len(fake_tasks["task_restore_source_list"].calls) == 1
+    assert fake_tasks["task_combine_restored_channels"].calls == []
+
+
+def test_cube_channel_ranges() -> None:
+    """The ranges cover every channel once, as evenly as they can"""
+    assert cublet_flow.cube_channel_ranges(num_channels=288, cube_channels=72)[:2] == [
+        (0, 4),
+        (4, 8),
+    ]
+    ranges = cublet_flow.cube_channel_ranges(num_channels=10, cube_channels=4)
+    assert ranges == [(0, 2), (2, 5), (5, 7), (7, 10)]
+
+
+def test_task_restore_channel(monkeypatch, tmp_path) -> None:
+    """A channel is restored under its own name, one without a beam is copied,
+    and the images wsclean made of it are deleted"""
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        cublet_flow, "restore_source_list", lambda **kwargs: calls.append(kwargs)
+    )
+    data = np.ones((1, 1, 4, 4), dtype=np.float32)
+    prefixes = [
+        tmp_path / f"SB1234.project-cubletresidualchan.i.ch{channels}"
+        for channels in ("0000-0004", "0004-0008")
+    ]
+    for prefix, beam in zip(prefixes, (0.005, 0.0), strict=True):
+        for image_type in ("image", "dirty", "psf"):
+            fits.writeto(
+                Path(f"{prefix}.{image_type}.fits"),
+                data=data,
+                header=fits.Header({"BMAJ": beam}),
+            )
+        cublet_flow.task_restore_source_list.fn(
+            wsclean_result=SimpleNamespace(
+                image_set=SimpleNamespace(
+                    prefix=str(prefix), image=[Path(f"{prefix}.image.fits")]
+                )
+            ),
+            source_list=tmp_path / "all-sources.txt",
+            wsclean_container=tmp_path / "wsclean.sif",
+            channel=True,
+        )
+
+    restored = "SB1234.project-cubletrestoredchan.i.ch{}.image.fits"
+    (call,) = calls
+    assert call["residual_image"] == Path(f"{prefixes[0]}.image.fits")
+    assert call["output_image"] == tmp_path / restored.format("0000-0004")
+    # Only the copy of the channel with no beam is left, as wsclean is not run here
+    assert [path.name for path in tmp_path.glob("*.fits")] == [
+        restored.format("0004-0008")
+    ]
+
+
+def test_task_combine_restored_channels(monkeypatch, tmp_path) -> None:
+    """The cube is named for the restored channel images"""
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(
+        cublet_flow,
+        "combine_images_to_cube",
+        lambda **kwargs: captured.update(kwargs) or tmp_path / "cube.fits",
+    )
+    name = "SB1234.project-cubletrestoredchan.beam00.i.ch{}.image.fits"
+    images = [tmp_path / name.format("0000-0001"), tmp_path / name.format("0001-0002")]
+    cublet_flow.task_combine_restored_channels.fn(restored_images=images)
+
+    assert captured["images"] == images
+    assert captured["mode"] == "image"
+    assert captured["prefix"] == str(
+        tmp_path / "SB1234.project-cubletrestoredchan.beam00.i"
+    )
 
 
 def test_image_island(monkeypatch, tmp_path) -> None:

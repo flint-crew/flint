@@ -14,6 +14,8 @@ from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+from astropy.io import fits
 from capn_crunch import BaseOptions, add_options_to_parser, create_options_from_parser
 from eye_patch.naming import FITSMaskNames
 from prefect import flow
@@ -23,6 +25,7 @@ from flint.configuration import (
     get_options_from_strategy,
     load_strategy_yaml,
 )
+from flint.cube import combine_images_to_cube
 from flint.cublet.islands import (
     CubletRegion,
     find_cublet_regions,
@@ -34,9 +37,9 @@ from flint.cublet.reordered import link_reordered_files
 from flint.cublet.sourcelist import concatenate_source_lists
 from flint.imager.wsclean import WSCleanResult, restore_source_list
 from flint.logging import logger
-from flint.ms import MS
+from flint.ms import MS, get_freqs_from_ms
 from flint.naming import add_timestamp_to_path, get_sbid_from_path
-from flint.options import dump_field_options_to_yaml
+from flint.options import FitsCubeOptions, dump_field_options_to_yaml
 from flint.predict.crystalball import CrystalBallOptions
 from flint.prefect.caching import task
 from flint.prefect.clusters import get_dask_runner
@@ -87,6 +90,8 @@ class BeamCubletOptions(BaseOptions):
     """Smallest island image, in pixels"""
     max_islands: int | None = None
     """Only image this many of the brightest islands"""
+    cube_channels: int | None = None
+    """Also make a restored cube of the whole beam with this many channels. Each channel is imaged without cleaning by a wsclean call of its own, and has all components added to it. By default no cube is made"""
     max_size: int | None = None
     """Ignore islands whose image would be larger than this, in pixels. They are not cleaned at all. By default none are ignored"""
     no_reuse_reordered: bool = False
@@ -248,22 +253,73 @@ def task_concatenate_source_lists(
     return concatenate_source_lists(source_lists=source_lists, tags=tags, output=output)
 
 
+def cube_channel_ranges(num_channels: int, cube_channels: int) -> list[tuple[int, int]]:
+    """Split the channels of a measurement set as evenly as ``-channels-out``
+    would. The end of each range is not part of it."""
+    if not 1 < cube_channels <= num_channels:
+        msg = f"{cube_channels=} has to be more than 1 and at most the {num_channels} channels of the data"
+        raise ValueError(msg)
+
+    return [
+        (
+            num_channels * channel // cube_channels,
+            num_channels * (channel + 1) // cube_channels,
+        )
+        for channel in range(cube_channels)
+    ]
+
+
 @task
 def task_restore_source_list(
-    wsclean_result: WSCleanResult, source_list: Path, wsclean_container: Path
+    wsclean_result: WSCleanResult,
+    source_list: Path,
+    wsclean_container: Path,
+    channel: bool = False,
 ) -> Path:
-    """Add all components found to the MFS image of what is left"""
-    assert wsclean_result.image_set is not None, "No images from wsclean"
+    """Add all components found to the image of what is left.
+
+    With ``channel`` the image is one plane of a cube. One with no data is
+    passed on as it is, and the images wsclean made are deleted once restored.
+    """
+    image_set = wsclean_result.image_set
+    assert image_set is not None, "No images from wsclean"
     # The MFS image is the last
-    residual_image = list(wsclean_result.image_set.image)[-1]
+    residual_image = list(image_set.image)[-1]
     assert "cubletresidual" in residual_image.name, f"Unexpected {residual_image=}"
-    return restore_source_list(
-        residual_image=residual_image,
-        source_list=source_list,
-        output_image=residual_image.with_name(
-            residual_image.name.replace("cubletresidual", "cubletrestored")
-        ),
-        container=wsclean_container,
+    output_image = residual_image.with_name(
+        residual_image.name.replace("cubletresidual", "cubletrestored")
+    )
+
+    beam = fits.getheader(residual_image).get("BMAJ") if channel else None
+    if channel and not (beam and np.isfinite(beam)):
+        # Nothing to restore, but the cube still needs the plane
+        logger.warning(f"{residual_image.name} has no beam, copying it as it is")
+        shutil.copyfile(residual_image, output_image)
+    else:
+        restore_source_list(
+            residual_image=residual_image,
+            source_list=source_list,
+            output_image=output_image,
+            container=wsclean_container,
+        )
+
+    if channel:
+        for image_type in ("image", "dirty", "psf", "model", "residual"):
+            Path(f"{image_set.prefix}.{image_type}.fits").unlink(missing_ok=True)
+
+    return output_image
+
+
+@task
+def task_combine_restored_channels(restored_images: list[Path]) -> Path:
+    """Join the restored channel images into one cube, and delete them"""
+    # The name of a channel image is <prefix>.ch<lo>-<hi>.image.fits
+    prefix = restored_images[0].name.rsplit(".", maxsplit=3)[0]
+    return combine_images_to_cube(
+        images=restored_images,
+        prefix=str(restored_images[0].parent / prefix),
+        mode="image",
+        fitscube_options=FitsCubeOptions(),
     )
 
 
@@ -311,6 +367,15 @@ def image_beam_cublets(
     """Image a beam island by island, in cycles of rounds"""
     ms = MS(path=beam_cublet_options.ms_path, column=beam_cublet_options.column)
     logger.info(f"Cublet imaging of {ms=}")
+    # Worked out now, so that a bad channel count fails before any imaging
+    channel_ranges = (
+        cube_channel_ranges(
+            num_channels=len(get_freqs_from_ms(ms=ms)),
+            cube_channels=beam_cublet_options.cube_channels,
+        )
+        if beam_cublet_options.cube_channels
+        else []
+    )
     save_cublet_settings(
         output_dir=ms.path.parent,
         beam_cublet_options=beam_cublet_options,
@@ -493,11 +558,44 @@ def image_beam_cublets(
         update_wsclean_options=residual_wsclean_options,
         wsclean_container=beam_cublet_options.wsclean_container,
     )
-    task_restore_source_list.submit(
+    restored_mfs = task_restore_source_list.submit(
         wsclean_result=residual_result,
         source_list=source_list,
         wsclean_container=beam_cublet_options.wsclean_container,
-    ).result()
+    )
+
+    if channel_ranges:
+        # Calls that run at once must not share a directory, as wsclean names
+        # its reordered files for the measurement set alone
+        channel_temp_dir = residual_wsclean_options.get("temp_dir") or work_dir / "cube"
+        restored_channels = []
+        for channel, channel_range in enumerate(channel_ranges):
+            channel_wsclean_options = dict(residual_wsclean_options)
+            channel_wsclean_options.update(
+                channels_out=1,
+                join_channels=False,
+                flint_name_suffix="cubletresidualchan",
+                temp_dir=f"{channel_temp_dir}/channel{channel:04d}",
+            )
+            channel_result = task_wsclean_imager.submit(
+                in_ms=round_ms,
+                update_wsclean_options=channel_wsclean_options,
+                wsclean_container=beam_cublet_options.wsclean_container,
+                channel_range=channel_range,
+            )
+            restored_channels.append(
+                task_restore_source_list.submit(
+                    wsclean_result=channel_result,
+                    source_list=source_list,
+                    wsclean_container=beam_cublet_options.wsclean_container,
+                    channel=True,
+                )
+            )
+        task_combine_restored_channels.submit(
+            restored_images=restored_channels  # type: ignore[arg-type]
+        ).result()
+
+    restored_mfs.result()
 
 
 def setup_beam_cublet_workflow(
