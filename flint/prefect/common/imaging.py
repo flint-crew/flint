@@ -359,7 +359,7 @@ def task_gaincal_applycal_ms(
 
     return gaincal_applycal_ms(
         ms=ms,
-        round=selfcal_round,
+        selfcal_round=selfcal_round,
         casa_container=casa_container,
         update_gain_cal_options=update_gain_cal_options,
         archive_input_ms=archive_input_ms,
@@ -383,7 +383,7 @@ def task_dp3_selfcal_ms(
     """Self-calibrate with DP3. See ``flint.selfcal.dp3.dp3_selfcal_ms``."""
     return dp3_selfcal_ms(
         ms=MS.cast(ms),
-        round=selfcal_round,
+        selfcal_round=selfcal_round,
         mode=mode,
         update_dp3_options=update_dp3_options,
         update_dp3_selfcal_options=update_dp3_selfcal_options,

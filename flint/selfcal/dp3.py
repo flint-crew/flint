@@ -71,7 +71,7 @@ def normalise_amplitudes(h5parm: Path) -> Path:
 
 def dp3_selfcal_ms(
     ms: MS,
-    round: int = 1,
+    selfcal_round: int = 1,
     mode: DP3SolveMode = "dp3ddecal",
     update_dp3_options: dict[str, Any] | None = None,
     update_dp3_selfcal_options: dict[str, Any] | None = None,
@@ -87,7 +87,7 @@ def dp3_selfcal_ms(
 
     Args:
         ms (MS): The measurement set, with the latest corrected data as its column and its model column set
-        round (int, optional): The self-calibration round, used to name the outputs. Defaults to 1.
+        selfcal_round (int, optional): The self-calibration round, used to name the outputs. Defaults to 1.
         mode (DP3SolveMode, optional): Solve with ``ddecal`` or ``gaincal``. Defaults to "dp3ddecal".
         update_dp3_options (dict[str, Any] | None, optional): Overrides for the solver's default options. Defaults to None.
         update_dp3_selfcal_options (dict[str, Any] | None, optional): Overrides for the default ``DP3SelfCalOptions``. Defaults to None.
@@ -107,7 +107,9 @@ def dp3_selfcal_ms(
         f"Self-calibrating {ms.path} with {mode}: {options=} {selfcal_options=}"
     )
 
-    cal_ms = copy_and_clean_ms_casagain(ms=ms, round=round, rename_ms=rename_ms)
+    cal_ms = copy_and_clean_ms_casagain(
+        ms=ms, selfcal_round=selfcal_round, rename_ms=rename_ms
+    )
     if archive_input_ms and not rename_ms:
         zip_folder(in_path=ms.path)
 

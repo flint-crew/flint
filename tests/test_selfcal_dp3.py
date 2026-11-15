@@ -51,7 +51,7 @@ def scale_amplitudes(ms: MS, scale: float) -> None:
 
 
 def test_dp3_selfcal_ms(selfcal_ms):
-    cal_ms = dp3_selfcal_ms(selfcal_ms, round=1)
+    cal_ms = dp3_selfcal_ms(selfcal_ms, selfcal_round=1)
 
     assert cal_ms.path.name == "SB39400.RACS_0635-31.beam0.small.round1.ms"
     assert cal_ms.column == "CORRECTED_DATA"
@@ -72,18 +72,18 @@ def test_dp3_selfcal_ms_options(selfcal_ms):
 
 def test_dp3_selfcal_ms_reuses_solutions(selfcal_ms, monkeypatch):
     """An h5parm left by an earlier attempt is applied without solving again"""
-    dp3_selfcal_ms(selfcal_ms, round=1)
+    dp3_selfcal_ms(selfcal_ms, selfcal_round=1)
 
     def no_solve(*_, **__):
         raise AssertionError("Solved again")
 
     monkeypatch.setattr(selfcal_dp3, "dp3_ddecal", no_solve)
-    cal_ms = dp3_selfcal_ms(selfcal_ms, round=1)
+    cal_ms = dp3_selfcal_ms(selfcal_ms, selfcal_round=1)
     assert cal_ms.column == "CORRECTED_DATA"
 
 
 def test_dp3_selfcal_ms_skip(selfcal_ms):
-    cal_ms = dp3_selfcal_ms(selfcal_ms, round=2, skip_selfcal=True)
+    cal_ms = dp3_selfcal_ms(selfcal_ms, selfcal_round=2, skip_selfcal=True)
     assert cal_ms.path.name.endswith(".round2.ms")
     assert cal_ms.column == "DATA"
     assert not cal_ms.path.with_suffix(".h5").exists()

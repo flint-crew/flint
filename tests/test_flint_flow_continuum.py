@@ -80,7 +80,7 @@ def test_process_science_fields_dataflow(tmp_path, monkeypatch, cleanup_fails) -
     def gaincal(ms: MS | FakeResult, selfcal_round: int, **_: Any) -> MS:
         ms = MS.cast(ms)
         return ms.with_options(
-            path=get_selfcal_ms_name(in_ms_path=ms.path, round=selfcal_round)
+            path=get_selfcal_ms_name(in_ms_path=ms.path, selfcal_round=selfcal_round)
         )
 
     def linmos(**_: Any) -> list[Any]:
