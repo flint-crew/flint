@@ -729,6 +729,7 @@ DEFAULT_TAR_RE_PATTERNS = (
     r".*beam[0-9]+\.ms\.zip",
     r".*beam[0-9]+\.ms",
     r".*\.caltable",
+    r".*\.h5",
     r".*\.tar",
     r".*\.csv",
 )

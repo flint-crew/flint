@@ -49,6 +49,10 @@ GainCalType: TypeAlias = Literal[
     "tec",
     "tec+phase",
 ]
+DataUse: TypeAlias = Literal["single", "dual", "full"]
+SolverAlgorithm: TypeAlias = Literal[
+    "directionsolve", "directioniterative", "hybrid", "lbfgs"
+]
 CorrelationType: TypeAlias = Literal["auto", "cross"]
 Interpolation: TypeAlias = Literal["nearest", "linear"]
 # Characters that would break DP3's list syntax are not allowed
@@ -134,8 +138,26 @@ class DP3DDECalOptions(BaseOptions):
     """Convergence tolerance of the solver"""
     uvlambdamin: float | None = Field(default=None, ge=0)
     """Ignore baselines shorter than this many wavelengths"""
+    uvlambdamax: float | None = Field(default=None, gt=0)
+    """Ignore baselines longer than this many wavelengths"""
+    uvmmin: float | None = Field(default=None, ge=0)
+    """Ignore baselines shorter than this many metres"""
+    uvmmax: float | None = Field(default=None, gt=0)
+    """Ignore baselines longer than this many metres"""
     propagatesolutions: bool | None = None
     """Start each solution interval from the previous solutions"""
+    propagateconvergedonly: bool | None = None
+    """Only carry solutions forward from intervals that converged"""
+    smoothnessconstraint: float | None = Field(default=None, ge=0)
+    """Width in Hz of the kernel that smooths solutions across frequency"""
+    smoothnessreffrequency: float | None = Field(default=None, ge=0)
+    """Frequency in Hz at which the smoothness kernel has its given width"""
+    smoothnessspectralexponent: float | None = None
+    """How the kernel width scales with frequency, e.g. -1 for ionospheric phases"""
+    datause: DataUse | None = None
+    """Which correlations to solve with. 'single' or 'dual' are faster for scalar or diagonal modes."""
+    solveralgorithm: SolverAlgorithm | None = None
+    """The solver DDECal uses"""
 
 
 class DP3GainCalOptions(BaseOptions):

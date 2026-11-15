@@ -171,6 +171,7 @@ all = [
     { name = "dp3" },
     { name = "fixms" },
     { name = "furo" },
+    { name = "h5py" },
     { name = "isort" },
     { name = "mypy" },
     { name = "myst-parser" },
@@ -216,10 +217,12 @@ dev = [
 ]
 dp3 = [
     { name = "dp3" },
+    { name = "h5py" },
 ]
 iono = [
     { name = "dp3" },
     { name = "fixms" },
+    { name = "h5py" },
     { name = "python-casacore" },
     { name = "spinifex" },
 ]
@@ -246,6 +249,9 @@ requires-dist = [
     { name = "fixms", marker = "extra == 'iono'", specifier = ">=0.4.0" },
     { name = "furo", marker = "extra == 'all'" },
     { name = "furo", marker = "extra == 'dev'" },
+    { name = "h5py", marker = "extra == 'all'" },
+    { name = "h5py", marker = "extra == 'dp3'" },
+    { name = "h5py", marker = "extra == 'iono'" },
     { name = "isort", marker = "extra == 'all'" },
     { name = "isort", marker = "extra == 'dev'" },
     { name = "jolly-roger", specifier = ">=0.10.1" },

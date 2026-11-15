@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 from prefect import task
 from prefect.cache_policies import NO_CACHE
 from prefect.logging import disable_run_logger
@@ -14,6 +15,7 @@ from prefect.testing.utilities import prefect_test_harness
 
 import flint.prefect.common.predict as predict_module
 import flint.prefect.flows.continuum_pipeline as continuum_flow
+from flint.configuration import FORMAT_VERSION
 from flint.ms import MS
 from flint.naming import extract_components_from_name, get_selfcal_ms_name
 from flint.options import FieldOptions
@@ -55,7 +57,8 @@ class SubmitRecorder:
 def test_process_science_fields_dataflow(tmp_path, monkeypatch, cleanup_fails) -> None:
     """Each beam is carried through every round on its own, and no convolution or
     linmos is submitted before the last imaging and self-calibration job. A failed
-    clean-up fails the flow, but the products are still archived"""
+    clean-up fails the flow, but the products are still archived. Round 1 solves
+    with DP3 and round 2 with CASA, as the strategy asks"""
     beams = (0, 1)
     calls: dict[str, list[dict[str, Any]]] = {}
     submitted: list[str] = []
@@ -104,6 +107,22 @@ def test_process_science_fields_dataflow(tmp_path, monkeypatch, cleanup_fails) -
         for beam in beams
     )
     gaincal_task = fake("gaincal", returns=gaincal)
+    dp3_task = fake("dp3", returns=gaincal)
+    imaging_strategy = tmp_path / "strategy.yaml"
+    imaging_strategy.write_text(
+        yaml.dump(
+            {
+                "version": FORMAT_VERSION,
+                "defaults": {"dp3ddecal": {"solint": 6}},
+                "selfcal": {
+                    0: {},
+                    1: {"dp3ddecal": {"mode": "diagonal"}},
+                    2: {"gaincal": {}},
+                },
+                "stokesv": {},
+            }
+        )
+    )
     wsclean_task = fake(
         "wsclean", returns=lambda in_ms, **_: FakeResult(MS.cast(in_ms))
     )
@@ -117,6 +136,7 @@ def test_process_science_fields_dataflow(tmp_path, monkeypatch, cleanup_fails) -
         ),
         "task_wsclean_imager": SubmitRecorder("image", wsclean_task, submitted),
         "task_gaincal_applycal_ms": SubmitRecorder("selfcal", gaincal_task, submitted),
+        "task_dp3_selfcal_ms": SubmitRecorder("selfcal", dp3_task, submitted),
         "task_create_beam_summary": fake("beam_summary", returns="beam_summary"),
         "task_run_bane_and_aegean": fake("aegean", returns="aegean"),
         "task_update_with_options": fake("update", returns="summary"),
@@ -153,6 +173,7 @@ def test_process_science_fields_dataflow(tmp_path, monkeypatch, cleanup_fails) -
         zip_ms=True,
         coadd_cubes=True,
         sbid_archive_path=tmp_path / "archive",
+        imaging_strategy=imaging_strategy,
     )
     # The flow fails, and so raises here, should any of its tasks fail
     with prefect_test_harness(), disable_run_logger():
@@ -186,8 +207,13 @@ def test_process_science_fields_dataflow(tmp_path, monkeypatch, cleanup_fails) -
     assert {"image", "selfcal"}.isdisjoint(submitted[first_linmos:])
     assert submitted[-1] == "cubes"
 
-    assert names("gaincal", "ms") == beam_names(".ms", ".round0.ms", ".round1.ms")
-    assert {call["selfcal_round"] for call in calls["gaincal"]} == {0, 1, 2}
+    assert names("gaincal", "ms") == beam_names(".ms", ".round1.ms")
+    assert {call["selfcal_round"] for call in calls["gaincal"]} == {0, 2}
+    assert names("dp3", "ms") == beam_names(".round0.ms")
+    for call in calls["dp3"]:
+        assert call["selfcal_round"] == 1
+        assert call["mode"] == "dp3ddecal"
+        assert call["update_dp3_options"] == {"solint": 6, "mode": "diagonal"}
     # Stokes-I in every round, then Stokes-V through the final Stokes-I results
     assert names("wsclean", "in_ms") == beam_names(
         ".round0.ms", ".round1.ms", ".round2.ms"
@@ -246,3 +272,26 @@ def test_check_field_options_skymodel_requirements(tmp_path, monkeypatch) -> Non
         _check_field_options(
             field_options=field_options.with_options(holofile=tmp_path / "missing.fits")
         )
+
+
+def test_check_field_options_casa_only_for_gaincal_rounds(tmp_path) -> None:
+    """The CASA container is needed only when a self-calibration round uses gaincal"""
+    imaging_strategy = tmp_path / "strategy.yaml"
+    strategy = {
+        "version": FORMAT_VERSION,
+        "defaults": {},
+        "selfcal": {0: {}, 1: {"dp3ddecal": {}}, 2: {"dp3gaincal": {}}},
+    }
+    imaging_strategy.write_text(yaml.dump(strategy))
+    field_options = FieldOptions(rounds=2, imaging_strategy=imaging_strategy)
+    _check_field_options(field_options=field_options)
+
+    with pytest.raises(ValueError, match="CASA Container"):
+        _check_field_options(
+            field_options=field_options.with_options(rounds=1, imaging_strategy=None)
+        )
+
+    strategy["selfcal"][2] = {"gaincal": {}}
+    imaging_strategy.write_text(yaml.dump(strategy))
+    with pytest.raises(ValueError, match="CASA Container"):
+        _check_field_options(field_options=field_options)

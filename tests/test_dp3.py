@@ -9,7 +9,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from casacore.tables import makecoldesc, table
+from casacore.tables import table
 from pydantic import ValidationError
 
 from flint.dp3 import (
@@ -28,28 +28,6 @@ from flint.dp3 import (
     options_to_parset,
 )
 from flint.options import MS
-
-
-@pytest.fixture
-def corrupted_ms(ms_example: Path) -> MS:
-    """The example MS with a unit point source model and known antenna phase errors."""
-    with table(str(ms_example), readonly=False, ack=False) as tab:
-        desc = makecoldesc("DATA", tab.getcoldesc("DATA"))
-        desc["name"] = "MODEL_DATA"
-        tab.addcols(desc)
-
-        model = np.zeros(tab.getcol("DATA").shape, dtype=np.complex64)
-        model[..., 0] = model[..., 3] = 1
-        phases = np.random.default_rng(42).uniform(-1, 1, 36)
-        gains = np.exp(
-            1j * (phases[tab.getcol("ANTENNA1")] - phases[tab.getcol("ANTENNA2")])
-        )
-
-        tab.putcol("MODEL_DATA", model)
-        tab.putcol("DATA", (model * gains[:, None, None]).astype(np.complex64))
-        tab.putcol("FLAG", np.zeros(model.shape, dtype=bool))
-
-    return MS(path=ms_example, column="DATA", model_column="MODEL_DATA")
 
 
 def assert_corrected_matches_model(ms: MS) -> None:
@@ -75,6 +53,20 @@ def test_options_to_parset():
     assert parset["cal.propagatesolutions"] == "false"
     assert parset["cal.mode"] == "scalarphase"
     assert "cal.maxiter" not in parset
+
+    parset = options_to_parset(
+        "cal",
+        DP3DDECalOptions(
+            smoothnessconstraint=5e7,
+            smoothnessspectralexponent=-1,
+            datause="dual",
+            uvmmin=200,
+        ),
+    )
+    assert parset["cal.smoothnessconstraint"] == "50000000.0"
+    assert parset["cal.smoothnessspectralexponent"] == "-1.0"
+    assert parset["cal.datause"] == "dual"
+    assert parset["cal.uvmmin"] == "200.0"
 
 
 def test_create_dp3_parset():

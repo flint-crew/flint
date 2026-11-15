@@ -9,7 +9,7 @@ from __future__ import annotations
 import shutil
 from argparse import ArgumentParser
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from eye_patch.options import MaskingOptions
@@ -37,6 +37,7 @@ from flint.options import (
 )
 from flint.peel.potato import PotatoPeelOptions
 from flint.selfcal.casa import GainCalOptions
+from flint.selfcal.dp3 import DP3SelfCalOptions
 from flint.sky_model import SkyModelOptions
 from flint.source_finding.aegean import AegeanOptions, BANEOptions
 
@@ -74,6 +75,7 @@ MODE_OPTIONS_MAPPING = {
     "dp3ddecal": DP3DDECalOptions,
     "dp3gaincal": DP3GainCalOptions,
     "dp3applycal": DP3ApplyCalOptions,
+    "dp3selfcal": DP3SelfCalOptions,
 }
 POLARISATION_MAPPING = {
     "total": "i",
@@ -441,6 +443,40 @@ def get_selfcal_round_fitscube_options(
     return options
 
 
+def get_selfcal_mode_for_round(
+    strategy: Strategy | None, round_info: int
+) -> Literal["gaincal", "dp3ddecal", "dp3gaincal"]:
+    """Which solver a self-calibration round uses: DP3 if the round names a DP3 solver, else CASA gaincal.
+
+    Only the round itself is looked at, not the ``defaults`` section, as a default
+    strategy lists every mode there. Rounds past the last one listed use the last.
+
+    Args:
+        strategy (Strategy | None): A loaded strategy file, if any
+        round_info (int): The self-calibration round
+
+    Raises:
+        ValueError: Raised if the round names more than one solver
+
+    Returns:
+        Literal["gaincal", "dp3ddecal", "dp3gaincal"]: The strategy mode holding the solver's options
+    """
+    if not strategy or "selfcal" not in strategy:
+        return "gaincal"
+
+    rounds = strategy["selfcal"]
+    round_scope = rounds.get(min(round_info, max(rounds.keys()))) or {}
+    solvers = [
+        mode for mode in ("gaincal", "dp3ddecal", "dp3gaincal") if mode in round_scope
+    ]
+    if len(solvers) > 1:
+        raise ValueError(
+            f"Self-calibration round {round_info} names several solvers: {solvers}"
+        )
+
+    return solvers[0] if solvers else "gaincal"
+
+
 def verify_configuration(input_strategy: Strategy, raise_on_error: bool = True) -> bool:
     """Perform basic checks on the configuration file
 
@@ -502,6 +538,12 @@ def verify_configuration(input_strategy: Strategy, raise_on_error: bool = True) 
             errors.append("The keys into the self-calibration should be ints. ")
 
         for round_info in round_keys:
+            try:
+                get_selfcal_mode_for_round(
+                    strategy=input_strategy, round_info=round_info
+                )
+            except ValueError as error:
+                errors.append(f"{error}")
             for mode in input_strategy["selfcal"][round_info]:
                 try:
                     options = get_options_from_strategy(

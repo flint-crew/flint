@@ -52,6 +52,7 @@ A 'mode' refers to a set of options for a given tool. As of version 0.2, the fol
 - `potatopeel`: This corresponds to `flint.peel.potato.PotatoPeelOptions`
 - `fitscube`: This correspond to `flint.options.FitsCubeOptions`
 - `dp3preflagger`, `dp3aoflagger`, `dp3ddecal`, `dp3gaincal`, `dp3applycal`: These correspond to the options classes in `flint.dp3` (see [DP3](dp3.md))
+- `dp3selfcal`: This corresponds to `flint.selfcal.dp3.DP3SelfCalOptions` (see [DP3](dp3.md#self-calibration-with-dp3))
 
 To see all the available options you can run `flint_{mode} -h` on the command-line
 (`eye-patch mask -h` for `masking`).
