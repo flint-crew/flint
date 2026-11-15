@@ -82,6 +82,8 @@ class BeamCubletOptions(BaseOptions):
     """Smallest island image, in pixels"""
     max_islands: int | None = None
     """Only image this many of the brightest islands"""
+    max_size: int | None = None
+    """Ignore islands whose image would be larger than this, in pixels. They are not cleaned at all. By default none are ignored"""
     no_reuse_reordered: bool = False
     """Have every island reorder the visibilities for itself, rather than share those of the brightest island of the round"""
     keep_island_images: bool = False
@@ -121,6 +123,7 @@ def task_find_cublet_regions(
         pad_factor=beam_cublet_options.pad_factor,
         min_size=beam_cublet_options.min_size,
         max_islands=beam_cublet_options.max_islands,
+        max_size=beam_cublet_options.max_size,
     )
 
 

@@ -113,9 +113,11 @@ def create_cublet_regions(
     pad_factor: float = 2.5,
     min_size: int = 128,
     max_islands: int | None = None,
+    max_size: int | None = None,
     padding: float = 1.2,
 ) -> list[CubletRegion]:
-    """Make the window of each island, brightest first.
+    """Make the window of each island, brightest first. Islands whose window
+    would be larger than ``max_size`` are left out.
 
     ``padding`` is the wsclean ``-padding`` both images are made with, as wsclean
     sizes its weight grid from the padded image.
@@ -157,6 +159,14 @@ def create_cublet_regions(
                 peak=float(peak),
             )
         )
+
+    if max_size is not None:
+        too_large = [region.size for region in regions if region.size > max_size]
+        if too_large:
+            logger.warning(
+                f"Ignoring {len(too_large)} islands with windows over {max_size=} pixels: {sorted(too_large)}"
+            )
+        regions = [region for region in regions if region.size <= max_size]
 
     regions.sort(key=lambda region: region.peak, reverse=True)
     return regions[:max_islands]
@@ -238,6 +248,7 @@ def find_cublet_regions(
     pad_factor: float = 2.5,
     min_size: int = 128,
     max_islands: int | None = None,
+    max_size: int | None = None,
 ) -> list[CubletRegion]:
     """Find the islands of a mask of an image, and write the clean masks of their windows"""
     mask_path = mask_names.scale_mask_fits or mask_names.mask_fits
@@ -255,6 +266,7 @@ def find_cublet_regions(
             pad_factor=pad_factor,
             min_size=min_size,
             max_islands=max_islands,
+            max_size=max_size,
         )
     logger.info(f"Kept {len(regions)} islands")
 

@@ -190,6 +190,26 @@ def test_create_cublet_regions_limits(mask, image, header) -> None:
     assert all(region.size == 128 for region in regions)
 
 
+def test_create_cublet_regions_max_size(mask, image, header) -> None:
+    """Islands with a window over the largest size are left out"""
+    labels = label_islands(mask=mask)
+    regions = create_cublet_regions(
+        labels=labels, image=image, header=header, pad_factor=2.0, min_size=16
+    )
+    sizes = sorted({region.size for region in regions})
+    assert len(sizes) > 1, "The islands need to differ in size for this test"
+
+    kept = create_cublet_regions(
+        labels=labels,
+        image=image,
+        header=header,
+        pad_factor=2.0,
+        min_size=16,
+        max_size=sizes[0],
+    )
+    assert kept == [region for region in regions if region.size == sizes[0]]
+
+
 def test_create_cublet_regions_empty(mask, image, header) -> None:
     """No islands, no regions"""
     labels = np.zeros_like(mask, dtype=np.int32)

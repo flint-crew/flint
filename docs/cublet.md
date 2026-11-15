@@ -139,6 +139,16 @@ Notes on the island options:
 - The `size` and `scale` of the MFS image have to be the same in every cycle,
   as the masks of the cycles are joined pixel by pixel.
 
+## Leaving out large islands
+
+`--max-size` ignores every island whose image would be larger than that many
+pixels a side. By default none are ignored. An ignored island is not cleaned
+and nothing of it is subtracted, so it stays in the image of what is left. The
+log names how many were ignored, and their sizes.
+
+It is meant for testing. A large island with many channels needs far more
+memory than a small one, and one that a worker can not hold fails the run.
+
 ## Where an island writes its images
 
 An island writes its images to a directory of its own, and only the MFS images
