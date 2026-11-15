@@ -192,6 +192,36 @@ log names how many were ignored, and their sizes.
 It is meant for testing. A large island with many channels needs far more
 memory than a small one, and one that a worker can not hold fails the run.
 
+## Imaging nearby islands together
+
+Every wsclean call has a cost that does not depend on the size of its image, so
+many small images are slow. `--patch-area` has nearby islands share one image,
+called a patch. By default every island is imaged alone.
+
+Pairs of islands are taken closest first. Their patches are joined when the
+image of the two together:
+
+- has fewer than `--patch-area` pixels more than their two images, and
+- is no wider than `--patch-max-size` pixels, 1024 by default.
+
+The first keeps a patch from taking in empty sky, and the second keeps it
+inside the memory of a worker. A larger `--patch-area` gives fewer and larger
+images. `65536`, the pixels of a 256 pixel image, is a place to start. It is a
+quick pass, and not the best grouping there is.
+
+An island is cleaned in one patch only. The image of a patch is as wide as its
+islands, with the padding of `--pad-factor` for the largest of them, so an
+island alone has the image it had before. `--max-islands` and `--max-size` then
+count and measure patches.
+
+The image of one patch can still hold part of an island of another, which is
+masked and so not cleaned there. The log of each cycle says how many do. The
+same happens without patches, and more often.
+
+To see what was imaged, each cycle writes `cublet/cycle<N>/masks/*.patches.fits`.
+It is an image of the beam where the islands of a patch and the outline of its
+image have the number of the patch, and all else is 0.
+
 ## Where an island writes its images
 
 An island writes its images to a directory of its own, and only the MFS images
@@ -255,7 +285,8 @@ when it was last heard from, and where each running task is in its code.
   cycle. The FITS images of an island are deleted once it has been imaged. Give
   `--keep-island-images` to keep them, named the same way.
 - The MFS image of each cycle. Those of later cycles have a `cycle<N>` suffix.
-- `cublet/cycle<N>/masks`, the clean masks of each island, and
+- `cublet/cycle<N>/masks`, the clean masks of each island and
+  `*.patches.fits`, an image of what each wsclean call covered, and
   `cublet/cycle<N>`, the joined mask of the cycle.
 - `cublet/*.c<cycle>r<round>-sources.txt`, the components found in that round,
   and `cublet/*.to-c<cycle>r<round>-sources.txt`, all components up to it.

@@ -94,6 +94,10 @@ class BeamCubletOptions(BaseOptions):
     """Also make a restored cube of the whole beam with this many channels. Each channel is imaged without cleaning by a wsclean call of its own, and has all components added to it. By default no cube is made"""
     max_size: int | None = None
     """Ignore islands whose image would be larger than this, in pixels. They are not cleaned at all. By default none are ignored"""
+    patch_area: int | None = None
+    """Image nearby islands together, in one patch, where that adds fewer than this many pixels to their images. By default every island is imaged alone"""
+    patch_max_size: int = 1024
+    """Largest image of a patch of islands, in pixels. A single island may still be larger"""
     no_reuse_reordered: bool = False
     """Have every island reorder the visibilities for itself, rather than share those of the brightest island of the round"""
     keep_island_images: bool = False
@@ -134,6 +138,8 @@ def task_find_cublet_regions(
         min_size=beam_cublet_options.min_size,
         max_islands=beam_cublet_options.max_islands,
         max_size=beam_cublet_options.max_size,
+        patch_area=beam_cublet_options.patch_area,
+        patch_max_size=beam_cublet_options.patch_max_size,
     )
 
 

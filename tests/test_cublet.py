@@ -13,10 +13,14 @@ from astropy.wcs import WCS
 from eye_patch.naming import FITSMaskNames
 
 from flint.cublet.islands import (
+    count_shared_windows,
     create_cublet_regions,
     find_cublet_regions,
+    group_islands,
+    island_boxes,
     island_cutout,
     label_islands,
+    label_patches,
     masked_peak,
     round_threshold,
     union_masks,
@@ -281,6 +285,138 @@ def test_find_cublet_regions(mask, image, header, tmp_path) -> None:
         position = island_wcs.pixel_to_world(half, half)
         x, y = WCS(header).world_to_pixel(position)
         assert (y, x) == pytest.approx(region.centre, abs=1e-6)
+
+
+def test_group_islands(mask) -> None:
+    """Close islands share a patch, and far ones do not"""
+    boxes = island_boxes(labels=label_islands(mask=mask))
+    assert boxes == [(50, 60, 100, 130), (300, 310, 200, 210), (300, 310, 215, 220)]
+
+    grouped = group_islands(
+        boxes=boxes, patch_area=1000, patch_max_size=1024, min_size=32
+    )
+    assert grouped == [0, 1, 1]
+
+
+def test_group_islands_limits(mask) -> None:
+    """A patch is not made where it costs too many pixels, or would be too large"""
+    boxes = island_boxes(labels=label_islands(mask=mask))
+
+    # The window of all three is 306 pixels, and those of the two patches 76 and 36
+    everything = group_islands(
+        boxes=boxes, patch_area=10**6, patch_max_size=1024, min_size=32
+    )
+    assert everything == [0, 0, 0]
+
+    capped = group_islands(
+        boxes=boxes, patch_area=10**6, patch_max_size=300, min_size=32
+    )
+    assert capped == [0, 1, 1]
+
+    # The window of the close pair is 36 pixels, and each alone 26
+    alone = group_islands(boxes=boxes, patch_area=-100, patch_max_size=1024, min_size=2)
+    assert alone == [0, 1, 2]
+
+
+def test_group_islands_few() -> None:
+    assert group_islands(boxes=[], patch_area=1000, patch_max_size=1024) == []
+    assert group_islands(
+        boxes=[(0, 4, 0, 4)], patch_area=1000, patch_max_size=1024
+    ) == [0]
+
+
+def test_label_patches_regions(mask, image, header) -> None:
+    """The window of a patch holds its islands, padded for the largest of them"""
+    labels, largest = label_patches(
+        labels=label_islands(mask=mask),
+        patch_area=1000,
+        patch_max_size=1024,
+        min_size=32,
+    )
+    assert largest == [30, 10]
+    assert np.array_equal(np.unique(labels), [0, 1, 2])
+    assert np.array_equal(labels > 0, mask > 0)
+
+    patch, single = create_cublet_regions(
+        labels=labels, image=image, header=header, min_size=32, largest=largest
+    )
+    assert (patch.idx, patch.peak) == (2, 5.0)
+    assert patch.centre == (305, 210)
+    # 20 pixels across both islands, and 1.5 times the 10 pixels of the largest
+    assert patch.size == 36
+
+    # An island alone is as without patches
+    assert (single.idx, single.size) == (1, 76)
+
+    cutout = island_cutout(mask=mask, labels=labels, region=patch)
+    assert cutout.sum() == 10 * 10 + 10 * 5
+
+
+def test_count_shared_windows(mask, image, header) -> None:
+    """The windows of the close pair hold each other until they share a patch"""
+    labels = label_islands(mask=mask)
+    regions = create_cublet_regions(
+        labels=labels, image=image, header=header, min_size=32
+    )
+    assert count_shared_windows(regions=regions, labels=labels) == 2
+
+    labels, largest = label_patches(
+        labels=labels, patch_area=1000, patch_max_size=1024, min_size=32
+    )
+    regions = create_cublet_regions(
+        labels=labels, image=image, header=header, min_size=32, largest=largest
+    )
+    assert count_shared_windows(regions=regions, labels=labels) == 0
+
+
+def test_find_cublet_regions_patches(mask, image, header, tmp_path) -> None:
+    """Patches are imaged as one, and the image of the windows is written"""
+    image_fits = tmp_path / "field.fits"
+    scale_mask_fits = tmp_path / "field.scalemask.fits"
+    fits.writeto(image_fits, data=image[None, None], header=header)
+    fits.writeto(scale_mask_fits, data=(mask * 6)[None, None], header=header)
+
+    regions = find_cublet_regions(
+        image_fits=image_fits,
+        mask_names=FITSMaskNames(scale_mask_fits=scale_mask_fits),
+        output_dir=tmp_path / "masks",
+        min_size=32,
+        patch_area=1000,
+    )
+    assert [region.idx for region in regions] == [2, 1]
+
+    with fits.open(regions[0].fits_mask.scale_mask_fits) as patch_mask:
+        assert np.sum(patch_mask[0].data == 6) == 150
+
+    with fits.open(tmp_path / "masks" / "field.patches.fits") as patch_fits:
+        patch_map = patch_fits[0].data
+        assert patch_fits[0].header["CRPIX1"] == header["CRPIX1"]
+    assert patch_map.shape == mask.shape
+    assert np.array_equal(np.unique(patch_map), [0, 1, 2])
+    # Both islands of the patch, and the outline of its window
+    assert np.all(patch_map[300:310, 200:210] == 2)
+    assert np.all(patch_map[300:310, 215:220] == 2)
+    assert np.all(patch_map[287:323, 192] == 2)
+    assert np.all(patch_map[287, 192:228] == 2)
+    assert patch_map[295, 205] == 0
+    assert np.all(patch_map[50:60, 100:130] == 1)
+
+
+def test_find_cublet_regions_writes_patch_map(mask, image, header, tmp_path) -> None:
+    """The image of the windows is written without patches as well"""
+    image_fits = tmp_path / "field.fits"
+    mask_fits = tmp_path / "field.mask.fits"
+    fits.writeto(image_fits, data=image[None, None], header=header)
+    fits.writeto(mask_fits, data=mask[None, None], header=header)
+
+    find_cublet_regions(
+        image_fits=image_fits,
+        mask_names=FITSMaskNames(mask_fits=mask_fits),
+        output_dir=tmp_path / "masks",
+        min_size=32,
+    )
+    patch_map = fits.getdata(tmp_path / "masks" / "field.patches.fits")
+    assert np.array_equal(np.unique(patch_map), [0, 1, 2, 3])
 
 
 SOURCE_LIST_HEADER = (
