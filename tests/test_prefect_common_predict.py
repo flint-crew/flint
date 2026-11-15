@@ -138,10 +138,11 @@ def test_check_skymodel_calibration_options_solver(tmp_path) -> None:
     )
     check_skymodel_calibration_options(field_options=field_options, holofiles=[None])
 
-    for round_0, match in (
+    cases: list[tuple[dict, str]] = [
         ({"dp3ddecal": {}}, "dp3gaincal, not dp3ddecal"),
         ({"gaincal": {}}, "casa_container"),
-    ):
+    ]
+    for round_0, match in cases:
         imaging_strategy = write_strategy(tmp_path / "other.yaml", round_0=round_0)
         with pytest.raises(ValueError, match=match):
             check_skymodel_calibration_options(

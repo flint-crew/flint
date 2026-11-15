@@ -9,7 +9,7 @@ from __future__ import annotations
 import shutil
 from argparse import ArgumentParser
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import yaml
 from eye_patch.options import MaskingOptions
@@ -77,6 +77,7 @@ MODE_OPTIONS_MAPPING = {
     "dp3applycal": DP3ApplyCalOptions,
     "dp3selfcal": DP3SelfCalOptions,
 }
+SelfCalMode: TypeAlias = Literal["gaincal", "dp3ddecal", "dp3gaincal"]
 POLARISATION_MAPPING = {
     "total": "i",
     "linear": "qu",
@@ -445,7 +446,7 @@ def get_selfcal_round_fitscube_options(
 
 def get_selfcal_mode_for_round(
     strategy: Strategy | Path | None, round_info: int
-) -> Literal["gaincal", "dp3ddecal", "dp3gaincal"]:
+) -> SelfCalMode:
     """Which solver a self-calibration round uses: DP3 if the round names a DP3 solver, else CASA gaincal.
 
     Only the round itself is looked at, not the ``defaults`` section, as a default
@@ -459,7 +460,7 @@ def get_selfcal_mode_for_round(
         ValueError: Raised if the round names more than one solver
 
     Returns:
-        Literal["gaincal", "dp3ddecal", "dp3gaincal"]: The strategy mode holding the solver's options
+        SelfCalMode: The strategy mode holding the solver's options
     """
     if isinstance(strategy, Path):
         strategy = load_strategy_yaml(input_yaml=strategy)
@@ -468,9 +469,8 @@ def get_selfcal_mode_for_round(
 
     rounds = strategy["selfcal"]
     round_scope = rounds.get(min(round_info, max(rounds.keys()))) or {}
-    solvers = [
-        mode for mode in ("gaincal", "dp3ddecal", "dp3gaincal") if mode in round_scope
-    ]
+    modes: tuple[SelfCalMode, ...] = ("gaincal", "dp3ddecal", "dp3gaincal")
+    solvers = [mode for mode in modes if mode in round_scope]
     if len(solvers) > 1:
         raise ValueError(
             f"Self-calibration round {round_info} names several solvers: {solvers}"

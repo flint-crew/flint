@@ -277,7 +277,7 @@ def test_check_field_options_skymodel_requirements(tmp_path, monkeypatch) -> Non
 def test_check_field_options_casa_only_for_gaincal_rounds(tmp_path) -> None:
     """The CASA container is needed only when a self-calibration round uses gaincal"""
     imaging_strategy = tmp_path / "strategy.yaml"
-    strategy = {
+    strategy: dict[str, Any] = {
         "version": FORMAT_VERSION,
         "defaults": {},
         "selfcal": {0: {}, 1: {"dp3ddecal": {}}, 2: {"dp3gaincal": {}}},
