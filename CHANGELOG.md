@@ -2,6 +2,10 @@
 
 # v0.3.0
 
+- Added `performance_report_dir` to the dask cluster configuration
+  - Saves the dask performance report of each flow run, named after the run
+  - Linked to the flow run as a `prefect` artifact
+  - Added `bokeh` as a dependency, which dask needs to render the report
 - Attempts to clean up the prefect tasks related to convolution and linmos
   - Added a `LinmosOptions`
   - Moved some file operations (e.g. deleting files) to the `flint.coadd.linmos`
