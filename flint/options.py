@@ -204,7 +204,7 @@ class FieldOptions(BaseOptions):
     casda_bandpass_table: Path | None = None
     """The bandpass table applied to the MSs for this SBID, as deposited onto CASDA. Used to identify antennas to flag that may be unflagged under certain conditions."""
     run_skymodel_calibration: bool = False
-    """Whether to run a phase-only self-calibration round (round 0) against a sky-model predicted from a reference catalogue before imaging. The holofile, if set, weights the model by the measured primary beam. Requires calibrate_container, casa_container and reference_catalogue_directory to be set."""
+    """Whether to run a phase-only self-calibration round (round 0) against a sky-model predicted from a reference catalogue before imaging. The holofile, if set, weights the model by the measured primary beam. Requires calibrate_container and reference_catalogue_directory to be set, and casa_container unless round 0 of the strategy solves with dp3gaincal."""
 
 
 IonexServer: TypeAlias = Literal["chapman", "cddis", "igsiono"]

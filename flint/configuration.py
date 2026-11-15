@@ -444,7 +444,7 @@ def get_selfcal_round_fitscube_options(
 
 
 def get_selfcal_mode_for_round(
-    strategy: Strategy | None, round_info: int
+    strategy: Strategy | Path | None, round_info: int
 ) -> Literal["gaincal", "dp3ddecal", "dp3gaincal"]:
     """Which solver a self-calibration round uses: DP3 if the round names a DP3 solver, else CASA gaincal.
 
@@ -452,7 +452,7 @@ def get_selfcal_mode_for_round(
     strategy lists every mode there. Rounds past the last one listed use the last.
 
     Args:
-        strategy (Strategy | None): A loaded strategy file, if any
+        strategy (Strategy | Path | None): A loaded strategy file, or the path to one, if any
         round_info (int): The self-calibration round
 
     Raises:
@@ -461,6 +461,8 @@ def get_selfcal_mode_for_round(
     Returns:
         Literal["gaincal", "dp3ddecal", "dp3gaincal"]: The strategy mode holding the solver's options
     """
+    if isinstance(strategy, Path):
+        strategy = load_strategy_yaml(input_yaml=strategy)
     if not strategy or "selfcal" not in strategy:
         return "gaincal"
 

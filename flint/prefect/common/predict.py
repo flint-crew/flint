@@ -9,14 +9,18 @@ from typing import Any
 from prefect import unmapped
 from prefect.futures import PrefectFuture, PrefectFutureList
 
-from flint.configuration import Strategy, get_options_from_strategy
+from flint.configuration import (
+    Strategy,
+    get_options_from_strategy,
+    get_selfcal_mode_for_round,
+)
 from flint.exceptions import NoFieldSourceError
 from flint.logging import logger
 from flint.ms import MS
 from flint.options import AddModelSubtractFieldOptions, FieldOptions, RACSAllOptions
 from flint.predict.crystalball import CrystalBallOptions
 from flint.prefect.caching import task
-from flint.prefect.common.imaging import task_gaincal_applycal_ms
+from flint.prefect.common.imaging import task_dp3_selfcal_ms, task_gaincal_applycal_ms
 from flint.sky_model import SkyModel, SkyModelOptions, create_sky_model
 
 
@@ -166,9 +170,16 @@ def check_skymodel_calibration_options(
         raise ValueError(
             "calibrate_container needs to be set if run_skymodel_calibration is True"
         )
-    if field_options.casa_container is None:
+    selfcal_mode = get_selfcal_mode_for_round(
+        strategy=field_options.imaging_strategy, round_info=0
+    )
+    if selfcal_mode == "dp3ddecal":
         raise ValueError(
-            "casa_container needs to be set if run_skymodel_calibration is True"
+            "The sky-model calibration round solves with dp3gaincal, not dp3ddecal"
+        )
+    if selfcal_mode == "gaincal" and field_options.casa_container is None:
+        raise ValueError(
+            "casa_container needs to be set if run_skymodel_calibration is True and round 0 uses gaincal"
         )
     for holofile in holofiles:
         if holofile is not None and not holofile.exists():
@@ -187,6 +198,18 @@ def get_skymodel_gaincal_options(strategy: Strategy | None) -> dict[str, Any]:
             f"Ignoring calmode={options['calmode']!r} for the sky-model calibration round, which is phase-only"
         )
     return {**options, "calmode": "p"}
+
+
+def get_skymodel_dp3_options(strategy: Strategy | None) -> dict[str, Any]:
+    """DP3 gaincal options for the sky-model calibration round: the strategy's round 0, always scalarphase."""
+    options = get_options_from_strategy(
+        strategy=strategy, mode="dp3gaincal", round_info=0, operation="selfcal"
+    )
+    if options.get("caltype", "scalarphase") != "scalarphase":
+        logger.warning(
+            f"Ignoring caltype={options['caltype']!r} for the sky-model calibration round, which is scalarphase"
+        )
+    return {**options, "caltype": "scalarphase"}
 
 
 def calibrate_mss_against_sky_model(
@@ -220,6 +243,15 @@ def calibrate_mss_against_sky_model(
         addmodel_subtract_options=unmapped(addmodel_subtract_options),
         skymodel=skymodels,
     )
+    if get_selfcal_mode_for_round(strategy=strategy, round_info=0) != "gaincal":
+        return task_dp3_selfcal_ms.map(
+            ms=model_mss,
+            selfcal_round=0,
+            mode="dp3gaincal",
+            update_dp3_options=unmapped(get_skymodel_dp3_options(strategy=strategy)),
+            archive_input_ms=field_options.zip_ms,
+            rename_ms=field_options.rename_ms,
+        )
     return task_gaincal_applycal_ms.map(
         ms=model_mss,
         selfcal_round=0,

@@ -27,7 +27,6 @@ from flint.configuration import (
     get_selfcal_mode_for_round,
     get_selfcal_round_fitscube_options,
     load_and_copy_strategy,
-    load_strategy_yaml,
 )
 from flint.imager.wsclean import WSCleanResult
 from flint.logging import logger
@@ -87,13 +86,10 @@ from flint.selfcal.utils import consider_skip_selfcal_on_round
 
 def uses_casa_selfcal(field_options: FieldOptions) -> bool:
     """Whether any self-calibration round will solve with CASA gaincal."""
-    strategy = (
-        load_strategy_yaml(input_yaml=field_options.imaging_strategy)
-        if field_options.imaging_strategy
-        else None
-    )
     return any(
-        get_selfcal_mode_for_round(strategy=strategy, round_info=current_round)
+        get_selfcal_mode_for_round(
+            strategy=field_options.imaging_strategy, round_info=current_round
+        )
         == "gaincal"
         for current_round in range(1, (field_options.rounds or 0) + 1)
     )
