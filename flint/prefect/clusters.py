@@ -10,9 +10,50 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from prefect.context import FlowRunContext
 from prefect_dask import DaskTaskRunner
 
+from flint.logging import logger
 from flint.utils import get_packaged_resource_path
+
+
+class FlintDaskTaskRunner(DaskTaskRunner):
+    """A DaskTaskRunner that can save the dask performance report of each flow run.
+
+    The report is written to ``performance_report_dir``, named after the flow run.
+    """
+
+    def __init__(
+        self,
+        *args: Any,
+        performance_report_dir: str | Path | None = None,
+        **kwargs: Any,
+    ):
+        super().__init__(*args, **kwargs)
+        self.performance_report_dir = (
+            Path(performance_report_dir) if performance_report_dir else None
+        )
+
+    def duplicate(self) -> FlintDaskTaskRunner:
+        runner = super().duplicate()
+        runner.performance_report_dir = self.performance_report_dir
+        return runner
+
+    @property
+    def client(self):
+        # The client is made on the first submit, inside the flow run, which is
+        # the only point the flow run (and so a unique report name) is known.
+        if self._client is None and self.performance_report_dir is not None:
+            flow_run_context = FlowRunContext.get()
+            name = flow_run_context.flow_run.name if flow_run_context else "flow"
+            self.performance_report_dir.mkdir(parents=True, exist_ok=True)
+            self.performance_report_path = str(
+                self.performance_report_dir / f"dask-performance-report-{name}.html"
+            )
+            logger.info(
+                f"Saving the dask performance report to {self.performance_report_path}"
+            )
+        return super().client
 
 
 def get_cluster_spec(cluster: str | Path) -> dict[Any, Any]:
@@ -57,7 +98,7 @@ def get_cluster_spec(cluster: str | Path) -> dict[Any, Any]:
 def get_dask_runner(
     cluster: str | Path = "galaxy_small",
     extra_cluster_kwargs: dict[str, Any] | None = None,
-) -> DaskTaskRunner:
+) -> FlintDaskTaskRunner:
     """Creates and returns a DaskTaskRunner configured to established a SLURMCluster instance
     to manage a set of dask-workers. The SLURMCluster is currently configured only for Galaxy.
 
@@ -65,9 +106,10 @@ def get_dask_runner(
         cluster (Union[str,Path]): The cluster name that will be used to search for a cluster specification file.
                        This could be the name of a known cluster, or the name of a yaml file installed
                        among the `cluster_configs` directory of the aces module.
+                       Setting ``performance_report_dir`` in it saves the dask performance report of each flow run there.
 
     Returns:
-        DaskTaskRunner: A dask task runner capable of being used as a task_runner for a prefect flow
+        FlintDaskTaskRunner: A dask task runner capable of being used as a task_runner for a prefect flow
     """
 
     spec = get_cluster_spec(cluster)
@@ -75,6 +117,6 @@ def get_dask_runner(
     if extra_cluster_kwargs is not None:
         spec["cluster_kwargs"].update(extra_cluster_kwargs)
 
-    task_runner = DaskTaskRunner(**spec)
+    task_runner = FlintDaskTaskRunner(**spec)
 
     return task_runner
