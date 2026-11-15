@@ -283,6 +283,22 @@ def test_flow_no_islands(fake_tasks, tmp_path) -> None:
     assert fake_tasks["task_restore_source_list"].calls == []
 
 
+def test_flow_saves_settings(fake_tasks, tmp_path) -> None:
+    """The strategy file and the options of a run are kept beside its outputs"""
+    options = _options(tmp_path, rounds=1, max_size=512)
+    flow_beam_cublet_image.fn(
+        beam_cublet_options=options,
+        crystalball_options=CrystalBallOptions(row_chunks=5000),
+    )
+
+    (strategy_copy,) = tmp_path.glob("strategy-*.yaml")
+    assert strategy_copy.read_text() == options.strategy.read_text()
+    (options_file,) = tmp_path.glob("beam_cublet_options-*.yaml")
+    assert "max_size: 512" in options_file.read_text()
+    (predict_file,) = tmp_path.glob("cublet_crystalball_options-*.yaml")
+    assert "row_chunks: 5000" in predict_file.read_text()
+
+
 def test_image_island(monkeypatch, tmp_path) -> None:
     """An island image is shifted, weighted as the full image and keeps the reordered files apart from its images"""
     mask_fits = tmp_path / "island.mask.fits"

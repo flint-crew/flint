@@ -679,10 +679,7 @@ class RACSAllPipelineOptions(BaseOptions):
 
 def dump_field_options_to_yaml(
     output_path: Path,
-    field_options: FieldOptions
-    | PolFieldOptions
-    | SubtractFieldOptions
-    | RACSAllOptions,
+    field_options: BaseOptions,
     overwrite: bool = False,
 ) -> Path:
     """Dump the supplied instance of `FieldOptions` to a yaml file
@@ -693,7 +690,7 @@ def dump_field_options_to_yaml(
 
     Args:
         output_path (Path): Path of the output file.
-        field_options (FieldOptions | PolFieldOptions | SubtractFieldOptions | RACSAllOptions): The `FieldOptions` class to write.
+        field_options (BaseOptions): The options to write, a `FieldOptions` or any other options class.
         overwrite (bool, optional): Overwrite the file if it exists. Defaults to False.
 
     Raises:

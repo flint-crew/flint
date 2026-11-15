@@ -204,6 +204,9 @@ when it was last heard from, and where each running task is in its code.
 
 ## Outputs
 
+- Timestamped copies of the strategy file, and of the options the run was
+  given (`beam_cublet_options-<time>.yaml` and
+  `cublet_crystalball_options-<time>.yaml`), beside the measurement set.
 - The component list of each island, named with a `c<cycle>r<round>i<island>`
   suffix, beside the measurement set. An island keeps its number only within a
   cycle. The FITS images of an island are deleted once it has been imaged. Give

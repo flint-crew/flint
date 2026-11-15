@@ -18,7 +18,11 @@ from capn_crunch import BaseOptions, add_options_to_parser, create_options_from_
 from eye_patch.naming import FITSMaskNames
 from prefect import flow
 
-from flint.configuration import get_options_from_strategy, load_strategy_yaml
+from flint.configuration import (
+    copy_and_timestamp_strategy_file,
+    get_options_from_strategy,
+    load_strategy_yaml,
+)
 from flint.cublet.islands import (
     CubletRegion,
     find_cublet_regions,
@@ -31,7 +35,8 @@ from flint.cublet.sourcelist import concatenate_source_lists
 from flint.imager.wsclean import WSCleanResult, restore_source_list
 from flint.logging import logger
 from flint.ms import MS
-from flint.naming import get_sbid_from_path
+from flint.naming import add_timestamp_to_path, get_sbid_from_path
+from flint.options import dump_field_options_to_yaml
 from flint.predict.crystalball import CrystalBallOptions
 from flint.prefect.caching import task
 from flint.prefect.clusters import get_dask_runner
@@ -275,12 +280,42 @@ def flow_beam_cublet_image(
         )
 
 
+def save_cublet_settings(
+    output_dir: Path,
+    beam_cublet_options: BeamCubletOptions,
+    crystalball_options: CrystalBallOptions,
+) -> list[Path]:
+    """Write timestamped copies of the strategy file and the options of a run to ``output_dir``"""
+    return [
+        copy_and_timestamp_strategy_file(
+            output_dir=output_dir, input_yaml=beam_cublet_options.strategy
+        ),
+        dump_field_options_to_yaml(
+            output_path=add_timestamp_to_path(
+                input_path=output_dir / "beam_cublet_options.yaml"
+            ),
+            field_options=beam_cublet_options,
+        ),
+        dump_field_options_to_yaml(
+            output_path=add_timestamp_to_path(
+                input_path=output_dir / "cublet_crystalball_options.yaml"
+            ),
+            field_options=crystalball_options,
+        ),
+    ]
+
+
 def image_beam_cublets(
     beam_cublet_options: BeamCubletOptions, crystalball_options: CrystalBallOptions
 ) -> None:
     """Image a beam island by island, in cycles of rounds"""
     ms = MS(path=beam_cublet_options.ms_path, column=beam_cublet_options.column)
     logger.info(f"Cublet imaging of {ms=}")
+    save_cublet_settings(
+        output_dir=ms.path.parent,
+        beam_cublet_options=beam_cublet_options,
+        crystalball_options=crystalball_options,
+    )
 
     strategy = load_strategy_yaml(input_yaml=beam_cublet_options.strategy)
     work_dir = beam_cublet_options.work_dir or ms.path.parent / "cublet"
