@@ -10,7 +10,7 @@ A self-calibration round solves with DP3 instead of CASA `gaincal` when that rou
 | `solint: 60s` | `solint: 6` | `solint: 6` | In timeslots. ASKAP integrates for about 10 s. `inf` is `0`. |
 | `nspw: 4` | `nchan: 72` | `nchan: 72` | Channels per solution, so 288 channels / 4. `0` is the whole band. |
 | `uvrange: ">200m"` | `uvmmin: 200` | `uvmmin: 200` | `"<5000m"` is `uvmmax: 5000`. For `klambda` ranges use `uvlambdamin`. |
-| `solnorm: true` | `dp3selfcal: {normalise_amplitudes: true}` | the same | On by default. Scales amplitudes to a mean of one, where `solnorm` scales their root mean square. |
+| `solnorm: true` | `dp3selfcal: {normalise_amplitudes: true}` | the same | On by default. Normalises per frequency solution like `solnorm` per spectral window, but also per feed and with the median, not the root mean square; see {ref}`Amplitude normalisation <dp3-normalisation>`. |
 | `minsnr` | none | none | DP3 does not flag low signal-to-noise solutions. Flint's default of `0.0` already turns this off. |
 | `selectdata`, `round` | none | none | DP3 always applies its uv cuts, and needs no round number. |
 

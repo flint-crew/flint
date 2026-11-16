@@ -30,7 +30,7 @@ class DP3SelfCalOptions(BaseOptions):
     """Flint's own settings for a round of DP3 self-calibration"""
 
     normalise_amplitudes: bool = True
-    """Scale amplitude solutions to a mean of one, so self-calibration keeps the flux scale"""
+    """Normalise amplitude solutions so self-calibration keeps the flux scale (see the DP3 docs)"""
 
 
 def get_soltabs(h5parm: Path) -> list[str]:
@@ -92,7 +92,8 @@ def get_solve_type(options: DP3DDECalOptions | DP3GainCalOptions) -> str:
 
 def get_corrections(h5parm: Path, solve_type: str) -> DP3ApplyCalOptions:
     """The applycal corrections for a round's solutions, in the order that undoes them."""
-    soltabs = get_soltabs(h5parm)
+    # TEC solves also write their fit errors, which are not a correction
+    soltabs = [name for name in get_soltabs(h5parm) if not name.startswith("error")]
     # DP3 can only apply full-Jones solutions as one correction
     if solve_type == "fulljones":
         return DP3ApplyCalOptions(correction=["fulljones"], soltab=soltabs)
@@ -103,23 +104,71 @@ def get_corrections(h5parm: Path, solve_type: str) -> DP3ApplyCalOptions:
     )
 
 
-def get_cross_hand_mask(soltab: h5py.Group) -> np.ndarray:
-    """Which of a soltab's solutions are cross-hands (e.g. XY), shaped to broadcast against them."""
+def get_axis_index(values: np.ndarray, axes: list[str], name: str) -> np.ndarray:
+    """Each solution's position along an axis, shaped to broadcast against the solutions, or 0 if it has no such axis."""
+    if name not in axes:
+        return np.zeros(1, dtype=int)
+    shape = [1] * values.ndim
+    shape[axes.index(name)] = values.shape[axes.index(name)]
+
+    return np.arange(values.shape[axes.index(name)]).reshape(shape)
+
+
+def get_feeds(
+    soltab: h5py.Group, values: np.ndarray, axes: list[str]
+) -> tuple[np.ndarray, np.ndarray]:
+    """Each solution's feed (the first letter of its polarisation) and whether it is a parallel hand, shaped to broadcast against the solutions."""
+    if "pol" not in axes:
+        return np.zeros(1, dtype=int), np.ones(1, dtype=bool)
+    pols = soltab["pol"].asstr()[:]
+    feeds = sorted({pol[0] for pol in pols})
+    shape = [1] * values.ndim
+    shape[axes.index("pol")] = len(pols)
+    feed = np.array([feeds.index(pol[0]) for pol in pols]).reshape(shape)
+    parallel = np.array([pol[0] == pol[1] for pol in pols]).reshape(shape)
+
+    return feed, parallel
+
+
+def normalise_soltab(soltab: h5py.Group, name: str) -> None:
+    """Divide an amplitude table, in place, by the median of each of its groups."""
     axes = soltab["val"].attrs["AXES"]
     axes = (axes.decode() if isinstance(axes, bytes) else axes).split(",")
-    is_cross = np.array([pol[0] != pol[1] for pol in soltab["pol"].asstr()[:]])
-    shape = [1] * soltab["val"].ndim
-    shape[axes.index("pol")] = is_cross.size
+    values = soltab["val"][:]
+    good = np.isfinite(values) & (soltab["weight"][:] > 0)
+    feed, parallel = get_feeds(soltab, values, axes)
 
-    return is_cross.reshape(shape)
+    # One factor per frequency solution, direction and feed, pooling times and antennas
+    keys = np.stack(
+        [
+            np.broadcast_to(index, values.shape).ravel()
+            for index in (
+                get_axis_index(values, axes, "freq"),
+                get_axis_index(values, axes, "dir"),
+                feed,
+            )
+        ],
+        axis=-1,
+    )
+    _, group = np.unique(keys, axis=0, return_inverse=True)
+    group = group.reshape(values.shape)
+    for group_id in np.unique(group):
+        in_group = group == group_id
+        samples = values[in_group & good & parallel]
+        if samples.size < 2:
+            logger.warning(f"Fewer than two good amplitudes in a group of {name}")
+            continue
+        values[in_group] /= np.median(samples)
+
+    soltab["val"][:] = values
 
 
 def normalise_amplitudes(h5parm: Path) -> Path:
-    """Scale each amplitude table in an h5parm, in place, so its good solutions average one.
+    """Normalise each amplitude table in an h5parm, in place, so self-calibration keeps the flux scale.
 
-    This keeps self-calibration from changing the flux scale, like CASA's ``solnorm``,
-    though that divides by the root mean square rather than the mean. Full-Jones
-    cross-hands (e.g. XY) are near zero, so are left out of the mean.
+    Each frequency solution, direction and feed gets its own factor, the median of
+    its good parallel-hand amplitudes across times and antennas. Groups with fewer
+    than two good solutions are left alone. See the DP3 docs for why.
 
     Args:
         h5parm (Path): The solutions to normalise
@@ -132,18 +181,8 @@ def normalise_amplitudes(h5parm: Path) -> Path:
     with h5py.File(h5parm, "r+") as solutions:
         for solset in solutions.values():
             for name, soltab in solset.items():
-                if not name.startswith("amplitude"):
-                    continue
-                values = soltab["val"][:]
-                good = np.isfinite(values) & (soltab["weight"][:] > 0)
-                if "pol" in soltab:
-                    good &= ~get_cross_hand_mask(soltab)
-                if not good.any():
-                    logger.warning(f"No good amplitudes in {h5parm}:{name}")
-                    continue
-                mean = values[good].mean()
-                logger.info(f"Normalising {h5parm}:{name} by {mean=}")
-                soltab["val"][:] = values / mean
+                if name.startswith("amplitude") and isinstance(soltab, h5py.Group):
+                    normalise_soltab(soltab, name=f"{h5parm}:{name}")
 
     return h5parm
 

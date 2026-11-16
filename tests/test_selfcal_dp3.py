@@ -60,14 +60,18 @@ def scale_amplitudes(ms: MS, scale: float) -> None:
 
 
 def write_h5parm(
-    h5parm: Path, soltabs: dict[str, np.ndarray], pols: list[str] | None = None
+    h5parm: Path,
+    soltabs: dict[str, np.ndarray],
+    pols: list[str] | None = None,
+    axes: str | None = None,
 ) -> Path:
-    """An h5parm of the given soltabs, on time and antenna axes, and a polarisation axis if ``pols`` is set."""
+    """An h5parm of the given soltabs, on time and antenna axes (plus polarisation if ``pols`` is set) unless ``axes`` is given."""
+    axes = axes or ("time,ant,pol" if pols else "time,ant")
     with h5py.File(h5parm, "w") as solutions:
         for name, values in soltabs.items():
             soltab = solutions.create_group(f"sol000/{name}")
             val = soltab.create_dataset("val", data=values)
-            val.attrs["AXES"] = np.bytes_("time,ant,pol" if pols else "time,ant")
+            val.attrs["AXES"] = np.bytes_(axes)
             soltab.create_dataset("weight", data=np.ones_like(values))
             if pols:
                 soltab.create_dataset("pol", data=np.array(pols, dtype="S2"))
@@ -184,11 +188,32 @@ def test_get_corrections_fulljones(tmp_path):
     assert corrections.soltab == ["amplitude000", "phase000"]
 
 
-def test_normalise_amplitudes_leaves_out_cross_hands(tmp_path):
-    """Full-Jones cross-hands are near zero, so would drag the mean down"""
+def test_normalise_amplitudes_groups(tmp_path):
+    """Each frequency, direction and feed is divided by its own median, pooling times and antennas"""
+    # Antennas at 1, 2 and 16 times their group's level: the median is 2, where the
+    # geometric mean would be 3.17, the mean 6.33 and the root mean square 9.3
+    pattern = np.array([1.0, 2.0, 16.0]).reshape(1, 3, 1, 1, 1)
+    freq, direction, feed = np.meshgrid(
+        np.arange(2), np.arange(2), np.arange(2), indexing="ij"
+    )
+    levels = (1 + freq + 10 * direction + 100 * feed).transpose(1, 0, 2)[np.newaxis]
+    amplitudes = np.broadcast_to(levels[:, np.newaxis] * pattern, (2, 3, 2, 2, 2))
+    h5parm = write_h5parm(
+        tmp_path / "solutions.h5",
+        {"amplitude000": amplitudes.copy()},
+        pols=["XX", "YY"],
+        axes="time,ant,dir,freq,pol",
+    )
+
+    with h5py.File(normalise_amplitudes(h5parm)) as solutions:
+        normalised = solutions["sol000/amplitude000/val"][:]
+    assert np.allclose(normalised, np.broadcast_to(pattern / 2, normalised.shape))
+
+
+def test_normalise_amplitudes_fulljones_rows(tmp_path):
+    """Cross-hands give no factor of their own, but are divided by their row's feed"""
     amplitudes = np.empty((2, 3, 4))
-    amplitudes[..., [0, 3]] = 2.0
-    amplitudes[..., [1, 2]] = 0.02
+    amplitudes[..., :] = [2.0, 0.2, 0.4, 4.0]
     h5parm = write_h5parm(
         tmp_path / "solutions.h5",
         {"amplitude000": amplitudes},
@@ -197,5 +222,61 @@ def test_normalise_amplitudes_leaves_out_cross_hands(tmp_path):
 
     with h5py.File(normalise_amplitudes(h5parm)) as solutions:
         normalised = solutions["sol000/amplitude000/val"][:]
-    assert np.allclose(normalised[..., [0, 3]], 1.0)
-    assert np.allclose(normalised[..., [1, 2]], 0.01)
+    assert np.allclose(normalised, [1.0, 0.1, 0.1, 1.0])
+
+
+def test_normalise_amplitudes_needs_two_good_solutions(tmp_path):
+    h5parm = write_h5parm(
+        tmp_path / "solutions.h5", {"amplitude000": np.full((1, 1), 3.0)}
+    )
+
+    with h5py.File(normalise_amplitudes(h5parm)) as solutions:
+        assert solutions["sol000/amplitude000/val"][:] == pytest.approx(3.0)
+
+
+def test_dp3_selfcal_ms_rotation_diagonal(selfcal_ms):
+    """A polarised source corrupted by diagonal times rotation gains, which is DP3's form, is recovered"""
+    rng = np.random.default_rng(1)
+    nant = 36
+    phases = np.exp(1j * rng.uniform(-1, 1, (nant, 2)))
+    diagonal = np.zeros((nant, 2, 2), dtype=complex)
+    diagonal[:, [0, 1], [0, 1]] = rng.uniform(0.8, 1.2, (nant, 2)) * phases
+    theta = rng.uniform(-0.5, 0.5, nant)
+    rotation = np.array(
+        [[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]]
+    )
+    gains = diagonal @ rotation.transpose(2, 0, 1)
+    # Rotation can not be seen against an unpolarised source
+    model = np.array([[1.3, 0.2], [0.2, 0.7]], dtype=complex)
+
+    with table(str(selfcal_ms.path), readonly=False, ack=False) as tab:
+        ant1, ant2 = tab.getcol("ANTENNA1"), tab.getcol("ANTENNA2")
+        shape = tab.getcol("DATA").shape
+        data = gains[ant1] @ model @ gains[ant2].conj().transpose(0, 2, 1)
+        tab.putcol(
+            "DATA", np.broadcast_to(data.reshape(-1, 1, 4), shape).astype(np.complex64)
+        )
+        tab.putcol(
+            "MODEL_DATA", np.broadcast_to(model.reshape(4), shape).astype(np.complex64)
+        )
+
+    cal_ms = dp3_selfcal_ms(
+        selfcal_ms,
+        # The default solver stalls on the degeneracies of a single polarised source
+        update_dp3_options={
+            "mode": "rotation+diagonal",
+            "solveralgorithm": "lbfgs",
+            "maxiter": 100,
+            "tolerance": 1e-8,
+        },
+        update_dp3_selfcal_options={"normalise_amplitudes": False},
+    )
+    assert_corrected_matches_model(cal_ms)
+
+
+def test_dp3_selfcal_ms_tec_phase(selfcal_ms):
+    cal_ms = dp3_selfcal_ms(selfcal_ms, update_dp3_options={"mode": "tec+phase"})
+    assert cal_ms.column == "CORRECTED_DATA"
+    h5parm = cal_ms.path.with_suffix(".h5")
+    assert get_soltabs(h5parm) == ["error000", "phase000", "tec000"]
+    assert get_corrections(h5parm, "tec+phase").correction == ["phase000", "tec000"]
