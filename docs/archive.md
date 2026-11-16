@@ -54,7 +54,7 @@ flint_flow_archive --field-path 60001 --imaging-strategy strategy.yaml \
     --cluster-config datamover.yaml
 ```
 
-The flags are the same ones the RACS-all flow takes for its archive stage.
+The strategy and rclone flags are the same ones the RACS-all flow takes.
 
 The strategy file only needs `version: 0.2` and the `defaults.archive`
 section. Nothing else in it is read.

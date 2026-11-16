@@ -110,9 +110,11 @@ def test_cli_refuses_a_missing_field_folder(tmp_path: Path) -> None:
         )
 
 
-def test_cli_needs_a_field_and_a_strategy() -> None:
-    with pytest.raises(ValueError, match="both required"):
+def test_cli_needs_a_field_and_a_strategy(capsys: pytest.CaptureFixture) -> None:
+    with pytest.raises(SystemExit):
         cli(["--field-path", "60001"])
+
+    assert "both required" in capsys.readouterr().err
 
 
 def test_parser() -> None:

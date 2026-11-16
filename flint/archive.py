@@ -289,8 +289,8 @@ def rclone_copy(
         work = Path(work_dir).resolve()
         listing = work / "files"
         listing.write_text("".join(f"{file}\n" for file in files))
-        # The list is passed as the command's own arguments, not a shell line,
-        # so paths with spaces survive; --files-from-raw reads names literally
+        # The list is passed as the command's own arguments, not a shell line, so
+        # paths with spaces survive; --files-from-raw takes each line as it is
         run_singularity_command(
             image=container,
             command=[

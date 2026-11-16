@@ -591,27 +591,6 @@ class RACSAllOptions(BaseOptions):
     """Path to the singularity calibrate container, required by run_skymodel_calibration for the addmodel prediction step"""
 
 
-def pol_field_options_cli_class(
-    racs_all_options_class: type[RACSAllOptions] = RACSAllOptions,
-) -> type[PolFieldOptions]:
-    """Build a ``PolFieldOptions`` subclass containing only the fields not already
-    present on ``RACSAllOptions``, so it can be added to the same CLI parser without
-    duplicate flags for the fields the two share. Every current and future
-    ``PolFieldOptions`` field is exposed on the CLI this way, either through this
-    class or through ``RACSAllOptions`` itself for the shared ones."""
-    overlap = set(racs_all_options_class.model_fields) & set(
-        PolFieldOptions.model_fields
-    )
-    unique_fields = {
-        name: (field.annotation, field)
-        for name, field in PolFieldOptions.model_fields.items()
-        if name not in overlap
-    }
-    return create_model(
-        "PolFieldOptionsCLI", __base__=PolFieldOptions.__base__, **unique_fields
-    )
-
-
 def exclude_fields_cli_class(
     options_class: type[BaseOptions], exclude_fields: set[str]
 ) -> type[BaseOptions]:
@@ -621,8 +600,7 @@ def exclude_fields_cli_class(
     duplicate-flag error.
 
     The result derives from ``options_class.__base__``, so it is a sibling rather
-    than a subclass. Generalises ``pol_field_options_cli_class`` to an arbitrary,
-    accumulated set of already-registered field names.
+    than a subclass.
     """
     unique_fields = {
         name: (field.annotation, field)

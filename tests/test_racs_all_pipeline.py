@@ -471,9 +471,9 @@ def _run_racs_all(
             spice_field_options=(
                 spice_field_options or SpiceFieldOptions()
             ).with_options(catalogue=catalogue),
-            archive_field_options=(
-                archive_field_options or ArchiveFieldOptions()
-            ).with_options(imaging_strategy=imaging_strategy),
+            # The strategy is read off racs_all_options, as a programmatic caller
+            # would expect, so it is not copied here
+            archive_field_options=archive_field_options or ArchiveFieldOptions(),
         )
 
 
@@ -518,7 +518,7 @@ def test_the_archive_stage_runs_last_over_the_field_folder(
     assert archive.return_value.call_count == 2
     first, second = archive.return_value.call_args_list
     assert first.kwargs["archive_field_options"] == ArchiveFieldOptions(
-        field_path=tmp_path, imaging_strategy=strategy, rclone_container=container
+        field_path=tmp_path, rclone_container=container
     )
     assert first.kwargs["archive_options"].destinations["tape"].method == "tar"
     assert second.kwargs["archive_field_options"].field_path == tmp_path

@@ -86,12 +86,12 @@ def _racs_all_result(
     )
 
 
-def _archive_options(archive_field_options: ArchiveFieldOptions) -> ArchiveOptions:
+def _archive_options(racs_all_options: RACSAllOptions) -> ArchiveOptions:
     """The archive options of the strategy file, with no destinations without one"""
-    if archive_field_options.imaging_strategy is None:
+    if racs_all_options.imaging_strategy is None:
         return ArchiveOptions()
     return archive_options_from_strategy(
-        strategy_yaml_path=archive_field_options.imaging_strategy
+        strategy_yaml_path=racs_all_options.imaging_strategy
     )
 
 
@@ -268,7 +268,7 @@ def process_racs_all(
     spice_field_options: SpiceFieldOptions,
     archive_field_options: ArchiveFieldOptions = ArchiveFieldOptions(),
 ) -> RACSAllResult:
-    archive_options = _archive_options(archive_field_options)
+    archive_options = _archive_options(racs_all_options)
     _check_racs_all_pipeline_options(
         pipeline_options=pipeline_options, archive_options=archive_options
     )

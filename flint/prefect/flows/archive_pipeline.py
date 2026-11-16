@@ -37,10 +37,12 @@ def process_archive(
         archive_options (ArchiveOptions): The destinations, from the strategy file
 
     Raises:
+        ValueError: No field folder was given
         RuntimeError: A destination was not reached
     """
     field_path = archive_field_options.field_path
-    assert field_path is not None, "field_path is required"
+    if field_path is None:
+        raise ValueError("archive_field_options.field_path is required")
     field = f"SB{get_sbid_from_path(path=field_path)}"
     futures = [
         task_archive_to.submit(
@@ -55,7 +57,7 @@ def process_archive(
     wait(futures)
 
     failed = [
-        f"{name}: {future.state.message}"
+        f"{name}: {future.state.message or future.state.name}"
         for name, future in zip(archive_options.destinations, futures)
         if not future.state.is_completed()
     ]
@@ -86,12 +88,13 @@ def get_parser() -> ArgumentParser:
 
 
 def cli(argv: list[str] | None = None) -> None:
-    args = get_parser().parse_args(argv)
+    parser = get_parser()
+    args = parser.parse_args(argv)
     options = create_options_from_parser(
         parser_namespace=args, options_class=ArchiveFieldOptions
     )
     if options.field_path is None or options.imaging_strategy is None:
-        raise ValueError("--field-path and --imaging-strategy are both required")
+        parser.error("--field-path and --imaging-strategy are both required")
 
     # The tasks run on another node, so the path has to stand on its own there
     field_path = options.field_path.resolve()
