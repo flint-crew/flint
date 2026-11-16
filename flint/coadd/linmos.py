@@ -53,8 +53,6 @@ class LinmosOptions(BaseOptions):
     """Collection of Stokes-I images used to correct widefield leakage when input images are Stokes Q or U. If None ``linmos`` will attempt to find them. Defaults to None."""
     force_remove_leakage: bool | None = None
     """Overwrite the ``removeLeakage`` option to ``linmos``. Defaults to None. """
-    overwrite: bool = False
-    """Overwrite the linmos parset file generated if it exists. Defaults to False."""
     remove_original_images: bool = False
     """Delete the images that were coaddede together. Defaults to False."""
     regrid_method: Literal["nearest", "linear", "cubic", "lanczos"] = "cubic"
@@ -681,10 +679,6 @@ def generate_linmos_parameter_set(
     # Now write the file, me hearty
     logger.info(f"Writing parset to {linmos_names.parset_output_path!s}.")
     logger.info(f"{parset}")
-    if not linmos_options.overwrite:
-        assert not Path(linmos_names.parset_output_path).exists(), (
-            f"The parset {linmos_names.parset_output_path} already exists!"
-        )
     with open(linmos_names.parset_output_path, "w") as parset_file:
         parset_file.write(parset)
 
@@ -752,6 +746,13 @@ def linmos_images(
         linmos_options=linmos_options,
         weight_list=weight_list,
     )
+
+    # Don't trust linmos to overwrite things, matie
+    stale_outputs = remove_files_folders(
+        linmos_names.image_fits, linmos_names.weight_fits
+    )
+    if stale_outputs:
+        logger.warning(f"Removed outputs of an earlier linmos run: {stale_outputs}")
 
     linmos_cmd_str = f"linmos -c {linmos_parset_summary.parset_path!s}"
     bind_dirs = [image.absolute().parent for image in images] + [
