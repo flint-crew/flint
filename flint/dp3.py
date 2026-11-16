@@ -175,6 +175,10 @@ class DP3GainCalOptions(BaseOptions):
     """Convergence tolerance of the solver"""
     uvlambdamin: float | None = Field(default=None, ge=0)
     """Ignore baselines shorter than this many wavelengths"""
+    uvmmin: float | None = Field(default=None, ge=0)
+    """Ignore baselines shorter than this many metres"""
+    uvmmax: float | None = Field(default=None, gt=0)
+    """Ignore baselines longer than this many metres"""
     propagatesolutions: bool | None = None
     """Start each solution interval from the previous solutions"""
 

@@ -68,6 +68,9 @@ def test_options_to_parset():
     assert parset["cal.datause"] == "dual"
     assert parset["cal.uvmmin"] == "200.0"
 
+    parset = options_to_parset("cal", DP3GainCalOptions(uvmmin=200))
+    assert parset["cal.uvmmin"] == "200.0"
+
 
 def test_create_dp3_parset():
     ms = MS(path=Path("some.ms"), column="CORRECTED_DATA")
