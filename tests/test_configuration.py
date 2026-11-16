@@ -738,3 +738,17 @@ def test_get_selfcal_mode_for_round(strategy):
         get_selfcal_mode_for_round(strategy=strategy, round_info=1)
     with pytest.raises(ValueError, match="not valid"):
         verify_configuration(input_strategy=strategy)
+
+
+@pytest.mark.parametrize(
+    ("solver", "solve"),
+    [("dp3ddecal", {"mode": "leakage"}), ("dp3gaincal", {"caltype": "tec+phase"})],
+)
+def test_verify_configuration_dp3_solve_types(strategy, solver, solve):
+    """A DP3 round is refused if self-calibration cannot apply what it solves for"""
+    del strategy["selfcal"][2]["gaincal"]
+    strategy["selfcal"][2][solver] = solve
+    applicable = solve != {"mode": "leakage"}
+    assert verify_configuration(input_strategy=strategy, raise_on_error=False) is (
+        applicable
+    )

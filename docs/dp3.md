@@ -27,7 +27,7 @@ Each step has an options class (e.g. `DP3DDECalOptions`) whose fields are DP3 se
 
 A self-calibration round in the continuum and RACS-all flows solves with DP3 when that round of the [strategy file](config.md) has a `dp3ddecal` or `dp3gaincal` block. Other rounds use CASA `gaincal`, and the CASA container is only required if some round does. Options merge in the usual order: the options class, then `defaults`, then the round. They are DP3's own settings in DP3's units, so `solint` is in timeslots (ASKAP's are about 10 s) and `smoothnessconstraint` is in Hz.
 
-`dp3ddecal` can smooth solutions across frequency and has more solver settings. `dp3gaincal` is DP3's simpler solver, set with `caltype`, `solint` and `nchan`. The [sky-model calibration](predict/skymodel.md) in round 0 solves with DP3 when round 0 has a `dp3gaincal` block, and always solves for `scalarphase`; `dp3ddecal` is not supported there.
+`dp3ddecal` can smooth solutions across frequency and has more solver settings. `dp3gaincal` is DP3's simpler solver, set with `caltype`, `solint` and `nchan`. Self-calibration can apply solutions of type `scalar`, `scalarphase`, `scalaramplitude`, `diagonal`, `diagonalphase`, `diagonalamplitude`, `fulljones`, `tec`, `tec+phase`, `rotation` and `rotation+diagonal`. A round that solves for anything else is refused when the strategy is loaded. The [sky-model calibration](predict/skymodel.md) in round 0 solves with DP3 when round 0 has a `dp3gaincal` block, and always solves for `scalarphase`; `dp3ddecal` is not supported there.
 
 ```yaml
 selfcal:

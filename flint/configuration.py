@@ -37,7 +37,7 @@ from flint.options import (
 )
 from flint.peel.potato import PotatoPeelOptions
 from flint.selfcal.casa import GainCalOptions
-from flint.selfcal.dp3 import DP3SelfCalOptions
+from flint.selfcal.dp3 import DP3SelfCalOptions, get_solve_type
 from flint.sky_model import SkyModelOptions
 from flint.source_finding.aegean import AegeanOptions, BANEOptions
 
@@ -555,8 +555,12 @@ def verify_configuration(input_strategy: Strategy, raise_on_error: bool = True) 
                         round_info=round_info,
                     )
                     try:
-                        _ = MODE_OPTIONS_MAPPING[mode](**options)
-                    except (TypeError, ValidationError) as error:
+                        mode_options = MODE_OPTIONS_MAPPING[mode](**options)
+                        if isinstance(
+                            mode_options, (DP3DDECalOptions, DP3GainCalOptions)
+                        ):
+                            get_solve_type(mode_options)
+                    except (TypeError, ValueError) as error:
                         errors.append(
                             f"{mode=} mode in {round_info=} incorrectly formed. {error} "
                         )

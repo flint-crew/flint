@@ -188,6 +188,8 @@ class DP3ApplyCalOptions(BaseOptions):
 
     correction: list[ParsetWord] = Field(default=["phase000"], min_length=1)
     """Soltabs to apply in turn, e.g. ['phase000'] or ['rotationmeasure000']"""
+    soltab: list[ParsetWord] | None = None
+    """The amplitude and phase soltabs a 'fulljones' correction reads, e.g. ['amplitude000', 'phase000']"""
     solset: ParsetWord | None = None
     """The solset holding the soltabs. DP3 picks one if unset."""
     interpolation: Interpolation | None = None

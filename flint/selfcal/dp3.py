@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Literal, TypeAlias
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 
 import numpy as np
 
@@ -19,6 +19,9 @@ from flint.logging import logger
 from flint.options import MS, BaseOptions
 from flint.selfcal.casa import copy_and_clean_ms_casagain
 from flint.utils import zip_folder
+
+if TYPE_CHECKING:
+    import h5py
 
 DP3SolveMode: TypeAlias = Literal["dp3ddecal", "dp3gaincal"]
 
@@ -48,6 +51,69 @@ def get_soltabs(h5parm: Path) -> list[str]:
         return []
 
 
+def get_solve_type(options: DP3DDECalOptions | DP3GainCalOptions) -> str:
+    """Find what a round solves for, refusing it if self-calibration cannot apply the solutions.
+
+    This is ``mode`` for DDECal and ``caltype`` for GainCal. Only the types listed
+    here can be applied by DP3 applycal; any other, such as ``leakage``, is refused.
+
+    Args:
+        options (DP3DDECalOptions | DP3GainCalOptions): The solver options of the round
+
+    Raises:
+        ValueError: Raised if self-calibration cannot apply what the round solves for
+
+    Returns:
+        str: What the round solves for, e.g. ``scalarphase``
+    """
+    solve_type = (
+        options.mode if isinstance(options, DP3DDECalOptions) else options.caltype
+    )
+    applicable = (
+        "scalar",
+        "scalarphase",
+        "scalaramplitude",
+        "diagonal",
+        "diagonalphase",
+        "diagonalamplitude",
+        "fulljones",
+        "tec",
+        "tec+phase",
+        "rotation",
+        "rotation+diagonal",
+    )
+    if solve_type not in applicable:
+        msg = f"Self-calibration cannot apply {solve_type} solutions. Solve for one of {applicable}"
+
+        raise ValueError(msg)
+
+    return solve_type
+
+
+def get_corrections(h5parm: Path, solve_type: str) -> DP3ApplyCalOptions:
+    """The applycal corrections for a round's solutions, in the order that undoes them."""
+    soltabs = get_soltabs(h5parm)
+    # DP3 can only apply full-Jones solutions as one correction
+    if solve_type == "fulljones":
+        return DP3ApplyCalOptions(correction=["fulljones"], soltab=soltabs)
+    # DP3 solves rotation+diagonal as the diagonal times the rotation, so the
+    # diagonal has to be undone first
+    return DP3ApplyCalOptions(
+        correction=sorted(soltabs, key=lambda name: name.startswith("rotation"))
+    )
+
+
+def get_cross_hand_mask(soltab: h5py.Group) -> np.ndarray:
+    """Which of a soltab's solutions are cross-hands (e.g. XY), shaped to broadcast against them."""
+    axes = soltab["val"].attrs["AXES"]
+    axes = (axes.decode() if isinstance(axes, bytes) else axes).split(",")
+    is_cross = np.array([pol[0] != pol[1] for pol in soltab["pol"].asstr()[:]])
+    shape = [1] * soltab["val"].ndim
+    shape[axes.index("pol")] = is_cross.size
+
+    return is_cross.reshape(shape)
+
+
 def normalise_amplitudes(h5parm: Path) -> Path:
     """Scale each amplitude table in an h5parm so its unflagged solutions average one."""
     import h5py
@@ -59,6 +125,9 @@ def normalise_amplitudes(h5parm: Path) -> Path:
                     continue
                 values = soltab["val"][:]
                 good = np.isfinite(values) & (soltab["weight"][:] > 0)
+                # Full-Jones cross-hands are leakages near zero, which would drag the mean down
+                if "pol" in soltab:
+                    good &= ~get_cross_hand_mask(soltab)
                 if not good.any():
                     logger.warning(f"No good amplitudes in {h5parm}:{name}")
                     continue
@@ -95,11 +164,15 @@ def dp3_selfcal_ms(
         skip_selfcal (bool, optional): Make the new measurement set without calibrating it. Defaults to False.
         rename_ms (bool, optional): Rename the input measurement set rather than copy it. Defaults to False.
 
+    Raises:
+        ValueError: Raised if self-calibration cannot apply what the round solves for
+
     Returns:
         MS: The new measurement set, with ``CORRECTED_DATA`` as its column and ``h5parm`` set
     """
     options_class = DP3DDECalOptions if mode == "dp3ddecal" else DP3GainCalOptions
     options = options_class().with_options(**(update_dp3_options or {}))
+    solve_type = get_solve_type(options)
     selfcal_options = DP3SelfCalOptions().with_options(
         **(update_dp3_selfcal_options or {})
     )
@@ -129,7 +202,5 @@ def dp3_selfcal_ms(
         normalise_amplitudes(h5parm)
 
     return dp3_applycal(
-        cal_ms,
-        h5parm=h5parm,
-        options=DP3ApplyCalOptions(correction=get_soltabs(h5parm)),
+        cal_ms, h5parm=h5parm, options=get_corrections(h5parm, solve_type)
     )

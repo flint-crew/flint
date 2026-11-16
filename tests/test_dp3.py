@@ -106,6 +106,27 @@ def test_applycal_parset(monkeypatch, tmp_path):
     assert "applycal.correction" not in parset
 
 
+def test_applycal_parset_fulljones(monkeypatch, tmp_path):
+    """The soltabs a full-Jones correction reads are set on the step, which its sub-step inherits"""
+    parsets = []
+    monkeypatch.setattr("flint.dp3.run_dp3", parsets.append)
+    h5parm = tmp_path / "sol.h5"
+    h5parm.touch()
+
+    dp3_applycal(
+        MS(path=Path("some.ms")),
+        h5parm=h5parm,
+        options=DP3ApplyCalOptions(
+            correction=["fulljones"], soltab=["amplitude000", "phase000"]
+        ),
+    )
+
+    parset = parsets[0]
+    assert parset["applycal.steps"] == "[c0]"
+    assert parset["applycal.c0.correction"] == "fulljones"
+    assert parset["applycal.soltab"] == "[amplitude000,phase000]"
+
+
 def test_applycal_needs_h5parm():
     with pytest.raises(ValueError, match="No h5parm"):
         dp3_applycal(MS(path=Path("some.ms")))

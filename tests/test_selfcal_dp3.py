@@ -2,14 +2,23 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import h5py
 import numpy as np
 import pytest
 from casacore.tables import table
 
 import flint.selfcal.dp3 as selfcal_dp3
+from flint.dp3 import DP3DDECalOptions, DP3GainCalOptions
 from flint.options import MS
-from flint.selfcal.dp3 import dp3_selfcal_ms, get_soltabs, normalise_amplitudes
+from flint.selfcal.dp3 import (
+    dp3_selfcal_ms,
+    get_corrections,
+    get_soltabs,
+    get_solve_type,
+    normalise_amplitudes,
+)
 
 
 @pytest.fixture
@@ -48,6 +57,22 @@ def scale_amplitudes(ms: MS, scale: float) -> None:
     """Multiply the data of every baseline by ``scale``, as antenna gains of its square root"""
     with table(str(ms.path), readonly=False, ack=False) as tab:
         tab.putcol("DATA", tab.getcol("DATA") * scale)
+
+
+def write_h5parm(
+    h5parm: Path, soltabs: dict[str, np.ndarray], pols: list[str] | None = None
+) -> Path:
+    """An h5parm of the given soltabs, on time and antenna axes, and a polarisation axis if ``pols`` is set."""
+    with h5py.File(h5parm, "w") as solutions:
+        for name, values in soltabs.items():
+            soltab = solutions.create_group(f"sol000/{name}")
+            val = soltab.create_dataset("val", data=values)
+            val.attrs["AXES"] = np.bytes_("time,ant,pol" if pols else "time,ant")
+            soltab.create_dataset("weight", data=np.ones_like(values))
+            if pols:
+                soltab.create_dataset("pol", data=np.array(pols, dtype="S2"))
+
+    return h5parm
 
 
 def test_dp3_selfcal_ms(selfcal_ms):
@@ -114,3 +139,63 @@ def test_get_soltabs_missing(tmp_path):
     assert get_soltabs(tmp_path / "missing.h5") == []
     (tmp_path / "broken.h5").write_text("not an h5parm")
     assert get_soltabs(tmp_path / "broken.h5") == []
+
+
+def test_dp3_selfcal_ms_fulljones(selfcal_ms):
+    cal_ms = dp3_selfcal_ms(selfcal_ms, update_dp3_options={"mode": "fulljones"})
+    assert get_soltabs(cal_ms.h5parm) == ["amplitude000", "phase000"]
+    assert_corrected_matches_model(cal_ms)
+
+
+def test_get_solve_type():
+    assert get_solve_type(DP3DDECalOptions(mode="rotation+diagonal")) == (
+        "rotation+diagonal"
+    )
+    assert get_solve_type(DP3GainCalOptions(caltype="fulljones")) == "fulljones"
+    with pytest.raises(ValueError, match="cannot apply leakage"):
+        get_solve_type(DP3DDECalOptions(mode="leakage"))
+
+
+def test_dp3_selfcal_ms_refuses_solves_it_cannot_apply(tmp_path):
+    """The solve type is checked before the measurement set is copied"""
+    with pytest.raises(ValueError, match="cannot apply"):
+        dp3_selfcal_ms(
+            MS(path=tmp_path / "missing.ms"), update_dp3_options={"mode": "tec+delay"}
+        )
+
+
+def test_get_corrections_undoes_the_diagonal_before_the_rotation(tmp_path):
+    h5parm = write_h5parm(
+        tmp_path / "solutions.h5",
+        {name: np.ones((2, 3)) for name in ("rotation000", "phase000", "amplitude000")},
+    )
+    corrections = get_corrections(h5parm, "rotation+diagonal")
+    assert corrections.correction == ["amplitude000", "phase000", "rotation000"]
+
+
+def test_get_corrections_fulljones(tmp_path):
+    h5parm = write_h5parm(
+        tmp_path / "solutions.h5",
+        {"amplitude000": np.ones((2, 3, 4)), "phase000": np.zeros((2, 3, 4))},
+        pols=["XX", "XY", "YX", "YY"],
+    )
+    corrections = get_corrections(h5parm, "fulljones")
+    assert corrections.correction == ["fulljones"]
+    assert corrections.soltab == ["amplitude000", "phase000"]
+
+
+def test_normalise_amplitudes_leaves_out_cross_hands(tmp_path):
+    """Full-Jones cross-hands are near zero, so would drag the mean down"""
+    amplitudes = np.empty((2, 3, 4))
+    amplitudes[..., [0, 3]] = 2.0
+    amplitudes[..., [1, 2]] = 0.02
+    h5parm = write_h5parm(
+        tmp_path / "solutions.h5",
+        {"amplitude000": amplitudes},
+        pols=["XX", "XY", "YX", "YY"],
+    )
+
+    with h5py.File(normalise_amplitudes(h5parm)) as solutions:
+        normalised = solutions["sol000/amplitude000/val"][:]
+    assert np.allclose(normalised[..., [0, 3]], 1.0)
+    assert np.allclose(normalised[..., [1, 2]], 0.01)
