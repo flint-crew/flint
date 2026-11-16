@@ -22,6 +22,7 @@ Calibration solves against the measurement set's `model_column` (e.g. `MODEL_DAT
 
 Each step has an options class (e.g. `DP3DDECalOptions`) whose fields are DP3 settings for that step. Unset options are left to DP3's defaults. They can also be set in a strategy file under the `dp3preflagger`, `dp3aoflagger`, `dp3ddecal`, `dp3gaincal` and `dp3applycal` modes.
 
+(dp3-selfcal)=
 ## Self-calibration with DP3
 
 A self-calibration round in the continuum and RACS-all flows solves with DP3 when that round of the [strategy file](config.md) has a `dp3ddecal` or `dp3gaincal` block. Other rounds use CASA `gaincal`, and the CASA container is only required if some round does. Options merge in the usual order: the options class, then `defaults`, then the round. They are DP3's own settings in DP3's units, so `solint` is in timeslots (ASKAP's are about 10 s) and `smoothnessconstraint` is in Hz.
@@ -42,14 +43,7 @@ selfcal:
 
 Each round writes its solutions to `<ms>.roundN.h5` and applies them to `CORRECTED_DATA`. Amplitude solutions are scaled to a mean of one, as `gaincal`'s `solnorm` does, unless the `dp3selfcal` mode sets `normalise_amplitudes: false`.
 
-| CASA `gaincal` | `dp3ddecal` | `dp3gaincal` |
-| --- | --- | --- |
-| `calmode: p` | `mode: scalarphase` | `caltype: scalarphase` |
-| `calmode: ap` | `mode: diagonal` | `caltype: diagonal` |
-| `solint: 60s` | `solint: 6` | `solint: 6` |
-| `nspw: 4` | `nchan: 1` with `smoothnessconstraint` | `nchan: 72` for 288 channels |
-| `uvrange: ">200m"` | `uvmmin: 200` | `uvmmin: 200` |
-| `solnorm: true` | `dp3selfcal: {normalise_amplitudes: true}` | `dp3selfcal: {normalise_amplitudes: true}` |
+To translate CASA `gaincal` rounds, see [Moving self-calibration from CASA to DP3](casa_to_dp3.md).
 
 ## Accessing via the CLI
 
