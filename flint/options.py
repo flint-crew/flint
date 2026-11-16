@@ -822,7 +822,7 @@ class MS(BaseOptions):
     model_column: str | None = None
     """If set indicates the column with model visibilities"""
     h5parm: Path | None = None
-    """If set indicates the h5parm with calibration solutions for the MS"""
+    """If set indicates the h5parm with calibration solutions for the MS that have not yet been applied"""
 
     @property
     def ms(self) -> MS:

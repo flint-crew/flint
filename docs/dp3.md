@@ -15,7 +15,7 @@ The tasks live in `flint.dp3`:
 - `dp3_flag`: flags with `aoflagger`, using the packaged `ASKAP.lua` strategy unless another is given. A `preflagger` step can run first.
 - `dp3_ddecal`: solves for gains against the model column with `ddecal`, and returns the measurement set with `h5parm` set to the solutions.
 - `dp3_gaincal`: the same, with `gaincal`.
-- `dp3_applycal`: applies one or more solution tables from an h5parm, writing the corrected data to a new column (`CORRECTED_DATA` by default). The measurement set's `h5parm` is used when none is given.
+- `dp3_applycal`: applies one or more solution tables from an h5parm, writing the corrected data to a new column (`CORRECTED_DATA` by default). The measurement set's `h5parm` is used when none is given, and is cleared once applied, as it only marks solutions still to be applied.
 - `dp3_solve_apply`: solves and applies in one call. With `gaincal` this is a single pass over the data. With `ddecal` the solutions are written to an h5parm and then applied.
 
 Calibration solves against the measurement set's `model_column` (e.g. `MODEL_DATA` written by `wsclean`), which must be set.

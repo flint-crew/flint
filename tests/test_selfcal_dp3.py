@@ -80,8 +80,8 @@ def test_dp3_selfcal_ms(selfcal_ms):
 
     assert cal_ms.path.name == "SB39400.RACS_0635-31.beam0.small.round1.ms"
     assert cal_ms.column == "CORRECTED_DATA"
-    assert cal_ms.h5parm == cal_ms.path.with_suffix(".h5")
-    assert get_soltabs(cal_ms.h5parm) == ["phase000"]
+    assert cal_ms.h5parm is None
+    assert get_soltabs(cal_ms.path.with_suffix(".h5")) == ["phase000"]
     assert_corrected_matches_model(cal_ms)
 
 
@@ -92,7 +92,7 @@ def test_dp3_selfcal_ms_options(selfcal_ms):
         mode="dp3gaincal",
         update_dp3_options={"caltype": "diagonal"},
     )
-    assert get_soltabs(cal_ms.h5parm) == ["amplitude000", "phase000"]
+    assert get_soltabs(cal_ms.path.with_suffix(".h5")) == ["amplitude000", "phase000"]
 
 
 def test_dp3_selfcal_ms_reuses_solutions(selfcal_ms, monkeypatch):
@@ -122,7 +122,7 @@ def test_dp3_selfcal_ms_normalises_amplitudes(selfcal_ms, normalise):
         update_dp3_options={"mode": "diagonal"},
         update_dp3_selfcal_options={"normalise_amplitudes": normalise},
     )
-    with h5py.File(cal_ms.h5parm) as solutions:
+    with h5py.File(cal_ms.path.with_suffix(".h5")) as solutions:
         mean = solutions["sol000/amplitude000/val"][:].mean()
     assert np.isclose(mean, 1.0 if normalise else 2.0, rtol=1e-3)
 
@@ -130,7 +130,7 @@ def test_dp3_selfcal_ms_normalises_amplitudes(selfcal_ms, normalise):
 def test_normalise_amplitudes_is_repeatable(selfcal_ms):
     scale_amplitudes(selfcal_ms, scale=4.0)
     cal_ms = dp3_selfcal_ms(selfcal_ms, update_dp3_options={"mode": "diagonal"})
-    with h5py.File(normalise_amplitudes(cal_ms.h5parm)) as solutions:
+    with h5py.File(normalise_amplitudes(cal_ms.path.with_suffix(".h5"))) as solutions:
         mean = solutions["sol000/amplitude000/val"][:].mean()
     assert np.isclose(mean, 1.0, rtol=1e-3)
 
@@ -143,7 +143,7 @@ def test_get_soltabs_missing(tmp_path):
 
 def test_dp3_selfcal_ms_fulljones(selfcal_ms):
     cal_ms = dp3_selfcal_ms(selfcal_ms, update_dp3_options={"mode": "fulljones"})
-    assert get_soltabs(cal_ms.h5parm) == ["amplitude000", "phase000"]
+    assert get_soltabs(cal_ms.path.with_suffix(".h5")) == ["amplitude000", "phase000"]
     assert_corrected_matches_model(cal_ms)
 
 

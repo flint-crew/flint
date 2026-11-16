@@ -350,7 +350,7 @@ def dp3_gaincal(
         ValueError: Raised if the model column is not set or missing
 
     Returns:
-        MS: The measurement set with ``h5parm`` set, and ``column`` set to ``output_column`` if given
+        MS: The measurement set with ``h5parm`` set, or if the solutions were applied, with ``column`` set to ``output_column`` and ``h5parm`` cleared
     """
     ms = MS.cast(ms)
     h5parm = h5parm or ms.path.with_suffix(".gaincal.h5")
@@ -365,7 +365,9 @@ def dp3_gaincal(
     }
     run_dp3(parset)
 
-    return ms.with_options(h5parm=h5parm, column=output_column or ms.column)
+    if output_column:
+        return ms.with_options(column=output_column, h5parm=None)
+    return ms.with_options(h5parm=h5parm)
 
 
 def dp3_applycal(
@@ -387,7 +389,7 @@ def dp3_applycal(
         FileNotFoundError: Raised if the h5parm does not exist
 
     Returns:
-        MS: The measurement set with ``column`` set to ``output_column`` and ``h5parm`` set
+        MS: The measurement set with ``column`` set to ``output_column`` and ``h5parm`` cleared
     """
     ms = MS.cast(ms)
     options = options or DP3ApplyCalOptions()
@@ -414,7 +416,7 @@ def dp3_applycal(
         parset[f"applycal.{name}.correction"] = soltab
     run_dp3(parset)
 
-    return ms.with_options(column=output_column, h5parm=h5parm)
+    return ms.with_options(column=output_column, h5parm=None)
 
 
 def dp3_solve_apply(
@@ -432,7 +434,7 @@ def dp3_solve_apply(
         output_column (str, optional): The column to write the corrected data to. Defaults to "CORRECTED_DATA".
 
     Returns:
-        MS: The measurement set with ``column`` set to ``output_column`` and ``h5parm`` set
+        MS: The measurement set with ``column`` set to ``output_column`` and ``h5parm`` cleared
     """
     ms = MS.cast(ms)
     options = options or DP3DDECalOptions()

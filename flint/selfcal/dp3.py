@@ -178,7 +178,7 @@ def dp3_selfcal_ms(
         ValueError: Raised if self-calibration cannot apply what the round solves for
 
     Returns:
-        MS: The new measurement set, with ``CORRECTED_DATA`` as its column and ``h5parm`` set
+        MS: The new measurement set, with ``CORRECTED_DATA`` as its column
     """
     options_class = DP3DDECalOptions if mode == "dp3ddecal" else DP3GainCalOptions
     options = options_class().with_options(**(update_dp3_options or {}))

@@ -92,12 +92,13 @@ def test_applycal_parset(monkeypatch, tmp_path):
     h5parm.touch()
 
     ms = dp3_applycal(
-        MS(path=Path("some.ms")),
-        h5parm=h5parm,
+        MS(path=Path("some.ms"), h5parm=h5parm),
         options=DP3ApplyCalOptions(correction=["amplitude000", "phase000"]),
     )
 
     assert ms.column == "CORRECTED_DATA"
+    # The solutions are applied, so are no longer waiting on the measurement set
+    assert ms.h5parm is None
     parset = parsets[0]
     assert parset["applycal.parmdb"] == str(h5parm)
     assert parset["applycal.steps"] == "[c0,c1]"
@@ -211,7 +212,7 @@ def test_dp3_ddecal_and_applycal(corrupted_ms):
 
     ms = dp3_applycal(solved_ms)
     assert ms.column == "CORRECTED_DATA"
-    assert ms.h5parm == solved_ms.h5parm
+    assert ms.h5parm is None
     assert_corrected_matches_model(ms)
 
 
@@ -229,6 +230,7 @@ def test_dp3_gaincal(corrupted_ms):
 def test_dp3_solve_apply(corrupted_ms, options):
     ms = dp3_solve_apply(corrupted_ms, options)
     assert ms.column == "CORRECTED_DATA"
+    assert ms.h5parm is None
     assert_corrected_matches_model(ms)
 
 
