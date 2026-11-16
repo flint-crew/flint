@@ -242,7 +242,8 @@ def test_check_field_options_skymodel_requirements(tmp_path, monkeypatch) -> Non
         "verify_reference_catalogues",
         lambda reference_directory: catalogues_valid[-1],
     )
-    _check_field_options(field_options=FieldOptions(rounds=0))
+    raw_mss = [MS(path=Path("2022-04-14_100122_0.ms"))]
+    _check_field_options(field_options=FieldOptions(rounds=0), science_mss=raw_mss)
 
     container = tmp_path / "container.sif"
     field_options = FieldOptions(
@@ -252,25 +253,29 @@ def test_check_field_options_skymodel_requirements(tmp_path, monkeypatch) -> Non
         casa_container=container,
     )
     with pytest.raises(ValueError, match="reference_catalogue_directory"):
-        _check_field_options(field_options=field_options)
+        _check_field_options(field_options=field_options, science_mss=raw_mss)
 
     field_options = field_options.with_options(reference_catalogue_directory=tmp_path)
     catalogues_valid.append(False)
     with pytest.raises(ValueError, match="reference_catalogue_directory"):
-        _check_field_options(field_options=field_options)
+        _check_field_options(field_options=field_options, science_mss=raw_mss)
 
     catalogues_valid.append(True)
-    _check_field_options(field_options=field_options)
+    _check_field_options(field_options=field_options, science_mss=raw_mss)
 
     for missing in ("calibrate_container", "casa_container"):
         with pytest.raises(ValueError, match=missing):
             _check_field_options(
-                field_options=field_options.with_options(**{missing: None})
+                field_options=field_options.with_options(**{missing: None}),
+                science_mss=raw_mss,
             )
 
     with pytest.raises(ValueError, match="Holography cube"):
         _check_field_options(
-            field_options=field_options.with_options(holofile=tmp_path / "missing.fits")
+            field_options=field_options.with_options(
+                holofile=tmp_path / "missing.fits"
+            ),
+            science_mss=raw_mss,
         )
 
 
@@ -283,15 +288,48 @@ def test_check_field_options_casa_only_for_gaincal_rounds(tmp_path) -> None:
         "selfcal": {0: {}, 1: {"dp3ddecal": {}}, 2: {"dp3gaincal": {}}},
     }
     imaging_strategy.write_text(yaml.dump(strategy))
+    raw_mss = [MS(path=Path("2022-04-14_100122_0.ms"))]
     field_options = FieldOptions(rounds=2, imaging_strategy=imaging_strategy)
-    _check_field_options(field_options=field_options)
+    _check_field_options(field_options=field_options, science_mss=raw_mss)
 
     with pytest.raises(ValueError, match="CASA Container"):
         _check_field_options(
-            field_options=field_options.with_options(rounds=1, imaging_strategy=None)
+            field_options=field_options.with_options(rounds=1, imaging_strategy=None),
+            science_mss=raw_mss,
         )
 
     strategy["selfcal"][2] = {"gaincal": {}}
     imaging_strategy.write_text(yaml.dump(strategy))
     with pytest.raises(ValueError, match="CASA Container"):
-        _check_field_options(field_options=field_options)
+        _check_field_options(field_options=field_options, science_mss=raw_mss)
+
+
+@pytest.mark.parametrize("rounds", [0, 2])
+def test_check_field_options_casa_for_casda_mss(tmp_path, rounds) -> None:
+    """CASDA measurement sets are preprocessed with CASA, whatever self-calibration solves with"""
+    imaging_strategy = tmp_path / "strategy.yaml"
+    imaging_strategy.write_text(
+        yaml.dump(
+            {
+                "version": FORMAT_VERSION,
+                "defaults": {},
+                "selfcal": {0: {}, 1: {"dp3ddecal": {}}, 2: {"dp3gaincal": {}}},
+            }
+        )
+    )
+    field_options = FieldOptions(rounds=rounds, imaging_strategy=imaging_strategy)
+    casda_mss = [
+        MS(
+            path=Path(
+                "scienceData.RACS_1237+00.SB40470.RACS_1237+00.beam00_averaged_cal.leakage.ms"
+            )
+        )
+    ]
+
+    with pytest.raises(ValueError, match="CASDA"):
+        _check_field_options(field_options=field_options, science_mss=casda_mss)
+
+    _check_field_options(
+        field_options=field_options.with_options(casa_container=tmp_path / "casa.sif"),
+        science_mss=casda_mss,
+    )

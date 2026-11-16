@@ -148,11 +148,10 @@ def _check_racs_all_options(racs_all_options: RACSAllOptions) -> None:
             raise ValueError(
                 f"{racs_all_options.reference_catalogue_directory=} does not appear to be valid. Check for reference catalogues"
             )
-    if racs_all_options.rounds is not None:
-        if racs_all_options.rounds >= 1 and racs_all_options.casa_container is None:
-            raise ValueError(
-                "CASA Container needs to be set if self-calibration is to be performed"
-            )
+    if racs_all_options.casa_container is None:
+        raise ValueError(
+            "casa_container needs to be set to preprocess CASDA measurement sets"
+        )
     if racs_all_options.coadd_cubes:
         if (
             racs_all_options.yandasoft_container is None

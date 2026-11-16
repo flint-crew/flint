@@ -95,7 +95,14 @@ def uses_casa_selfcal(field_options: FieldOptions) -> bool:
     )
 
 
-def _check_field_options(field_options: FieldOptions) -> None:
+def _is_casda_ms(ms: MS) -> bool:
+    """Whether a measurement set is named as deposited onto CASDA."""
+    return isinstance(extract_components_from_name(name=ms.path), CASDANameComponents)
+
+
+def _check_field_options(
+    field_options: FieldOptions, science_mss: Sequence[MS]
+) -> None:
     run_aegean = (
         False if field_options.aegean_container is None else field_options.run_aegean
     )
@@ -117,10 +124,15 @@ def _check_field_options(field_options: FieldOptions) -> None:
             raise ValueError(
                 f"{field_options.reference_catalogue_directory=} does not appear to be valid. Check for reference catalogues"
             )
-    if field_options.casa_container is None and uses_casa_selfcal(field_options):
-        raise ValueError(
-            "CASA Container needs to be set if self-calibration is to be performed with gaincal"
-        )
+    if field_options.casa_container is None:
+        if uses_casa_selfcal(field_options):
+            raise ValueError(
+                "CASA Container needs to be set if self-calibration is to be performed with gaincal"
+            )
+        if _is_casda_ms(science_mss[0]):
+            raise ValueError(
+                "casa_container needs to be set to preprocess CASDA measurement sets"
+            )
     if field_options.coadd_cubes:
         if (
             field_options.yandasoft_container is None
@@ -194,9 +206,7 @@ def preprocess_science_mss(
     """Copy the raw science MSs into the output directory, calibrated and flagged ready for imaging."""
     # TODO: This feels a little too much like that feeling of being out
     # at sea for to long. Should refactor (or mask a EMU only).
-    if isinstance(
-        extract_components_from_name(name=science_mss[0].path), CASDANameComponents
-    ):
+    if _is_casda_ms(science_mss[0]):
         preprocessed_mss = task_copy_and_preprocess_casda_askap_ms.map(
             casda_ms=science_mss,
             casa_container=field_options.casa_container,
@@ -308,17 +318,17 @@ def process_science_fields(
 ) -> list[PrefectFuture[Any]]:
     # returned futures are resolved by prefect to fail the flow on task failure
 
+    science_mss = find_mss(
+        mss_parent_path=science_path, expected_ms_count=field_options.expected_ms
+    )
+
     # Verify no nasty incompatible options
-    _check_field_options(field_options=field_options)
+    _check_field_options(field_options=field_options, science_mss=science_mss)
 
     # Get some placeholder names
     run_aegean = (
         False if field_options.aegean_container is None else field_options.run_aegean
     )  # This is also in check_field_options
-
-    science_mss = find_mss(
-        mss_parent_path=science_path, expected_ms_count=field_options.expected_ms
-    )
 
     output_split_science_path = _check_create_output_split_science_path(
         science_path=science_path, split_path=split_path, check_exists=True
