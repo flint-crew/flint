@@ -41,7 +41,7 @@ selfcal:
     dp3ddecal: {mode: diagonal, solint: 6, nchan: 1, datause: dual, smoothnessconstraint: 5.0e7}
 ```
 
-Each round writes its solutions to `<ms>.roundN.h5` and applies them to `CORRECTED_DATA`. Amplitude solutions are scaled to a mean of one, as `gaincal`'s `solnorm` does, unless the `dp3selfcal` mode sets `normalise_amplitudes: false`.
+Each round writes its solutions to `<ms>.roundN.h5` and applies them to `CORRECTED_DATA`. Amplitude solutions are scaled to a mean of one, unless the `dp3selfcal` mode sets `normalise_amplitudes: false`. This is like `gaincal`'s `solnorm`, which instead scales the root mean square of the amplitudes to one.
 
 To translate CASA `gaincal` rounds, see [Moving self-calibration from CASA to DP3](casa_to_dp3.md).
 

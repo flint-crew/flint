@@ -115,7 +115,18 @@ def get_cross_hand_mask(soltab: h5py.Group) -> np.ndarray:
 
 
 def normalise_amplitudes(h5parm: Path) -> Path:
-    """Scale each amplitude table in an h5parm so its unflagged solutions average one."""
+    """Scale each amplitude table in an h5parm, in place, so its good solutions average one.
+
+    This keeps self-calibration from changing the flux scale, like CASA's ``solnorm``,
+    though that divides by the root mean square rather than the mean. Full-Jones
+    cross-hands (e.g. XY) are near zero, so are left out of the mean.
+
+    Args:
+        h5parm (Path): The solutions to normalise
+
+    Returns:
+        Path: The same h5parm
+    """
     import h5py
 
     with h5py.File(h5parm, "r+") as solutions:
@@ -125,7 +136,6 @@ def normalise_amplitudes(h5parm: Path) -> Path:
                     continue
                 values = soltab["val"][:]
                 good = np.isfinite(values) & (soltab["weight"][:] > 0)
-                # Full-Jones cross-hands are leakages near zero, which would drag the mean down
                 if "pol" in soltab:
                     good &= ~get_cross_hand_mask(soltab)
                 if not good.any():
