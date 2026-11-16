@@ -331,6 +331,67 @@ def test_linmos_images_blanks_its_padding_once(tmp_path, monkeypatch, trim):
     assert len(blanked) == (0 if trim else 1)
 
 
+def test_linmos_images_removes_earlier_outputs(tmp_path, monkeypatch):
+    """Outputs left by an interrupted run are removed so linmos starts afresh."""
+    container = tmp_path / "yandasoft.sif"
+    container.touch()
+    linmos_options = LinmosOptions(
+        base_output_name=tmp_path / "linmos_field", trim_linmos_fits=False
+    )
+    linmos_names = create_linmos_names(name_prefix=linmos_options.base_output_name)
+    stale = np.ones((10, 10), dtype=np.float32)
+    fits.writeto(linmos_names.image_fits, stale)
+    fits.writeto(linmos_names.weight_fits, stale)
+
+    fresh = np.ones((40, 40), dtype=np.float32)
+
+    def fake_run_singularity_command(**kwargs) -> None:
+        fits.writeto(linmos_names.image_fits, fresh)
+        fits.writeto(linmos_names.weight_fits, fresh)
+
+    monkeypatch.setattr(
+        "flint.coadd.linmos.generate_linmos_parameter_set",
+        lambda **kwargs: LinmosParsetSummary(
+            parset_path=tmp_path / "linmos.parset", image_paths=()
+        ),
+    )
+    monkeypatch.setattr(
+        "flint.coadd.linmos.run_singularity_command", fake_run_singularity_command
+    )
+
+    result = linmos_images(
+        images=[tmp_path / "beam00.fits"],
+        linmos_options=linmos_options,
+        container=container,
+    )
+
+    assert fits.getdata(result.image_fits).shape == fresh.shape
+    assert fits.getdata(result.weight_fits).shape == fresh.shape
+
+
+def test_linmos_images_keeps_outputs_when_inputs_are_missing(tmp_path):
+    """Earlier outputs are only removed once every input image is found."""
+    container = tmp_path / "yandasoft.sif"
+    container.touch()
+    image = tmp_path / "SB1234.RACS_1200-45.beam00.round4.i.fits"
+    image.touch()
+    missing = tmp_path / "SB1234.RACS_1200-45.beam01.round4.i.fits"
+    linmos_options = LinmosOptions(base_output_name=tmp_path / "linmos_field")
+    linmos_names = create_linmos_names(name_prefix=linmos_options.base_output_name)
+    linmos_names.image_fits.touch()
+    linmos_names.weight_fits.touch()
+
+    with pytest.raises(AssertionError):
+        linmos_images(
+            images=[image, missing],
+            linmos_options=linmos_options,
+            container=container,
+        )
+
+    assert linmos_names.image_fits.exists()
+    assert linmos_names.weight_fits.exists()
+
+
 def test_trim_fits_while_blanking(tmp_path):
     """Ensure that fits files can be trimmed appropriately based on row/columns with valid pixels.
     This will require pixels with values of 0.0 to be naned"""
@@ -539,3 +600,25 @@ def test_linmos_parset_sets_the_regrid_method(tmp_path, linmos_options, expected
     ]
     assert len(method) == 1
     assert method[0].split("=")[1].strip() == expected
+
+
+def test_linmos_parset_replaces_an_existing_parset(tmp_path):
+    """A parset left by an earlier run is rewritten rather than refused."""
+    images = []
+    for beam in range(2):
+        image = tmp_path / f"SB1234.RACS_1200-45.beam{beam:02d}.round4.i.fits"
+        image.touch()
+        images.append(image)
+    linmos_names = create_linmos_names(name_prefix=str(tmp_path / "field"))
+    linmos_names.parset_output_path.write_text("# left by an earlier run\n")
+
+    summary = generate_linmos_parameter_set(
+        images=images,
+        linmos_names=linmos_names,
+        linmos_options=LinmosOptions(),
+        weight_list="[weight0,weight1]",
+    )
+
+    parset = summary.parset_path.read_text()
+    assert "# left by an earlier run" not in parset
+    assert parset.startswith("linmos.names")
