@@ -50,7 +50,7 @@ run the stage by itself:
 
 ```bash
 flint_flow_archive --field-path 60001 --imaging-strategy strategy.yaml \
-    --rclone-container rclone.sif --rclone-config ~/.config/rclone/rclone.conf \
+    --rclone-container flint-containers_rclone.sif --rclone-config ~/.config/rclone/rclone.conf \
     --cluster-config datamover.yaml
 ```
 

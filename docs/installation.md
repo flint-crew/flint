@@ -84,7 +84,8 @@ that lacks those instructions. `--cpu auto` picks the highest level the machine
 running the command supports, based on the flags in `/proc/cpuinfo`, and falls
 back to `portable` on non-x86 machines. These builds only exist for releases
 made after the [CPU-specific builds](https://github.com/flint-crew/flint-containers/pull/8)
-were added, so pass such a release with `--tag`.
+were added, so pass such a release with `--tag`. The default is `v1.4.0`, the
+first release that also carries the rclone container the archive stage uses.
 
 ```{admonition} Caution
 :class: caution

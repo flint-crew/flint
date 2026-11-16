@@ -27,10 +27,8 @@ class FlintContainer(BaseOptions):
     """The expected file name of the container. This will be appended to the container directory path."""
     description: str | None = None
     """Short description on the purpose of the container"""
-    tag: str = "v1.0"
+    tag: str = "v1.4.0"
     """Tag of the container, if applicable"""
-    fixed_tag: bool = False
-    """Keep ``tag`` as it is, for an upstream image without flint's release and CPU tags"""
 
 
 calibrate_container = FlintContainer(
@@ -77,11 +75,9 @@ casa_container = FlintContainer(
 )
 rclone_container = FlintContainer(
     name="rclone",
-    file_name="rclone.sif",
-    uri="docker://rclone/rclone",
-    description="rclone, used to copy archived products and check them",
-    tag="1.75.2",
-    fixed_tag=True,
+    file_name="flint-containers_rclone.sif",
+    uri="docker://ghcr.io/flint-crew/rclone",
+    description="rclone, used to copy archived products to a folder or an object store",
 )
 LIST_OF_KNOWN_CONTAINERS = (
     calibrate_container,
@@ -314,12 +310,11 @@ async def download_known_containers_coro(
     containers_downloaded = []
     coros = []
     for idx, known_container in enumerate(LIST_OF_KNOWN_CONTAINERS):
-        if not known_container.fixed_tag:
-            known_container = known_container.with_options(
-                tag=get_container_tag(
-                    tag=new_tag or known_container.tag, cpu_level=cpu_level
-                )
+        known_container = known_container.with_options(
+            tag=get_container_tag(
+                tag=new_tag or known_container.tag, cpu_level=cpu_level
             )
+        )
         logger.info(
             f"Downloading {idx + 1} of {len(LIST_OF_KNOWN_CONTAINERS)}, container {known_container.name}, tag {known_container.tag}"
         )
