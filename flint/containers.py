@@ -27,7 +27,7 @@ class FlintContainer(BaseOptions):
     """The expected file name of the container. This will be appended to the container directory path."""
     description: str | None = None
     """Short description on the purpose of the container"""
-    tag: str = "v1.0"
+    tag: str = "v1.4.0"
     """Tag of the container, if applicable"""
 
 
@@ -73,6 +73,12 @@ casa_container = FlintContainer(
     uri="docker://ghcr.io/flint-crew/casa",
     description="A monolithic install of the CASA application",
 )
+rclone_container = FlintContainer(
+    name="rclone",
+    file_name="flint-containers_rclone.sif",
+    uri="docker://ghcr.io/flint-crew/rclone",
+    description="rclone, used to copy archived products to a folder or an object store",
+)
 LIST_OF_KNOWN_CONTAINERS = (
     calibrate_container,
     wsclean_container,
@@ -81,6 +87,7 @@ LIST_OF_KNOWN_CONTAINERS = (
     aegean_contaer,
     potato_container,
     casa_container,
+    rclone_container,
 )
 KNOWN_CONTAINER_LOOKUP: dict[str, FlintContainer] = {
     v.name: v for v in LIST_OF_KNOWN_CONTAINERS

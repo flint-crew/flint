@@ -14,6 +14,7 @@ quickstart.md
 about.md
 data.md
 config.md
+archive.md
 flagging.md
 dp3.md
 casa_to_dp3.md

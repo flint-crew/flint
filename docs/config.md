@@ -174,6 +174,45 @@ and honours `compress: true` set under
 round) as normal. If you set `compress: true` for the final round's per-beam
 cube, it is ignored and a warning is logged.
 
+### `archive`
+
+Besides the regular expressions the standalone continuum flow's tarball and copy
+use, `defaults.archive` holds the destinations of the RACS-all archive stage
+(see [Archiving](archive.md)). Each is named, and gives:
+
+- `method`: `copy`, which runs rclone to a folder or an object store, or `tar`,
+  which writes one tarball.
+- `location`: an absolute folder path, or for `copy` an rclone remote and bucket
+  such as `acacia:racs-all`. A remote's credentials stay in the rclone config file.
+- `patterns`: regular expressions matched whole against each file's path relative
+  to the field folder. A file any pattern matches is taken. A pattern that matches
+  nothing is logged; a destination that matches nothing fails the stage.
+- `suffix` (optional): added to the field name at that destination, so two
+  destinations can share a location. `suffix: .ms` sends measurement sets to
+  `SB60001.ms.tar` beside the `SB60001.tar` of another destination.
+
+```yaml
+defaults:
+  archive:
+    destinations:
+      hot:
+        method: copy
+        location: /scratch/racs/hot
+        patterns: [".*\\.linmos\\.fits", ".*\\.(png|csv)"]
+      tape:
+        method: tar
+        location: /datastore/racs/tape
+        patterns: [".*"]
+      acacia:
+        method: copy
+        location: acacia:racs-all
+        patterns: [".*\\.fits(\\.fz)?", "rmsynth/.*", "spice/.*"]
+```
+
+`archive` must sit under `defaults`, as the strategy check rejects any other
+top-level section, and the archive stage reads it from there alone: a per-round
+`archive` block is not applied. Two destinations may not write the same target.
+
 ## Configuration based settings in Python API
 
 Most settings within `flint` are stored in immutable option classes, e.g.

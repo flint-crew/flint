@@ -228,12 +228,12 @@ def pulled_uris(monkeypatch):
 @pytest.mark.parametrize(
     "kwargs, suffix",
     [
-        ({}, ":v1.0"),
+        ({}, ":v1.4.0"),
         ({"new_tag": "v2.0.0"}, ":v2.0.0"),
         ({"new_tag": "v2.0.0", "cpu": "portable"}, ":v2.0.0"),
         ({"new_tag": "v2.0.0", "cpu": "x86-64-v3"}, ":v2.0.0-x86-64-v3"),
         ({"new_tag": "v2.0.0", "cpu": "x86-64-v4"}, ":v2.0.0-x86-64-v4"),
-        ({"cpu": "x86-64-v4"}, ":v1.0-x86-64-v4"),
+        ({"cpu": "x86-64-v4"}, ":v1.4.0-x86-64-v4"),
     ],
 )
 def test_download_tag_selection(tmp_path, pulled_uris, kwargs, suffix):
@@ -255,6 +255,15 @@ def test_download_tag_selection_auto(tmp_path, pulled_uris, monkeypatch):
 
     assert pulled_uris
     assert all(uri.endswith(":v2.0.0-x86-64-v3") for uri in pulled_uris)
+
+
+def test_rclone_is_a_flint_container(tmp_path, pulled_uris):
+    """rclone comes from flint-containers like the rest, with the same tags"""
+    download_known_containers(
+        container_directory=tmp_path, new_tag="v1.4.0", cpu="x86-64-v4"
+    )
+
+    assert "docker://ghcr.io/flint-crew/rclone:v1.4.0-x86-64-v4" in pulled_uris
 
 
 def test_download_bad_cpu(tmp_path, pulled_uris):

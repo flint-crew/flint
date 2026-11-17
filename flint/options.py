@@ -18,7 +18,7 @@ import yaml
 from astropy.coordinates import EarthLocation, SkyCoord
 from astropy.time import Time
 from capn_crunch import BaseOptions
-from pydantic import Field, create_model
+from pydantic import Field, create_model, model_validator
 
 from flint.exceptions import MSError, NamingException
 from flint.logging import logger
@@ -586,10 +586,6 @@ class RACSAllOptions(BaseOptions):
     """Construct beam masks from MFS images to use for the next round of imaging. """
     imaging_strategy: Path | None = None
     """Path to a FLINT imaging yaml file that contains settings to use throughout imaging"""
-    sbid_archive_path: Path | None = None
-    """Path that SBID archive tarballs will be created under. If None no archive tarballs are created. See ArchiveOptions. """
-    sbid_copy_path: Path | None = None
-    """Path that final processed products will be copied into. If None no copying of file products is performed. See ArchiveOptions. """
     rename_ms: bool = False
     """Rename MSs throughout rounds of imaging and self-cal instead of creating copies. This will delete data-columns throughout. """
     coadd_cubes: bool = False
@@ -604,27 +600,6 @@ class RACSAllOptions(BaseOptions):
     """Path to the singularity calibrate container, required by run_skymodel_calibration for the addmodel prediction step"""
 
 
-def pol_field_options_cli_class(
-    racs_all_options_class: type[RACSAllOptions] = RACSAllOptions,
-) -> type[PolFieldOptions]:
-    """Build a ``PolFieldOptions`` subclass containing only the fields not already
-    present on ``RACSAllOptions``, so it can be added to the same CLI parser without
-    duplicate flags for the fields the two share. Every current and future
-    ``PolFieldOptions`` field is exposed on the CLI this way, either through this
-    class or through ``RACSAllOptions`` itself for the shared ones."""
-    overlap = set(racs_all_options_class.model_fields) & set(
-        PolFieldOptions.model_fields
-    )
-    unique_fields = {
-        name: (field.annotation, field)
-        for name, field in PolFieldOptions.model_fields.items()
-        if name not in overlap
-    }
-    return create_model(
-        "PolFieldOptionsCLI", __base__=PolFieldOptions.__base__, **unique_fields
-    )
-
-
 def exclude_fields_cli_class(
     options_class: type[BaseOptions], exclude_fields: set[str]
 ) -> type[BaseOptions]:
@@ -634,8 +609,7 @@ def exclude_fields_cli_class(
     duplicate-flag error.
 
     The result derives from ``options_class.__base__``, so it is a sibling rather
-    than a subclass. Generalises ``pol_field_options_cli_class`` to an arbitrary,
-    accumulated set of already-registered field names.
+    than a subclass.
     """
     unique_fields = {
         name: (field.annotation, field)
@@ -653,8 +627,10 @@ class RACSAllPipelineOptions(BaseOptions):
     """Options controlling the ``racs-all`` flow-of-flows.
 
     Execution order: imaging -> polarisation -> rm-synth/clean -> spice-compression
+    -> archive
 
-    with each stage individually skippable.
+    with each stage individually skippable. The archive runs when the strategy file
+    defines destinations under ``defaults.archive.destinations``.
     """
 
     output_path: Path | None = None
@@ -675,6 +651,8 @@ class RACSAllPipelineOptions(BaseOptions):
     """Specify a new cluster configuration file for the rm-synth/clean stage, different to the preferred one. If None, drawn from the preferred cluster config"""
     spice_cluster_config: Path | None = None
     """Specify a new cluster configuration file for the spice-compression stage, different to the preferred one. If None, drawn from the preferred cluster config"""
+    archive_cluster_config: Path | None = None
+    """Cluster configuration file for the archive stage, best on a data-mover partition. If None, drawn from the preferred cluster config"""
 
 
 def dump_field_options_to_yaml(
@@ -736,6 +714,47 @@ DEFAULT_TAR_RE_PATTERNS = (
 DEFAULT_COPY_RE_PATTERNS = (r".*linmos.*fits", r".*weight\.fits", r".*png", r".*csv")
 
 
+class ArchiveDestination(BaseOptions):
+    """One place a field's products go.
+
+    A field lands at ``<location>/<field><suffix>``, as a folder for ``copy`` and
+    with ``.tar`` added for ``tar``, so two destinations may share a location when
+    their suffixes differ.
+    """
+
+    method: Literal["copy", "tar"]
+    """``copy`` runs rclone, to a folder or an object store. ``tar`` writes one tarball"""
+    location: str
+    """An absolute folder path, or for ``copy`` an rclone remote and bucket such as ``acacia:racs-all``"""
+    patterns: tuple[str, ...]
+    """Regular expressions matched whole against each file's path relative to the field folder"""
+    suffix: str = ""
+    """Added to the field name at this destination: ``.ms`` gives ``SB60001.ms.tar`` or ``SB60001.ms``"""
+
+    @model_validator(mode="after")
+    def check_location(self) -> Self:
+        if Path(self.location).is_absolute() or (self.method == "copy" and self.remote):
+            return self
+        wanted = "an absolute folder path"
+        if self.method == "copy":
+            wanted += " or an rclone remote such as acacia:racs-all"
+        raise ValueError(f"location {self.location!r} is not {wanted}")
+
+    @property
+    def remote(self) -> bool:
+        """Whether the location is an rclone remote rather than a local folder"""
+        return (
+            not Path(self.location).is_absolute()
+            and ":" in self.location.split("/", 1)[0]
+        )
+
+    def target(self, field: str) -> str:
+        """Where a field lands at this destination: a folder for ``copy``, a
+        tarball for ``tar``."""
+        name = f"{self.location}/{field}{self.suffix}"
+        return f"{name}.tar" if self.method == "tar" else name
+
+
 class ArchiveOptions(BaseOptions):
     """Container for options related to archiving products from flint workflows"""
 
@@ -743,6 +762,23 @@ class ArchiveOptions(BaseOptions):
     """Regular-expressions to use to collect files that should be tarballed"""
     copy_file_re_patterns: tuple[str, ...] = DEFAULT_COPY_RE_PATTERNS
     """Regular-expressions used to identify files to copy into a final location (not tarred)"""
+    destinations: dict[str, ArchiveDestination] = {}
+    """Where the RACS-all archive stage sends a field, by name"""
+
+
+class ArchiveFieldOptions(BaseOptions):
+    """Options for archiving one field's folder, standalone or as the last stage
+    of the racs-all flow. The destinations come from the strategy file, see
+    ``ArchiveOptions``."""
+
+    field_path: Path | None = None
+    """The field folder to archive, named by its SBID. Computed by the racs-all flow, so required only when running this pipeline standalone"""
+    imaging_strategy: Path | None = None
+    """Path to a FLINT imaging yaml file whose defaults.archive.destinations say where the field goes"""
+    rclone_container: Path | None = None
+    """The rclone container, needed by every copy destination"""
+    rclone_config: Path | None = None
+    """rclone config file defining the remotes and holding their credentials. Keep it readable by you alone"""
 
 
 class FitsCubeOptions(BaseOptions):

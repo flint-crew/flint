@@ -752,3 +752,34 @@ def test_verify_configuration_dp3_solve_types(strategy, solver, solve):
     assert verify_configuration(input_strategy=strategy, raise_on_error=False) is (
         applicable
     )
+
+
+def test_archive_destinations_in_a_strategy(package_strategy):
+    """Every destination of the RACS-all archive stage is defined in the strategy"""
+    from flint.options import ArchiveOptions
+
+    strategy = dict(package_strategy)
+    strategy["defaults"] = dict(strategy["defaults"])
+    strategy["defaults"]["archive"] = {
+        "destinations": {
+            "hot": {
+                "method": "copy",
+                "location": "/scratch/hot",
+                "patterns": [r".*\.linmos\.fits"],
+            },
+            "tape": {"method": "tar", "location": "/tape", "patterns": [".*"]},
+        }
+    }
+    verify_configuration(input_strategy=strategy)
+
+    options = ArchiveOptions(
+        **get_options_from_strategy(
+            strategy=strategy, mode="archive", round_info=0, operation="selfcal"
+        )
+    )
+    assert options.destinations["tape"].method == "tar"
+    assert options.destinations["hot"].patterns == (r".*\.linmos\.fits",)
+
+    strategy["defaults"]["archive"]["destinations"]["tape"]["method"] = "scp"
+    with pytest.raises(ValueError):
+        verify_configuration(input_strategy=strategy)
