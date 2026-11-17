@@ -357,6 +357,10 @@ gaincal runs on flint's defaults: `solint: 60s`, `minsnr: 0.0` and
 regular self-calibration rounds, which each read the `gaincal` section of their
 own round.
 
+To solve with DP3 instead, without the CASA container, put a `dp3gaincal`
+section in round 0 in place of `gaincal`. Its `caltype` is always
+`scalarphase` (see {ref}`Self-calibration with DP3 <dp3-selfcal>`).
+
 The flow always writes the calibrate model, and takes the catalogue directory
 from `--reference-catalogue-directory`. To build the model from a catalogue of
 your own instead, see [Using your own catalogue](#skymodel-own-catalogue).

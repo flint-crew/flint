@@ -204,7 +204,10 @@ class FieldOptions(BaseOptions):
     casda_bandpass_table: Path | None = None
     """The bandpass table applied to the MSs for this SBID, as deposited onto CASDA. Used to identify antennas to flag that may be unflagged under certain conditions."""
     run_skymodel_calibration: bool = False
-    """Whether to run a phase-only self-calibration round (round 0) against a sky-model predicted from a reference catalogue before imaging. The holofile, if set, weights the model by the measured primary beam. Requires calibrate_container, casa_container and reference_catalogue_directory to be set."""
+    """Whether to run a phase-only self-calibration round (round 0) against a sky-model predicted from a reference catalogue before imaging. The holofile, if set, weights the model by the measured primary beam. Requires calibrate_container and reference_catalogue_directory to be set, and casa_container unless round 0 of the strategy solves with dp3gaincal."""
+
+
+IonexServer: TypeAlias = Literal["chapman", "cddis", "igsiono"]
 
 
 class PolFieldOptions(BaseOptions):
@@ -249,6 +252,12 @@ class PolFieldOptions(BaseOptions):
     """Desired width, in Hz, of each plane of the polarisation cubes. The wsclean channel division is solved for this target so the cubes have a single linear frequency axis, overriding the strategy ``channels_out``. Deliberately separate from ``RACSAllOptions.cube_channel_width``, as the continuum and polarisation cubes need not share a channelisation. See ``flint.imager.channel_division``"""
     sbid_copy_path: Path | None = None
     """Path that final processed products will be copied into. If None no copying of file products is performed. See ArchiveOptions. """
+    ionex_directory: Path | None = None
+    """Directory of IONEX maps fetched beforehand with ``flint_ionosphere download``. If set, ionospheric Faraday rotation is corrected with spinifex before imaging"""
+    ionex_server: IonexServer = "chapman"
+    """Server the IONEX maps come from"""
+    ionex_prefix: str = "uqr"
+    """Analysis centre of the IONEX maps"""
 
 
 class FFTBANEOptions(BaseOptions):
@@ -698,6 +707,7 @@ DEFAULT_TAR_RE_PATTERNS = (
     r".*beam[0-9]+\.ms\.zip",
     r".*beam[0-9]+\.ms",
     r".*\.caltable",
+    r".*\.h5",
     r".*\.tar",
     r".*\.csv",
 )
@@ -848,7 +858,7 @@ class MS(BaseOptions):
     model_column: str | None = None
     """If set indicates the column with model visibilities"""
     h5parm: Path | None = None
-    """If set indicates the h5parm with calibration solutions for the MS"""
+    """If set indicates the h5parm with calibration solutions for the MS that have not yet been applied"""
 
     @property
     def ms(self) -> MS:

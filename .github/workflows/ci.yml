@@ -40,7 +40,8 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13",]
-        runs-on: [ubuntu-latest]
+        # ubuntu-latest (26.04) lacks libfuse3-3, which the apptainer .deb needs
+        runs-on: [ubuntu-24.04]
 
     steps:
       - uses: actions/checkout@v7

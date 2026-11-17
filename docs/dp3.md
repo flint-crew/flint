@@ -15,12 +15,58 @@ The tasks live in `flint.dp3`:
 - `dp3_flag`: flags with `aoflagger`, using the packaged `ASKAP.lua` strategy unless another is given. A `preflagger` step can run first.
 - `dp3_ddecal`: solves for gains against the model column with `ddecal`, and returns the measurement set with `h5parm` set to the solutions.
 - `dp3_gaincal`: the same, with `gaincal`.
-- `dp3_applycal`: applies one or more solution tables from an h5parm, writing the corrected data to a new column (`CORRECTED_DATA` by default). The measurement set's `h5parm` is used when none is given.
+- `dp3_applycal`: applies one or more solution tables from an h5parm, writing the corrected data to a new column (`CORRECTED_DATA` by default). The measurement set's `h5parm` is used when none is given, and is cleared once applied, as it only marks solutions still to be applied.
 - `dp3_solve_apply`: solves and applies in one call. With `gaincal` this is a single pass over the data. With `ddecal` the solutions are written to an h5parm and then applied.
 
 Calibration solves against the measurement set's `model_column` (e.g. `MODEL_DATA` written by `wsclean`), which must be set.
 
 Each step has an options class (e.g. `DP3DDECalOptions`) whose fields are DP3 settings for that step. Unset options are left to DP3's defaults. They can also be set in a strategy file under the `dp3preflagger`, `dp3aoflagger`, `dp3ddecal`, `dp3gaincal` and `dp3applycal` modes.
+
+(dp3-selfcal)=
+## Self-calibration with DP3
+
+A self-calibration round in the continuum and RACS-all flows solves with DP3 when that round of the [strategy file](config.md) has a `dp3ddecal` or `dp3gaincal` block. Other rounds use CASA `gaincal`, and the CASA container is only required if some round does. Options merge in the usual order: the options class, then `defaults`, then the round. They are DP3's own settings in DP3's units, so `solint` is in timeslots (ASKAP's are about 10 s) and `smoothnessconstraint` is in Hz.
+
+`dp3ddecal` can smooth solutions across frequency and has more solver settings. `dp3gaincal` is DP3's simpler solver, set with `caltype`, `solint` and `nchan`. Self-calibration can apply solutions of type `scalar`, `scalarphase`, `scalaramplitude`, `diagonal`, `diagonalphase`, `diagonalamplitude`, `fulljones`, `tec`, `tec+phase`, `rotation` and `rotation+diagonal`. A round that solves for anything else is refused when the strategy is loaded. The [sky-model calibration](predict/skymodel.md) in round 0 solves with DP3 when round 0 has a `dp3gaincal` block, and always solves for `scalarphase`; `dp3ddecal` is not supported there.
+
+```yaml
+selfcal:
+  0:
+    dp3gaincal: {solint: 12}  # sky-model round, always scalarphase
+  1:
+    dp3gaincal: {caltype: scalarphase, solint: 6, nchan: 0}
+  2:
+    dp3ddecal: {mode: scalarphase, solint: 3, nchan: 1, smoothnessconstraint: 5.0e7}
+  3:
+    dp3ddecal: {mode: diagonal, solint: 6, nchan: 1, datause: dual, smoothnessconstraint: 5.0e7}
+```
+
+Each round writes its solutions to `<ms>.roundN.h5` and applies them to `CORRECTED_DATA`. Amplitude solutions are normalised first (see below), unless the `dp3selfcal` mode sets `normalise_amplitudes: false`.
+
+To translate CASA `gaincal` rounds, see [Moving self-calibration from CASA to DP3](casa_to_dp3.md).
+
+(dp3-normalisation)=
+### Amplitude normalisation
+
+Amplitude self-calibration can not tell a gain from an error in the model wherever the two trade off, so whatever the model gets wrong there leaks into the gains. Normalisation divides out exactly those parts, keeping the flux and polarisation scale set by the bandpass calibrator, and leaves every gain the data do pin down.
+
+| Axis | Own factor? | Why |
+| --- | --- | --- |
+| Frequency solution | yes | The overall scale at each frequency trades off against the model's spectrum, which is made from the same data. One factor for the band lets self-calibration tilt it and bias spectral indices. |
+| Feed (X, Y) | yes | The model is Stokes I only, so a common XX/YY ratio trades off against the field's net Stokes Q. |
+| Direction | yes | Each facet's model can be incomplete in its own way. |
+| Time, antenna | no | A model error is the same for every time and antenna, so differences along these are real gain. |
+
+Each factor is the median of the group's good parallel-hand amplitudes. The median is unchanged by taking logs, so a gain of 2 and one of ½ balance, and a diverged antenna, which DDECal does not flag by default, does not pull it. Full-Jones cross-hands are divided by the factor of their row's feed, and a group with fewer than two good solutions is left alone. For well-behaved gains the choice of average matters little: the median, means and root mean square differ by about half the square of the gain scatter.
+
+Other tools differ:
+
+| Tool | One factor per | Average |
+| --- | --- | --- |
+| CASA `gaincal` `solnorm` | spectral window, hands pooled (one per `nspw` chunk in flint) | root mean square, or with `normtype='median'` the median power |
+| LoSoTo `norm` | the caller's choice of axes | mean, in log space if asked (recommended for amplitudes) |
+| facetselfcal `normamps` | direction, all else pooled (`normslope` can take out a band tilt) | geometric mean |
+| flint | frequency solution, feed and direction | median |
 
 ## Accessing via the CLI
 

@@ -555,14 +555,16 @@ def test_self_cal_name_wbeams():
     for beam in range(45):
         ms = Path(f"SB12349.RACS_1234+45.beam{beam:02d}.ms")
         e_ms = Path(f"SB12349.RACS_1234+45.beam{beam:02d}.round1.ms")
-        out_ms = get_selfcal_ms_name(in_ms_path=ms, round=1)
+        out_ms = get_selfcal_ms_name(in_ms_path=ms, selfcal_round=1)
         assert out_ms == e_ms
 
-    for round in range(1, 5):
+    for selfcal_round in range(1, 5):
         for beam in range(45):
-            ms = Path(f"SB12349.RACS_1234+45.beam{beam:02d}.round{round}.ms")
-            e_ms = Path(f"SB12349.RACS_1234+45.beam{beam:02d}.round{round + 1}.ms")
-            out_ms = get_selfcal_ms_name(in_ms_path=ms, round=round + 1)
+            ms = Path(f"SB12349.RACS_1234+45.beam{beam:02d}.round{selfcal_round}.ms")
+            e_ms = Path(
+                f"SB12349.RACS_1234+45.beam{beam:02d}.round{selfcal_round + 1}.ms"
+            )
+            out_ms = get_selfcal_ms_name(in_ms_path=ms, selfcal_round=selfcal_round + 1)
             assert out_ms == e_ms
 
 
@@ -572,12 +574,12 @@ def test_self_cal_name():
 
     ms = Path("SB12349.RACS_1234+45.ms")
     e_ms = Path("SB12349.RACS_1234+45.round1.ms")
-    out_ms = get_selfcal_ms_name(in_ms_path=ms, round=1)
+    out_ms = get_selfcal_ms_name(in_ms_path=ms, selfcal_round=1)
     assert out_ms == e_ms
 
     ms = Path("SB12349.RACS_1234+45.round1.ms")
     e_ms = Path("SB12349.RACS_1234+45.round2.ms")
-    out_ms = get_selfcal_ms_name(in_ms_path=ms, round=2)
+    out_ms = get_selfcal_ms_name(in_ms_path=ms, selfcal_round=2)
     assert out_ms == e_ms
 
     ms = Path(
@@ -586,7 +588,7 @@ def test_self_cal_name():
     e_ms = Path(
         "/some/other/directory/SB12349.RACS_1234+45.verrrrryyylonnnnnnnhhhhh.round2.ms"
     )
-    out_ms = get_selfcal_ms_name(in_ms_path=ms, round=2)
+    out_ms = get_selfcal_ms_name(in_ms_path=ms, selfcal_round=2)
     assert out_ms == e_ms
 
 

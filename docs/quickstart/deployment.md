@@ -285,6 +285,19 @@ Here a `dask-worker` refers to an agent established by `dask` that carries out w
 
 See `dask_jobqueue.SLURMCluster` for a complete list of available keyword arguments.
 
+### Saving the `dask` performance report
+
+The `dask` dashboard only lives as long as the cluster. To keep a copy of it, add a `performance_report_dir` to the cluster configuration file:
+
+```yaml
+cluster_class: "dask_jobqueue.SLURMCluster"
+performance_report_dir: "dask_reports"
+cluster_kwargs:
+    ...
+```
+
+Each flow run then saves a `dask` performance report to that directory as `dask-performance-report-<flow run name>.html` once it finishes, whether it succeeded or not. The report is a standalone HTML page holding the main dashboard plots (task stream, worker profile, bandwidth and so on), and is viewed in a web browser.
+
 Note that there there are many other `dask` cluster types for a variety of platforms. Redeploying to a new platform should be straightforward if there exists a `dask` cluster interface for it.
 
 ## Other Prefect Flow options

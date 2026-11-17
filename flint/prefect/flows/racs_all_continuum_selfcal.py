@@ -27,6 +27,7 @@ from flint.catalogue import verify_reference_catalogues
 from flint.configuration import (
     Strategy,
     get_options_from_strategy,
+    get_selfcal_mode_for_round,
     get_selfcal_round_fitscube_options,
     load_and_copy_strategy,
 )
@@ -55,6 +56,7 @@ from flint.prefect.common.imaging import (
     create_convolve_linmos_cubes,
     task_copy_and_preprocess_casda_askap_ms,
     task_create_image_mask_model,
+    task_dp3_selfcal_ms,
     task_flag_ms_aoflagger,
     task_gaincal_applycal_ms,
     task_potato_peel,
@@ -146,11 +148,10 @@ def _check_racs_all_options(racs_all_options: RACSAllOptions) -> None:
             raise ValueError(
                 f"{racs_all_options.reference_catalogue_directory=} does not appear to be valid. Check for reference catalogues"
             )
-    if racs_all_options.rounds is not None:
-        if racs_all_options.rounds >= 1 and racs_all_options.casa_container is None:
-            raise ValueError(
-                "CASA Container needs to be set if self-calibration is to be performed"
-            )
+    if racs_all_options.casa_container is None:
+        raise ValueError(
+            "casa_container needs to be set to preprocess CASDA measurement sets"
+        )
     if racs_all_options.coadd_cubes:
         if (
             racs_all_options.yandasoft_container is None
@@ -590,24 +591,45 @@ def process_racs_all_continuum(
             round_imaging_results = imaging_results[current_round - 1]
             imaging_results[current_round] = []
             for beam_imaging_results in round_imaging_results:
-                update_gain_options = get_options_from_strategy(
+                selfcal_mode = get_selfcal_mode_for_round(
+                    strategy=strategy, round_info=current_round
+                )
+                update_solver_options = get_options_from_strategy(
                     strategy=strategy,
-                    mode="gaincal",
+                    mode=selfcal_mode,
                     round_info=current_round,
                     operation="selfcal",
                 )
-                # TODO: Offer DP3 (task_dp3_solve_apply) as a container-free self-calibration backend
-                cal_mss = task_gaincal_applycal_ms.map(
-                    ms=beam_imaging_results.mss,
-                    selfcal_round=current_round,
-                    archive_input_ms=racs_all_options.zip_ms,
-                    skip_selfcal=False,
-                    rename_ms=racs_all_options.rename_ms,
-                    archive_cal_table=True,
-                    casa_container=racs_all_options.casa_container,
-                    update_gain_cal_options=unmapped(update_gain_options),
-                    wait_for=beam_imaging_results.wsclean_result,
-                )
+                if selfcal_mode == "gaincal":
+                    cal_mss = task_gaincal_applycal_ms.map(
+                        ms=beam_imaging_results.mss,
+                        selfcal_round=current_round,
+                        archive_input_ms=racs_all_options.zip_ms,
+                        skip_selfcal=False,
+                        rename_ms=racs_all_options.rename_ms,
+                        archive_cal_table=True,
+                        casa_container=racs_all_options.casa_container,
+                        update_gain_cal_options=unmapped(update_solver_options),
+                        wait_for=beam_imaging_results.wsclean_result,
+                    )
+                else:
+                    cal_mss = task_dp3_selfcal_ms.map(
+                        ms=beam_imaging_results.mss,
+                        selfcal_round=current_round,
+                        mode=selfcal_mode,
+                        update_dp3_options=unmapped(update_solver_options),
+                        update_dp3_selfcal_options=unmapped(
+                            get_options_from_strategy(
+                                strategy=strategy,
+                                mode="dp3selfcal",
+                                round_info=current_round,
+                                operation="selfcal",
+                            )
+                        ),
+                        archive_input_ms=racs_all_options.zip_ms,
+                        rename_ms=racs_all_options.rename_ms,
+                        wait_for=beam_imaging_results.wsclean_result,
+                    )
                 update_masking_options = get_options_from_strategy(
                     strategy=strategy,
                     mode="masking",

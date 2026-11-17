@@ -755,6 +755,8 @@ class HistoryEntry(StrEnum):
 
     ROTATED = "flint: rotated the visibilities to the sky frame with fixms"
     """Visibilities rotated from the instrument frame to the sky frame by fixms"""
+    IONOSPHERE_CORRECTED = "flint: corrected ionospheric Faraday rotation with spinifex"
+    """Ionospheric Faraday rotation removed into a separate column"""
 
 
 def add_history_entry(ms: MS | Path, entry: HistoryEntry) -> HistoryEntry:

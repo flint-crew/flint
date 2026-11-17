@@ -24,6 +24,7 @@ from flint.configuration import (
     FitsCubeOptions,
     Strategy,
     get_options_from_strategy,
+    get_selfcal_mode_for_round,
     get_selfcal_round_fitscube_options,
     load_and_copy_strategy,
 )
@@ -48,6 +49,7 @@ from flint.prefect.common.imaging import (
     task_copy_and_preprocess_casda_askap_ms,
     task_create_apply_solutions_cmd,
     task_create_image_mask_model,
+    task_dp3_selfcal_ms,
     task_flag_ms_aoflagger,
     task_gaincal_applycal_ms,
     task_potato_peel,
@@ -82,7 +84,25 @@ from flint.prefect.common.utils import (
 from flint.selfcal.utils import consider_skip_selfcal_on_round
 
 
-def _check_field_options(field_options: FieldOptions) -> None:
+def uses_casa_selfcal(field_options: FieldOptions) -> bool:
+    """Whether any self-calibration round will solve with CASA gaincal."""
+    return any(
+        get_selfcal_mode_for_round(
+            strategy=field_options.imaging_strategy, round_info=current_round
+        )
+        == "gaincal"
+        for current_round in range(1, (field_options.rounds or 0) + 1)
+    )
+
+
+def _is_casda_ms(ms: MS) -> bool:
+    """Whether a measurement set is named as deposited onto CASDA."""
+    return isinstance(extract_components_from_name(name=ms.path), CASDANameComponents)
+
+
+def _check_field_options(
+    field_options: FieldOptions, science_mss: Sequence[MS]
+) -> None:
     run_aegean = (
         False if field_options.aegean_container is None else field_options.run_aegean
     )
@@ -104,10 +124,14 @@ def _check_field_options(field_options: FieldOptions) -> None:
             raise ValueError(
                 f"{field_options.reference_catalogue_directory=} does not appear to be valid. Check for reference catalogues"
             )
-    if field_options.rounds is not None:
-        if field_options.rounds >= 1 and field_options.casa_container is None:
+    if field_options.casa_container is None:
+        if uses_casa_selfcal(field_options):
             raise ValueError(
-                "CASA Container needs to be set if self-calibration is to be performed"
+                "CASA Container needs to be set if self-calibration is to be performed with gaincal"
+            )
+        if _is_casda_ms(science_mss[0]):
+            raise ValueError(
+                "casa_container needs to be set to preprocess CASDA measurement sets"
             )
     if field_options.coadd_cubes:
         if (
@@ -182,9 +206,7 @@ def preprocess_science_mss(
     """Copy the raw science MSs into the output directory, calibrated and flagged ready for imaging."""
     # TODO: This feels a little too much like that feeling of being out
     # at sea for to long. Should refactor (or mask a EMU only).
-    if isinstance(
-        extract_components_from_name(name=science_mss[0].path), CASDANameComponents
-    ):
+    if _is_casda_ms(science_mss[0]):
         preprocessed_mss = task_copy_and_preprocess_casda_askap_ms.map(
             casda_ms=science_mss,
             casa_container=field_options.casa_container,
@@ -296,17 +318,17 @@ def process_science_fields(
 ) -> list[PrefectFuture[Any]]:
     # returned futures are resolved by prefect to fail the flow on task failure
 
+    science_mss = find_mss(
+        mss_parent_path=science_path, expected_ms_count=field_options.expected_ms
+    )
+
     # Verify no nasty incompatible options
-    _check_field_options(field_options=field_options)
+    _check_field_options(field_options=field_options, science_mss=science_mss)
 
     # Get some placeholder names
     run_aegean = (
         False if field_options.aegean_container is None else field_options.run_aegean
     )  # This is also in check_field_options
-
-    science_mss = find_mss(
-        mss_parent_path=science_path, expected_ms_count=field_options.expected_ms
-    )
 
     output_split_science_path = _check_create_output_split_science_path(
         science_path=science_path, split_path=split_path, check_exists=True
@@ -447,23 +469,44 @@ def process_science_fields(
                 current_round=current_round,
                 skip_selfcal_on_rounds=field_options.skip_selfcal_on_rounds,
             )
-            update_gain_options = get_options_from_strategy(
+            selfcal_mode = get_selfcal_mode_for_round(
+                strategy=strategy, round_info=current_round
+            )
+            update_solver_options = get_options_from_strategy(
                 strategy=strategy,
-                mode="gaincal",
+                mode=selfcal_mode,
                 round_info=current_round,
                 operation="selfcal",
             )
-            # TODO: Offer DP3 (task_dp3_solve_apply) as a container-free self-calibration backend
-            cal_mss = task_gaincal_applycal_ms.map(
-                ms=previous_results,
-                selfcal_round=current_round,
-                archive_input_ms=field_options.zip_ms,
-                skip_selfcal=skip_gaincal_current_round,
-                rename_ms=field_options.rename_ms,
-                archive_cal_table=True,
-                casa_container=field_options.casa_container,
-                update_gain_cal_options=unmapped(update_gain_options),
-            )  # type: ignore
+            if selfcal_mode == "gaincal":
+                cal_mss = task_gaincal_applycal_ms.map(
+                    ms=previous_results,
+                    selfcal_round=current_round,
+                    archive_input_ms=field_options.zip_ms,
+                    skip_selfcal=skip_gaincal_current_round,
+                    rename_ms=field_options.rename_ms,
+                    archive_cal_table=True,
+                    casa_container=field_options.casa_container,
+                    update_gain_cal_options=unmapped(update_solver_options),
+                )  # type: ignore
+            else:
+                cal_mss = task_dp3_selfcal_ms.map(
+                    ms=previous_results,
+                    selfcal_round=current_round,
+                    mode=selfcal_mode,
+                    update_dp3_options=unmapped(update_solver_options),
+                    update_dp3_selfcal_options=unmapped(
+                        get_options_from_strategy(
+                            strategy=strategy,
+                            mode="dp3selfcal",
+                            round_info=current_round,
+                            operation="selfcal",
+                        )
+                    ),
+                    archive_input_ms=field_options.zip_ms,
+                    skip_selfcal=skip_gaincal_current_round,
+                    rename_ms=field_options.rename_ms,
+                )  # type: ignore
 
             fits_beam_masks = None
             if consider_beam_mask_round(

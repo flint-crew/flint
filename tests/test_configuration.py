@@ -16,6 +16,7 @@ from flint.configuration import (
     create_default_yaml,
     get_image_options_from_yaml,
     get_options_from_strategy,
+    get_selfcal_mode_for_round,
     get_selfcal_options_from_yaml,
     get_selfcal_round_fitscube_options,
     load_strategy_yaml,
@@ -714,6 +715,43 @@ def test_dp3_options_from_strategy():
     strategy["selfcal"][1]["dp3ddecal"]["mode"] = "scalarphse"
     with pytest.raises(ValueError):
         verify_configuration(input_strategy=strategy)
+
+
+def test_get_selfcal_mode_for_round(strategy):
+    """A round solves with DP3 only when the round itself names a DP3 solver"""
+    assert get_selfcal_mode_for_round(strategy=None, round_info=1) == "gaincal"
+    # A default strategy lists every mode, DP3 ones included, under defaults
+    assert "dp3ddecal" in strategy["defaults"]
+    assert get_selfcal_mode_for_round(strategy=strategy, round_info=1) == "gaincal"
+
+    del strategy["selfcal"][2]["gaincal"]
+    assert get_selfcal_mode_for_round(strategy=strategy, round_info=2) == "gaincal"
+
+    strategy["selfcal"][2]["dp3ddecal"] = {}
+    assert get_selfcal_mode_for_round(strategy=strategy, round_info=2) == "dp3ddecal"
+    # Rounds past the last listed one use the last
+    assert get_selfcal_mode_for_round(strategy=strategy, round_info=5) == "dp3ddecal"
+    assert verify_configuration(input_strategy=strategy)
+
+    strategy["selfcal"][1]["dp3gaincal"] = {}
+    with pytest.raises(ValueError, match="several solvers"):
+        get_selfcal_mode_for_round(strategy=strategy, round_info=1)
+    with pytest.raises(ValueError, match="not valid"):
+        verify_configuration(input_strategy=strategy)
+
+
+@pytest.mark.parametrize(
+    ("solver", "solve"),
+    [("dp3ddecal", {"mode": "leakage"}), ("dp3gaincal", {"caltype": "tec+phase"})],
+)
+def test_verify_configuration_dp3_solve_types(strategy, solver, solve):
+    """A DP3 round is refused if self-calibration cannot apply what it solves for"""
+    del strategy["selfcal"][2]["gaincal"]
+    strategy["selfcal"][2][solver] = solve
+    applicable = solve != {"mode": "leakage"}
+    assert verify_configuration(input_strategy=strategy, raise_on_error=False) is (
+        applicable
+    )
 
 
 def test_archive_destinations_in_a_strategy(package_strategy):

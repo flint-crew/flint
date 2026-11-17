@@ -81,6 +81,7 @@ from flint.peel.potato import potato_peel
 from flint.prefect.caching import task
 from flint.prefect.common.utils import task_getattr, upload_image_as_artifact
 from flint.selfcal.casa import gaincal_applycal_ms
+from flint.selfcal.dp3 import DP3SolveMode, dp3_selfcal_ms
 from flint.source_finding.aegean import AegeanOutputs, run_bane_and_aegean
 from flint.summary import FieldSummary
 from flint.utils import (
@@ -358,13 +359,37 @@ def task_gaincal_applycal_ms(
 
     return gaincal_applycal_ms(
         ms=ms,
-        round=selfcal_round,
+        selfcal_round=selfcal_round,
         casa_container=casa_container,
         update_gain_cal_options=update_gain_cal_options,
         archive_input_ms=archive_input_ms,
         skip_selfcal=skip_selfcal,
         rename_ms=rename_ms,
         archive_cal_table=archive_cal_table,
+    )
+
+
+@task
+def task_dp3_selfcal_ms(
+    ms: MS | WSCleanResult,
+    selfcal_round: int,
+    mode: DP3SolveMode = "dp3ddecal",
+    update_dp3_options: dict[str, Any] | None = None,
+    update_dp3_selfcal_options: dict[str, Any] | None = None,
+    archive_input_ms: bool = False,
+    skip_selfcal: bool = False,
+    rename_ms: bool = False,
+) -> MS:
+    """Self-calibrate with DP3. See ``flint.selfcal.dp3.dp3_selfcal_ms``."""
+    return dp3_selfcal_ms(
+        ms=MS.cast(ms),
+        selfcal_round=selfcal_round,
+        mode=mode,
+        update_dp3_options=update_dp3_options,
+        update_dp3_selfcal_options=update_dp3_selfcal_options,
+        archive_input_ms=archive_input_ms,
+        skip_selfcal=skip_selfcal,
+        rename_ms=rename_ms,
     )
 
 
