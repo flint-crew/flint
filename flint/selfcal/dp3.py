@@ -104,63 +104,64 @@ def get_corrections(h5parm: Path, solve_type: str) -> DP3ApplyCalOptions:
     )
 
 
-def get_axis_index(values: np.ndarray, axes: list[str], name: str) -> np.ndarray:
-    """Each solution's position along an axis, shaped to broadcast against the solutions, or 0 if it has no such axis."""
-    if name not in axes:
-        return np.zeros(1, dtype=int)
-    shape = [1] * values.ndim
-    shape[axes.index(name)] = values.shape[axes.index(name)]
-
-    return np.arange(values.shape[axes.index(name)]).reshape(shape)
-
-
-def get_feeds(
-    soltab: h5py.Group, values: np.ndarray, axes: list[str]
-) -> tuple[np.ndarray, np.ndarray]:
-    """Each solution's feed (the first letter of its polarisation) and whether it is a parallel hand, shaped to broadcast against the solutions."""
+def get_row_hands(soltab: h5py.Group, axes: list[str]) -> np.ndarray:
+    """For each polarisation, the index of the parallel hand of its row feed: XX and XY both map to XX."""
     if "pol" not in axes:
-        return np.zeros(1, dtype=int), np.ones(1, dtype=bool)
-    pols = soltab["pol"].asstr()[:]
-    feeds = sorted({pol[0] for pol in pols})
-    shape = [1] * values.ndim
-    shape[axes.index("pol")] = len(pols)
-    feed = np.array([feeds.index(pol[0]) for pol in pols]).reshape(shape)
-    parallel = np.array([pol[0] == pol[1] for pol in pols]).reshape(shape)
+        return np.zeros(1, dtype=int)
+    pols = list(soltab["pol"].asstr()[:])
 
-    return feed, parallel
+    return np.array([pols.index(pol[0] * 2) for pol in pols])
 
 
-def normalise_soltab(soltab: h5py.Group, name: str) -> None:
-    """Divide an amplitude table, in place, by the median of each of its groups."""
+def normalise_soltab(soltab: h5py.Group, name: str) -> h5py.Group:
+    """Divide an amplitude table by the median of each of its groups.
+
+    A soltab holds ``val`` and ``weight`` arrays of one shape, with the axis names
+    in ``val.attrs["AXES"]``, drawn from ``time,ant,dir,freq,pol`` in any order. A
+    polarisation such as ``XX`` or ``XY`` names a row feed and a column feed.
+
+    Each frequency, direction and feed gets one factor: the median of its good
+    parallel-hand amplitudes over all times and antennas. A cross-hand is divided
+    by its row feed's factor. A group with fewer than two good amplitudes is left alone.
+
+    Args:
+        soltab (h5py.Group): The amplitude table, opened for writing. Its ``val`` is overwritten in place
+        name (str): How to refer to the table in log messages
+
+    Returns:
+        h5py.Group: The same ``soltab``, with its ``val`` normalised
+    """
     axes = soltab["val"].attrs["AXES"]
     axes = (axes.decode() if isinstance(axes, bytes) else axes).split(",")
     values = soltab["val"][:]
     good = np.isfinite(values) & (soltab["weight"][:] > 0)
-    feed, parallel = get_feeds(soltab, values, axes)
 
-    # One factor per frequency solution, direction and feed, pooling times and antennas
-    keys = np.stack(
-        [
-            np.broadcast_to(index, values.shape).ravel()
-            for index in (
-                get_axis_index(values, axes, "freq"),
-                get_axis_index(values, axes, "dir"),
-                feed,
-            )
-        ],
-        axis=-1,
-    )
-    _, group = np.unique(keys, axis=0, return_inverse=True)
-    group = group.reshape(values.shape)
-    for group_id in np.unique(group):
-        in_group = group == group_id
-        samples = values[in_group & good & parallel]
-        if samples.size < 2:
-            logger.warning(f"Fewer than two good amplitudes in a group of {name}")
-            continue
-        values[in_group] /= np.median(samples)
+    row_hands = get_row_hands(soltab, axes)
+    is_parallel = row_hands == np.arange(len(row_hands))
+    pol_axis = axes.index("pol") if "pol" in axes else None
+    if pol_axis is not None:
+        shape = [1] * values.ndim
+        shape[pol_axis] = len(row_hands)
+        good &= is_parallel.reshape(shape)
 
-    soltab["val"][:] = values
+    pooled = tuple(axes.index(axis) for axis in ("time", "ant") if axis in axes)
+    samples = np.ma.masked_where(~good, values)
+    median = np.ma.filled(np.ma.median(samples, axis=pooled, keepdims=True), 1.0)
+    count = samples.count(axis=pooled, keepdims=True)
+    if pol_axis is not None:
+        short = np.count_nonzero(np.compress(is_parallel, count, axis=pol_axis) < 2)
+        median = np.take(median, row_hands, axis=pol_axis)
+        count = np.take(count, row_hands, axis=pol_axis)
+    else:
+        short = np.count_nonzero(count < 2)
+    if short:
+        logger.warning(
+            f"{short} groups of {name} have fewer than two good amplitudes and keep their scale"
+        )
+
+    soltab["val"][:] = values / np.where(count >= 2, median, 1.0)
+
+    return soltab
 
 
 def normalise_amplitudes(h5parm: Path) -> Path:
