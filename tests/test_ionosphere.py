@@ -74,8 +74,9 @@ def test_correct_ionosphere(polarised_ms: MS, options: IonosphereOptions):
     corrected_ms = correct_ionosphere(polarised_ms, options)
 
     assert corrected_ms.column == "IONO_CORRECTED_DATA"
+    assert corrected_ms.h5parm is None
     assert has_history_entry(corrected_ms, HistoryEntry.IONOSPHERE_CORRECTED)
-    with h5py.File(corrected_ms.h5parm) as h5parm:
+    with h5py.File(polarised_ms.path.with_suffix(".spinifex.h5")) as h5parm:
         rm = h5parm["sol000/rotationmeasure000/val"][:].mean()
 
     corrected = read_column(corrected_ms, "IONO_CORRECTED_DATA")
@@ -113,10 +114,10 @@ def test_correct_ionosphere_refuses_corrected_column(
 def test_correct_ionosphere_replaces_stale_h5parm(
     polarised_ms: MS, options: IonosphereOptions
 ):
-    stale = correct_ionosphere(polarised_ms, options).h5parm
+    correct_ionosphere(polarised_ms, options)
     correct_ionosphere(polarised_ms, options)
 
-    with h5py.File(stale) as h5parm:
+    with h5py.File(polarised_ms.path.with_suffix(".spinifex.h5")) as h5parm:
         assert list(h5parm.keys()) == ["sol000"]
 
 

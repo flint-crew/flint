@@ -138,7 +138,7 @@ def _skippable_ms_copy_and_clean(
 
 
 def copy_and_clean_ms_casagain(
-    ms: MS, round: int = 1, verify: bool = True, rename_ms: bool = False
+    ms: MS, selfcal_round: int = 1, verify: bool = True, rename_ms: bool = False
 ) -> MS:
     """Create a copy of a measurement set in preparation for selfcalibration
     using casa's gaincal and applycal. Applycal only works when calibrating
@@ -151,14 +151,14 @@ def copy_and_clean_ms_casagain(
 
     Args:
         ms (MS): Measurement set that would go through self-calibration.
-        round (int, optional): The self-calibration round. Defaults to 1.
+        selfcal_round (int, optional): The self-calibration round. Defaults to 1.
         verify (bool, optional): Verify that copying the measurementt set (done in preparation for gaincal) was successful. Uses a call to rsync. Defaults to True.
         move_ms (bool, optional): Rather than copying the MS, simple renamed the MS and modify columns appropriately. Defaults to False.
 
     Returns:
         MS: Copy of input measurement set with columns removed as required.
     """
-    out_ms_path = get_selfcal_ms_name(in_ms_path=ms.path, round=round)
+    out_ms_path = get_selfcal_ms_name(in_ms_path=ms.path, selfcal_round=selfcal_round)
 
     mode_text = "Renaming" if rename_ms else "Copying"
 
@@ -350,7 +350,7 @@ def _process_gaincal_options(
 def gaincal_applycal_ms(
     ms: MS,
     casa_container: Path,
-    round: int = 1,
+    selfcal_round: int = 1,
     gain_cal_options: GainCalOptions | None = None,
     update_gain_cal_options: dict[str, Any] | None = None,
     archive_input_ms: bool = False,
@@ -363,7 +363,7 @@ def gaincal_applycal_ms(
 
     Args:
         ms (MS): Measurement set that will be self-calibrated.
-        round (int, optional): Round of self-calibration, which is used for unique names. Defaults to 1.
+        selfcal_round (int, optional): Round of self-calibration, which is used for unique names. Defaults to 1.
         casa_container (Path): A path to a singularity container with CASA tooling.
         gain_cal_options (Optional[GainCalOptions], optional): Options provided to gaincal. Defaults to None.
         update_gain_cal_options (Optional[Dict[str, Any]], optional): Update the gain_cal_options with these. Defaults to None.
@@ -395,7 +395,9 @@ def gaincal_applycal_ms(
         update_gain_cal_options=update_gain_cal_options,
     )
 
-    cal_ms = copy_and_clean_ms_casagain(ms=ms, round=round, rename_ms=rename_ms)
+    cal_ms = copy_and_clean_ms_casagain(
+        ms=ms, selfcal_round=selfcal_round, rename_ms=rename_ms
+    )
 
     # Archive straight after copying in case we skip the gaincal and return
     if archive_input_ms and not rename_ms:
@@ -515,7 +517,7 @@ def cli() -> None:
     if args.mode == "gaincal":
         gaincal_applycal_ms(
             ms=MS(path=args.ms, column=args.column),
-            round=args.round,
+            selfcal_round=args.round,
             casa_container=args.casa_container,
         )
 

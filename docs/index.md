@@ -16,6 +16,7 @@ data.md
 config.md
 flagging.md
 dp3.md
+casa_to_dp3.md
 ionosphere.md
 masking.md
 source_finding.md

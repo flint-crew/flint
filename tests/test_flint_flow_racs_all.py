@@ -120,7 +120,7 @@ def test_resolve_final_masks() -> None:
 
 @pytest.fixture
 def base_racs_all_options(tmp_path) -> RACSAllOptions:
-    """A minimal RACSAllOptions with just enough set to pass the wsclean_container check"""
+    """A minimal RACSAllOptions with just enough set to pass the container checks"""
     wsclean_container = tmp_path / "wsclean.sif"
     wsclean_container.touch()
 
@@ -129,6 +129,7 @@ def base_racs_all_options(tmp_path) -> RACSAllOptions:
         mid_data=tmp_path / "mid",
         high_data=tmp_path / "high",
         wsclean_container=wsclean_container,
+        casa_container=tmp_path / "casa.sif",
         rounds=0,
     )
 
@@ -170,6 +171,19 @@ def test_check_racs_all_options_skymodel_requirements(
             _check_racs_all_options(
                 racs_all_options=racs_all_options.with_options(**{missing: None})
             )
+
+
+@pytest.mark.parametrize("rounds", [0, 2])
+def test_check_racs_all_options_casa_without_selfcal(
+    base_racs_all_options, rounds
+) -> None:
+    """The CASDA measurement sets are preprocessed with CASA, with or without self-calibration"""
+    with pytest.raises(ValueError, match="casa_container"):
+        _check_racs_all_options(
+            racs_all_options=base_racs_all_options.with_options(
+                rounds=rounds, casa_container=None
+            )
+        )
 
 
 def test_check_create_output_science_path(tmpdir, monkeypatch) -> None:

@@ -49,6 +49,10 @@ GainCalType: TypeAlias = Literal[
     "tec",
     "tec+phase",
 ]
+DataUse: TypeAlias = Literal["single", "dual", "full"]
+SolverAlgorithm: TypeAlias = Literal[
+    "directionsolve", "directioniterative", "hybrid", "lbfgs"
+]
 CorrelationType: TypeAlias = Literal["auto", "cross"]
 Interpolation: TypeAlias = Literal["nearest", "linear"]
 # Characters that would break DP3's list syntax are not allowed
@@ -134,8 +138,26 @@ class DP3DDECalOptions(BaseOptions):
     """Convergence tolerance of the solver"""
     uvlambdamin: float | None = Field(default=None, ge=0)
     """Ignore baselines shorter than this many wavelengths"""
+    uvlambdamax: float | None = Field(default=None, gt=0)
+    """Ignore baselines longer than this many wavelengths"""
+    uvmmin: float | None = Field(default=None, ge=0)
+    """Ignore baselines shorter than this many metres"""
+    uvmmax: float | None = Field(default=None, gt=0)
+    """Ignore baselines longer than this many metres"""
     propagatesolutions: bool | None = None
     """Start each solution interval from the previous solutions"""
+    propagateconvergedonly: bool | None = None
+    """Only carry solutions forward from intervals that converged"""
+    smoothnessconstraint: float | None = Field(default=None, ge=0)
+    """Width in Hz of the kernel that smooths solutions across frequency"""
+    smoothnessreffrequency: float | None = Field(default=None, ge=0)
+    """Frequency in Hz at which the smoothness kernel has its given width"""
+    smoothnessspectralexponent: float | None = None
+    """How the kernel width scales with frequency, e.g. -1 for ionospheric phases"""
+    datause: DataUse | None = None
+    """Which correlations to solve with. 'single' or 'dual' are faster for scalar or diagonal modes."""
+    solveralgorithm: SolverAlgorithm | None = None
+    """The solver DDECal uses"""
 
 
 class DP3GainCalOptions(BaseOptions):
@@ -153,6 +175,10 @@ class DP3GainCalOptions(BaseOptions):
     """Convergence tolerance of the solver"""
     uvlambdamin: float | None = Field(default=None, ge=0)
     """Ignore baselines shorter than this many wavelengths"""
+    uvmmin: float | None = Field(default=None, ge=0)
+    """Ignore baselines shorter than this many metres"""
+    uvmmax: float | None = Field(default=None, gt=0)
+    """Ignore baselines longer than this many metres"""
     propagatesolutions: bool | None = None
     """Start each solution interval from the previous solutions"""
 
@@ -162,6 +188,8 @@ class DP3ApplyCalOptions(BaseOptions):
 
     correction: list[ParsetWord] = Field(default=["phase000"], min_length=1)
     """Soltabs to apply in turn, e.g. ['phase000'] or ['rotationmeasure000']"""
+    soltab: list[ParsetWord] | None = None
+    """The amplitude and phase soltabs a 'fulljones' correction reads, e.g. ['amplitude000', 'phase000']"""
     solset: ParsetWord | None = None
     """The solset holding the soltabs. DP3 picks one if unset."""
     interpolation: Interpolation | None = None
@@ -322,7 +350,7 @@ def dp3_gaincal(
         ValueError: Raised if the model column is not set or missing
 
     Returns:
-        MS: The measurement set with ``h5parm`` set, and ``column`` set to ``output_column`` if given
+        MS: The measurement set with ``h5parm`` set, or if the solutions were applied, with ``column`` set to ``output_column`` and ``h5parm`` cleared
     """
     ms = MS.cast(ms)
     h5parm = h5parm or ms.path.with_suffix(".gaincal.h5")
@@ -337,7 +365,9 @@ def dp3_gaincal(
     }
     run_dp3(parset)
 
-    return ms.with_options(h5parm=h5parm, column=output_column or ms.column)
+    if output_column:
+        return ms.with_options(column=output_column, h5parm=None)
+    return ms.with_options(h5parm=h5parm)
 
 
 def dp3_applycal(
@@ -359,7 +389,7 @@ def dp3_applycal(
         FileNotFoundError: Raised if the h5parm does not exist
 
     Returns:
-        MS: The measurement set with ``column`` set to ``output_column`` and ``h5parm`` set
+        MS: The measurement set with ``column`` set to ``output_column`` and ``h5parm`` cleared
     """
     ms = MS.cast(ms)
     options = options or DP3ApplyCalOptions()
@@ -386,7 +416,7 @@ def dp3_applycal(
         parset[f"applycal.{name}.correction"] = soltab
     run_dp3(parset)
 
-    return ms.with_options(column=output_column, h5parm=h5parm)
+    return ms.with_options(column=output_column, h5parm=None)
 
 
 def dp3_solve_apply(
@@ -404,7 +434,7 @@ def dp3_solve_apply(
         output_column (str, optional): The column to write the corrected data to. Defaults to "CORRECTED_DATA".
 
     Returns:
-        MS: The measurement set with ``column`` set to ``output_column`` and ``h5parm`` set
+        MS: The measurement set with ``column`` set to ``output_column`` and ``h5parm`` cleared
     """
     ms = MS.cast(ms)
     options = options or DP3DDECalOptions()

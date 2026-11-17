@@ -3,8 +3,11 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+import numpy as np
 import pytest
+from casacore.tables import makecoldesc, table
 
+from flint.options import MS
 from flint.utils import get_packaged_resource_path
 
 
@@ -106,3 +109,25 @@ def ms_example_with_name(tmpdir):
         return Path(outpath) / "SB39400.RACS_0635-31.beam0.small.ms"
 
     return _ms_example
+
+
+@pytest.fixture
+def corrupted_ms(ms_example: Path) -> MS:
+    """The example MS with a unit point source model and known antenna phase errors."""
+    with table(str(ms_example), readonly=False, ack=False) as tab:
+        desc = makecoldesc("DATA", tab.getcoldesc("DATA"))
+        desc["name"] = "MODEL_DATA"
+        tab.addcols(desc)
+
+        model = np.zeros(tab.getcol("DATA").shape, dtype=np.complex64)
+        model[..., 0] = model[..., 3] = 1
+        phases = np.random.default_rng(42).uniform(-1, 1, 36)
+        gains = np.exp(
+            1j * (phases[tab.getcol("ANTENNA1")] - phases[tab.getcol("ANTENNA2")])
+        )
+
+        tab.putcol("MODEL_DATA", model)
+        tab.putcol("DATA", (model * gains[:, None, None]).astype(np.complex64))
+        tab.putcol("FLAG", np.zeros(model.shape, dtype=bool))
+
+    return MS(path=ms_example, column="DATA", model_column="MODEL_DATA")

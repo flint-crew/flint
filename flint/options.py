@@ -204,7 +204,7 @@ class FieldOptions(BaseOptions):
     casda_bandpass_table: Path | None = None
     """The bandpass table applied to the MSs for this SBID, as deposited onto CASDA. Used to identify antennas to flag that may be unflagged under certain conditions."""
     run_skymodel_calibration: bool = False
-    """Whether to run a phase-only self-calibration round (round 0) against a sky-model predicted from a reference catalogue before imaging. The holofile, if set, weights the model by the measured primary beam. Requires calibrate_container, casa_container and reference_catalogue_directory to be set."""
+    """Whether to run a phase-only self-calibration round (round 0) against a sky-model predicted from a reference catalogue before imaging. The holofile, if set, weights the model by the measured primary beam. Requires calibrate_container and reference_catalogue_directory to be set, and casa_container unless round 0 of the strategy solves with dp3gaincal."""
 
 
 IonexServer: TypeAlias = Literal["chapman", "cddis", "igsiono"]
@@ -729,6 +729,7 @@ DEFAULT_TAR_RE_PATTERNS = (
     r".*beam[0-9]+\.ms\.zip",
     r".*beam[0-9]+\.ms",
     r".*\.caltable",
+    r".*\.h5",
     r".*\.tar",
     r".*\.csv",
 )
@@ -821,7 +822,7 @@ class MS(BaseOptions):
     model_column: str | None = None
     """If set indicates the column with model visibilities"""
     h5parm: Path | None = None
-    """If set indicates the h5parm with calibration solutions for the MS"""
+    """If set indicates the h5parm with calibration solutions for the MS that have not yet been applied"""
 
     @property
     def ms(self) -> MS:

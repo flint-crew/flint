@@ -414,7 +414,7 @@ def update_beam_resolution_field_in_path(
     return new_path
 
 
-def get_selfcal_ms_name(in_ms_path: Path, round: int = 1) -> Path:
+def get_selfcal_ms_name(in_ms_path: Path, selfcal_round: int = 1) -> Path:
     """Create the new output MS path that will be used for self-calibration. The
     output measurement set path will include a roundN.ms suffix, where N is the
     round. If such a suffix already exists from an earlier self-calibration round,
@@ -422,7 +422,7 @@ def get_selfcal_ms_name(in_ms_path: Path, round: int = 1) -> Path:
 
     Args:
         in_ms_path (Path): The measurement set that will go through self-calibration
-        round (int, optional): The self-calibration round number that is currently being used. Defaults to 1.
+        selfcal_round (int, optional): The self-calibration round number that is currently being used. Defaults to 1.
 
     Returns:
         Path: Output measurement set path to use
@@ -432,9 +432,9 @@ def get_selfcal_ms_name(in_ms_path: Path, round: int = 1) -> Path:
         logger.info("Detected a previous round of self-calibration. ")
         span = res.span()
         name_str = str(in_ms_path.name)
-        name = f"{name_str[: span[0]]}.round{round}.ms"
+        name = f"{name_str[: span[0]]}.round{selfcal_round}.ms"
     else:
-        name = f"{in_ms_path.stem!s}.round{round}.ms"
+        name = f"{in_ms_path.stem!s}.round{selfcal_round}.ms"
     out_ms_path = in_ms_path.parent / name
 
     assert in_ms_path != out_ms_path, (
