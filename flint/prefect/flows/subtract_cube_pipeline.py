@@ -195,7 +195,8 @@ def task_map_all_wsclean(in_mss: list[MS], *args, **kwargs) -> list[WSCleanResul
     return wsclean_results
 
 
-def combine_all_linmos_images(
+@task
+def task_combine_all_linmos_images(
     linmos_commands: list[LinmosResult],
     combine_weights: bool = False,
     time_domain: bool = False,
@@ -284,9 +285,6 @@ def combine_all_linmos_images(
             image.unlink()
 
     return Path(output_cube_path)
-
-
-task_combine_all_linmos_images = task(combine_all_linmos_images)
 
 
 @flow
