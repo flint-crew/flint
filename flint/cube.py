@@ -46,6 +46,9 @@ def combine_images_to_cube(
 
     A output file name will be generated based on the  prefix and mode (e.g. `image`, `residual`, `psf`, `dirty`).
 
+    A cube left by an earlier attempt is replaced, so this is safe to run again. If
+    that attempt finished and removed its images, its cube is returned as it is.
+
     Args:
         images (list[Path]): The images to combine into a cube
         prefix (str): The prefix of the images to combine
@@ -64,6 +67,39 @@ def combine_images_to_cube(
     logger.info(f"Running on {socket.gethostname()=}")
 
     output_cube_name = create_image_cube_name(image_prefix=Path(prefix), mode=mode)
+    output_freqs_name = output_cube_name.with_suffix(".freqs_Hz.txt")
+    gzip_name, tile_name = (
+        output_cube_name.with_name(output_cube_name.name + extension)
+        for extension in (".gz", ".fz")
+    )
+    final_cube = output_cube_name
+    if fitscube_options.compress:
+        tiled = fitscube_options.compress_method.startswith("tile")
+        final_cube = tile_name if tiled else gzip_name
+
+    missing = [image for image in images if not Path(image).exists()]
+    if missing:
+        # The images are removed last, so one being gone means the cube was finished
+        finished = (
+            fitscube_options.remove_original_images
+            and final_cube.exists()
+            and output_freqs_name.exists()
+        )
+        if not finished:
+            msg = f"{len(missing)} of {len(images)} images to cube are missing, the first being {missing[0]}"
+            raise FileNotFoundError(msg)
+        logger.warning(
+            f"An earlier attempt finished {final_cube.name} and removed its images. Not combining again."
+        )
+        remove_files_folders(*images)
+        return final_cube
+
+    # A task rerun after a dask worker death meets its own partial cube
+    stale_outputs = remove_files_folders(
+        output_cube_name, output_freqs_name, gzip_name, tile_name
+    )
+    if stale_outputs:
+        logger.warning(f"Removed outputs of an earlier attempt: {stale_outputs}")
 
     logger.info(f"Combining {len(images)} images into {output_cube_name}")
     logger.debug(f"{images=}")
@@ -80,7 +116,7 @@ def combine_images_to_cube(
             if bounding_box is None
             else bounding_box,
             create_blanks=fitscube_options.create_blanks,
-            overwrite=fitscube_options.overwrite,
+            overwrite=True,
         )
     except ShapeMismatchException as e:
         msg = f"Images to be cubed have differing pixel grids: {e}"
@@ -94,11 +130,7 @@ def combine_images_to_cube(
     if beam_shape is not None:
         set_cube_beam(cube=output_cube_name, beam_shape=beam_shape)
 
-    output_freqs_name = output_cube_name.with_suffix(".freqs_Hz.txt")
     np.savetxt(output_freqs_name, freqs.to("Hz").value)
-
-    if fitscube_options.remove_original_images:
-        remove_files_folders(*images)
 
     if fitscube_options.compress:
         start = time.perf_counter()
@@ -111,6 +143,10 @@ def combine_images_to_cube(
         logger.info(
             f"Compressed to {output_cube_name.name} in {time.perf_counter() - start:.0f}s"
         )
+
+    # Last of all, as a rerun reads a missing image as a finished cube
+    if fitscube_options.remove_original_images:
+        remove_files_folders(*images)
 
     return output_cube_name
 

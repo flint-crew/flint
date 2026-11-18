@@ -48,6 +48,7 @@ from flint.prefect.common.imaging import (
 )
 from flint.prefect.common.ms import task_subtract_model_from_ms
 from flint.prefect.common.predict import task_addmodel_to_ms, task_crystalball_to_ms
+from flint.utils import remove_files_folders
 
 # These improve the stability of the distributed dask cluster, particularly around
 # the usage of crystalball prediction
@@ -244,6 +245,16 @@ def task_combine_all_linmos_images(
         image_prefix=base_cube_path, mode="contsub", suffix=output_suffix
     )
 
+    # Checked first, so a cube whose images are gone is never removed
+    missing = [image for image in images_to_combine if not Path(image).exists()]
+    if missing:
+        msg = f"{len(missing)} of {len(images_to_combine)} images to cube are missing, the first being {missing[0]}"
+        raise FileNotFoundError(msg)
+
+    # A task rerun after a dask worker death meets its own partial cube
+    if remove_files_folders(output_cube_path):
+        logger.warning(f"Removed {output_cube_path} left by an earlier attempt")
+
     _ = combine_fits(
         file_list=images_to_combine,
         out_cube=output_cube_path,
@@ -252,6 +263,7 @@ def task_combine_all_linmos_images(
         bounding_box=fits_cube_options.bounding_box,
         invalidate_zeros=fits_cube_options.invalidate_zeros,
         create_blanks=fits_cube_options.create_blanks,
+        overwrite=True,
     )
 
     if fits_cube_options.remove_original_images:

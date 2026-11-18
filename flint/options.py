@@ -804,7 +804,7 @@ class FitsCubeOptions(BaseOptions):
     create_blanks: bool = True
     """Have fitscube re-grid the input frequencies onto a tolerant regular grid before writing."""
     overwrite: bool = False
-    """Overwrite the output file if it exists"""
+    """No longer has an effect, as an existing cube is always replaced"""
 
 
 class MSSummary(BaseOptions):
