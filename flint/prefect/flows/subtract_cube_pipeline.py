@@ -195,8 +195,7 @@ def task_map_all_wsclean(in_mss: list[MS], *args, **kwargs) -> list[WSCleanResul
     return wsclean_results
 
 
-@task
-def task_combine_all_linmos_images(
+def combine_all_linmos_images(
     linmos_commands: list[LinmosResult],
     combine_weights: bool = False,
     time_domain: bool = False,
@@ -266,6 +265,15 @@ def task_combine_all_linmos_images(
         overwrite=True,
     )
 
+    if fits_cube_options.compress:
+        output_cube_path = compress_cube(
+            output_cube_path,
+            method=fits_cube_options.compress_method,
+            max_workers=fits_cube_options.max_workers,
+            quantize_level=fits_cube_options.compress_quantize_level,
+        )
+
+    # Last of all, so a rerun of a killed compression still has its images
     if fits_cube_options.remove_original_images:
         logger.info(f"Removing original {len(images_to_combine)} images")
         for image in images_to_combine:
@@ -275,15 +283,10 @@ def task_combine_all_linmos_images(
             )
             image.unlink()
 
-    if fits_cube_options.compress:
-        output_cube_path = compress_cube(
-            output_cube_path,
-            method=fits_cube_options.compress_method,
-            max_workers=fits_cube_options.max_workers,
-            quantize_level=fits_cube_options.compress_quantize_level,
-        )
-
     return Path(output_cube_path)
+
+
+task_combine_all_linmos_images = task(combine_all_linmos_images)
 
 
 @flow

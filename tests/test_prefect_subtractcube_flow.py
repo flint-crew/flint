@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from functools import partial
 from pathlib import Path
 
 import pytest
@@ -10,8 +11,8 @@ from astropy.io import fits
 
 from flint.coadd.linmos import LinmosResult
 from flint.prefect.flows.subtract_cube_pipeline import (
+    combine_all_linmos_images,
     get_parser,
-    task_combine_all_linmos_images,
 )
 from tests.test_cube import _write_channel_image
 
@@ -46,7 +47,7 @@ def test_combine_all_linmos_images_replaces_a_partial_cube(tmp_path: Path):
     partial_cube = tmp_path / "SB1234.RACS_0000-00.contsub.freq.linmos.cube.fits"
     partial_cube.write_bytes(b"half written")
 
-    cube = task_combine_all_linmos_images.fn(
+    cube = combine_all_linmos_images(
         linmos_commands=linmos_results,
         update_fits_cube_options={"remove_original_images": False},
     )
@@ -64,6 +65,35 @@ def test_combine_all_linmos_images_missing_image_keeps_the_cube(tmp_path: Path):
     missing.unlink()
 
     with pytest.raises(FileNotFoundError, match=re.escape(missing.name)):
-        task_combine_all_linmos_images.fn(linmos_commands=linmos_results)
+        combine_all_linmos_images(linmos_commands=linmos_results)
 
     assert existing_cube.read_bytes() == b"an earlier cube"
+
+
+def test_combine_all_linmos_images_keeps_images_until_compressed(
+    tmp_path: Path, monkeypatch
+):
+    """A worker killed while compressing leaves the images for the rerun"""
+    linmos_results = _linmos_results(tmp_path)
+    images = [linmos_result.image_fits for linmos_result in linmos_results]
+    combine = partial(
+        combine_all_linmos_images,
+        linmos_commands=linmos_results,
+        update_fits_cube_options={"compress": True, "compress_method": "tile-gzip"},
+    )
+
+    def killed(*args, **kwargs):
+        raise RuntimeError("killed")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            "flint.prefect.flows.subtract_cube_pipeline.compress_cube", killed
+        )
+        with pytest.raises(RuntimeError, match="killed"):
+            combine()
+    assert all(image.exists() for image in images)
+
+    cube = combine()
+
+    assert cube.name.endswith(".fits.fz")
+    assert not any(image.exists() for image in images)
