@@ -197,7 +197,7 @@ def _combine_three_channels(tmp_path: Path, **options) -> tuple[partial, list[Pa
 
 def test_combine_images_to_cube_replaces_a_partial_cube(tmp_path: Path) -> None:
     """A cube a dead worker left a FITS block short, with no frequencies beside
-    it, is replaced without ``overwrite`` being set"""
+    it, is replaced"""
     combine, images = _combine_three_channels(tmp_path, remove_original_images=False)
     cube = combine()
     freqs = cube.with_suffix(".freqs_Hz.txt")
