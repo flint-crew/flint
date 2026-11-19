@@ -6,7 +6,7 @@ imaging flows.
 
 from __future__ import annotations
 
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from pathlib import Path
 from typing import Any, NamedTuple, ParamSpec, TypeVar
 
@@ -16,8 +16,12 @@ from eye_patch.masking import create_mask_from_fits
 from eye_patch.naming import FITSMaskNames
 from eye_patch.options import MaskingOptions
 from eye_patch.scales import flatten_scale_mask_fits
-from fitscube.bounding_box import BoundingBox, get_common_bounding_box
-from prefect import Task, unmapped
+from fitscube.bounding_box import (
+    BoundingBox,
+    extract_common_bounding_box,
+    get_common_bounding_box,
+)
+from prefect import Task, tags, unmapped
 from prefect.artifacts import create_table_artifact
 from prefect.futures import PrefectFuture
 
@@ -123,6 +127,7 @@ task_remove_files_folders = task(
     remove_files_folders, retries=2, retry_delay_seconds=30
 )
 task_get_common_bounding_box = task(get_common_bounding_box)
+task_extract_common_bounding_box = task(extract_common_bounding_box)
 task_split_cube_into_planes = task(split_cube_into_planes)
 task_bane_fits_image = task(bane_fits_image)
 task_dp3_flag = task(dp3_flag)
@@ -1068,11 +1073,33 @@ def _resolution_suffix(suffix_str: str | None, mode: ResolutionModes) -> str:
     return f"{suffix_str}.{mode}" if suffix_str else str(mode)
 
 
-def linmos_channel_groups_to_cubes(
+class LinmosPlanes(NamedTuple):
+    """The per-channel mosaics of one Stokes, before they are stacked into cubes"""
+
+    image: list[PrefectFuture[Path]]
+    """The co-added image of each channel"""
+    weight: list[PrefectFuture[Path]]
+    """The linmos weight of each channel"""
+    bkg: list[PrefectFuture[Path]]
+    """Background of each channel, empty unless BANE was asked for"""
+    rms: list[PrefectFuture[Path]]
+    """RMS noise of each channel, empty unless BANE was asked for"""
+    total_image: list[PrefectFuture[Path]]
+    """Each channel at the one beam covering the band, empty unless asked for"""
+    total_bkg: list[PrefectFuture[Path]]
+    """Background measured on the total-resolution planes"""
+    total_rms: list[PrefectFuture[Path]]
+    """RMS noise measured on the total-resolution planes"""
+    bane_results: list[PrefectFuture[BANEMaps]]
+    """The BANE runs reading the image planes"""
+    total_bane_results: list[PrefectFuture[BANEMaps]]
+    """The BANE runs reading the total-resolution planes"""
+
+
+def linmos_channel_groups_to_planes(
     channel_groups: Collection[Collection[Path]],
     container: Path,
     linmos_options: LinmosOptions,
-    fitscube_options: FitsCubeOptions,
     stokesi_channel_groups: Collection[Collection[Path]] | None = None,
     field_summary: FieldSummary | None = None,
     suffix_str: str | None = None,
@@ -1080,31 +1107,9 @@ def linmos_channel_groups_to_cubes(
     fft_bane_options: FFTBANEOptions | None = None,
     total_beam_shape: PrefectFuture[BeamShape] | None = None,
     beam_cutoff: float | None = None,
-) -> LinmosCubes:
-    """Co-add beam images one channel at a time, in parallel, then stack the
-    resulting mosaics back into image and weight cubes.
-
-    Should ``fitscube_options.bounding_box`` be True, the common bounding box
-    of valid pixels is computed once every channel has been co-added and is
-    passed into the cube assembly so fitscube trims both the image and weight
-    cubes to the same shared pixel grid while writing them.
-
-    Args:
-        channel_groups (Collection[Collection[Path]]): For each channel, the beam images to co-add
-        container (Path): Path to a yandasoft singularity container
-        linmos_options (LinmosOptions): Options passed to each per-channel linmos
-        fitscube_options (FitsCubeOptions, optional): Options for controlling the FITS cube creation. Defaults to None.
-        stokesi_channel_groups (Collection[Collection[Path]] | None, optional): For each channel, the Stokes I beam images used for the leakage correction. Defaults to None.
-        field_summary (FieldSummary | None, optional): Description of the field, used to get the ``pol_axis``. Defaults to None.
-        suffix_str (str | None, optional): Additional suffix added to the linmos and cube names. Defaults to None.
-        holofile (Path | None, optional): Holography file overriding the one in ``linmos_options``. Defaults to None.
-        fft_bane_options (FFTBANEOptions | None, optional): When given, each co-added channel also gets a BANE background and RMS map, stacked into their own cubes. Defaults to None, i.e. no BANE.
-        total_beam_shape (PrefectFuture[BeamShape] | None, optional): When given, each co-added plane is also convolved to this one beam and stacked into a second set of cubes. See ``total_beam_from_channel_groups``. Defaults to None, i.e. the natural-resolution cubes alone.
-        beam_cutoff (float | None, optional): Planes coarser than this, in arcsec, are blanked rather than convolved to ``total_beam_shape``. Defaults to no cutoff.
-
-    Returns:
-        LinmosCubes: The cubes being created
-    """
+) -> LinmosPlanes:
+    """Co-add the beam images of each channel, in parallel, into per-channel
+    mosaics. The arguments are those of ``linmos_channel_groups_to_cubes``."""
     stokesi_groups = (
         list(stokesi_channel_groups) if stokesi_channel_groups is not None else None
     )
@@ -1175,19 +1180,32 @@ def linmos_channel_groups_to_cubes(
                     task_getattr.submit(total_bane_maps, "rms_image")
                 )
 
-    bounding_box: bool | PrefectFuture[BoundingBox] = False
-    if fitscube_options.bounding_box:
-        # Passing the future in is what forms the barrier - every channel has to
-        # be co-added before the box that all of them share can be known. The same
-        # box is then reused for both cubes so they stay on the same pixel grid.
-        bounding_box = task_get_common_bounding_box.submit(
-            file_list=image_planes, invalidate_zeros=fitscube_options.invalidate_zeros
-        )
+    return LinmosPlanes(
+        image=image_planes,
+        weight=weight_planes,
+        bkg=bkg_planes,
+        rms=rms_planes,
+        total_image=total_planes,
+        total_bkg=total_bkg_planes,
+        total_rms=total_rms_planes,
+        bane_results=bane_results,
+        total_bane_results=total_bane_results,
+    )
 
+
+def linmos_planes_to_cubes(
+    linmos_planes: LinmosPlanes,
+    fitscube_options: FitsCubeOptions,
+    bounding_box: bool | PrefectFuture[BoundingBox] = False,
+    suffix_str: str | None = None,
+    total_beam_shape: PrefectFuture[BeamShape] | None = None,
+) -> LinmosCubes:
+    """Stack per-channel mosaics into cubes, each trimmed to ``bounding_box`` so
+    they share a pixel grid."""
     # Stack the per-channel mosaics back into image and weight cubes,
     # removing the per-channel mosaics once cubed.
     cube_prefix = task_create_name_from_common_fields.submit(
-        in_paths=image_planes,
+        in_paths=linmos_planes.image,
         additional_suffixes=_resolution_suffix(suffix_str, ResolutionModes.NATURAL),
     )
     cubes = {
@@ -1200,24 +1218,24 @@ def linmos_channel_groups_to_cubes(
             # ``remove_original_images`` has the image cube delete the planes the
             # total convolution and BANE read, so it may not run until they have
             # finished
-            wait_for=([*total_planes, *bane_results] or None)
+            wait_for=([*linmos_planes.total_image, *linmos_planes.bane_results] or None)
             if mode == "image"
             else None,
         )
         for planes, mode in (
-            (image_planes, "image"),
-            (weight_planes, "weight"),
-            (bkg_planes, "bkg"),
-            (rms_planes, "rms"),
+            (linmos_planes.image, "image"),
+            (linmos_planes.weight, "weight"),
+            (linmos_planes.bkg, "bkg"),
+            (linmos_planes.rms, "rms"),
         )
         if planes
     }
     total_prefix = (
         task_create_name_from_common_fields.submit(
-            in_paths=image_planes,
+            in_paths=linmos_planes.image,
             additional_suffixes=_resolution_suffix(suffix_str, ResolutionModes.TOTAL),
         )
-        if total_planes
+        if linmos_planes.total_image
         else None
     )
     total_cubes = {
@@ -1229,12 +1247,14 @@ def linmos_channel_groups_to_cubes(
             bounding_box=bounding_box,
             beam_shape=total_beam_shape,
             # As above, the total image cube deletes the planes BANE reads
-            wait_for=(total_bane_results or None) if mode == "image" else None,
+            wait_for=(linmos_planes.total_bane_results or None)
+            if mode == "image"
+            else None,
         )
         for planes, mode in (
-            (total_planes, "image"),
-            (total_bkg_planes, "bkg"),
-            (total_rms_planes, "rms"),
+            (linmos_planes.total_image, "image"),
+            (linmos_planes.total_bkg, "bkg"),
+            (linmos_planes.total_rms, "rms"),
         )
         if planes
     }
@@ -1247,6 +1267,137 @@ def linmos_channel_groups_to_cubes(
         total_bkg=total_cubes.get("bkg"),
         total_rms=total_cubes.get("rms"),
     )
+
+
+def linmos_channel_groups_to_cubes(
+    channel_groups: Collection[Collection[Path]],
+    container: Path,
+    linmos_options: LinmosOptions,
+    fitscube_options: FitsCubeOptions,
+    stokesi_channel_groups: Collection[Collection[Path]] | None = None,
+    field_summary: FieldSummary | None = None,
+    suffix_str: str | None = None,
+    holofile: Path | None = None,
+    fft_bane_options: FFTBANEOptions | None = None,
+    total_beam_shape: PrefectFuture[BeamShape] | None = None,
+    beam_cutoff: float | None = None,
+) -> LinmosCubes:
+    """Co-add beam images one channel at a time, in parallel, then stack the
+    resulting mosaics back into image and weight cubes.
+
+    Should ``fitscube_options.bounding_box`` be True, the common bounding box
+    of valid pixels is computed once every channel has been co-added and is
+    passed into the cube assembly so fitscube trims both the image and weight
+    cubes to the same shared pixel grid while writing them.
+
+    Args:
+        channel_groups (Collection[Collection[Path]]): For each channel, the beam images to co-add
+        container (Path): Path to a yandasoft singularity container
+        linmos_options (LinmosOptions): Options passed to each per-channel linmos
+        fitscube_options (FitsCubeOptions, optional): Options for controlling the FITS cube creation. Defaults to None.
+        stokesi_channel_groups (Collection[Collection[Path]] | None, optional): For each channel, the Stokes I beam images used for the leakage correction. Defaults to None.
+        field_summary (FieldSummary | None, optional): Description of the field, used to get the ``pol_axis``. Defaults to None.
+        suffix_str (str | None, optional): Additional suffix added to the linmos and cube names. Defaults to None.
+        holofile (Path | None, optional): Holography file overriding the one in ``linmos_options``. Defaults to None.
+        fft_bane_options (FFTBANEOptions | None, optional): When given, each co-added channel also gets a BANE background and RMS map, stacked into their own cubes. Defaults to None, i.e. no BANE.
+        total_beam_shape (PrefectFuture[BeamShape] | None, optional): When given, each co-added plane is also convolved to this one beam and stacked into a second set of cubes. See ``total_beam_from_channel_groups``. Defaults to None, i.e. the natural-resolution cubes alone.
+        beam_cutoff (float | None, optional): Planes coarser than this, in arcsec, are blanked rather than convolved to ``total_beam_shape``. Defaults to no cutoff.
+
+    Returns:
+        LinmosCubes: The cubes being created
+    """
+    linmos_planes = linmos_channel_groups_to_planes(
+        channel_groups=channel_groups,
+        container=container,
+        linmos_options=linmos_options,
+        stokesi_channel_groups=stokesi_channel_groups,
+        field_summary=field_summary,
+        suffix_str=suffix_str,
+        holofile=holofile,
+        fft_bane_options=fft_bane_options,
+        total_beam_shape=total_beam_shape,
+        beam_cutoff=beam_cutoff,
+    )
+
+    bounding_box: bool | PrefectFuture[BoundingBox] = False
+    if fitscube_options.bounding_box:
+        # Passing the future in is what forms the barrier - every channel has to
+        # be co-added before the box that all of them share can be known. The same
+        # box is then reused for both cubes so they stay on the same pixel grid.
+        bounding_box = task_get_common_bounding_box.submit(
+            file_list=linmos_planes.image,
+            invalidate_zeros=fitscube_options.invalidate_zeros,
+        )
+
+    return linmos_planes_to_cubes(
+        linmos_planes=linmos_planes,
+        fitscube_options=fitscube_options,
+        bounding_box=bounding_box,
+        suffix_str=suffix_str,
+        total_beam_shape=total_beam_shape,
+    )
+
+
+def linmos_stokes_channel_groups_to_cubes(
+    stokes_channel_groups: Mapping[str, Collection[Collection[Path]]],
+    container: Path,
+    linmos_options: LinmosOptions,
+    fitscube_options: FitsCubeOptions,
+    stokesi_channel_groups: Collection[Collection[Path]] | None = None,
+    field_summary: FieldSummary | None = None,
+    suffix_str: str | None = None,
+    holofile: Path | None = None,
+    fft_bane_options: FFTBANEOptions | None = None,
+    total_beam_shape: PrefectFuture[BeamShape] | None = None,
+    beam_cutoff: float | None = None,
+) -> dict[str, LinmosCubes]:
+    """As ``linmos_channel_groups_to_cubes`` for several Stokes at once, keyed
+    by Stokes. Their cubes are all trimmed to one bounding box, so every Stokes
+    shares a pixel grid."""
+    stokes_planes: dict[str, LinmosPlanes] = {}
+    stokes_boxes: list[PrefectFuture[BoundingBox]] = []
+    for stokes, channel_groups in stokes_channel_groups.items():
+        with tags(f"stokes-{stokes}"):
+            linmos_planes = linmos_channel_groups_to_planes(
+                channel_groups=channel_groups,
+                container=container,
+                linmos_options=linmos_options,
+                stokesi_channel_groups=stokesi_channel_groups,
+                field_summary=field_summary,
+                suffix_str=suffix_str,
+                holofile=holofile,
+                fft_bane_options=fft_bane_options,
+                total_beam_shape=total_beam_shape,
+                beam_cutoff=beam_cutoff,
+            )
+            stokes_planes[stokes] = linmos_planes
+            if fitscube_options.bounding_box:
+                stokes_boxes.append(
+                    task_get_common_bounding_box.submit(
+                        file_list=linmos_planes.image,
+                        invalidate_zeros=fitscube_options.invalidate_zeros,
+                    )
+                )
+
+    # The valid pixels of one Stokes can stop a pixel short of another's, as
+    # seen for Q/U against I, and rm-synth needs every Stokes on one grid
+    bounding_box: bool | PrefectFuture[BoundingBox] = False
+    if stokes_boxes:
+        bounding_box = task_extract_common_bounding_box.submit(
+            bounding_boxes=stokes_boxes
+        )
+
+    stokes_cubes: dict[str, LinmosCubes] = {}
+    for stokes, linmos_planes in stokes_planes.items():
+        with tags(f"stokes-{stokes}"):
+            stokes_cubes[stokes] = linmos_planes_to_cubes(
+                linmos_planes=linmos_planes,
+                fitscube_options=fitscube_options,
+                bounding_box=bounding_box,
+                suffix_str=suffix_str,
+                total_beam_shape=total_beam_shape,
+            )
+    return stokes_cubes
 
 
 class ConvolvedLinmosCubes(NamedTuple):
