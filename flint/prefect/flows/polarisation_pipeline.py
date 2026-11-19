@@ -46,7 +46,7 @@ from flint.prefect.clusters import get_dask_runner
 from flint.prefect.common.imaging import (
     convolve_channel_groups_to_natural_resolution,
     convolve_mfs_beam_images_to_common_resolution,
-    linmos_channel_groups_to_cubes,
+    linmos_stokes_channel_groups_to_cubes,
     task_flatten_mask,
     task_get_channel_images_from_paths,
     task_get_mfs_image_from_paths,
@@ -505,43 +505,42 @@ def process_science_fields_pol(
     stokes_total_cubes: dict[str, PrefectFuture[Path]] = {}
     stokes_total_bkg_cubes: dict[str, PrefectFuture[Path]] = {}
     stokes_total_rms_cubes: dict[str, PrefectFuture[Path]] = {}
-    all_input_images: list[Path] = []
-    for stokes, channel_groups in stokes_channel_groups.items():
-        with tags(f"stokes-{stokes}"):
-            all_input_images.extend(
-                [image for beam_images in channel_groups for image in beam_images]
-            )
-            stokes_cubes = linmos_channel_groups_to_cubes(
-                channel_groups=channel_groups,
-                container=pol_field_options.yandasoft_container,
-                linmos_options=LinmosOptions(
-                    holofile=pol_field_options.holofile,
-                    cutoff=pol_field_options.pb_cutoff,
-                    force_remove_leakage=force_remove_leakage,
-                    cleanup=True,
-                ),
-                stokesi_channel_groups=i_channel_groups,
-                field_summary=field_summary,
-                fitscube_options=fitscube_options,
-                suffix_str=POL_NAME_SUFFIX,
-                fft_bane_options=fft_bane_options,
-                total_beam_shape=total_beam_shape,
-                beam_cutoff=pol_field_options.cube_beam_cutoff,
-            )
-            stokes_image_cubes[stokes] = stokes_cubes.image
-            stokes_weight_cubes[stokes] = stokes_cubes.weight
-            if stokes_cubes.bkg is not None and stokes_cubes.rms is not None:
-                stokes_bkg_cubes[stokes] = stokes_cubes.bkg
-                stokes_rms_cubes[stokes] = stokes_cubes.rms
-            if stokes_cubes.total_image is not None:
-                stokes_total_cubes[stokes] = stokes_cubes.total_image
-            if (
-                stokes_cubes.total_bkg is not None
-                and stokes_cubes.total_rms is not None
-            ):
-                stokes_total_bkg_cubes[stokes] = stokes_cubes.total_bkg
-                stokes_total_rms_cubes[stokes] = stokes_cubes.total_rms
-            cube_results.extend(stokes_cubes.futures)
+    all_input_images: list[Path] = [
+        image
+        for channel_groups in stokes_channel_groups.values()
+        for beam_images in channel_groups
+        for image in beam_images
+    ]
+    # Every Stokes in one call, so their cubes are trimmed to a shared bounding box
+    all_stokes_cubes = linmos_stokes_channel_groups_to_cubes(
+        stokes_channel_groups=stokes_channel_groups,
+        container=pol_field_options.yandasoft_container,
+        linmos_options=LinmosOptions(
+            holofile=pol_field_options.holofile,
+            cutoff=pol_field_options.pb_cutoff,
+            force_remove_leakage=force_remove_leakage,
+            cleanup=True,
+        ),
+        stokesi_channel_groups=i_channel_groups,
+        field_summary=field_summary,
+        fitscube_options=fitscube_options,
+        suffix_str=POL_NAME_SUFFIX,
+        fft_bane_options=fft_bane_options,
+        total_beam_shape=total_beam_shape,
+        beam_cutoff=pol_field_options.cube_beam_cutoff,
+    )
+    for stokes, stokes_cubes in all_stokes_cubes.items():
+        stokes_image_cubes[stokes] = stokes_cubes.image
+        stokes_weight_cubes[stokes] = stokes_cubes.weight
+        if stokes_cubes.bkg is not None and stokes_cubes.rms is not None:
+            stokes_bkg_cubes[stokes] = stokes_cubes.bkg
+            stokes_rms_cubes[stokes] = stokes_cubes.rms
+        if stokes_cubes.total_image is not None:
+            stokes_total_cubes[stokes] = stokes_cubes.total_image
+        if stokes_cubes.total_bkg is not None and stokes_cubes.total_rms is not None:
+            stokes_total_bkg_cubes[stokes] = stokes_cubes.total_bkg
+            stokes_total_rms_cubes[stokes] = stokes_cubes.total_rms
+        cube_results.extend(stokes_cubes.futures)
 
     # Remove the convolved per-beam channel images now that every cube is built.
     # Stokes I images are kept until here as they feed the Q/U leakage correction.

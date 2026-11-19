@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import shutil
 from functools import partial
 from pathlib import Path
@@ -174,9 +175,8 @@ def test_rotate_cube_is_idempotent(tmpdir) -> None:
     assert np.array_equal(fits.getdata(cube), data)
 
 
-def test_combine_images_to_cube_overwrite(tmpdir) -> None:
-    """An existing cube is only replaced when ``overwrite`` is set"""
-    tmp_path = Path(tmpdir)
+def _combine_three_channels(tmp_path: Path, **options) -> tuple[partial, list[Path]]:
+    """Three channel images of one beam, and the call that cubes them"""
     images = [
         _write_channel_image(
             tmp_path / f"SB1234.RACS_0000-00.beam00.round1-{channel:04d}-image.fits",
@@ -185,22 +185,80 @@ def test_combine_images_to_cube_overwrite(tmpdir) -> None:
         )
         for channel in range(3)
     ]
-    fitscube_options = FitsCubeOptions(
-        invalidate_zeros=False, remove_original_images=False
-    )
     combine = partial(
         combine_images_to_cube,
         images=images,
         prefix=f"{tmp_path}/SB1234.RACS_0000-00.beam00.round1",
         mode="image",
+        fitscube_options=FitsCubeOptions(invalidate_zeros=False, **options),
     )
-    combine(fitscube_options=fitscube_options)
+    return combine, images
 
-    with pytest.raises(FileExistsError):
-        combine(fitscube_options=fitscube_options)
 
-    cube = combine(fitscube_options=fitscube_options.with_options(overwrite=True))
+def test_combine_images_to_cube_replaces_a_partial_cube(tmp_path: Path) -> None:
+    """A cube a dead worker left a FITS block short, with no frequencies beside
+    it, is replaced"""
+    combine, images = _combine_three_channels(tmp_path, remove_original_images=False)
+    cube = combine()
+    freqs = cube.with_suffix(".freqs_Hz.txt")
+    size = cube.stat().st_size
+    with cube.open("r+b") as file:
+        file.truncate(size - 2880)
+    freqs.unlink()
+
+    assert combine() == cube
+
+    assert cube.stat().st_size == size
     _assert_cube_matches_images(cube=cube, images=images)
+    assert len(np.loadtxt(freqs)) == len(images)
+
+
+@pytest.mark.parametrize("compress", [False, True])
+def test_combine_images_to_cube_rerun_returns_the_finished_cube(
+    tmp_path: Path, compress: bool
+) -> None:
+    """A rerun after the first attempt finished and removed its images hands
+    back the cube that attempt made"""
+    combine, images = _combine_three_channels(
+        tmp_path, compress=compress, compress_method="tile-gzip"
+    )
+    cube = combine()
+    assert cube.name.endswith(".fits.fz" if compress else ".fits")
+    assert not any(image.exists() for image in images)
+    written = cube.read_bytes()
+
+    assert combine() == cube
+    assert cube.read_bytes() == written
+
+
+def test_combine_images_to_cube_rerun_removes_the_images_left(tmp_path: Path) -> None:
+    """A rerun of an attempt that died part way through removing its images
+    removes the rest of them"""
+    combine, images = _combine_three_channels(tmp_path, remove_original_images=False)
+    cube = combine()
+    written = cube.read_bytes()
+    images[0].unlink()
+
+    rerun = partial(combine, fitscube_options=FitsCubeOptions(invalidate_zeros=False))
+    assert rerun() == cube
+
+    assert cube.read_bytes() == written
+    assert not any(image.exists() for image in images)
+
+
+def test_combine_images_to_cube_missing_image_keeps_the_cube(tmp_path: Path) -> None:
+    """With an image missing that no earlier attempt would have removed, the
+    cube already on disk is left alone"""
+    combine, images = _combine_three_channels(tmp_path, remove_original_images=False)
+    cube = combine()
+    written = cube.read_bytes()
+    images[1].unlink()
+
+    with pytest.raises(FileNotFoundError, match=re.escape(images[1].name)):
+        combine()
+
+    assert cube.read_bytes() == written
+    assert images[0].exists()
 
 
 def test_rotate_cube_single_stokes_is_header_only(tmpdir) -> None:

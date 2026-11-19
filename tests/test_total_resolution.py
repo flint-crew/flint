@@ -5,6 +5,7 @@ RM-synthesis needs of its inputs.
 
 from __future__ import annotations
 
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -12,11 +13,11 @@ from typing import Any
 import numpy as np
 import pytest
 from astropy.io import fits
-from prefect import flow
+from prefect import flow, task
 from prefect.logging import disable_run_logger
 from prefect.testing.utilities import prefect_test_harness
 
-from flint.coadd.linmos import LinmosOptions
+from flint.coadd.linmos import LinmosOptions, LinmosResult
 from flint.convol import (
     BeamShape,
     convolve_plane_to_beam,
@@ -30,11 +31,13 @@ from flint.prefect.common.imaging import (
     _resolution_suffix,
     convolve_channel_groups_to_natural_resolution,
     linmos_channel_groups_to_cubes,
+    linmos_stokes_channel_groups_to_cubes,
     total_beam_from_channel_groups,
 )
 
 # Reuse the synthetic helpers rather than keeping a second copy of them
 from tests.test_convol import _write_cube_with_beam  # noqa: E402
+from tests.test_cube import _write_channel_image  # noqa: E402
 from tests.test_natural_resolution import _bmaj_arcsec, _channel_groups  # noqa: E402
 
 STEM = "SB12345.BENCH_0000+00.ch0000-0019"
@@ -206,21 +209,10 @@ class _Submitted:
     kwargs: dict[str, Any] = field(default_factory=dict)
 
 
-def test_image_cubes_wait_for_every_reader_of_their_planes(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """An image cube deletes the planes it stacks, so it may not be built until
-    every other task reading those planes - the total convolution and BANE - has
-    finished with them"""
+def _fake_submits(monkeypatch: pytest.MonkeyPatch, *names: str) -> list[_Submitted]:
+    """Fake the ``.submit`` of each named task, listing what gets submitted"""
     submitted: list[_Submitted] = []
-    for name in (
-        "task_linmos_images",
-        "task_getattr",
-        "task_bane_fits_image",
-        "task_convolve_plane_to_beam",
-        "task_create_name_from_common_fields",
-        "task_combine_images_to_cube",
-    ):
+    for name in names:
 
         def fake_submit(*args: Any, _name: str = name, **kwargs: Any) -> _Submitted:
             future = _Submitted(task=_name, args=args, kwargs=kwargs)
@@ -228,6 +220,24 @@ def test_image_cubes_wait_for_every_reader_of_their_planes(
             return future
 
         monkeypatch.setattr(f"flint.prefect.common.imaging.{name}.submit", fake_submit)
+    return submitted
+
+
+def test_image_cubes_wait_for_every_reader_of_their_planes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An image cube deletes the planes it stacks, so it may not be built until
+    every other task reading those planes - the total convolution and BANE - has
+    finished with them"""
+    submitted = _fake_submits(
+        monkeypatch,
+        "task_linmos_images",
+        "task_getattr",
+        "task_bane_fits_image",
+        "task_convolve_plane_to_beam",
+        "task_create_name_from_common_fields",
+        "task_combine_images_to_cube",
+    )
 
     cubes = linmos_channel_groups_to_cubes(
         channel_groups=[[Path("ch0.beam00.fits")], [Path("ch1.beam00.fits")]],
@@ -253,3 +263,131 @@ def test_image_cubes_wait_for_every_reader_of_their_planes(
     for cube in (cubes.weight, cubes.bkg, cubes.rms, cubes.total_bkg, cubes.total_rms):
         assert cube is not None
         assert cube.kwargs["wait_for"] is None
+
+
+def _submitted_for_two_stokes(
+    monkeypatch: pytest.MonkeyPatch, bounding_box: bool
+) -> list[_Submitted]:
+    """Everything submitted to cube a single channel of Stokes I and Q"""
+    submitted = _fake_submits(
+        monkeypatch,
+        "task_linmos_images",
+        "task_getattr",
+        "task_create_name_from_common_fields",
+        "task_get_common_bounding_box",
+        "task_extract_common_bounding_box",
+        "task_combine_images_to_cube",
+    )
+    linmos_stokes_channel_groups_to_cubes(
+        stokes_channel_groups={
+            "i": [[Path("i.ch0.beam00.fits")]],
+            "q": [[Path("q.ch0.beam00.fits")]],
+        },
+        container=Path("yandasoft.sif"),
+        linmos_options=LinmosOptions(),
+        fitscube_options=FitsCubeOptions(bounding_box=bounding_box),
+    )
+    return submitted
+
+
+def test_stokes_cubes_are_trimmed_to_one_merged_box(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each Stokes has its box found over its own planes, and the merge of those
+    is the one box every cube of every Stokes is trimmed to"""
+    submitted = _submitted_for_two_stokes(monkeypatch, bounding_box=True)
+
+    boxes = [s for s in submitted if s.task == "task_get_common_bounding_box"]
+    (merged,) = [s for s in submitted if s.task == "task_extract_common_bounding_box"]
+    cubes = [s for s in submitted if s.task == "task_combine_images_to_cube"]
+    image_cubes = [cube for cube in cubes if cube.kwargs["mode"] == "image"]
+
+    assert len(cubes) == 4, "an image and a weight cube for each Stokes"
+    assert [box.kwargs["file_list"] for box in boxes] == [
+        cube.kwargs["images"] for cube in image_cubes
+    ]
+    assert merged.kwargs["bounding_boxes"] == boxes
+    assert all(cube.kwargs["bounding_box"] is merged for cube in cubes)
+
+
+def test_no_box_is_found_when_stokes_cubes_are_not_trimmed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With trimming off the planes are never read for a box"""
+    submitted = _submitted_for_two_stokes(monkeypatch, bounding_box=False)
+
+    assert not [s for s in submitted if "bounding_box" in s.task]
+    cubes = [s for s in submitted if s.task == "task_combine_images_to_cube"]
+    assert len(cubes) == 4
+    assert all(cube.kwargs["bounding_box"] is False for cube in cubes)
+
+
+@task
+def _linmos_as_first_image(image_list: list[Path], **_: Any) -> LinmosResult:
+    """Stands in for linmos: the mosaic and its weight are the first beam image"""
+    beam_image = image_list[0]
+    stem = beam_image.name.replace(".beam00", "").removesuffix(".image.fits")
+    mosaic = beam_image.with_name(f"{stem}.pol.linmos.fits")
+    weight = beam_image.with_name(f"{stem}.pol.weight.fits")
+    shutil.copy(beam_image, mosaic)
+    shutil.copy(beam_image, weight)
+    return LinmosResult(
+        cmd="linmos",
+        parset=beam_image.with_name(f"{stem}.parset"),
+        image_fits=mosaic,
+        weight_fits=weight,
+    )
+
+
+def test_every_stokes_is_cubed_on_one_pixel_grid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Stokes Q mosaics whose valid pixels stop short of those of Stokes I still
+    give cubes of the shape of the Stokes I ones, or rm-synth cannot line them up"""
+    stokes_channel_groups = {
+        stokes: [
+            [
+                _write_channel_image(
+                    tmp_path
+                    / f"SB1234.RACS_0000-00.beam00.round3.{stokes}.ch{channel:04d}-{channel + 1:04d}.image.fits",
+                    channel=channel,
+                    shape=(12, 14),
+                    nan_border=nan_border,
+                )
+            ]
+            for channel in range(3)
+        ]
+        for stokes, nan_border in {"i": 1, "q": 2}.items()
+    }
+    monkeypatch.setattr(
+        "flint.prefect.common.imaging.task_linmos_images", _linmos_as_first_image
+    )
+
+    @flow
+    def _cube() -> dict[str, list[Path]]:
+        stokes_cubes = linmos_stokes_channel_groups_to_cubes(
+            stokes_channel_groups=stokes_channel_groups,
+            container=Path("yandasoft.sif"),
+            linmos_options=LinmosOptions(),
+            fitscube_options=FitsCubeOptions(invalidate_zeros=False),
+            suffix_str="pol",
+        )
+        return {
+            stokes: [cube.result() for cube in cubes.futures]
+            for stokes, cubes in stokes_cubes.items()
+        }
+
+    with prefect_test_harness(), disable_run_logger():
+        stokes_cubes = _cube()
+
+    shapes = {
+        fits.getdata(cube).squeeze().shape
+        for cubes in stokes_cubes.values()
+        for cube in cubes
+    }
+    assert shapes == {(3, 10, 12)}, "the valid pixels of Stokes I"
+
+    q_image = fits.getdata(stokes_cubes["q"][0]).squeeze()
+    assert np.all(np.isfinite(q_image[:, 1:-1, 1:-1]))
+    q_image[:, 1:-1, 1:-1] = np.nan
+    assert np.all(np.isnan(q_image)), "Stokes Q is padded out to the Stokes I box"
