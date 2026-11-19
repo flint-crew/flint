@@ -202,6 +202,20 @@ def get_phase_dir_from_ms(ms: MS | Path) -> SkyCoord:
     return phase_sky
 
 
+def get_boresight_from_ms(ms: MS | Path) -> SkyCoord | None:
+    """Where the dish pointed, which FixMS keeps in FIELD_OLD. None before FixMS has run."""
+    ms = MS.cast(ms)
+
+    field_old = ms.path / "FIELD_OLD"
+    if not field_old.exists():
+        return None
+
+    with table(str(field_old), readonly=True, ack=False) as tab:
+        phase_dir = tab.getcol("PHASE_DIR")[0]
+
+    return SkyCoord(*phase_dir[0], unit=(u.rad, u.rad))
+
+
 def get_times_from_ms(
     ms: MS | Path, unique: bool = False, sort: bool = False, return_raw: float = False
 ) -> Time | np.typing.NDArray[np.floating]:
@@ -369,6 +383,7 @@ def describe_ms(
 
     beam_no = get_beam_from_ms(ms=ms)
     phase_dir = get_phase_dir_from_ms(ms=ms)
+    boresight = get_boresight_from_ms(ms=ms)
 
     ms_times = get_times_from_ms(ms=ms)
     ms_times = Time([ms_times.min(), ms_times.max()])
@@ -399,6 +414,7 @@ def describe_ms(
         integration=integration,
         location=location,
         pol_axis=pol_axis,
+        boresight=boresight,
     )
 
 

@@ -22,6 +22,7 @@ from flint.ms import (
     copy_and_preprocess_casda_askap_ms,
     describe_ms,
     find_mss,
+    get_boresight_from_ms,
     get_phase_dir_from_ms,
     get_times_from_ms,
     has_history_entry,
@@ -391,6 +392,18 @@ def test_history_entry(casda_example):
 
     with table(f"{casda_example!s}/HISTORY", ack=False) as history:
         assert history.getcol("APP_PARAMS")
+
+
+def test_boresight_is_the_pointing_fixms_keeps(casda_example):
+    """FixMS moves the phase centre to the beam, and keeps where the dish pointed"""
+    assert get_boresight_from_ms(ms=casda_example) is None
+    pointing = get_phase_dir_from_ms(ms=casda_example)
+
+    ms = preprocess_askap_ms(ms=casda_example, fix_stokes_factor=True)
+
+    for boresight in (get_boresight_from_ms(ms=ms), describe_ms(ms=ms).boresight):
+        assert boresight is not None
+        assert boresight.separation(pointing).arcsec < 1e-3
 
 
 def test_phase_dir(ms_example):

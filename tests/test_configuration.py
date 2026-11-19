@@ -15,6 +15,7 @@ from flint.configuration import (
     copy_and_timestamp_strategy_file,
     create_default_yaml,
     get_image_options_from_yaml,
+    get_mosaic_mode,
     get_options_from_strategy,
     get_selfcal_mode_for_round,
     get_selfcal_options_from_yaml,
@@ -736,6 +737,27 @@ def test_get_selfcal_mode_for_round(strategy):
     strategy["selfcal"][1]["dp3gaincal"] = {}
     with pytest.raises(ValueError, match="several solvers"):
         get_selfcal_mode_for_round(strategy=strategy, round_info=1)
+    with pytest.raises(ValueError, match="not valid"):
+        verify_configuration(input_strategy=strategy)
+
+
+def test_get_mosaic_mode(strategy):
+    """An operation mosaics with patchwork only when its own section names it"""
+    assert get_mosaic_mode(strategy=None, operation="polarisation") == "linmos"
+    # A default strategy lists every mode, patchwork included, under defaults
+    assert "patchwork" in strategy["defaults"]
+    assert get_mosaic_mode(strategy=strategy, operation="polarisation") == "linmos"
+
+    strategy["polarisation"] = {"patchwork": {"holography_scale": "stored"}}
+    assert get_mosaic_mode(strategy=strategy, operation="polarisation") == "patchwork"
+    assert verify_configuration(input_strategy=strategy)
+    patchwork_options = get_options_from_strategy(
+        strategy=strategy, operation="polarisation", mode="patchwork"
+    )
+    assert patchwork_options["holography_scale"] == "stored"
+    assert patchwork_options["kernel"] == "cubic"
+
+    strategy["polarisation"]["patchwork"] = {"not_an_option": 1}
     with pytest.raises(ValueError, match="not valid"):
         verify_configuration(input_strategy=strategy)
 

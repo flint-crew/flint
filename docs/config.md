@@ -53,6 +53,7 @@ A 'mode' refers to a set of options for a given tool. As of version 0.2, the fol
 - `fitscube`: This correspond to `flint.options.FitsCubeOptions`
 - `dp3preflagger`, `dp3aoflagger`, `dp3ddecal`, `dp3gaincal`, `dp3applycal`: These correspond to the options classes in `flint.dp3` (see [DP3](dp3.md))
 - `dp3selfcal`: This corresponds to `flint.selfcal.dp3.DP3SelfCalOptions` (see {ref}`Self-calibration with DP3 <dp3-selfcal>`)
+- `patchwork`: This corresponds to `flint.coadd.patchwork.PatchworkOptions` (see [below](#patchwork))
 
 To see all the available options you can run `flint_{mode} -h` on the command-line
 (`eye-patch mask -h` for `masking`).
@@ -173,6 +174,31 @@ and honours `compress: true` set under
 `defaults.fitscube` (or a `selfcal.<round>.fitscube` override for the final
 round) as normal. If you set `compress: true` for the final round's per-beam
 cube, it is ignored and a warning is logged.
+
+### `patchwork`
+
+Beam images are co-added with yandasoft `linmos` unless an operation names a
+`patchwork` mode, in which case
+[patchwork](https://github.com/flint-crew/patchwork) co-adds them and no
+yandasoft container is needed. As with the self-calibration solvers, only the
+operation's own section decides this: an entry under `defaults` sets option
+values, but does not switch the mosaicker.
+
+Only the `polarisation` operation supports it so far:
+
+```yaml
+polarisation:
+  patchwork: {}
+```
+
+patchwork co-adds every Stokes of a channel together, and rotates Q and U to
+north at each pixel as it does (see
+[polarisation imaging](quickstart/polarisation.md)). The mosaics and cubes keep
+the names `linmos` would give them.
+
+A patchwork mosaic is slightly brighter than a `linmos` one, as it scales each
+holography beam to 1 at its centre. Set `holography_scale: stored` to use the
+beams as `linmos` does when comparing the two.
 
 ### `archive`
 

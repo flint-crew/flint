@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -11,6 +12,7 @@ from flint.imageset import ImageSet
 from flint.ms import (
     MSSummary,
     describe_ms,
+    get_phase_dir_from_ms,
     get_telescope_location_from_ms,
     get_times_from_ms,
 )
@@ -155,6 +157,22 @@ def test_field_summary(ms_example):
     assert field_summary.integration_time == 19.90655994415036
     assert isinstance(field_summary.ms_times, Time)
     assert len(field_summary.ms_times) == 2
+
+
+def test_field_summary_carries_the_boresight(ms_example):
+    """However a field summary is built, it picks up where the dish pointed"""
+    assert create_field_summary(mss=[ms_example]).boresight is None
+
+    # FixMS keeps the pointing by copying the FIELD table to FIELD_OLD
+    shutil.copytree(ms_example / "FIELD", ms_example / "FIELD_OLD")
+    pointing = get_phase_dir_from_ms(ms=ms_example)
+
+    for field_summary in (
+        create_field_summary(mss=[ms_example]),
+        create_field_summary(ms_summaries=[describe_ms(ms=ms_example)]),
+    ):
+        assert field_summary.boresight is not None
+        assert field_summary.boresight.separation(pointing).arcsec < 1e-3
 
 
 def test_field_summary_with_mss_and_summaries(

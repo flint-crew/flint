@@ -16,6 +16,7 @@ from eye_patch.options import MaskingOptions
 from jolly_roger.tractor import TukeyTractorOptions
 from pydantic import ValidationError
 
+from flint.coadd.patchwork import PatchworkOptions
 from flint.dp3 import (
     DP3AOFlaggerOptions,
     DP3ApplyCalOptions,
@@ -76,8 +77,10 @@ MODE_OPTIONS_MAPPING = {
     "dp3gaincal": DP3GainCalOptions,
     "dp3applycal": DP3ApplyCalOptions,
     "dp3selfcal": DP3SelfCalOptions,
+    "patchwork": PatchworkOptions,
 }
 SelfCalMode: TypeAlias = Literal["gaincal", "dp3ddecal", "dp3gaincal"]
+MosaicMode: TypeAlias = Literal["linmos", "patchwork"]
 POLARISATION_MAPPING = {
     "total": "i",
     "linear": "qu",
@@ -477,6 +480,19 @@ def get_selfcal_mode_for_round(
         )
 
     return solvers[0] if solvers else "gaincal"
+
+
+def get_mosaic_mode(strategy: Strategy | Path | None, operation: str) -> MosaicMode:
+    """Which mosaicker an operation uses: patchwork if its section names it, else linmos.
+
+    As with ``get_selfcal_mode_for_round``, the ``defaults`` section does not count.
+    """
+    if isinstance(strategy, Path):
+        strategy = load_strategy_yaml(input_yaml=strategy)
+    if not strategy:
+        return "linmos"
+
+    return "patchwork" if "patchwork" in (strategy.get(operation) or {}) else "linmos"
 
 
 def verify_configuration(input_strategy: Strategy, raise_on_error: bool = True) -> bool:
