@@ -825,6 +825,7 @@ def task_patchwork_stokes_images(
     holofile: Path | None = None,
     field_summary: FieldSummary | None = None,
     suffix_str: str | None = None,
+    trim: bool = False,
 ) -> dict[str, MosaicResult]:
     """Mosaic the beam images of every Stokes together with patchwork, under
     the names linmos would give them. The arguments follow ``task_linmos_images``."""
@@ -844,6 +845,7 @@ def task_patchwork_stokes_images(
         holofile=holofile,
         pol_axis=field_summary.pol_axis if field_summary else None,
         boresight=field_summary.boresight if field_summary else None,
+        trim=trim,
     )
 
 

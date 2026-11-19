@@ -41,7 +41,7 @@ from flint.summary import FieldSummary
 from tests.test_convol import _write_cube_with_beam  # noqa: E402
 from tests.test_cube import _write_channel_image  # noqa: E402
 from tests.test_natural_resolution import _bmaj_arcsec, _channel_groups  # noqa: E402
-from tests.test_patchwork_coadd import BORESIGHT, _beam_images  # noqa: E402
+from tests.test_patchwork_coadd import BORESIGHT, beam_images  # noqa: E402
 
 STEM = "SB12345.BENCH_0000+00.ch0000-0019"
 
@@ -444,7 +444,7 @@ def test_patchwork_cubes_every_stokes_on_one_pixel_grid(tmp_path: Path) -> None:
     every Stokes, with nothing standing in for the mosaicker"""
     stokes_channel_groups = {
         stokes: [
-            _beam_images(
+            beam_images(
                 tmp_path, stokes, channel=channel, frequency_hz=9.4e8 + channel * 1e7
             )
             for channel in range(2)

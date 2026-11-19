@@ -763,6 +763,25 @@ def test_get_mosaic_mode(strategy):
 
 
 @pytest.mark.parametrize(
+    "misplaced",
+    [
+        {"polarisation": {"linear": {"wsclean": {}, "patchwork": {}}}},
+        {"stokesv": {"wsclean": {}, "patchwork": {}}},
+    ],
+)
+def test_a_patchwork_mode_nothing_reads_is_refused(strategy, misplaced):
+    """Named anywhere but directly under polarisation it would validate, and
+    linmos would quietly do the mosaicking"""
+    (operation,) = misplaced
+    strategy[operation] = misplaced[operation]
+    assert not verify_configuration(input_strategy=strategy, raise_on_error=False)
+
+    scope = strategy[operation].get("linear", strategy[operation])
+    del scope["patchwork"]
+    assert verify_configuration(input_strategy=strategy)
+
+
+@pytest.mark.parametrize(
     ("solver", "solve"),
     [("dp3ddecal", {"mode": "leakage"}), ("dp3gaincal", {"caltype": "tec+phase"})],
 )

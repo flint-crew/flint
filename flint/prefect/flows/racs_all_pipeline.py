@@ -16,6 +16,7 @@ from prefect import flow
 from flint.archive import archive_options_from_strategy, check_archive_prerequisites
 from flint.configuration import (
     POLARISATION_MAPPING,
+    get_mosaic_mode,
     get_options_from_strategy,
     load_strategy_yaml,
 )
@@ -124,7 +125,13 @@ def _check_stage_prerequisites(
         }
 
     if not pipeline_options.skip_polarisation:
-        for name in ("wsclean_container", "yandasoft_container"):
+        mosaic_mode = get_mosaic_mode(
+            strategy=pol_field_options.imaging_strategy, operation="polarisation"
+        )
+        pol_containers = ["wsclean_container"]
+        if mosaic_mode == "linmos":
+            pol_containers.append("yandasoft_container")
+        for name in pol_containers:
             if getattr(pol_field_options, name) is None:
                 raise ValueError(f"polarisation stage requires {name}")
             paths[f"polarisation {name}"] = getattr(pol_field_options, name)

@@ -184,7 +184,8 @@ yandasoft container is needed. As with the self-calibration solvers, only the
 operation's own section decides this: an entry under `defaults` sets option
 values, but does not switch the mosaicker.
 
-Only the `polarisation` operation supports it so far:
+Only the `polarisation` operation supports it so far, named directly under it
+as below. A strategy that names it anywhere else is rejected:
 
 ```yaml
 polarisation:

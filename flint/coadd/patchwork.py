@@ -19,6 +19,8 @@ from patchwork.options import (
     PrimaryBeamOptions,
     ResampleOptions,
 )
+from patchwork.polarisation import STOKES_CODES
+from patchwork.tile import weight_groups
 
 from flint.coadd.linmos import compute_pb_rotation_alpha
 from flint.logging import logger
@@ -70,6 +72,7 @@ def patchwork_stokes_images(
     holofile: Path | None = None,
     pol_axis: float | None = None,
     boresight: SkyCoord | None = None,
+    trim: bool = False,
 ) -> dict[str, MosaicResult]:
     """Mosaic the beam images of every Stokes of one channel in a single pass.
 
@@ -84,6 +87,7 @@ def patchwork_stokes_images(
         holofile (Path | None, optional): Holography cube to weight by and remove leakage with. Defaults to None, a Gaussian beam.
         pol_axis (float | None, optional): Third-axis orientation of the field in radians, which rotates the holography. Defaults to None.
         boresight (SkyCoord | None, optional): Where the dish pointed, which Q and U are referenced to north at. Defaults to None.
+        trim (bool, optional): Trim the mosaic to where the beams contribute. That follows the primary beam, and so the frequency, so it is not for channels that are stacked into a cube. Defaults to False.
 
     Returns:
         dict[str, MosaicResult]: The mosaic and weight of each Stokes
@@ -94,9 +98,7 @@ def patchwork_stokes_images(
     )
 
     options = MosaicOptions(
-        # Trimming to the primary beam would shrink the grid as the beam narrows
-        # with frequency, and the channels are stacked into one cube
-        frame=FrameOptions(full_frame=True),
+        frame=FrameOptions(full_frame=not trim),
         primary_beam=PrimaryBeamOptions(
             pb_model="holography" if holofile else "gaussian",
             holography_cube=holofile,
@@ -139,14 +141,18 @@ def patchwork_stokes_images(
                 for key in ("BMAJ", "BMIN", "BPA"):
                     open_fits[0].header[key] = 0.0
 
+    # patchwork orders its mosaics by Stokes code, and says which weight each has.
+    # Q and U share one, so every name is a hard link to the output
+    ordered_stokes = sorted(stokes_base_paths, key=lambda s: STOKES_CODES[s.upper()])
+    groups = weight_groups(tuple(STOKES_CODES[s.upper()] for s in ordered_stokes))
     results: dict[str, MosaicResult] = {}
-    for stokes, base_path in stokes_base_paths.items():
-        linmos_names = create_linmos_names(name_prefix=base_path)
-        # Q and U share one weight, so each name is a hard link to the output
-        weight_group = "qu" if stokes in ("q", "u") else stokes
+    for stokes, scratch_image, group in zip(
+        ordered_stokes, scratch_names.images, groups, strict=True
+    ):
+        linmos_names = create_linmos_names(name_prefix=stokes_base_paths[stokes])
         for scratch_path, final_path in (
-            (Path(f"{scratch}.{stokes}.mosaic.fits"), linmos_names.image_fits),
-            (Path(f"{scratch}.{weight_group}.weight.fits"), linmos_names.weight_fits),
+            (scratch_image, linmos_names.image_fits),
+            (scratch_names.weights[group], linmos_names.weight_fits),
         ):
             final_path.unlink(missing_ok=True)
             final_path.hardlink_to(scratch_path)

@@ -23,7 +23,7 @@ STOKES_CODES = {"i": 1, "q": 2, "u": 3, "v": 4}
 NUMPY = PatchworkOptions(backend="numpy")
 
 
-def _write_beam_image(
+def write_beam_image(
     path: Path,
     centre: SkyCoord,
     stokes: str,
@@ -57,7 +57,7 @@ def _write_beam_image(
     return path
 
 
-def _beam_images(
+def beam_images(
     directory: Path,
     stokes: str,
     channel: int = 0,
@@ -68,7 +68,7 @@ def _beam_images(
     """The images of one Stokes of a 2x2 footprint of beams a degree apart"""
     offsets = ((-0.5, -0.5), (0.5, -0.5), (-0.5, 0.5), (0.5, 0.5))
     return [
-        _write_beam_image(
+        write_beam_image(
             directory
             / f"SB1234.RACS_0000-00.beam{beam:02d}.round3.{stokes}.ch{channel:04d}-{channel + 1:04d}.image.fits",
             centre=BORESIGHT.spherical_offsets_by(east * u.deg, north * u.deg),
@@ -81,18 +81,19 @@ def _beam_images(
     ]
 
 
-def _mosaic(
+def mosaic_footprint(
     directory: Path,
     stokes_values: dict[str, float],
     boresight: SkyCoord | None = BORESIGHT,
     patchwork_options: PatchworkOptions = NUMPY,
+    trim: bool = False,
     **image_kwargs,
 ) -> dict[str, MosaicResult]:
     """Mosaic a footprint of each Stokes, each of the value given"""
     directory.mkdir(exist_ok=True)
     return patchwork_stokes_images(
         stokes_images={
-            stokes: _beam_images(directory, stokes, value=value, **image_kwargs)
+            stokes: beam_images(directory, stokes, value=value, **image_kwargs)
             for stokes, value in stokes_values.items()
         },
         stokes_base_paths={
@@ -100,12 +101,13 @@ def _mosaic(
         },
         patchwork_options=patchwork_options,
         boresight=boresight,
+        trim=trim,
     )
 
 
 def test_every_stokes_is_mosaicked_under_the_linmos_names(tmp_path: Path) -> None:
     """Each Stokes gets a mosaic and a weight where linmos would put them"""
-    mosaics = _mosaic(tmp_path, {"i": 1.0, "q": 0.5, "u": 0.5, "v": 0.1})
+    mosaics = mosaic_footprint(tmp_path, {"i": 1.0, "q": 0.5, "u": 0.5, "v": 0.1})
 
     for stokes, mosaic in mosaics.items():
         assert mosaic.image_fits == tmp_path / f"field.{stokes}.linmos.fits"
@@ -135,7 +137,7 @@ def test_channels_share_one_pixel_grid(tmp_path: Path) -> None:
     channels are stacked into one cube"""
     headers = [
         fits.getheader(
-            _mosaic(tmp_path / name, {"i": 1.0}, frequency_hz=frequency_hz)[
+            mosaic_footprint(tmp_path / name, {"i": 1.0}, frequency_hz=frequency_hz)[
                 "i"
             ].image_fits
         )
@@ -147,19 +149,44 @@ def test_channels_share_one_pixel_grid(tmp_path: Path) -> None:
     assert WCS(headers[0]).celestial.wcs == WCS(headers[1]).celestial.wcs
 
 
+def test_a_trimmed_mosaic_stops_at_the_primary_beam(tmp_path: Path) -> None:
+    """A mosaic that stands alone, as an MFS one does, is not left padded out to
+    the whole of every beam image"""
+    whole, trimmed = (
+        fits.getdata(
+            mosaic_footprint(
+                tmp_path / name, {"i": 1.0}, frequency_hz=1.8e9, trim=trim
+            )["i"].image_fits
+        )
+        for name, trim in (("whole", False), ("trimmed", True))
+    )
+
+    assert trimmed.size < whole.size
+    assert np.sum(np.isfinite(trimmed)) == np.sum(np.isfinite(whole))
+
+
+def test_stokes_q_alone_keeps_a_weight_of_its_own(tmp_path: Path) -> None:
+    """Only Q and U together share a weight, which patchwork names for itself"""
+    mosaic = mosaic_footprint(tmp_path, {"q": 1.0})["q"]
+
+    assert mosaic.weight_fits == tmp_path / "field.q.weight.fits"
+    assert np.any(np.isfinite(fits.getdata(mosaic.weight_fits)))
+    assert not list(tmp_path.glob("*patchwork*"))
+
+
 def test_an_earlier_run_is_replaced(tmp_path: Path) -> None:
     """A task run again by dask meets what its first run left half written"""
     for name in ("field.i.linmos.fits", "field.i.patchwork.i.mosaic.fits"):
         (tmp_path / name).write_bytes(b"half written")
 
-    mosaic = _mosaic(tmp_path, {"i": 1.0})["i"]
+    mosaic = mosaic_footprint(tmp_path, {"i": 1.0})["i"]
 
     assert np.any(np.isfinite(fits.getdata(mosaic.image_fits)))
 
 
 def test_a_blank_channel_stays_blank(tmp_path: Path) -> None:
     """A channel with every beam blanked gives a blank plane, marked as one"""
-    mosaic = _mosaic(tmp_path, {"i": 1.0}, blank_beams=(0, 1, 2, 3))["i"]
+    mosaic = mosaic_footprint(tmp_path, {"i": 1.0}, blank_beams=(0, 1, 2, 3))["i"]
 
     assert np.all(np.isnan(fits.getdata(mosaic.image_fits)))
     assert fits.getheader(mosaic.image_fits)["BMAJ"] == 0.0
@@ -167,7 +194,7 @@ def test_a_blank_channel_stays_blank(tmp_path: Path) -> None:
 
 def test_a_blank_first_beam_does_not_cost_the_mosaic_its_beam(tmp_path: Path) -> None:
     """The restoring beam comes from a beam that has one, not simply the first"""
-    mosaic = _mosaic(tmp_path, {"i": 1.0}, blank_beams=(0,))["i"]
+    mosaic = mosaic_footprint(tmp_path, {"i": 1.0}, blank_beams=(0,))["i"]
 
     assert fits.getheader(mosaic.image_fits)["BMAJ"] == pytest.approx(0.01)
     assert np.any(np.isfinite(fits.getdata(mosaic.image_fits)))
@@ -176,13 +203,13 @@ def test_a_blank_first_beam_does_not_cost_the_mosaic_its_beam(tmp_path: Path) ->
 def test_q_and_u_need_the_boresight(tmp_path: Path) -> None:
     """Without the boresight nothing says what Q and U are measured from"""
     with pytest.raises(ValueError, match="Q and U"):
-        _mosaic(tmp_path, {"q": 1.0, "u": 0.0}, boresight=None)
+        mosaic_footprint(tmp_path, {"q": 1.0, "u": 0.0}, boresight=None)
 
 
 def test_q_and_u_are_rotated_to_north_at_each_pixel(tmp_path: Path) -> None:
     """Q alone at the boresight's north is part U at the north of a pixel off to
     one side, and the other way about on the other side"""
-    mosaics = _mosaic(tmp_path, {"q": 1.0, "u": 0.0})
+    mosaics = mosaic_footprint(tmp_path, {"q": 1.0, "u": 0.0})
 
     u_over_q = (
         fits.getdata(mosaics["u"].image_fits).squeeze()
@@ -201,7 +228,7 @@ def test_the_default_backend_mosaics(tmp_path: Path) -> None:
     """The backend flint uses unless a strategy says otherwise"""
     images = [
         fits.getdata(
-            _mosaic(tmp_path / name, {"i": 1.0}, patchwork_options=options)[
+            mosaic_footprint(tmp_path / name, {"i": 1.0}, patchwork_options=options)[
                 "i"
             ].image_fits
         )

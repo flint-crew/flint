@@ -61,7 +61,10 @@ from flint.prefect.common.imaging import (
     task_wsclean_imager,
     total_beam_from_channel_groups,
 )
-from flint.prefect.common.ms import task_correct_ionosphere
+from flint.prefect.common.ms import (
+    task_correct_ionosphere,
+    task_get_boresight_from_ms,
+)
 from flint.prefect.common.utils import (
     raise_on_failed_stage,
     task_create_field_summary,
@@ -286,6 +289,26 @@ def process_science_fields_pol(
         holography_path=pol_field_options.holofile,
     )
 
+    patchwork_options: PatchworkOptions | None = None
+    if get_mosaic_mode(strategy=strategy, operation="polarisation") == "patchwork":
+        patchwork_options = PatchworkOptions(
+            **get_options_from_strategy(
+                strategy=strategy, operation="polarisation", mode="patchwork"
+            )
+        )
+        # Q and U cannot be rotated without the boresight, which the mosaics would
+        # otherwise only find out once every image has been made
+        if (
+            "linear" in _polarisations_to_image(strategy)
+            and task_get_boresight_from_ms.submit(ms=science_mss[0]).result() is None
+        ):
+            raise MSError(
+                "patchwork needs the boresight to mosaic Q and U, but the "
+                "measurement sets have no FIELD_OLD table, which FixMS leaves"
+            )
+    else:
+        assert pol_field_options.yandasoft_container is not None
+
     dump_field_options_to_yaml(
         output_path=add_timestamp_to_path(
             input_path=flint_ms_directory / "pol_field_options.yaml"
@@ -475,16 +498,6 @@ def process_science_fields_pol(
     i_channel_groups = stokes_channel_groups.get("i")
     force_remove_leakage: bool | None = None if i_channel_groups else False
 
-    patchwork_options: PatchworkOptions | None = None
-    if get_mosaic_mode(strategy=strategy, operation="polarisation") == "patchwork":
-        patchwork_options = PatchworkOptions(
-            **get_options_from_strategy(
-                strategy=strategy, operation="polarisation", mode="patchwork"
-            )
-        )
-    else:
-        assert pol_field_options.yandasoft_container is not None
-
     fitscube_options = FitsCubeOptions().with_options(
         **get_options_from_strategy(
             strategy=strategy,
@@ -601,6 +614,8 @@ def process_science_fields_pol(
                     holofile=pol_field_options.holofile,
                     field_summary=field_summary,
                     suffix_str=f"{POL_NAME_SUFFIX}.{product_type}",
+                    # An MFS mosaic stands alone, so is trimmed as linmos trims it
+                    trim=True,
                 )
                 for stokes, beam_images in stokes_images.items():
                     mfs_image_path = task_getattr.submit(
