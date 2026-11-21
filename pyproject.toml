@@ -49,12 +49,12 @@ dependencies = [
     "dask",
     "dask-jobqueue",
     "bokeh>=3.1", # dask needs it to render performance reports
-    "RACS-tools>=4.4.0,<4.5", # 4.5 refuses a common beam that float32 round-off puts a hair inside a plane's beam
+    "RACS-tools>=4.6.0", # accepts float32 round-off in a beam that a target must contain
     "radio-beam>=0.3.4",
     "reproject>=0.10",
     "pandas",
     "ConfigArgParse>=1.7",
-    "fitscube[pgzip]>=2.11",
+    "fitscube[pgzip]>=2.12.1", # extracted planes carry the beam table's beam exactly
     "astroquery>=0.4.8.dev0",
     "crystalball>=0.4.3",
     "jolly-roger>=0.10.1",
