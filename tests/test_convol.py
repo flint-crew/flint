@@ -20,6 +20,7 @@ from flint.convol import (
     _beams_from_cubes,
     blank_images,
     check_if_cube_fits,
+    common_beam_from_beam_shapes,
     common_beam_from_cubes,
     common_beam_shape_from_cubes,
     convolve_images_or_blank,
@@ -499,6 +500,17 @@ def test_common_beam_shape_from_cubes(tmp_path: Path) -> None:
     blank = _write_cube_with_beam(tmp_path / "blank.fits", [0.0, tiny, 0.0])
     with pytest.raises(ValueError, match="No usable restoring beam"):
         common_beam_shape_from_cubes(cube_paths=[blank])
+
+
+def test_common_beam_from_beam_shapes_skips_missing_beams() -> None:
+    """A channel with no beam of its own, as a fully flagged one has, does not
+    constrain the common beam, and nothing but such channels gives no beam"""
+    no_beam = BeamShape(bmaj_arcsec=np.nan, bmin_arcsec=np.nan, bpa_deg=np.nan)
+    beam_shapes = [BeamShape(10.0, 8.0, 0.0), no_beam, BeamShape(12.0, 9.0, 30.0)]
+
+    assert common_beam_from_beam_shapes(beam_shapes).bmaj_arcsec >= 12.0
+    for nothing_usable in ([no_beam], []):
+        assert not np.isfinite(common_beam_from_beam_shapes(nothing_usable)).any()
 
 
 def test_blank_images(tmp_path: Path) -> None:

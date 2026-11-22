@@ -33,7 +33,8 @@ from flint.prefect.common.imaging import (
     convolve_channel_groups_to_natural_resolution,
     linmos_channel_groups_to_cubes,
     linmos_stokes_channel_groups_to_cubes,
-    total_beam_from_channel_groups,
+    task_total_beam_from_channel_beams,
+    total_beam_from_channel_beams,
 )
 from flint.summary import FieldSummary
 
@@ -46,23 +47,6 @@ from tests.test_patchwork_coadd import BORESIGHT, beam_images  # noqa: E402
 STEM = "SB12345.BENCH_0000+00.ch0000-0019"
 
 
-def _total_beam(
-    stokes_channel_groups: dict[str, list[list[Path]]],
-    cutoff: float | None = None,
-    fixed_beam_shape: tuple[float, float, float] | None = None,
-) -> BeamShape:
-    @flow
-    def _solve() -> BeamShape:
-        return total_beam_from_channel_groups(
-            stokes_channel_groups=stokes_channel_groups,
-            cutoff=cutoff,
-            fixed_beam_shape=fixed_beam_shape,
-        ).result()
-
-    with prefect_test_harness(), disable_run_logger():
-        return _solve()
-
-
 def _naturally_then_totally(
     stokes_channel_groups: dict[str, list[list[Path]]],
     cutoff: float | None = None,
@@ -72,11 +56,11 @@ def _naturally_then_totally(
 
     @flow
     def _run() -> tuple[dict[str, list[list[Path]]], BeamShape]:
-        natural = convolve_channel_groups_to_natural_resolution(
+        natural, channel_beam_shapes = convolve_channel_groups_to_natural_resolution(
             stokes_channel_groups=stokes_channel_groups, cutoff=cutoff
         )
-        return natural, total_beam_from_channel_groups(
-            stokes_channel_groups=natural, cutoff=cutoff
+        return natural, task_total_beam_from_channel_beams.submit(
+            channel_beam_shapes=channel_beam_shapes, cutoff=cutoff
         ).result()
 
     with prefect_test_harness(), disable_run_logger():
@@ -101,20 +85,58 @@ def _cube_from_planes(
     )
 
 
-def test_total_beam_covers_the_coarsest_channel(tmp_path: Path) -> None:
+def _channel_beams(*bmaj_arcsec: float) -> list[BeamShape]:
+    return [BeamShape(bmaj, bmaj * 0.8, 0.0) for bmaj in bmaj_arcsec]
+
+
+def test_total_beam_covers_the_coarsest_channel() -> None:
     """One beam for the whole band has to cover every channel in it, or a channel
     it does not cover cannot be deconvolved to reach it"""
-    groups = _channel_groups(tmp_path, {"q": [[10.0], [20.0], [15.0]]})
-
-    beam = _total_beam(groups)
+    beam = total_beam_from_channel_beams(_channel_beams(10.0, 20.0, 15.0))
 
     assert beam.bmaj_arcsec >= 20.0
 
 
+def test_total_beam_leaves_out_channels_beyond_the_cutoff() -> None:
+    """A coarse channel is blanked when its plane is convolved, so it must not
+    drag the total beam out to it, and a band of them has no total beam at all"""
+    beam = total_beam_from_channel_beams(_channel_beams(10.0, 40.0), cutoff=20.0)
+    assert 10.0 <= beam.bmaj_arcsec < 40.0
+
+    no_beam = total_beam_from_channel_beams(_channel_beams(40.0, 50.0), cutoff=20.0)
+    assert not np.isfinite(no_beam.bmaj_arcsec)
+
+
+def test_total_beam_is_the_fixed_beam_when_one_is_given() -> None:
+    """A fixed beam is used as it is, not rounded up as a solved one is"""
+    beam = total_beam_from_channel_beams(
+        _channel_beams(10.0, 20.0), fixed_beam_shape=(25.05, 24.0, 3.0)
+    )
+
+    assert beam == BeamShape(25.05, 24.0, 3.0)
+
+
+def test_total_beam_covers_a_channel_whose_first_image_is_blanked(
+    tmp_path: Path,
+) -> None:
+    """An image beyond the cutoff is blanked and carries no beam. When it is the
+    first image of its channel, the rest of that channel still has to be able to
+    reach the total beam."""
+    groups = _channel_groups(tmp_path, {"q": [[10.0, 10.5], [40.0, 18.0]]})
+
+    natural, beam = _naturally_then_totally(groups, cutoff=20.0)
+
+    blanked, kept = natural["q"][1]
+    assert _bmaj_arcsec(blanked) == 0.0
+    assert beam.bmaj_arcsec >= _bmaj_arcsec(kept) >= 18.0
+    convolve_plane_to_beam(plane=kept, beam_shape=beam, cutoff=20.0)
+
+
 def test_total_beam_covers_every_stokes(tmp_path: Path) -> None:
-    """The beam is solved over a single Stokes, which is only sound because the
-    natural pass has already given every Stokes of a channel one resolution. Run
-    in that order, the total beam still has to cover the coarsest Stokes."""
+    """The beam is solved over the beam of each channel, which is only sound
+    because the natural pass has already given every Stokes of a channel one
+    resolution. Run in that order, the total beam still has to cover the coarsest
+    Stokes."""
     groups = _channel_groups(tmp_path, {"q": [[10.0], [12.0]], "u": [[10.0], [22.0]]})
 
     natural, beam = _naturally_then_totally(groups)

@@ -217,27 +217,11 @@ def cubes_share_common_beam(
     return all(beam == usable_beams[0] for beam in usable_beams)
 
 
-def common_beam_from_cubes(
-    cube_paths: Collection[Path], cutoff: float | None = None
-) -> Beam | None:
-    """The smallest beam that encompasses every usable channel of every cube.
-
-    Args:
-        cube_paths (Collection[Path]): The FITS cubes to inspect
-        cutoff (float | None, optional): Channels coarser than this, in arcsec, are left out of the common beam rather than dragging every channel out to their resolution. Defaults to no cutoff.
-
-    Returns:
-        Beam | None: The beam every usable channel fits inside, or None when no channel of any cube carries a real restoring beam
-    """
-    beams = _cube_beams(cube_paths=cube_paths)
-    if beams is None:
-        return None
-
+def common_beam_from_beams(beams: Beams, cutoff: float | None = None) -> Beam | None:
+    """The smallest beam every usable beam fits inside, or None when none is usable.
+    See ``usable_beam_mask``."""
     usable = usable_beam_mask(beams=beams, cutoff=cutoff)
     if not usable.any():
-        logger.warning(
-            f"No usable restoring beam among {list(cube_paths)=}, so no common beam"
-        )
         return None
 
     logger.info(f"Deriving a common beam from {usable.sum()} of {len(usable)} beams")
@@ -263,6 +247,45 @@ def common_beam_from_cubes(
         minor=rounded.minor_arcsec * u.arcsecond,
         pa=rounded.pa_deg * u.degree,
     )
+
+
+def common_beam_from_beam_shapes(
+    beam_shapes: Collection[BeamShape], cutoff: float | None = None
+) -> BeamShape:
+    """The smallest beam every usable beam fits inside, or NaNs when none is usable."""
+    major, minor, pa = np.array(beam_shapes, dtype=float).reshape(-1, 3).T
+    common_beam = common_beam_from_beams(
+        beams=Beams(major=major * u.arcsec, minor=minor * u.arcsec, pa=pa * u.deg),
+        cutoff=cutoff,
+    )
+    if common_beam is None:
+        return BeamShape(bmaj_arcsec=np.nan, bmin_arcsec=np.nan, bpa_deg=np.nan)
+
+    return BeamShape.from_radio_beam(radio_beam=common_beam)
+
+
+def common_beam_from_cubes(
+    cube_paths: Collection[Path], cutoff: float | None = None
+) -> Beam | None:
+    """The smallest beam that encompasses every usable channel of every cube.
+
+    Args:
+        cube_paths (Collection[Path]): The FITS cubes to inspect
+        cutoff (float | None, optional): Channels coarser than this, in arcsec, are left out of the common beam rather than dragging every channel out to their resolution. Defaults to no cutoff.
+
+    Returns:
+        Beam | None: The beam every usable channel fits inside, or None when no channel of any cube carries a real restoring beam
+    """
+    beams = _cube_beams(cube_paths=cube_paths)
+    if beams is None:
+        return None
+
+    common_beam = common_beam_from_beams(beams=beams, cutoff=cutoff)
+    if common_beam is None:
+        logger.warning(
+            f"No usable restoring beam among {list(cube_paths)=}, so no common beam"
+        )
+    return common_beam
 
 
 def common_beam_shape_from_cubes(

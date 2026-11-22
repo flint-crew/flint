@@ -78,11 +78,12 @@ def _convolved_naturally(
 ) -> dict[str, list[list[Path]]]:
     @flow
     def _convolve() -> dict[str, list[list[Path]]]:
-        return convolve_channel_groups_to_natural_resolution(
+        convolved, _ = convolve_channel_groups_to_natural_resolution(
             stokes_channel_groups=stokes_channel_groups,
             cutoff=cutoff,
             fixed_beam_shape=fixed_beam_shape,
         )
+        return convolved
 
     with prefect_test_harness(), disable_run_logger():
         return _convolve()

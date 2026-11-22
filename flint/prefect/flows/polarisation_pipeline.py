@@ -57,9 +57,9 @@ from flint.prefect.common.imaging import (
     task_preprocess_askap_ms,
     task_remove_files_folders,
     task_split_and_get_image_set,
+    task_total_beam_from_channel_beams,
     task_transpose_and_sort_channel_images,
     task_wsclean_imager,
-    total_beam_from_channel_groups,
 )
 from flint.prefect.common.ms import (
     task_correct_ionosphere,
@@ -465,10 +465,12 @@ def process_science_fields_pol(
         ).result()
         for stokes, beam_channel_images in stokes_beam_channel_images.items()
     }
-    stokes_channel_groups = convolve_channel_groups_to_natural_resolution(
-        stokes_channel_groups=raw_stokes_channel_groups,
-        cutoff=pol_field_options.cube_beam_cutoff,
-        fixed_beam_shape=pol_field_options.fixed_beam_shape,
+    stokes_channel_groups, channel_beam_shapes = (
+        convolve_channel_groups_to_natural_resolution(
+            stokes_channel_groups=raw_stokes_channel_groups,
+            cutoff=pol_field_options.cube_beam_cutoff,
+            fixed_beam_shape=pol_field_options.fixed_beam_shape,
+        )
     )
     # Superseded by the convolved images, which are all that is read from here on
     remove_raw_result = task_remove_files_folders.submit(
@@ -484,8 +486,8 @@ def process_science_fields_pol(
     # resolution. Every channel already shares a beam across Stokes, so a beam
     # solved per Stokes here would only find the same answer three times.
     total_beam_shape = (
-        total_beam_from_channel_groups(
-            stokes_channel_groups=stokes_channel_groups,
+        task_total_beam_from_channel_beams.submit(
+            channel_beam_shapes=channel_beam_shapes,
             cutoff=pol_field_options.cube_beam_cutoff,
             fixed_beam_shape=pol_field_options.fixed_beam_shape,
         )

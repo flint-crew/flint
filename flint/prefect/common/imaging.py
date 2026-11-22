@@ -44,6 +44,7 @@ from flint.coadd.patchwork import (
 )
 from flint.convol import (
     BeamShape,
+    common_beam_from_beam_shapes,
     convolve_images,
     convolve_images_or_blank,
     convolve_plane_to_beam,
@@ -1412,7 +1413,7 @@ def linmos_channel_groups_to_cubes(
         suffix_str (str | None, optional): Additional suffix added to the linmos and cube names. Defaults to None.
         holofile (Path | None, optional): Holography file overriding the one in ``linmos_options``. Defaults to None.
         fft_bane_options (FFTBANEOptions | None, optional): When given, each co-added channel also gets a BANE background and RMS map, stacked into their own cubes. Defaults to None, i.e. no BANE.
-        total_beam_shape (PrefectFuture[BeamShape] | None, optional): When given, each co-added plane is also convolved to this one beam and stacked into a second set of cubes. See ``total_beam_from_channel_groups``. Defaults to None, i.e. the natural-resolution cubes alone.
+        total_beam_shape (PrefectFuture[BeamShape] | None, optional): When given, each co-added plane is also convolved to this one beam and stacked into a second set of cubes. See ``total_beam_from_channel_beams``. Defaults to None, i.e. the natural-resolution cubes alone.
         beam_cutoff (float | None, optional): Planes coarser than this, in arcsec, are blanked rather than convolved to ``total_beam_shape``. Defaults to no cutoff.
 
     Returns:
@@ -1605,7 +1606,7 @@ def convolve_channel_groups_to_natural_resolution(
     stokes_channel_groups: dict[str, list[list[Path]]],
     cutoff: float | None = None,
     fixed_beam_shape: Sequence[float] | None = None,
-) -> dict[str, list[list[Path]]]:
+) -> tuple[dict[str, list[list[Path]]], list[BeamShape]]:
     """Convolve per-channel beam images to one common beam per channel, which is
     the 'natural' resolution mode of racs_tools: resolution follows frequency
     rather than every channel being dragged out to the coarsest in the band.
@@ -1623,7 +1624,7 @@ def convolve_channel_groups_to_natural_resolution(
         fixed_beam_shape (Sequence[float] | None, optional): Convolve every channel to this (arcsec, arcsec, deg) rather than a solved beam. Defaults to solving each channel.
 
     Returns:
-        dict[str, list[list[Path]]]: The convolved beam images of each channel, for each Stokes
+        tuple[dict[str, list[list[Path]]], list[BeamShape]]: The convolved beam images of each channel, for each Stokes, and the beam each channel was convolved to
     """
     # Channel N has to be the same frequency in every Stokes, or a beam shared
     # across them describes nothing. Differing channelisations already misalign
@@ -1671,43 +1672,42 @@ def convolve_channel_groups_to_natural_resolution(
         for stokes, channel_groups in stokes_channel_groups.items()
     }
 
-    return {
+    convolved_images = {
         stokes: [future.result() for future in futures]
         for stokes, futures in convolved_groups.items()
     }
+    return convolved_images, beam_shapes.result()
 
 
-def total_beam_from_channel_groups(
-    stokes_channel_groups: dict[str, list[list[Path]]],
+def total_beam_from_channel_beams(
+    channel_beam_shapes: Sequence[BeamShape],
     cutoff: float | None = None,
     fixed_beam_shape: Sequence[float] | None = None,
-) -> PrefectFuture[BeamShape]:
+) -> BeamShape:
     """Solve the one beam that covers every channel of every Stokes, which is the
     'total' resolution mode of racs_tools and what RM-synthesis needs of its
     inputs.
 
-    Solved over a single image per channel.
-    ``convolve_channel_groups_to_natural_resolution`` has already brought every
-    beam and every Stokes of a channel to one resolution, so the rest of a
-    channel's images carry nothing the first does not.
+    Solved over the beam each channel was convolved to rather than over its
+    images. An image blanked for being beyond the cutoff carries no beam, so one
+    read in place of its channel would leave that channel out of the solve.
 
     Args:
-        stokes_channel_groups (dict[str, list[list[Path]]]): For each Stokes, the beam images of each channel, already at their natural resolution
-        cutoff (float | None, optional): Images whose major axis exceeds this, in arcsec, are left out of the solve rather than dragging the beam out to them. Defaults to no cutoff.
+        channel_beam_shapes (Sequence[BeamShape]): The beam of each channel, as ``convolve_channel_groups_to_natural_resolution`` returns them
+        cutoff (float | None, optional): Channels whose major axis exceeds this, in arcsec, are left out of the solve rather than dragging the beam out to them. Defaults to no cutoff.
         fixed_beam_shape (Sequence[float] | None, optional): Use this (arcsec, arcsec, deg) rather than solving one. Defaults to solving.
 
     Returns:
-        PrefectFuture[BeamShape]: The beam every channel is brought to
+        BeamShape: The beam every channel is brought to
     """
-    channel_groups = next(iter(stokes_channel_groups.values()))
-    channel_images = [beam_images[0] for beam_images in channel_groups]
-    logger.info(f"Solving a total common beam over {len(channel_images)} channels")
+    if fixed_beam_shape:
+        return BeamShape(*fixed_beam_shape)
 
-    return task_get_common_beam_from_images.submit(
-        image_paths=channel_images,
-        cutoff=cutoff,
-        fixed_beam_shape=fixed_beam_shape,
-    )
+    logger.info(f"Solving a total common beam over {len(channel_beam_shapes)} channels")
+    return common_beam_from_beam_shapes(beam_shapes=channel_beam_shapes, cutoff=cutoff)
+
+
+task_total_beam_from_channel_beams = task(total_beam_from_channel_beams)
 
 
 def convolve_mfs_beam_images_to_common_resolution(
