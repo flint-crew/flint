@@ -6,7 +6,7 @@ from pathlib import Path
 
 from astropy.io import fits
 from astropy.wcs import WCS
-from fitscube.combine_fits import compress_cube
+from fitscube_rs.compat import compress_cube
 
 from flint.convol import BeamShape
 from flint.options import SpiceOptions

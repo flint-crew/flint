@@ -11,7 +11,7 @@ import pytest
 from astropy.io import fits
 from astropy.table import Table
 from astropy.wcs import WCS
-from fitscube.extract import ExtractOptions, extract_plane_from_cube
+from fitscube_rs.compat import ExtractOptions, extract_plane_from_cube
 from radio_beam import Beam, Beams
 from radio_beam.utils import BeamError
 

@@ -17,7 +17,7 @@ import dask
 import numpy as np
 from capn_crunch import add_options_to_parser, create_options_from_parser
 from configargparse import ArgumentParser
-from fitscube.combine_fits import combine_fits, compress_cube
+from fitscube_rs.compat import combine_fits, compress_cube
 from prefect import flow, tags, unmapped
 from prefect.futures import PrefectFuture
 
