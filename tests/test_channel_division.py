@@ -13,8 +13,7 @@ from collections.abc import Sequence
 import numpy as np
 import pytest
 from astropy import units as u
-from fitscube.combine_fits import even_spacing
-from fitscube.exceptions import IrregularSpacingException
+from fitscube_rs.compat import IrregularSpacingException, even_spacing
 
 from flint.exceptions import ChannelDivisionError
 from flint.imager import channel_division

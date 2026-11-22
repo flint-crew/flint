@@ -11,8 +11,7 @@ import astropy.units as u
 import numpy as np
 import pytest
 from astropy.io import fits
-from fitscube.bounding_box import get_common_bounding_box
-from fitscube.extract import find_target_axis
+from fitscube_rs.compat import find_target_axis, get_common_bounding_box
 from radio_beam import Beams
 
 from flint.convol import BeamShape

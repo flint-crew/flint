@@ -29,8 +29,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 from astropy import units as u
 from capn_crunch import BaseOptions
-from fitscube.combine_fits import even_spacing
-from fitscube.exceptions import IrregularSpacingException
+from fitscube_rs.compat import IrregularSpacingException, even_spacing
 
 from flint.exceptions import ChannelDivisionError
 from flint.logging import logger

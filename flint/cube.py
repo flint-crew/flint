@@ -9,11 +9,13 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 from astropy.io import fits
-from fitscube.bounding_box import BoundingBox
-from fitscube.combine_fits import combine_fits, compress_cube
-from fitscube.exceptions import ShapeMismatchException, TargetAxisMissingException
-from fitscube.extract import (
+from fitscube_rs.compat import (
+    BoundingBox,
     ExtractPlanesOptions,
+    ShapeMismatchException,
+    TargetAxisMissingException,
+    combine_fits,
+    compress_cube,
     count_cube_planes,
     extract_planes_from_cube,
     find_target_axis,

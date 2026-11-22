@@ -16,7 +16,7 @@ from eye_patch.masking import create_mask_from_fits
 from eye_patch.naming import FITSMaskNames
 from eye_patch.options import MaskingOptions
 from eye_patch.scales import flatten_scale_mask_fits
-from fitscube.bounding_box import (
+from fitscube_rs.compat import (
     BoundingBox,
     extract_common_bounding_box,
     get_common_bounding_box,
