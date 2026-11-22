@@ -146,11 +146,12 @@ dependencies = [
     { name = "bokeh", version = "3.10.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "capn-crunch" },
     { name = "configargparse" },
+    { name = "convolve-rs" },
     { name = "crystalball" },
     { name = "dask" },
     { name = "dask-jobqueue" },
     { name = "eye-patch" },
-    { name = "fitscube", extra = ["pgzip"] },
+    { name = "fitscube-rs", extra = ["compat"] },
     { name = "jolly-roger" },
     { name = "matplotlib" },
     { name = "numba" },
@@ -160,7 +161,6 @@ dependencies = [
     { name = "prefect-dask" },
     { name = "pydantic" },
     { name = "pyyaml" },
-    { name = "racs-tools" },
     { name = "radio-beam" },
     { name = "reproject" },
     { name = "rocket-fft" },
@@ -171,6 +171,7 @@ dependencies = [
 [package.optional-dependencies]
 all = [
     { name = "dp3" },
+    { name = "fitscube", extra = ["pgzip"] },
     { name = "fixms" },
     { name = "furo" },
     { name = "h5py" },
@@ -183,6 +184,7 @@ all = [
     { name = "pytest-rerunfailures" },
     { name = "pytest-xdist" },
     { name = "python-casacore" },
+    { name = "racs-tools" },
     { name = "rm-lite" },
     { name = "ruff" },
     { name = "sphinx", version = "9.0.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
@@ -199,6 +201,7 @@ casa = [
     { name = "python-casacore" },
 ]
 dev = [
+    { name = "fitscube", extra = ["pgzip"] },
     { name = "furo" },
     { name = "isort" },
     { name = "mypy" },
@@ -208,6 +211,7 @@ dev = [
     { name = "pytest-cov" },
     { name = "pytest-rerunfailures" },
     { name = "pytest-xdist" },
+    { name = "racs-tools" },
     { name = "ruff" },
     { name = "sphinx", version = "9.0.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "sphinx", version = "9.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
@@ -239,6 +243,7 @@ requires-dist = [
     { name = "bokeh", specifier = ">=3.1" },
     { name = "capn-crunch", specifier = ">=1.2.0" },
     { name = "configargparse", specifier = ">=1.7" },
+    { name = "convolve-rs", specifier = ">=2.4.0" },
     { name = "crystalball", specifier = ">=0.4.3" },
     { name = "dask" },
     { name = "dask-jobqueue" },
@@ -246,7 +251,9 @@ requires-dist = [
     { name = "dp3", marker = "extra == 'dp3'", specifier = ">=6.6.0" },
     { name = "dp3", marker = "extra == 'iono'", specifier = ">=6.6.0" },
     { name = "eye-patch", specifier = ">=2.0.1,<3" },
-    { name = "fitscube", extras = ["pgzip"], specifier = ">=2.12.1" },
+    { name = "fitscube", extras = ["pgzip"], marker = "extra == 'all'", specifier = ">=2.12.1" },
+    { name = "fitscube", extras = ["pgzip"], marker = "extra == 'dev'", specifier = ">=2.12.1" },
+    { name = "fitscube-rs", extras = ["compat"], specifier = ">=2.4.0" },
     { name = "fixms", marker = "extra == 'all'", specifier = ">=0.4.0" },
     { name = "fixms", marker = "extra == 'casa'", specifier = ">=0.4.0" },
     { name = "fixms", marker = "extra == 'iono'", specifier = ">=0.4.0" },
@@ -283,7 +290,8 @@ requires-dist = [
     { name = "python-casacore", marker = "extra == 'casa'", specifier = ">=3.6.0" },
     { name = "python-casacore", marker = "extra == 'iono'", specifier = ">=3.6.0" },
     { name = "pyyaml" },
-    { name = "racs-tools", specifier = ">=4.6.0" },
+    { name = "racs-tools", marker = "extra == 'all'", specifier = ">=4.6.1" },
+    { name = "racs-tools", marker = "extra == 'dev'", specifier = ">=4.6.1" },
     { name = "radio-beam", specifier = ">=0.3.4" },
     { name = "reproject", specifier = ">=0.10" },
     { name = "rm-lite", marker = "extra == 'all'", specifier = "==2026.9.14" },
@@ -875,6 +883,20 @@ wheels = [
 ]
 
 [[package]]
+name = "convolve-rs"
+version = "2.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/10/04/b115be5917662752dc3fa0ac614a0bc042563f46e05f2e9ea35b477a5740/convolve_rs-2.4.0.tar.gz", hash = "sha256:fc7ab56e22ed0e82bcbad41011e34e1daf40611f10009bf42ffb0c441eea9987", size = 587310, upload-time = "2026-11-22T03:00:15.223Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/64/01/ac9ecdfc45f17067054974e0d0cb9dc08f0fba40bcce3384af59a306816f/convolve_rs-2.4.0-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:78b9fa113657449794fb03d83cf0355c55992ab82938d76b54a3a2a3dd6bfa2a", size = 1557740, upload-time = "2026-11-22T03:00:10.008Z" },
+    { url = "https://files.pythonhosted.org/packages/b5/71/4067ef891eecd076c8ee07d1f25d6d24e383c0cc60c414e9519f9a10b27d/convolve_rs-2.4.0-cp310-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:f9d07d121b1fed1acd1ff4b646bb03c8fa947cb7a39e550577c73934767fdf4e", size = 1716955, upload-time = "2026-11-22T03:00:12.051Z" },
+    { url = "https://files.pythonhosted.org/packages/14/04/0dec290ac6e57aecd547f6ed161178f196b659e830f412ca6b90c4f07a6b/convolve_rs-2.4.0-cp310-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:32cb4671c18e46dc5d0a23f971dddd8fc1844e1522b75799bc7fe24035538413", size = 2001514, upload-time = "2026-11-22T03:00:13.802Z" },
+]
+
+[[package]]
 name = "coolname"
 version = "2.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1345,6 +1367,25 @@ wheels = [
 [package.optional-dependencies]
 pgzip = [
     { name = "pgzip" },
+]
+
+[[package]]
+name = "fitscube-rs"
+version = "2.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/0b/a4/045c1e88a085e8e136fc71b765fd33833e8ca8db585cbabf3f0d0d8cc16a/fitscube_rs-2.4.0.tar.gz", hash = "sha256:285036cfcd99c28c6afcb63634486f6104ec9fbc78ccb7e8885b3f8f7bbefa1d", size = 253135, upload-time = "2026-11-22T03:00:08.905Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/41/64/3357e4f9e584336625e066cca8595301b4f25846f5271caec2bb37b42b8f/fitscube_rs-2.4.0-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:9b0d7a5a64e5365c8bf915ead9bcf6c69f65d495e62003087bd9843afb06464c", size = 1328644, upload-time = "2026-11-22T03:00:04.086Z" },
+    { url = "https://files.pythonhosted.org/packages/1a/92/9f5e69c1353a803609ff5673530c20e244165a77277512e581175f917404/fitscube_rs-2.4.0-cp310-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:df2728ccaa4cc6804a662528039edd909bbe701911fcd29bce296508d8b91a93", size = 1429553, upload-time = "2026-11-22T03:00:05.846Z" },
+    { url = "https://files.pythonhosted.org/packages/e3/74/20292d68421664062c2a42f12a340842b0642dfe0a1563732c8ff7aab1c1/fitscube_rs-2.4.0-cp310-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:620904b35d41deb0b0493ec4fdeb84418ac544047489fe4846f3ef5e263074fc", size = 1509455, upload-time = "2026-11-22T03:00:07.363Z" },
+]
+
+[package.optional-dependencies]
+compat = [
+    { name = "astropy" },
 ]
 
 [[package]]
@@ -3376,7 +3417,7 @@ wheels = [
 
 [[package]]
 name = "racs-tools"
-version = "4.6.0"
+version = "4.6.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "astropy" },
@@ -3387,9 +3428,9 @@ dependencies = [
     { name = "spectral-cube" },
     { name = "tqdm" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/54/9f/8fc878f5bb172de8d17c7d4f60319f6c1515f27764319511960f0a1e4360/racs_tools-4.6.0.tar.gz", hash = "sha256:f741926431ac1117f30c5a9cc80093fda0386f077ac5dab0261909c92dd034ca", size = 35887, upload-time = "2026-11-21T11:37:31.975Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ae/0e/cc7969c6e3edc622354655edf03904e6148fcbdcabb7db7fa9654015e52c/racs_tools-4.6.1.tar.gz", hash = "sha256:0a159180f85658109a1c1bdd6d2986b2e118cdf88c28aa02317b4c6f2c9e5265", size = 36189, upload-time = "2026-11-21T15:11:19.632Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a8/1a/bbdc5fb008e72e33362a4324f1307fbdf5999a71ab7cd7cb3fd997fe6508/racs_tools-4.6.0-py3-none-any.whl", hash = "sha256:7e4dd398da9852e74e2c58f365ba5c234e3bfcc9d67377fc9b164b56b19481a4", size = 38044, upload-time = "2026-11-21T11:37:32.838Z" },
+    { url = "https://files.pythonhosted.org/packages/a3/47/7d020bd2242730b69d8e034de8ae684c48587142e01b7bbb17e5b4bf0b2a/racs_tools-4.6.1-py3-none-any.whl", hash = "sha256:1d8f41fa48d313475bb12a3baa5830f605d1906b537f41a4ee087794aac4a350", size = 38355, upload-time = "2026-11-21T15:11:20.263Z" },
 ]
 
 [[package]]

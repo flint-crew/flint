@@ -49,12 +49,12 @@ dependencies = [
     "dask",
     "dask-jobqueue",
     "bokeh>=3.1", # dask needs it to render performance reports
-    "convolve-rs>=2.3.1", # file-level smoothing API, zero beam on blanked planes
+    "convolve-rs>=2.4.0", # file-level smoothing API, zero beam on blanked planes
     "radio-beam>=0.3.4",
     "reproject>=0.10",
     "pandas",
     "ConfigArgParse>=1.7",
-    "fitscube-rs[compat]>=2.3.1", # fitscube's Python API over the Rust implementation
+    "fitscube-rs[compat]>=2.4.0", # fitscube's Python API over the Rust implementation
     "astroquery>=0.4.8.dev0",
     "crystalball>=0.4.3",
     "jolly-roger>=0.10.1",
