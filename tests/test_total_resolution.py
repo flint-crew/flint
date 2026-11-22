@@ -18,6 +18,7 @@ from prefect.logging import disable_run_logger
 from prefect.testing.utilities import prefect_test_harness
 
 from flint.coadd.linmos import LinmosOptions, LinmosResult
+from flint.coadd.patchwork import PatchworkOptions
 from flint.convol import (
     BeamShape,
     convolve_plane_to_beam,
@@ -34,11 +35,13 @@ from flint.prefect.common.imaging import (
     linmos_stokes_channel_groups_to_cubes,
     total_beam_from_channel_groups,
 )
+from flint.summary import FieldSummary
 
 # Reuse the synthetic helpers rather than keeping a second copy of them
 from tests.test_convol import _write_cube_with_beam  # noqa: E402
 from tests.test_cube import _write_channel_image  # noqa: E402
 from tests.test_natural_resolution import _bmaj_arcsec, _channel_groups  # noqa: E402
+from tests.test_patchwork_coadd import BORESIGHT, beam_images  # noqa: E402
 
 STEM = "SB12345.BENCH_0000+00.ch0000-0019"
 
@@ -391,3 +394,95 @@ def test_every_stokes_is_cubed_on_one_pixel_grid(
     assert np.all(np.isfinite(q_image[:, 1:-1, 1:-1]))
     q_image[:, 1:-1, 1:-1] = np.nan
     assert np.all(np.isnan(q_image)), "Stokes Q is padded out to the Stokes I box"
+
+
+def test_patchwork_mosaics_every_stokes_of_a_channel_in_one_task(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Q and U are only rotated when mosaicked together, so with patchwork a
+    channel's Stokes share one task, and linmos is never called"""
+    submitted = _fake_submits(
+        monkeypatch,
+        "task_linmos_images",
+        "task_patchwork_stokes_images",
+        "task_getitem",
+        "task_getattr",
+        "task_create_name_from_common_fields",
+        "task_combine_images_to_cube",
+    )
+
+    linmos_stokes_channel_groups_to_cubes(
+        stokes_channel_groups={
+            "q": [[Path("q.ch0.beam00.fits")], [Path("q.ch1.beam00.fits")]],
+            "u": [[Path("u.ch0.beam00.fits")], [Path("u.ch1.beam00.fits")]],
+        },
+        container=None,
+        linmos_options=LinmosOptions(cutoff=0.2),
+        fitscube_options=FitsCubeOptions(bounding_box=False),
+        patchwork_options=PatchworkOptions(),
+    )
+
+    assert not [s for s in submitted if s.task == "task_linmos_images"]
+    mosaics = [s for s in submitted if s.task == "task_patchwork_stokes_images"]
+    assert [mosaic.kwargs["stokes_images"] for mosaic in mosaics] == [
+        {"q": [Path("q.ch0.beam00.fits")], "u": [Path("u.ch0.beam00.fits")]},
+        {"q": [Path("q.ch1.beam00.fits")], "u": [Path("u.ch1.beam00.fits")]},
+    ]
+    assert all(mosaic.kwargs["pb_cutoff"] == 0.2 for mosaic in mosaics)
+
+    cubes = [s for s in submitted if s.task == "task_combine_images_to_cube"]
+    assert len(cubes) == 4, "an image and a weight cube for each Stokes"
+    for cube in cubes:
+        # Each plane is an attribute of one Stokes looked up in a channel's mosaics
+        lookups = [plane.args[0] for plane in cube.kwargs["images"]]
+        assert [lookup.args[0] for lookup in lookups] == mosaics
+        assert len({lookup.args[1] for lookup in lookups}) == 1
+
+
+def test_patchwork_cubes_every_stokes_on_one_pixel_grid(tmp_path: Path) -> None:
+    """Real patchwork mosaics of each channel stack into cubes of one shape for
+    every Stokes, with nothing standing in for the mosaicker"""
+    stokes_channel_groups = {
+        stokes: [
+            beam_images(
+                tmp_path, stokes, channel=channel, frequency_hz=9.4e8 + channel * 1e7
+            )
+            for channel in range(2)
+        ]
+        for stokes in ("i", "q", "u")
+    }
+
+    @flow
+    def _cube() -> dict[str, list[Path]]:
+        stokes_cubes = linmos_stokes_channel_groups_to_cubes(
+            stokes_channel_groups=stokes_channel_groups,
+            container=None,
+            linmos_options=LinmosOptions(),
+            fitscube_options=FitsCubeOptions(),
+            field_summary=FieldSummary(
+                sbid="1234",
+                cal_sbid="None",
+                field_name="RACS_0000-00",
+                boresight=BORESIGHT,
+            ),
+            suffix_str="pol",
+            patchwork_options=PatchworkOptions(backend="numpy"),
+        )
+        return {
+            stokes: [cube.result() for cube in cubes.futures]
+            for stokes, cubes in stokes_cubes.items()
+        }
+
+    with prefect_test_harness(), disable_run_logger():
+        stokes_cubes = _cube()
+
+    shapes = {
+        fits.getdata(cube).squeeze().shape
+        for cubes in stokes_cubes.values()
+        for cube in cubes
+    }
+    assert len(shapes) == 1
+    assert shapes.pop()[0] == 2, "a plane for each channel"
+    for stokes, cubes in stokes_cubes.items():
+        assert len(cubes) == 2, "an image and a weight cube"
+        assert np.any(np.isfinite(fits.getdata(cubes[0]))), stokes

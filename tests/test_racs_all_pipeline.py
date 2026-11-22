@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from argparse import ArgumentParser
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,11 @@ from capn_crunch import create_options_from_parser
 from prefect.logging import disable_run_logger
 from prefect.testing.utilities import prefect_test_harness
 
+from flint.configuration import (
+    create_default_yaml,
+    load_strategy_yaml,
+    write_strategy_to_yaml,
+)
 from flint.options import (
     ArchiveDestination,
     ArchiveFieldOptions,
@@ -300,6 +306,43 @@ def test_stage_prerequisites_rejects_missing_container_path(
                 aegean_container=containers["aegean"]
             ),
         )
+
+
+def test_stage_prerequisites_patchwork_needs_no_yandasoft(
+    tmp_path: Path, racs_all_options: RACSAllOptions
+) -> None:
+    """Only a polarisation stage that mosaics with linmos needs its container"""
+    containers = _containers(tmp_path)
+    strategy = load_strategy_yaml(
+        input_yaml=create_default_yaml(output_yaml=tmp_path / "default.yaml"),
+        verify=False,
+    )
+    strategy["polarisation"] = {"patchwork": {}}
+    patchwork_strategy = write_strategy_to_yaml(
+        strategy=strategy, output_path=tmp_path / "patchwork.yaml"
+    )
+
+    for imaging_strategy, needs_yandasoft in (
+        (patchwork_strategy, False),
+        (tmp_path / "default.yaml", True),
+    ):
+        check = partial(
+            _check_stage_prerequisites,
+            pipeline_options=RACSAllPipelineOptions(skip_imaging=True),
+            racs_all_options=racs_all_options,
+            pol_field_options=PolFieldOptions(
+                wsclean_container=containers["wsclean"],
+                imaging_strategy=imaging_strategy,
+            ),
+            spice_field_options=SpiceFieldOptions(
+                aegean_container=containers["aegean"]
+            ),
+        )
+        if needs_yandasoft:
+            with pytest.raises(ValueError, match="yandasoft_container"):
+                check()
+        else:
+            check()
 
 
 def test_stage_prerequisites_requires_aegean_without_catalogue(

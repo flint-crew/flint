@@ -16,6 +16,7 @@ from eye_patch.options import MaskingOptions
 from jolly_roger.tractor import TukeyTractorOptions
 from pydantic import ValidationError
 
+from flint.coadd.patchwork import PatchworkOptions
 from flint.dp3 import (
     DP3AOFlaggerOptions,
     DP3ApplyCalOptions,
@@ -76,8 +77,10 @@ MODE_OPTIONS_MAPPING = {
     "dp3gaincal": DP3GainCalOptions,
     "dp3applycal": DP3ApplyCalOptions,
     "dp3selfcal": DP3SelfCalOptions,
+    "patchwork": PatchworkOptions,
 }
 SelfCalMode: TypeAlias = Literal["gaincal", "dp3ddecal", "dp3gaincal"]
+MosaicMode: TypeAlias = Literal["linmos", "patchwork"]
 POLARISATION_MAPPING = {
     "total": "i",
     "linear": "qu",
@@ -479,6 +482,34 @@ def get_selfcal_mode_for_round(
     return solvers[0] if solvers else "gaincal"
 
 
+def get_mosaic_mode(strategy: Strategy | Path | None, operation: str) -> MosaicMode:
+    """Which mosaicker an operation uses: patchwork if its section names it, else linmos.
+
+    As with ``get_selfcal_mode_for_round``, the ``defaults`` section does not count.
+    """
+    if isinstance(strategy, Path):
+        strategy = load_strategy_yaml(input_yaml=strategy)
+    if not strategy:
+        return "linmos"
+
+    return "patchwork" if "patchwork" in (strategy.get(operation) or {}) else "linmos"
+
+
+def _paths_to_mode(
+    section: Any, mode: str, path: tuple[Any, ...] = ()
+) -> list[tuple[Any, ...]]:
+    """The keys leading to each place ``mode`` is named in a strategy"""
+    if not isinstance(section, dict):
+        return []
+    return [
+        found
+        for key, value in section.items()
+        for found in (
+            [(*path, key)] if key == mode else _paths_to_mode(value, mode, (*path, key))
+        )
+    ]
+
+
 def verify_configuration(input_strategy: Strategy, raise_on_error: bool = True) -> bool:
     """Perform basic checks on the configuration file
 
@@ -632,6 +663,14 @@ def verify_configuration(input_strategy: Strategy, raise_on_error: bool = True) 
                         )
                 except Exception as exception:
                     errors.append(f"{exception}")
+
+    # Named anywhere else it would validate, and linmos would quietly be used
+    for path in _paths_to_mode(input_strategy, "patchwork"):
+        if path not in (("defaults", "patchwork"), ("polarisation", "patchwork")):
+            errors.append(
+                f"'patchwork' under {path[:-1]} is never read. It selects the "
+                "mosaicker only when named directly under 'polarisation'. "
+            )
 
     valid_config = len(errors) == 0
     if not valid_config:

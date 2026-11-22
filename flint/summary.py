@@ -30,6 +30,7 @@ from flint.ms import (
     MS,
     MSSummary,
     describe_ms,
+    get_boresight_from_ms,
     get_pol_axis_as_rad,
     get_telescope_location_from_ms,
     get_times_from_ms,
@@ -90,6 +91,8 @@ class FieldSummary(BaseOptions):
     """The path to the linmos image of all beams"""
     pol_axis: float | None = None
     """The orientation of the ASKAP third-axis in radians. """
+    boresight: SkyCoord | None = None
+    """Where the dish pointed, which the Q and U of every beam are referenced to north at"""
 
 
 # TODO: Need to establise a MSLike type
@@ -282,6 +285,7 @@ def create_field_summary(
     sbid: None | str = None
     field: None | str = None
     pol_axis: None | float = None
+    boresight: None | SkyCoord = None
     if mss is not None:
         mss = [MS.cast(ms=ms) for ms in mss]
 
@@ -300,6 +304,7 @@ def create_field_summary(
         integration = ms_times.ptp().to(u.second).value
         location = get_telescope_location_from_ms(ms=ms)
         pol_axis = get_pol_axis_as_rad(ms=ms)
+        boresight = get_boresight_from_ms(ms=ms)
 
     if ms_summaries is not None:
         ms_components = processed_ms_format(in_name=ms_summaries[0].path.name)
@@ -313,6 +318,7 @@ def create_field_summary(
         integration = ms_summaries[0].integration
         location = ms_summaries[0].location
         pol_axis = ms_summaries[0].pol_axis
+        boresight = ms_summaries[0].boresight
 
     assert field is not None, f"Field name is empty in {ms_components=} from {ms.path=}"
 
@@ -333,6 +339,7 @@ def create_field_summary(
         holography_path=holography_path,
         ms_times=Time([ms_times.min(), ms_times.max()]),
         pol_axis=pol_axis,
+        boresight=boresight,
         **kwargs,
     )
 

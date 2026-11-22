@@ -836,6 +836,8 @@ class MSSummary(BaseOptions):
     """Unique timesteps in the measurement set"""
     integration: float | None = None
     """Length of the observing time in seconds"""
+    boresight: SkyCoord | None = None
+    """Where the dish pointed, as against ``phase_dir`` at the beam centre. None if the MS does not record it"""
 
 
 class HasMS(Protocol):

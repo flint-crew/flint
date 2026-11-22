@@ -58,6 +58,26 @@ Three options steer this:
 - `--fixed-beam-shape`: convolve every channel to this `(arcsec, arcsec, deg)`
   beam instead of solving one, which gives a cube of constant resolution.
 
+## Mosaicking
+
+The convolved beam images are co-added with yandasoft `linmos` by default.
+Naming a `patchwork` mode in the `polarisation` section of the strategy file
+co-adds them with [patchwork](https://github.com/flint-crew/patchwork) instead
+(see [configuration](../config.md)):
+
+```yaml
+polarisation:
+  patchwork: {}
+```
+
+The difference matters for Stokes Q and U. Those of every beam image are
+referenced to north at the boresight of the observation, where the dish
+pointed, not to north at each pixel as the IAU convention asks. `linmos` co-adds
+them as they are, which is increasingly wrong towards the celestial pole.
+patchwork rotates them to north at each pixel and records `POLFRAME = 'NORTH'`
+in their headers. It reads the boresight from the `FIELD_OLD` table that FixMS
+leaves in each measurement set, and refuses to co-add Q and U without it.
+
 ## Spectro-polarimetric imaging in WSClean
 
 We encourage users to carefully read the [WSclean documentation](https://wsclean.readthedocs.io/en/latest/). In practice, we have encountered a few common 'gotchas' when producing polarisation cube. As always, a user should pay attention to the output logs to see e.g. how many iterations have been performed and what the stopping criterion was. We also encourage the inspection of image, model, and residual products to see how well (or not) deconvolution has performed.
