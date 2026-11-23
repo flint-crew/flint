@@ -533,6 +533,19 @@ def test_blank_images(tmp_path: Path) -> None:
         assert not header_beam_is_usable(header=fits.getheader(blank))
 
 
+def test_blank_images_in_place(tmp_path: Path) -> None:
+    """With no suffix the image itself is blanked, under its own name"""
+    plane = _write_plane_with_beam(tmp_path / "stokes_q.ch0000-0000.fits", 10.0)
+    shape = fits.getdata(plane).shape
+
+    assert blank_images(image_paths=[plane], convol_suffix=None) == [plane]
+
+    assert not list(tmp_path.glob("*.conv.fits"))
+    assert np.all(np.isnan(fits.getdata(plane)))
+    assert fits.getdata(plane).shape == shape
+    assert not header_beam_is_usable(header=fits.getheader(plane))
+
+
 def test_convolve_images_or_blank(tmp_path: Path) -> None:
     """A defined beam is convolved to, as convolve_images would"""
     plane = _write_plane_with_beam(tmp_path / "stokes_q.ch0000-0000.fits", 10.0)

@@ -527,7 +527,7 @@ def convolve_images(
 
 
 def blank_images(
-    image_paths: Collection[Path], convol_suffix: str = "conv"
+    image_paths: Collection[Path], convol_suffix: str | None = "conv"
 ) -> list[Path]:
     """Write an all-NaN copy of each image, marked with a zero beam.
 
@@ -539,7 +539,7 @@ def blank_images(
 
     Args:
         image_paths (Collection[Path]): The images to blank
-        convol_suffix (str, optional): The suffix added to .fits, matching the convolved images these stand in for. Defaults to 'conv'.
+        convol_suffix (str | None, optional): The suffix added to .fits, matching the convolved images these stand in for. None blanks each image in place. Defaults to 'conv'.
 
     Returns:
         list[Path]: The blanked images
@@ -547,9 +547,11 @@ def blank_images(
     blank_image_paths: list[Path] = []
 
     for image_path in image_paths:
-        blank_image_path = Path(
-            str(image_path).replace(".fits", f".{convol_suffix}.fits")
-        )
+        blank_image_path = Path(image_path)
+        if convol_suffix is not None:
+            blank_image_path = Path(
+                str(image_path).replace(".fits", f".{convol_suffix}.fits")
+            )
         logger.info(f"Blanking {image_path} into {blank_image_path=}")
 
         with fits.open(image_path) as open_fits:

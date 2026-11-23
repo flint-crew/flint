@@ -119,6 +119,26 @@ self-calibration then absorbs the difference into the antenna gains. With
 - The `polarisation` operation is unaffected. It always sets `pol` from the
   polarisation being imaged.
 
+#### Blanking near-empty channel images
+
+A channel that is all but completely flagged still gives an image, made from
+the few visibilities left. It is nearly empty, so its noise is tiny, and
+anything that weights by noise (the mosaicking, RM synthesis) lets it take
+over. `flint_min_image_vis` blanks every image of a channel that wsclean made
+from fewer visibilities than the number given:
+
+```yaml
+defaults:
+  wsclean:
+    flint_min_image_vis: 1000
+```
+
+The count is the `WSCNVIS` wsclean writes into the header of the channel
+image: one for each row and channel of data with weight. A healthy 8 MHz RACS
+channel has several hundred thousand. A blanked image is all NaN and carries a
+zero beam, which later stages read as holding no PSF. The MFS images are left
+as they are.
+
 ### `fitscube`
 
 In the self-cal flows (`continuum_pipeline`, `racs_all_continuum_selfcal`),

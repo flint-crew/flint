@@ -18,17 +18,20 @@ from __future__ import annotations
 
 import re
 from argparse import ArgumentParser
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from numbers import Number
 from pathlib import Path
 from typing import Any, NamedTuple
 
+import numpy as np
+from astropy.io import fits
 from capn_crunch import (
     add_options_to_parser,
     create_options_from_parser,
 )
 from pydantic import Field, model_validator
 
+from flint.convol import blank_images
 from flint.exceptions import (
     AttemptRerunException,
     CleanDivergenceError,
@@ -195,6 +198,8 @@ class WSCleanOptions(BaseOptions):
     """Directory images are written to before being moved beside the MS. Takes precedence over ``temp_dir`` for this purpose"""
     flint_keep_linear_images: bool = False
     """Keep the XX and YY images when ``pol`` is ``xx,yy``, rather than deleting them once Stokes I is formed"""
+    flint_min_image_vis: int | None = Field(default=None, gt=0)
+    """Blank every image of a channel that wsclean made from fewer visibilities than this, as counted by its WSCNVIS header key. None to skip"""
 
     @model_validator(mode="after")
     def check_pol(self) -> WSCleanOptions:
@@ -718,6 +723,56 @@ def parse_pols(pol_str: str) -> tuple[str, ...] | None:
     return pols if len(pols) > 1 else None
 
 
+def blank_sparse_channels(
+    images: Mapping[WSCleanOutput, Path], min_vis: int
+) -> list[int]:
+    """Blank in place every image of each channel that wsclean made from fewer
+    than ``min_vis`` visibilities in any polarisation, and return those channels.
+
+    wsclean records the count of an image as ``WSCNVIS``. An image without one is
+    left out of the decision, and the MFS images are never blanked.
+    """
+    headers = [
+        (output.channel, output.pol or "image", fits.getheader(path))
+        for output, path in images.items()
+        if output.image_type == "image" and output.channel is not None
+    ]
+    uncounted = sum("WSCNVIS" not in header for _, _, header in headers)
+    if uncounted:
+        logger.warning(f"{uncounted} channel images carry no WSCNVIS, so go unchecked")
+
+    sparse = sorted(
+        {
+            channel
+            for channel, _, header in headers
+            if header.get("WSCNVIS", min_vis) < min_vis
+        }
+    )
+    for channel in sparse:
+        channel_headers = [
+            (pol, header)
+            for header_channel, pol, header in headers
+            if header_channel == channel
+        ]
+        counts = {
+            pol: (header.get("WSCNVIS"), header.get("WSCENVIS"))
+            for pol, header in channel_headers
+        }
+        frequency = channel_headers[0][1].get("CRVAL3", np.nan)
+        logger.info(
+            f"Blanking channel {channel} at {frequency / 1e6:.1f} MHz, with "
+            f"(WSCNVIS, WSCENVIS) of {counts} against {min_vis=}"
+        )
+        blank_images(
+            image_paths=[
+                path for output, path in images.items() if output.channel == channel
+            ],
+            convol_suffix=None,
+        )
+
+    return sparse
+
+
 def collect_wsclean_outputs(
     wsclean_result: WSCleanResult,
     prefix: str,
@@ -751,6 +806,9 @@ def collect_wsclean_outputs(
         )
         logger.info(f"Renaming {output.path} to {flint_path}")
         renamed[output] = output.path.rename(flint_path)
+
+    if options.flint_min_image_vis is not None:
+        blank_sparse_channels(images=renamed, min_vis=options.flint_min_image_vis)
 
     image_types = ("image", "residual", *(extra_output_types or ()))
     collected = [output for output in outputs if output.image_type in image_types]
