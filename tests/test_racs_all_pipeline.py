@@ -1085,7 +1085,15 @@ def test_options_from_argv(tmp_path: Path) -> None:
 
     data = [tmp_path / str(sbid) for sbid in (56289, 67042, 35212)]
     options = options_from_argv(
-        [*map(str, data), "--cluster-config", "petrichor_main.yaml", "--rounds", "3"]
+        [
+            *map(str, data),
+            "--cluster-config",
+            "petrichor_main.yaml",
+            "--rounds",
+            "3",
+            "--min-channel-valid-fraction",
+            "0.3",
+        ]
     )
 
     assert set(options) == {
@@ -1103,6 +1111,7 @@ def test_options_from_argv(tmp_path: Path) -> None:
         racs_all_options.high_data,
     ] == data
     assert racs_all_options.rounds == 3
+    assert racs_all_options.min_channel_valid_fraction == 0.3
     # Stage cluster configurations default to --cluster-config
     pipeline_options = options["pipeline_options"]
     assert pipeline_options.imaging_cluster_config == Path("petrichor_main.yaml")

@@ -23,6 +23,16 @@ Optionally, any data whose corresponding flag is set to `True` can be `NaN`.
 
 This functionality is implemented in `flint.flagging.nan_zero_extreme_flag_ms` function0n.
 
+## Flagging sparse channels
+
+A channel with only a little valid data left images with a large and ragged restoring beam. When such a channel is convolved to a common resolution with its neighbours it drags them out to its own.
+
+The RACS-all flows take `--min-channel-valid-fraction`. When set, any channel of a measurement set with less than that fraction of its visibilities unflagged is flagged outright. With `0.3`, a channel with under 30% of its data valid has the rest flagged as well. This is done per measurement set before each round of imaging, so data flagged by self-calibration are counted too.
+
+The fraction is counted over every row and polarisation of the channel. Antennas or integrations flagged across the whole band count against every channel, so a heavily flagged measurement set can lose all of its channels.
+
+This functionality is implemented in the `flint.flagging.flag_sparse_channels` function.
+
 ## Accessing via the CLI
 
 The flagging utilities via the CLI in `flint` can be done via `flint_flagging`:

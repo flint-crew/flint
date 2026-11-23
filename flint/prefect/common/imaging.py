@@ -58,7 +58,7 @@ from flint.dp3 import (
     dp3_gaincal,
     dp3_solve_apply,
 )
-from flint.flagging import flag_ms_aoflagger
+from flint.flagging import flag_ms_aoflagger, flag_sparse_channels
 from flint.imager.wsclean import (
     WSCleanOptions,
     WSCleanResult,
@@ -141,6 +141,7 @@ task_get_common_bounding_box = task(get_common_bounding_box)
 task_extract_common_bounding_box = task(extract_common_bounding_box)
 task_split_cube_into_planes = task(split_cube_into_planes)
 task_bane_fits_image = task(bane_fits_image)
+task_flag_sparse_channels = task(flag_sparse_channels)
 task_dp3_flag = task(dp3_flag)
 task_dp3_ddecal = task(dp3_ddecal)
 task_dp3_gaincal = task(dp3_gaincal)

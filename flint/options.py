@@ -548,6 +548,8 @@ class RACSAllOptions(BaseOptions):
     """Path to the high data to process"""
     flagger_container: Path | None = None
     """Path to the singularity aoflagger container"""
+    min_channel_valid_fraction: float | None = None
+    """Before each round of imaging, flag any channel of a measurement set with less than this fraction of its visibilities unflagged. None to skip"""
     casa_container: Path | None = None
     """Path to the singularity CASA container"""
     expected_ms: int = 36
