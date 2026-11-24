@@ -328,6 +328,8 @@ def image_and_linmos_intervals(
         )
         interval_count = subtract_field_options.max_intervals
 
+    # Rate limiter: each linmos future puts itself on ``finished`` when done. Once
+    # the in-flight limit is reached, one is taken off before the next is submitted.
     in_flight: dict[
         PrefectFuture[LinmosResult], tuple[int, PrefectFuture[list[WSCleanResult]]]
     ] = {}
