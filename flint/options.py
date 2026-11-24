@@ -100,8 +100,6 @@ class SubtractFieldOptions(BaseOptions):
     """Cutoff in arcseconds to use when calculating the common beam each cube channel is convolved to"""
     pb_cutoff: float = 0.1
     """Primary beam attenuation cutoff to use during linmos"""
-    stagger_delay_seconds: float | None = None
-    """The delay, in seconds, that should be used when submitting items in batches (e.g. looping over channels)"""
     attempt_subtract: bool = False
     """Attempt to subtract the model column from the nominated data column"""
     subtract_data_column: str = "DATA"

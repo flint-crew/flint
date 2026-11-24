@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from pathlib import Path
 from queue import Queue
-from time import sleep
 from typing import Any
 
 import dask
@@ -358,9 +357,6 @@ def image_and_linmos_intervals(
         in_flight[linmos_future] = (interval, wsclean_future)
         linmos_future.add_done_callback(finished.put)
 
-        if subtract_field_options.stagger_delay_seconds:
-            sleep(subtract_field_options.stagger_delay_seconds)
-
         last = interval == interval_count - 1
         while in_flight and (
             last or len(in_flight) >= subtract_field_options.max_intervals_in_flight
@@ -458,10 +454,6 @@ def flow_subtract_cube(
     logger.info(
         f"Considering {len(freqs_mhz)} frequencies from {science_mss[0]}, range covering {np.min(freqs_mhz)}-{np.max(freqs_mhz)} MHz"
     )
-    if len(freqs_mhz) > 20 and subtract_field_options.stagger_delay_seconds is None:
-        logger.critical(
-            f"{len(freqs_mhz)} channels and no stagger delay set! Consider setting a stagger delay"
-        )
 
     logger.info("Collecting times from representative measurement set")
     times = get_times_from_ms(
