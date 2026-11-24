@@ -80,6 +80,9 @@ def _check_and_verify_options(
         assert subtract_field_options.max_intervals_in_flight >= 1, (
             f"{subtract_field_options.max_intervals_in_flight=} must be at least 1"
         )
+        assert subtract_field_options.max_failed_intervals >= 0, (
+            f"{subtract_field_options.max_failed_intervals=} must be at least 0"
+        )
 
     if subtract_field_options and subtract_field_options.use_addmodel:
         assert addmodel_subtract_field_options, (
@@ -296,15 +299,15 @@ def collect_interval(
     wsclean_future: PrefectFuture[list[WSCleanResult]],
     linmos_future: PrefectFuture[LinmosResult],
     range_name: str,
-) -> LinmosResult | None:
-    """Wait on one interval, returning its linmos result or None if it failed."""
+) -> LinmosResult | Exception:
+    """Wait on one interval, returning its linmos result or the error it failed with."""
     try:
         # A failed wsclean leaves linmos only an unfinished upstream to report
         wsclean_future.result()
         return linmos_future.result()
     except Exception as exception:
         logger.error(f"{range_name} {interval} failed: {exception!r}")
-        return None
+        return exception
 
 
 def image_and_linmos_intervals(
@@ -316,21 +319,8 @@ def image_and_linmos_intervals(
 ) -> list[LinmosResult]:
     """Image and linmos each channel or time, at most ``max_intervals_in_flight`` at once.
 
-    A failed interval is logged and left out of the result. Raises once more than
-    ``max_failed_intervals`` have failed, or if none worked.
-
-    Args:
-        science_mss (tuple[MS, ...]): The measurement sets to image
-        subtract_field_options (SubtractFieldOptions): Options of the flow
-        update_wsclean_options (dict[str, Any]): Overrides for the wsclean options
-        range_name (str): The wsclean option each interval sets, ``channel_range`` or ``scan_range``
-        interval_count (int): How many intervals there are, of which the first ``max_intervals`` are imaged
-
-    Raises:
-        FailedIntervalsError: Raised when too many or all intervals failed
-
-    Returns:
-        list[LinmosResult]: The linmos result of each interval that worked, in order
+    A failed interval is left out, and this raises once more than
+    ``max_failed_intervals`` have failed or if none worked.
     """
     if interval_count > subtract_field_options.max_intervals:
         logger.critical(
@@ -341,7 +331,7 @@ def image_and_linmos_intervals(
     in_flight: deque[
         tuple[int, PrefectFuture[list[WSCleanResult]], PrefectFuture[LinmosResult]]
     ] = deque()
-    results: list[LinmosResult | None] = []
+    results: list[LinmosResult | Exception] = []
     for interval in range(interval_count):
         interval_range = (interval, interval + 1)
         logger.info(f"Imaging {range_name}={interval_range}")
@@ -374,20 +364,27 @@ def image_and_linmos_intervals(
             results.append(
                 collect_interval(*in_flight.popleft(), range_name=range_name)
             )
-            if results.count(None) > subtract_field_options.max_failed_intervals:
-                msg = f"{results.count(None)} {range_name} intervals failed, more than {subtract_field_options.max_failed_intervals=}"
-                raise FailedIntervalsError(msg)
+            errors = [result for result in results if isinstance(result, Exception)]
+            if len(errors) > subtract_field_options.max_failed_intervals:
+                msg = f"{len(errors)} {range_name} intervals failed, more than {subtract_field_options.max_failed_intervals=}, the last with {errors[-1]!r}"
+                raise FailedIntervalsError(msg) from errors[-1]
 
-    failed = [interval for interval, result in enumerate(results) if result is None]
-    if len(failed) == len(results):
-        msg = f"All {interval_count} {range_name} intervals failed"
-        raise FailedIntervalsError(msg)
-    if failed:
+    errors = [result for result in results if isinstance(result, Exception)]
+    if len(errors) == len(results):
+        last_error = errors[-1] if errors else None
+        msg = f"All {interval_count} {range_name} intervals failed, the last with {last_error!r}"
+        raise FailedIntervalsError(msg) from last_error
+    if errors:
+        failed = [
+            interval
+            for interval, result in enumerate(results)
+            if isinstance(result, Exception)
+        ]
         logger.error(
             f"{len(failed)} of {interval_count} {range_name} intervals failed and are not in the cube: {failed}"
         )
 
-    return [result for result in results if result is not None]
+    return [result for result in results if not isinstance(result, Exception)]
 
 
 @flow

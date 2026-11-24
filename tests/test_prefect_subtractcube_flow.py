@@ -108,7 +108,7 @@ def test_combine_all_linmos_images_keeps_images_until_compressed(
     assert not any(image.exists() for image in images)
 
 
-def _image_intervals(
+def image_intervals(
     monkeypatch,
     interval_count: int,
     failing: tuple[int, ...] = (),
@@ -161,7 +161,7 @@ def _image_intervals(
 
 def test_image_intervals_leaves_out_a_failed_interval(monkeypatch):
     """A failed interval is dropped and the rest keep their order"""
-    results, _ = _image_intervals(
+    results, _ = image_intervals(
         monkeypatch, interval_count=4, failing=(1,), max_failed_intervals=1
     )
 
@@ -170,30 +170,34 @@ def test_image_intervals_leaves_out_a_failed_interval(monkeypatch):
 
 def test_image_intervals_too_many_failed(monkeypatch):
     """More failures than allowed fails the flow"""
-    with pytest.raises(FailedIntervalsError, match="2 scan_range intervals failed"):
-        _image_intervals(
+    with pytest.raises(
+        FailedIntervalsError, match="2 scan_range intervals failed.*interval 1 broke"
+    ):
+        image_intervals(
             monkeypatch, interval_count=4, failing=(0, 1), max_failed_intervals=1
         )
 
 
 def test_image_intervals_all_failed(monkeypatch):
     """Nothing to cube fails the flow, even within the tolerance"""
-    with pytest.raises(FailedIntervalsError, match="All 2 scan_range intervals"):
-        _image_intervals(
+    with pytest.raises(
+        FailedIntervalsError, match="All 2 scan_range intervals.*interval 1 broke"
+    ):
+        image_intervals(
             monkeypatch, interval_count=2, failing=(0, 1), max_failed_intervals=10
         )
 
 
 def test_image_intervals_stops_at_max_intervals(monkeypatch):
     """Only the first max_intervals are imaged"""
-    results, _ = _image_intervals(monkeypatch, interval_count=4, max_intervals=2)
+    results, _ = image_intervals(monkeypatch, interval_count=4, max_intervals=2)
 
     assert results == [0, 1]
 
 
 def test_image_intervals_caps_those_in_flight(monkeypatch):
     """With two in flight, the third interval waits for the first to finish"""
-    _, started_by_linmos = _image_intervals(
+    _, started_by_linmos = image_intervals(
         monkeypatch, interval_count=4, linmos_seconds=0.5, max_intervals_in_flight=2
     )
 
