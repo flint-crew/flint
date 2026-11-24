@@ -120,6 +120,10 @@ class SubtractFieldOptions(BaseOptions):
     """Perform channel-wise imaing of the residuals"""
     max_intervals: int = 500
     """The maximum number of scans/channels to consider"""
+    max_intervals_in_flight: int = 128
+    """The most scans/channels being imaged and linmos'd at once"""
+    max_failed_intervals: int = 10
+    """The most scans/channels that may fail and be left out of the cube before the flow fails"""
 
 
 class FieldOptions(BaseOptions):
