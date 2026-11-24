@@ -9,8 +9,8 @@ already been preprocessed and fixed.
 
 from __future__ import annotations
 
-from collections import deque
 from pathlib import Path
+from queue import Queue
 from time import sleep
 from typing import Any
 
@@ -328,10 +328,11 @@ def image_and_linmos_intervals(
         )
         interval_count = subtract_field_options.max_intervals
 
-    in_flight: deque[
-        tuple[int, PrefectFuture[list[WSCleanResult]], PrefectFuture[LinmosResult]]
-    ] = deque()
-    results: list[LinmosResult | Exception] = []
+    in_flight: dict[
+        PrefectFuture[LinmosResult], tuple[int, PrefectFuture[list[WSCleanResult]]]
+    ] = {}
+    finished: Queue[PrefectFuture[LinmosResult]] = Queue()
+    results: dict[int, LinmosResult | Exception] = {}
     for interval in range(interval_count):
         interval_range = (interval, interval + 1)
         logger.info(f"Imaging {range_name}={interval_range}")
@@ -352,7 +353,8 @@ def image_and_linmos_intervals(
             remove_original_images=True,
             cleanup_linmos=True,
         )
-        in_flight.append((interval, wsclean_future, linmos_future))
+        in_flight[linmos_future] = (interval, wsclean_future)
+        linmos_future.add_done_callback(finished.put)
 
         if subtract_field_options.stagger_delay_seconds:
             sleep(subtract_field_options.stagger_delay_seconds)
@@ -361,30 +363,38 @@ def image_and_linmos_intervals(
         while in_flight and (
             last or len(in_flight) >= subtract_field_options.max_intervals_in_flight
         ):
-            results.append(
-                collect_interval(*in_flight.popleft(), range_name=range_name)
+            finished_linmos = finished.get()
+            finished_interval, finished_wsclean = in_flight.pop(finished_linmos)
+            results[finished_interval] = collect_interval(
+                finished_interval,
+                finished_wsclean,
+                finished_linmos,
+                range_name=range_name,
             )
-            errors = [result for result in results if isinstance(result, Exception)]
+            errors = [
+                result for result in results.values() if isinstance(result, Exception)
+            ]
             if len(errors) > subtract_field_options.max_failed_intervals:
                 msg = f"{len(errors)} {range_name} intervals failed, more than {subtract_field_options.max_failed_intervals=}, the last with {errors[-1]!r}"
                 raise FailedIntervalsError(msg) from errors[-1]
 
-    errors = [result for result in results if isinstance(result, Exception)]
-    if len(errors) == len(results):
+    ordered = [results[interval] for interval in range(interval_count)]
+    errors = [result for result in ordered if isinstance(result, Exception)]
+    if len(errors) == len(ordered):
         last_error = errors[-1] if errors else None
         msg = f"All {interval_count} {range_name} intervals failed, the last with {last_error!r}"
         raise FailedIntervalsError(msg) from last_error
     if errors:
         failed = [
             interval
-            for interval, result in enumerate(results)
+            for interval, result in enumerate(ordered)
             if isinstance(result, Exception)
         ]
         logger.error(
             f"{len(failed)} of {interval_count} {range_name} intervals failed and are not in the cube: {failed}"
         )
 
-    return [result for result in results if not isinstance(result, Exception)]
+    return [result for result in ordered if not isinstance(result, Exception)]
 
 
 @flow

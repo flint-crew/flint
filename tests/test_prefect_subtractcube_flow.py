@@ -112,25 +112,27 @@ def image_intervals(
     monkeypatch,
     interval_count: int,
     failing: tuple[int, ...] = (),
-    linmos_seconds: float = 0.0,
+    linmos_seconds: dict[int, float] | None = None,
     **options,
-) -> tuple[list[Any], dict[int, list[int]]]:
+) -> tuple[list[Any], list[int], dict[int, list[int]]]:
     """Run the interval loop with stand-in tasks, each interval's result being its index.
 
-    Also returns, for each interval, which wsclean intervals had started by the
-    time its linmos finished.
+    Also returns how many intervals were running as each one started, and which
+    had started by the time each linmos finished.
     """
     started: list[int] = []
+    running_at_start: list[int] = []
     started_by_linmos: dict[int, list[int]] = {}
 
     @task
     def fake_wsclean(scan_range: tuple[int, int], **kwargs) -> int:
         started.append(scan_range[0])
+        running_at_start.append(len(started) - len(started_by_linmos))
         return scan_range[0]
 
     @task
     def fake_linmos(wsclean_results: int, **kwargs) -> int:
-        time.sleep(linmos_seconds)
+        time.sleep((linmos_seconds or {}).get(wsclean_results, 0.0))
         started_by_linmos[wsclean_results] = list(started)
         if wsclean_results in failing:
             raise ValueError(f"interval {wsclean_results} broke")
@@ -156,12 +158,12 @@ def image_intervals(
         )
 
     with prefect_test_harness(), disable_run_logger():
-        return image_flow(), started_by_linmos
+        return image_flow(), running_at_start, started_by_linmos
 
 
 def test_image_intervals_leaves_out_a_failed_interval(monkeypatch):
     """A failed interval is dropped and the rest keep their order"""
-    results, _ = image_intervals(
+    results, _, _ = image_intervals(
         monkeypatch, interval_count=4, failing=(1,), max_failed_intervals=1
     )
 
@@ -171,7 +173,7 @@ def test_image_intervals_leaves_out_a_failed_interval(monkeypatch):
 def test_image_intervals_too_many_failed(monkeypatch):
     """More failures than allowed fails the flow"""
     with pytest.raises(
-        FailedIntervalsError, match="2 scan_range intervals failed.*interval 1 broke"
+        FailedIntervalsError, match=r"2 scan_range intervals failed.*interval \d broke"
     ):
         image_intervals(
             monkeypatch, interval_count=4, failing=(0, 1), max_failed_intervals=1
@@ -190,16 +192,31 @@ def test_image_intervals_all_failed(monkeypatch):
 
 def test_image_intervals_stops_at_max_intervals(monkeypatch):
     """Only the first max_intervals are imaged"""
-    results, _ = image_intervals(monkeypatch, interval_count=4, max_intervals=2)
+    results, _, _ = image_intervals(monkeypatch, interval_count=4, max_intervals=2)
 
     assert results == [0, 1]
 
 
 def test_image_intervals_caps_those_in_flight(monkeypatch):
-    """With two in flight, the third interval waits for the first to finish"""
-    _, started_by_linmos = image_intervals(
-        monkeypatch, interval_count=4, linmos_seconds=0.5, max_intervals_in_flight=2
+    """No more than max_intervals_in_flight intervals run at once"""
+    _, running_at_start, _ = image_intervals(
+        monkeypatch,
+        interval_count=5,
+        linmos_seconds=dict.fromkeys(range(5), 0.3),
+        max_intervals_in_flight=2,
     )
 
-    assert 2 not in started_by_linmos[0]
-    assert sorted(started_by_linmos[3]) == [0, 1, 2, 3]
+    assert max(running_at_start) <= 2
+
+
+def test_image_intervals_does_not_wait_on_a_slow_interval(monkeypatch):
+    """A slow interval holds one slot while the others keep the rest busy"""
+    results, _, started_by_linmos = image_intervals(
+        monkeypatch,
+        interval_count=4,
+        linmos_seconds={0: 2.0},
+        max_intervals_in_flight=2,
+    )
+
+    assert sorted(started_by_linmos[0]) == [0, 1, 2, 3]
+    assert results == [0, 1, 2, 3]
