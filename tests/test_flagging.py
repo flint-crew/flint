@@ -67,9 +67,10 @@ def test_set_all_chans_flagged_by_baseline(ms_example) -> None:
     assert np.all(modified_flags[:, 110:120, :])
 
 
-def test_flag_sparse_channels(ms_example) -> None:
+@pytest.mark.parametrize("chunk_size", (100000, 300))
+def test_flag_sparse_channels(ms_example, chunk_size: int) -> None:
     """A channel with too little valid data is flagged outright, and one with
-    enough is left as it was"""
+    enough is left as it was, however many rows are handled at a time"""
     with table(str(ms_example), ack=False, readonly=False) as tab:
         flags = np.zeros_like(tab.getcol("FLAG"), dtype=bool)
         rows = flags.shape[0]
@@ -82,7 +83,9 @@ def test_flag_sparse_channels(ms_example) -> None:
     expected[:, 10:20, :] = True
 
     for _ in range(2):
-        ms = flag_sparse_channels(ms=ms_example, min_valid_fraction=0.3)
+        ms = flag_sparse_channels(
+            ms=ms_example, min_valid_fraction=0.3, chunk_size=chunk_size
+        )
         with table(str(ms.path), ack=False) as tab:
             assert np.array_equal(tab.getcol("FLAG"), expected)
 

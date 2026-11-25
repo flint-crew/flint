@@ -8,6 +8,7 @@ import pytest
 from astropy.coordinates import EarthLocation, Latitude, Longitude
 from astropy.time import Time
 
+from flint.exceptions import MSError
 from flint.imageset import ImageSet
 from flint.ms import (
     MSSummary,
@@ -173,6 +174,18 @@ def test_field_summary_carries_the_boresight(ms_example):
     ):
         assert field_summary.boresight is not None
         assert field_summary.boresight.separation(pointing).arcsec < 1e-3
+
+
+def test_field_summary_refuses_measurement_sets_pointed_differently(ms_example):
+    """A mosaic takes the third-axis angle of one measurement set for all, so a
+    set that differs is refused rather than rotated wrongly"""
+    ms_summary = describe_ms(ms=ms_example)
+    assert ms_summary.pol_axis is not None
+    turned = ms_summary.with_options(pol_axis=ms_summary.pol_axis + np.deg2rad(5.0))
+
+    create_field_summary(ms_summaries=[ms_summary, ms_summary])
+    with pytest.raises(MSError, match="third-axis"):
+        create_field_summary(ms_summaries=[ms_summary, turned])
 
 
 def test_field_summary_with_mss_and_summaries(

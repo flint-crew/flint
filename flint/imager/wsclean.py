@@ -782,6 +782,8 @@ def collect_wsclean_outputs(
 ) -> ImageSet:
     """Gather the images wsclean wrote under ``prefix`` into an ``ImageSet`` with flint names.
 
+    With ``flint_min_image_vis`` set, every image of a channel made from fewer
+    visibilities than that is blanked in place first. See ``blank_sparse_channels``.
     With ``pol: xx,yy`` the XX and YY images become Stokes I, and are deleted unless
     ``flint_keep_linear_images`` is set. Images not gathered are renamed too, and
     left on disk with a warning. Channel images are cubed when

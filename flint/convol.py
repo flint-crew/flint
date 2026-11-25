@@ -529,10 +529,11 @@ def convolve_images(
 def blank_images(
     image_paths: Collection[Path], convol_suffix: str | None = "conv"
 ) -> list[Path]:
-    """Write an all-NaN copy of each image, marked with a zero beam.
+    """Blank each image to all-NaN, marked with a zero beam. The blank is a copy
+    named with ``convol_suffix``, or the image itself when that is None.
 
-    This stands in for a convolution that cannot be done: a channel whose every
-    image is beyond the beam cutoff has no common beam to convolve to, and
+    The copy stands in for a convolution that cannot be done: a channel whose
+    every image is beyond the beam cutoff has no common beam to convolve to, and
     copying the images at their own resolutions would have whatever they are
     co-added into claim a beam that describes none of them. The zero beam is the
     marker ``usable_beam_mask`` and ``fitscube`` both read as 'no PSF here'.
