@@ -526,46 +526,49 @@ def flow_subtract_cube(
     )
 
     cube_futures: list[PrefectFuture[Path]] = []
-    if subtract_field_options.channelwise_image:
-        with tags("channel-cube"):
-            channel_linmos_results = image_and_linmos_intervals(
-                science_mss=science_mss,
-                subtract_field_options=subtract_field_options,
-                update_wsclean_options=update_wsclean_options,
-                range_name="channel_range",
-                interval_count=len(freqs_mhz),
-            )
-            cube_futures.extend(
-                task_combine_all_linmos_images.submit(
-                    linmos_commands=channel_linmos_results,
-                    combine_weights=combine_weights,
-                    update_fits_cube_options=update_fits_cube_options,
+    try:
+        if subtract_field_options.channelwise_image:
+            with tags("channel-cube"):
+                channel_linmos_results = image_and_linmos_intervals(
+                    science_mss=science_mss,
+                    subtract_field_options=subtract_field_options,
+                    update_wsclean_options=update_wsclean_options,
+                    range_name="channel_range",
+                    interval_count=len(freqs_mhz),
                 )
-                for combine_weights in (False, True)
-            )
+                cube_futures.extend(
+                    task_combine_all_linmos_images.submit(
+                        linmos_commands=channel_linmos_results,
+                        combine_weights=combine_weights,
+                        update_fits_cube_options=update_fits_cube_options,
+                    )
+                    for combine_weights in (False, True)
+                )
 
-    if subtract_field_options.timestep_image:
-        with tags("time-cube"):
-            scan_linmos_results = image_and_linmos_intervals(
-                science_mss=science_mss,
-                subtract_field_options=subtract_field_options,
-                update_wsclean_options=update_wsclean_options,
-                range_name="scan_range",
-                interval_count=len(times),
-            )
-            cube_futures.extend(
-                task_combine_all_linmos_images.submit(
-                    linmos_commands=scan_linmos_results,
-                    combine_weights=combine_weights,
-                    time_domain=True,
-                    update_fits_cube_options=update_fits_cube_options,
+        if subtract_field_options.timestep_image:
+            with tags("time-cube"):
+                scan_linmos_results = image_and_linmos_intervals(
+                    science_mss=science_mss,
+                    subtract_field_options=subtract_field_options,
+                    update_wsclean_options=update_wsclean_options,
+                    range_name="scan_range",
+                    interval_count=len(times),
                 )
-                for combine_weights in (False, True)
-            )
+                cube_futures.extend(
+                    task_combine_all_linmos_images.submit(
+                        linmos_commands=scan_linmos_results,
+                        combine_weights=combine_weights,
+                        time_domain=True,
+                        update_fits_cube_options=update_fits_cube_options,
+                    )
+                    for combine_weights in (False, True)
+                )
+    finally:
+        # Even on a failure, so a channel cube being written is not cut off
+        wait(cube_futures)
 
     # prefect-dask hides a dask error, such as a KilledWorker, unless it is asked
     # for the result
-    wait(cube_futures)
     return [future.result() for future in cube_futures] or list(science_mss)
 
 
