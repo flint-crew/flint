@@ -10,7 +10,7 @@ already been preprocessed and fixed.
 from __future__ import annotations
 
 from pathlib import Path
-from time import sleep
+from queue import Queue
 from typing import Any
 
 import dask
@@ -19,11 +19,11 @@ from capn_crunch import add_options_to_parser, create_options_from_parser
 from configargparse import ArgumentParser
 from fitscube.combine_fits import combine_fits, compress_cube
 from prefect import flow, tags, unmapped
-from prefect.futures import PrefectFuture
+from prefect.futures import PrefectFuture, wait
 
 from flint.coadd.linmos import LinmosResult
 from flint.configuration import get_options_from_strategy, load_and_copy_strategy
-from flint.exceptions import FrequencyMismatchError
+from flint.exceptions import FailedIntervalsError, FrequencyMismatchError
 from flint.imager.wsclean import WSCleanResult
 from flint.logging import logger
 from flint.ms import (
@@ -75,6 +75,12 @@ def _check_and_verify_options(
             and subtract_field_options.yandasoft_container.is_file()
         ), (
             f"{subtract_field_options.yandasoft_container=} does not exist or is not a file"
+        )
+        assert subtract_field_options.max_intervals_in_flight >= 1, (
+            f"{subtract_field_options.max_intervals_in_flight=} must be at least 1"
+        )
+        assert subtract_field_options.max_failed_intervals >= 0, (
+            f"{subtract_field_options.max_failed_intervals=} must be at least 0"
         )
 
     if subtract_field_options and subtract_field_options.use_addmodel:
@@ -287,6 +293,108 @@ def task_combine_all_linmos_images(
     return Path(output_cube_path)
 
 
+def collect_interval(
+    interval: int,
+    wsclean_future: PrefectFuture[list[WSCleanResult]],
+    linmos_future: PrefectFuture[LinmosResult],
+    range_name: str,
+) -> LinmosResult | Exception:
+    """Wait on one interval, returning its linmos result or the error it failed with."""
+    try:
+        # A failed wsclean leaves linmos only an unfinished upstream to report
+        wsclean_future.result()
+        return linmos_future.result()
+    except Exception as exception:
+        logger.error(f"{range_name} {interval} failed: {exception!r}")
+        return exception
+
+
+def image_and_linmos_intervals(
+    science_mss: tuple[MS, ...],
+    subtract_field_options: SubtractFieldOptions,
+    update_wsclean_options: dict[str, Any],
+    range_name: str,
+    interval_count: int,
+) -> list[LinmosResult]:
+    """Image and linmos each channel or time, at most ``max_intervals_in_flight`` at once.
+
+    A failed interval is left out, and this raises once more than
+    ``max_failed_intervals`` have failed or if none worked.
+    """
+    if interval_count > subtract_field_options.max_intervals:
+        logger.critical(
+            f"Imaging only the first {subtract_field_options.max_intervals} of {interval_count} {range_name} intervals"
+        )
+        interval_count = subtract_field_options.max_intervals
+
+    # Rate limiter: each linmos future puts itself on ``finished`` when done. Once
+    # the in-flight limit is reached, one is taken off before the next is submitted.
+    in_flight: dict[
+        PrefectFuture[LinmosResult], tuple[int, PrefectFuture[list[WSCleanResult]]]
+    ] = {}
+    finished: Queue[PrefectFuture[LinmosResult]] = Queue()
+    results: dict[int, LinmosResult | Exception] = {}
+    for interval in range(interval_count):
+        interval_range = (interval, interval + 1)
+        logger.info(f"Imaging {range_name}={interval_range}")
+        wsclean_future = task_map_all_wsclean.submit(
+            in_mss=science_mss,
+            wsclean_container=subtract_field_options.wsclean_container,
+            update_wsclean_options=update_wsclean_options,
+            **{range_name: interval_range},
+        )
+        linmos_future = task_common_beam_convolve_linmos.submit(
+            wsclean_results=wsclean_future,
+            linmos_suffix_str=None,
+            field_options=subtract_field_options,
+            convol_mode="image",
+            convol_filter="image.",
+            convol_suffix_str="optimal.conv",
+            trim_linmos_fits=False,  # This is necessary to ensure all images have same pixel-coordinates
+            remove_original_images=True,
+            cleanup_linmos=True,
+        )
+        in_flight[linmos_future] = (interval, wsclean_future)
+        linmos_future.add_done_callback(finished.put)
+
+        last = interval == interval_count - 1
+        while in_flight and (
+            last or len(in_flight) >= subtract_field_options.max_intervals_in_flight
+        ):
+            finished_linmos = finished.get()
+            finished_interval, finished_wsclean = in_flight.pop(finished_linmos)
+            results[finished_interval] = collect_interval(
+                finished_interval,
+                finished_wsclean,
+                finished_linmos,
+                range_name=range_name,
+            )
+            errors = [
+                result for result in results.values() if isinstance(result, Exception)
+            ]
+            if len(errors) > subtract_field_options.max_failed_intervals:
+                msg = f"{len(errors)} {range_name} intervals failed, more than {subtract_field_options.max_failed_intervals=}, the last with {errors[-1]!r}"
+                raise FailedIntervalsError(msg) from errors[-1]
+
+    ordered = [results[interval] for interval in range(interval_count)]
+    errors = [result for result in ordered if isinstance(result, Exception)]
+    if len(errors) == len(ordered):
+        last_error = errors[-1] if errors else None
+        msg = f"All {interval_count} {range_name} intervals failed, the last with {last_error!r}"
+        raise FailedIntervalsError(msg) from last_error
+    if errors:
+        failed = [
+            interval
+            for interval, result in enumerate(ordered)
+            if isinstance(result, Exception)
+        ]
+        logger.error(
+            f"{len(failed)} of {interval_count} {range_name} intervals failed and are not in the cube: {failed}"
+        )
+
+    return [result for result in ordered if not isinstance(result, Exception)]
+
+
 @flow
 def flow_addmodel_to_mss(
     science_path_or_mss: Path | tuple[MS, ...],
@@ -320,10 +428,7 @@ def flow_subtract_cube(
     subtract_field_options: SubtractFieldOptions,
     addmodel_subtract_field_options: AddModelSubtractFieldOptions,
     crystalball_subtract_field_options: CrystalBallOptions,
-) -> list[PrefectFuture[Any] | MS]:
-    # returned futures are resolved by prefect to fail the flow on task failure
-    cube_results: list[PrefectFuture[Any] | MS] = []
-
+) -> list[Path] | list[MS]:
     strategy = load_and_copy_strategy(
         output_split_science_path=science_path,
         imaging_strategy=subtract_field_options.imaging_strategy,
@@ -349,10 +454,6 @@ def flow_subtract_cube(
     logger.info(
         f"Considering {len(freqs_mhz)} frequencies from {science_mss[0]}, range covering {np.min(freqs_mhz)}-{np.max(freqs_mhz)} MHz"
     )
-    if len(freqs_mhz) > 20 and subtract_field_options.stagger_delay_seconds is None:
-        logger.critical(
-            f"{len(freqs_mhz)} channels and no stagger delay set! Consider setting a stagger delay"
-        )
 
     logger.info("Collecting times from representative measurement set")
     times = get_times_from_ms(
@@ -407,131 +508,68 @@ def flow_subtract_cube(
                 ms=science_mss, column_name=subtract_field_options.subtract_data_column
             )
 
+    # Resolved here so a failed subtract raises its own error before any imaging
+    science_mss = tuple(
+        ms.result() if isinstance(ms, PrefectFuture) else ms for ms in science_mss
+    )
+
     # Fellow Captain Zic request, arrr
     if subtract_field_options.subtract_only:
         logger.info("The '--subtract-only' option has been specified. No imaging.")
         return list(science_mss)
 
-    if subtract_field_options.channelwise_image:
-        with tags("channel-cube"):
-            channel_parset_list = []
-            for channel, freq_mhz in enumerate(freqs_mhz):
-                if channel >= subtract_field_options.max_intervals:
-                    logger.critical("Breaking for sanity")
-                    break
+    update_wsclean_options = get_options_from_strategy(
+        strategy=strategy, mode="wsclean", operation="subtractcube"
+    )
+    update_fits_cube_options = get_options_from_strategy(
+        strategy=strategy, mode="fitscube", operation="subtractcube"
+    )
 
-                logger.info(f"Imaging {channel=} {freq_mhz=}")
-                channel_range = (channel, channel + 1)
-                update_wsclean_options = get_options_from_strategy(
-                    strategy=strategy,
-                    mode="wsclean",
-                    operation="subtractcube",
-                )
-                channel_wsclean_cmds = task_map_all_wsclean.submit(
-                    in_mss=science_mss,
-                    wsclean_container=subtract_field_options.wsclean_container,
-                    channel_range=channel_range,
+    cube_futures: list[PrefectFuture[Path]] = []
+    try:
+        if subtract_field_options.channelwise_image:
+            with tags("channel-cube"):
+                channel_linmos_results = image_and_linmos_intervals(
+                    science_mss=science_mss,
+                    subtract_field_options=subtract_field_options,
                     update_wsclean_options=update_wsclean_options,
+                    range_name="channel_range",
+                    interval_count=len(freqs_mhz),
+                )
+                cube_futures.extend(
+                    task_combine_all_linmos_images.submit(
+                        linmos_commands=channel_linmos_results,
+                        combine_weights=combine_weights,
+                        update_fits_cube_options=update_fits_cube_options,
+                    )
+                    for combine_weights in (False, True)
                 )
 
-                channel_parset = task_common_beam_convolve_linmos.submit(
-                    wsclean_results=channel_wsclean_cmds,
-                    linmos_suffix_str=None,
-                    field_options=subtract_field_options,
-                    convol_mode="image",
-                    convol_filter="image.",
-                    convol_suffix_str="optimal.conv",
-                    trim_linmos_fits=False,  # This is necessary to ensure all images have same pixel-coordinates
-                    remove_original_images=True,
-                    cleanup_linmos=True,
-                )
-
-                channel_parset_list.append(channel_parset)
-
-                if subtract_field_options.stagger_delay_seconds:
-                    sleep(subtract_field_options.stagger_delay_seconds)
-
-            # 4 - cube concatenated each linmos field together to single file
-            update_fits_cube_options = get_options_from_strategy(
-                strategy=strategy,
-                mode="fitscube",
-                operation="subtractcube",
-            )
-            cube_results.append(
-                task_combine_all_linmos_images.submit(
-                    linmos_commands=channel_parset_list,
-                    update_fits_cube_options=update_fits_cube_options,
-                )
-            )
-            cube_results.append(
-                task_combine_all_linmos_images.submit(
-                    linmos_commands=channel_parset_list,
-                    combine_weights=True,
-                    update_fits_cube_options=update_fits_cube_options,
-                )
-            )
-
-    if subtract_field_options.timestep_image:
-        with tags("time-cube"):
-            scan_parset_list = []
-            for scan, time in enumerate(times):
-                if scan >= subtract_field_options.max_intervals:
-                    logger.critical("Breaking for sanity")
-                    break
-
-                logger.info(f"Imaging {scan=} {time=}")
-                scan_range = (scan, scan + 1)
-                update_wsclean_options = get_options_from_strategy(
-                    strategy=strategy,
-                    mode="wsclean",
-                    operation="subtractcube",
-                )
-                scan_wsclean_cmds = task_map_all_wsclean.submit(
-                    in_mss=science_mss,
-                    wsclean_container=subtract_field_options.wsclean_container,
-                    scan_range=scan_range,
+        if subtract_field_options.timestep_image:
+            with tags("time-cube"):
+                scan_linmos_results = image_and_linmos_intervals(
+                    science_mss=science_mss,
+                    subtract_field_options=subtract_field_options,
                     update_wsclean_options=update_wsclean_options,
+                    range_name="scan_range",
+                    interval_count=len(times),
                 )
-
-                scan_parset = task_common_beam_convolve_linmos.submit(
-                    wsclean_results=scan_wsclean_cmds,
-                    linmos_suffix_str=None,
-                    field_options=subtract_field_options,
-                    convol_mode="image",
-                    convol_filter="image.",
-                    convol_suffix_str="optimal.conv",
-                    trim_linmos_fits=False,  # This is necessary to ensure all images have same pixel-coordinates
-                    remove_original_images=True,
-                    cleanup_linmos=True,
+                cube_futures.extend(
+                    task_combine_all_linmos_images.submit(
+                        linmos_commands=scan_linmos_results,
+                        combine_weights=combine_weights,
+                        time_domain=True,
+                        update_fits_cube_options=update_fits_cube_options,
+                    )
+                    for combine_weights in (False, True)
                 )
-                scan_parset_list.append(scan_parset)
+    finally:
+        # Even on a failure, so a channel cube being written is not cut off
+        wait(cube_futures)
 
-                if subtract_field_options.stagger_delay_seconds:
-                    sleep(subtract_field_options.stagger_delay_seconds)
-
-            # 4 - cube concatenated each linmos field together to single file
-            update_fits_cube_options = get_options_from_strategy(
-                strategy=strategy,
-                mode="fitscube",
-                operation="subtractcube",
-            )
-            cube_results.append(
-                task_combine_all_linmos_images.submit(
-                    linmos_commands=scan_parset_list,
-                    time_domain=True,
-                    update_fits_cube_options=update_fits_cube_options,
-                )
-            )
-            cube_results.append(
-                task_combine_all_linmos_images.submit(
-                    linmos_commands=scan_parset_list,
-                    combine_weights=True,
-                    time_domain=True,
-                    update_fits_cube_options=update_fits_cube_options,
-                )
-            )
-
-    return cube_results if cube_results else list(science_mss)
+    # prefect-dask hides a dask error, such as a KilledWorker, unless it is asked
+    # for the result
+    return [future.result() for future in cube_futures] or list(science_mss)
 
 
 def setup_run_subtract_flow(
