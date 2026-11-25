@@ -38,6 +38,8 @@ After a set of model visibilities have been predicted for each measurement set, 
 
 A field image is produced at each channel by a separate `linmos` process invocation. That is to say, if there are 288 channels in the collection of measurement sets, there will be 288 separate  `linmos` processes throughout the flow. Once all field images have been proceduced they are concatenated together (in an asynchronous and memory efficient way) into a single FITS cube. See the [fitscube python package for more information](https://github.com/alecthomson/fitscube).
 
+At most `max_intervals_in_flight` channels (or time steps) are imaged and `linmos`'d at once. Once that many are running, the next is submitted as soon as any of them finishes, which keeps the load on the `dask` scheduler and the `prefect` server steady over a long run. A channel that fails is logged and left out of the cube. With `create_blanks` (the default) a missing channel inside the band becomes a blank plane, while one at either edge shortens the cube. The flow fails once more than `max_failed_intervals` channels have failed.
+
 ### Processes vs Threads
 
 A `dask-worker` can be assigned a set of cpu cores that are to be used throughout computation. Further, a `dask-worker` can be configured to execute work using either a `ProcessPool` or a `ThreadPool`, each with different types of advantages and disadvantages. Should many external compiled applications be called upong (as is the case throughout the self-calibration and imaging pipeline), a process backed work pool is advised:

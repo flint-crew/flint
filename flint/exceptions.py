@@ -83,3 +83,7 @@ class NoFieldSourceError(FlintException):
 
 class UnusableBeamError(FlintException):
     """Raised when a holography cube has no usable response for a beam"""
+
+
+class FailedIntervalsError(FlintException):
+    """Raised when too many channels or times failed to image"""
