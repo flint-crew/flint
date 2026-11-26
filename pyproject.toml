@@ -49,7 +49,7 @@ dependencies = [
     "dask",
     "dask-jobqueue",
     "bokeh>=3.1", # dask needs it to render performance reports
-    "convolve-rs>=3.0.0", # linear convolution, normalised near missing data
+    "convolve-rs>=3.0.1", # linear convolution, normalised near missing data
     "radio-beam>=0.3.4",
     "reproject>=0.10",
     "pandas",

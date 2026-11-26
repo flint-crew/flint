@@ -245,7 +245,7 @@ requires-dist = [
     { name = "bokeh", specifier = ">=3.1" },
     { name = "capn-crunch", specifier = ">=1.2.0" },
     { name = "configargparse", specifier = ">=1.7" },
-    { name = "convolve-rs", specifier = ">=3.0.0" },
+    { name = "convolve-rs", specifier = ">=3.0.1" },
     { name = "crystalball", specifier = ">=0.4.3" },
     { name = "dask" },
     { name = "dask-jobqueue" },
@@ -909,16 +909,16 @@ wheels = [
 
 [[package]]
 name = "convolve-rs"
-version = "3.0.0"
+version = "3.0.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/1d/d1/ec2f41961995f65e6b3e9bb6fd88c8841e44377ec4075d96ee7d9821dbcf/convolve_rs-3.0.0.tar.gz", hash = "sha256:d6f56d2253d15c669723ca81ae6be6248cbb413186cb9ecd5ade967d01bdcc74", size = 593305, upload-time = "2026-11-22T09:56:08.939Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1e/c5/5d10704797303a972115c33dd911f2eccc54d4973c47af9265f36c3825e8/convolve_rs-3.0.1.tar.gz", hash = "sha256:3a2830efc4aeba0177ad52475af512dafbf5b3fd46dafe3b88ab7243d726a96a", size = 593732, upload-time = "2026-11-26T07:30:56.391Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4b/f0/9d5be0e9a91c44990839f1ec109f2cb73f2cce881b5338d8c37404ecd4f9/convolve_rs-3.0.0-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:5573372860104f065bfc25639ac5ff752c3225685c6781c88b785273c9ecd0a8", size = 1572792, upload-time = "2026-11-22T09:56:04.071Z" },
-    { url = "https://files.pythonhosted.org/packages/51/0e/ad2f787f396613531383dfb7293458db9adcc82d4b5f7e5904ca9b959372/convolve_rs-3.0.0-cp310-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:ecffa67f55243513687c67d17fccaa0bc6bab63239b9192ff5af11da31a24bb2", size = 1735922, upload-time = "2026-11-22T09:56:05.709Z" },
-    { url = "https://files.pythonhosted.org/packages/4b/3c/7b7f014602f30b442e3d53d41c52461af0aa535f593817dd791d37dd96e5/convolve_rs-3.0.0-cp310-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:a255aafe912473182a97cc7472cf0f9bf2f7cd8075770a4516e39345b3111ad0", size = 2016574, upload-time = "2026-11-22T09:56:07.384Z" },
+    { url = "https://files.pythonhosted.org/packages/b4/90/3a6f0828022d72cbbfa99bd8ffacc5890f4cfdd92da2e0524ae39dcc813c/convolve_rs-3.0.1-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:34ec75cb8c79539f140b60e4b4d25ec525be27edde6827e4878944821bc21a34", size = 1589790, upload-time = "2026-11-26T07:30:52.38Z" },
+    { url = "https://files.pythonhosted.org/packages/ed/57/81ba141b96d28f841d4cf255e4f430e6f67835ef9323b17ef1595bcd33f2/convolve_rs-3.0.1-cp310-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:d5d9bba3cb6cc167f4c778bd976612b5624b567221bb6db62c4e33b1647f524b", size = 1751543, upload-time = "2026-11-26T07:30:53.715Z" },
+    { url = "https://files.pythonhosted.org/packages/89/a2/3af7f48b71917e61b2d90e103ce02df184129c417a0b2e1a954cf4df43dc/convolve_rs-3.0.1-cp310-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:c8e76e7d6a1a082a700dad8a035f80a98e262ec26fd3e9181d45d6d3781c1494", size = 2032436, upload-time = "2026-11-26T07:30:54.926Z" },
 ]
 
 [[package]]
