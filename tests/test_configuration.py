@@ -17,6 +17,7 @@ from flint.configuration import (
     get_image_options_from_yaml,
     get_mosaic_mode,
     get_options_from_strategy,
+    get_patchwork_options,
     get_selfcal_mode_for_round,
     get_selfcal_options_from_yaml,
     get_selfcal_round_fitscube_options,
@@ -762,22 +763,53 @@ def test_get_mosaic_mode(strategy):
         verify_configuration(input_strategy=strategy)
 
 
-@pytest.mark.parametrize(
-    "misplaced",
-    [
-        {"polarisation": {"linear": {"wsclean": {}, "patchwork": {}}}},
-        {"stokesv": {"wsclean": {}, "patchwork": {}}},
-    ],
-)
-def test_a_patchwork_mode_nothing_reads_is_refused(strategy, misplaced):
-    """Named anywhere but directly under polarisation it would validate, and
-    linmos would quietly do the mosaicking"""
-    (operation,) = misplaced
-    strategy[operation] = misplaced[operation]
+def test_get_mosaic_mode_of_a_selfcal_round(strategy):
+    """Each self-calibration round chooses its own mosaicker, and rounds past
+    the last one listed follow the last"""
+    last_round = max(strategy["selfcal"])
+    strategy["selfcal"][last_round]["patchwork"] = {"kernel": "linear"}
+    assert verify_configuration(input_strategy=strategy)
+
+    modes = [
+        get_mosaic_mode(strategy=strategy, operation="selfcal", round_info=round_info)
+        for round_info in (0, last_round, last_round + 5)
+    ]
+    assert modes == ["linmos", "patchwork", "patchwork"]
+    # Without a round there is no section to read
+    assert get_mosaic_mode(strategy=strategy, operation="selfcal") == "linmos"
+
+    assert (
+        get_patchwork_options(strategy=strategy, operation="selfcal", round_info=0)
+        is None
+    )
+    patchwork_options = get_patchwork_options(
+        strategy=strategy, operation="selfcal", round_info=last_round + 5
+    )
+    assert patchwork_options is not None
+    assert patchwork_options.kernel == "linear"
+
+
+@pytest.mark.parametrize("operation", ["stokesv", "subtractcube"])
+def test_get_patchwork_options_of_an_operation(strategy, operation):
+    """Stokes V and subtract-cube mosaic with patchwork once their section names it"""
+    strategy[operation] = {"wsclean": {}}
+    assert get_patchwork_options(strategy=strategy, operation=operation) is None
+    assert get_patchwork_options(strategy=None, operation=operation) is None
+
+    strategy[operation]["patchwork"] = {"holography_scale": "stored"}
+    assert verify_configuration(input_strategy=strategy)
+    patchwork_options = get_patchwork_options(strategy=strategy, operation=operation)
+    assert patchwork_options is not None
+    assert patchwork_options.holography_scale == "stored"
+
+
+def test_a_patchwork_mode_nothing_reads_is_refused(strategy):
+    """Named under a polarisation rather than the operation it would validate,
+    and linmos would quietly do the mosaicking"""
+    strategy["polarisation"] = {"linear": {"wsclean": {}, "patchwork": {}}}
     assert not verify_configuration(input_strategy=strategy, raise_on_error=False)
 
-    scope = strategy[operation].get("linear", strategy[operation])
-    del scope["patchwork"]
+    del strategy["polarisation"]["linear"]["patchwork"]
     assert verify_configuration(input_strategy=strategy)
 
 

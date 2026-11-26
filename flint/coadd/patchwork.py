@@ -5,12 +5,12 @@ from __future__ import annotations
 
 from collections.abc import Collection, Mapping
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
 from capn_crunch import BaseOptions
-from patchwork.io import BeamShape
+from patchwork.io import BeamShape, stokes_from_header
 from patchwork.mosaic import mosaic
 from patchwork.options import (
     FrameOptions,
@@ -25,6 +25,7 @@ from patchwork.tile import weight_groups
 from flint.coadd.linmos import compute_pb_rotation_alpha
 from flint.logging import logger
 from flint.naming import create_linmos_names
+from flint.utils import remove_files_folders
 
 
 class PatchworkOptions(BaseOptions):
@@ -164,3 +165,34 @@ def patchwork_stokes_images(
         scratch_path.unlink()
 
     return results
+
+
+def patchwork_images(
+    images: Collection[Path],
+    base_path: Path,
+    remove_original_images: bool = False,
+    **kwargs: Any,
+) -> MosaicResult:
+    """Mosaic the beam images of one Stokes, as ``patchwork_stokes_images`` does several.
+
+    Args:
+        images (Collection[Path]): The beam images
+        base_path (Path): The base path of the outputs, as ``create_linmos_names`` takes it
+        remove_original_images (bool, optional): Delete the beam images once they are mosaicked. Defaults to False.
+        **kwargs (Any): Passed to ``patchwork_stokes_images``
+
+    Returns:
+        MosaicResult: The mosaic and its weight
+    """
+    stokes_code = stokes_from_header(fits.getheader(next(iter(images))))
+    stokes = {code: name.lower() for name, code in STOKES_CODES.items()}.get(
+        stokes_code, "i"
+    )
+    mosaic_result = patchwork_stokes_images(
+        stokes_images={stokes: images}, stokes_base_paths={stokes: base_path}, **kwargs
+    )[stokes]
+
+    if remove_original_images:
+        remove_files_folders(*images)
+
+    return mosaic_result

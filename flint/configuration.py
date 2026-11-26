@@ -482,17 +482,45 @@ def get_selfcal_mode_for_round(
     return solvers[0] if solvers else "gaincal"
 
 
-def get_mosaic_mode(strategy: Strategy | Path | None, operation: str) -> MosaicMode:
+def get_mosaic_mode(
+    strategy: Strategy | Path | None, operation: str, round_info: int | None = None
+) -> MosaicMode:
     """Which mosaicker an operation uses: patchwork if its section names it, else linmos.
 
-    As with ``get_selfcal_mode_for_round``, the ``defaults`` section does not count.
+    As with ``get_selfcal_mode_for_round``, the ``defaults`` section does not count,
+    and given a ``round_info`` it is that round's section that is read, with rounds
+    past the last one listed using the last.
     """
     if isinstance(strategy, Path):
         strategy = load_strategy_yaml(input_yaml=strategy)
     if not strategy:
         return "linmos"
 
-    return "patchwork" if "patchwork" in (strategy.get(operation) or {}) else "linmos"
+    scope = strategy.get(operation) or {}
+    if round_info is not None and scope:
+        scope = scope.get(min(round_info, max(scope.keys()))) or {}
+
+    return "patchwork" if "patchwork" in scope else "linmos"
+
+
+def get_patchwork_options(
+    strategy: Strategy | Path | None, operation: str, round_info: int | None = None
+) -> PatchworkOptions | None:
+    """The patchwork options of an operation that mosaics with it, or None if it uses linmos"""
+    mosaic_mode = get_mosaic_mode(
+        strategy=strategy, operation=operation, round_info=round_info
+    )
+    if mosaic_mode == "linmos":
+        return None
+
+    return PatchworkOptions(
+        **get_options_from_strategy(
+            strategy=strategy,
+            operation=operation,
+            mode="patchwork",
+            round_info=round_info,
+        )
+    )
 
 
 def _paths_to_mode(
@@ -666,10 +694,13 @@ def verify_configuration(input_strategy: Strategy, raise_on_error: bool = True) 
 
     # Named anywhere else it would validate, and linmos would quietly be used
     for path in _paths_to_mode(input_strategy, "patchwork"):
-        if path not in (("defaults", "patchwork"), ("polarisation", "patchwork")):
+        scope = path[:-1]
+        selfcal_round = len(scope) == 2 and scope[0] == "selfcal"
+        operations = ("defaults", "polarisation", "stokesv", "subtractcube")
+        if not selfcal_round and scope not in [(name,) for name in operations]:
             errors.append(
-                f"'patchwork' under {path[:-1]} is never read. It selects the "
-                "mosaicker only when named directly under 'polarisation'. "
+                f"'patchwork' under {scope} is never read. It selects the mosaicker "
+                "only when named directly under an operation or a round of 'selfcal'. "
             )
 
     valid_config = len(errors) == 0

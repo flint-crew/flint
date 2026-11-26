@@ -14,6 +14,7 @@ from astropy.wcs import WCS
 from flint.coadd.patchwork import (
     MosaicResult,
     PatchworkOptions,
+    patchwork_images,
     patchwork_stokes_images,
 )
 
@@ -130,6 +131,40 @@ def test_every_stokes_is_mosaicked_under_the_linmos_names(tmp_path: Path) -> Non
         equal_nan=True,
     )
     assert not list(tmp_path.glob("*patchwork*"))
+
+
+@pytest.mark.parametrize("stokes", ["i", "v"])
+def test_one_stokes_is_mosaicked_on_its_own(tmp_path: Path, stokes: str) -> None:
+    """The continuum and Stokes V mosaics are of one Stokes, whichever it is"""
+    images = beam_images(tmp_path, stokes)
+
+    mosaic = patchwork_images(
+        images=images,
+        base_path=tmp_path / "field",
+        patchwork_options=NUMPY,
+        boresight=BORESIGHT,
+    )
+
+    assert mosaic.image_fits == tmp_path / "field.linmos.fits"
+    assert mosaic.weight_fits == tmp_path / "field.weight.fits"
+    assert fits.getheader(mosaic.image_fits)["CRVAL4"] == STOKES_CODES[stokes]
+    assert np.isfinite(fits.getdata(mosaic.image_fits)).any()
+    assert all(image.exists() for image in images)
+
+
+def test_one_stokes_can_remove_its_beam_images(tmp_path: Path) -> None:
+    """Subtract-cube has no use for the beam images of an interval once mosaicked"""
+    images = beam_images(tmp_path, "i")
+
+    mosaic = patchwork_images(
+        images=images,
+        base_path=tmp_path / "field",
+        remove_original_images=True,
+        patchwork_options=NUMPY,
+    )
+
+    assert mosaic.image_fits.exists()
+    assert not any(image.exists() for image in images)
 
 
 def test_channels_share_one_pixel_grid(tmp_path: Path) -> None:

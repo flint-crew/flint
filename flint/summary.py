@@ -23,6 +23,7 @@ from astropy.utils.iers import conf
 from capn_crunch import BaseOptions
 
 from flint.coadd.linmos import LinmosResult
+from flint.coadd.patchwork import MosaicResult
 from flint.coadd.utils import check_shared_pointing
 from flint.imager.wsclean import WSCleanResult
 from flint.imageset import ImageSet
@@ -192,20 +193,20 @@ def add_rms_information(
 
 
 def add_linmos_fits_image(
-    field_summary: FieldSummary, linmos_command: LinmosResult
+    field_summary: FieldSummary, linmos_command: LinmosResult | MosaicResult
 ) -> FieldSummary:
     """Extract the path of the linmos fits image from the LinmosResult
     the co-added the field
 
     Args:
         field_summary (FieldSummary): Existing field summary to update
-        linmos_command (LinmosResult): Instance of a completed linmos command that coadded a field
+        linmos_command (LinmosResult | MosaicResult): The completed linmos command, or patchwork mosaic, that coadded a field
 
     Returns:
         FieldSummary: The updated field summary object with the linmos fits image added
     """
-    assert isinstance(linmos_command, LinmosResult), (
-        f"{linmos_command=} is type {type(linmos_command)}, expected LinmosResult"
+    assert isinstance(linmos_command, (LinmosResult, MosaicResult)), (
+        f"{linmos_command=} is type {type(linmos_command)}, expected LinmosResult or MosaicResult"
     )
 
     image_fits = linmos_command.image_fits
@@ -218,7 +219,7 @@ def update_field_summary(
     field_summary: FieldSummary,
     aegean_outputs: AegeanOutputs | None = None,
     mss: list[MS] | None = None,
-    linmos_command: LinmosResult | None = None,
+    linmos_command: LinmosResult | MosaicResult | None = None,
     **kwargs,
 ) -> FieldSummary:
     """Update an existing `FieldSummary` instance with additional information.
@@ -230,7 +231,7 @@ def update_field_summary(
         field_summary (FieldSummary): Field summary object to update
         aegean_outputs (Optional[AegeanOutputs], optional): Will add RMS and aegean related properties. Defaults to None.
         mss (Optional[Collection[MS]], optionals): Set of measurement sets to describe
-        linmos_command (Optional[LinmosResult], optional): The linmos command created when co-adding all beam images together
+        linmos_command (LinmosResult | MosaicResult | None, optional): The linmos command, or patchwork mosaic, created when co-adding all beam images together
 
     Returns:
         FieldSummary: An updated field summary objects

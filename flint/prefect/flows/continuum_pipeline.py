@@ -23,7 +23,9 @@ from flint.catalogue import verify_reference_catalogues
 from flint.configuration import (
     FitsCubeOptions,
     Strategy,
+    get_mosaic_mode,
     get_options_from_strategy,
+    get_patchwork_options,
     get_selfcal_mode_for_round,
     get_selfcal_round_fitscube_options,
     load_and_copy_strategy,
@@ -133,11 +135,13 @@ def _check_field_options(
             raise ValueError(
                 "casa_container needs to be set to preprocess CASDA measurement sets"
             )
-    if field_options.coadd_cubes:
-        if (
-            field_options.yandasoft_container is None
-            or not field_options.yandasoft_container
-        ):
+    if field_options.coadd_cubes and not field_options.yandasoft_container:
+        cube_mosaic_mode = get_mosaic_mode(
+            strategy=field_options.imaging_strategy,
+            operation="selfcal",
+            round_info=field_options.rounds,
+        )
+        if cube_mosaic_mode == "linmos":
             raise ValueError(
                 "Unable to create linmos cubes without a yandasoft container"
             )
@@ -599,46 +603,57 @@ def process_science_fields(
             )
         )
 
-    if field_options.yandasoft_container:
-        for current_round, wsclean_results in imaging_results.items():
-            parsets = create_convol_linmos_images(
-                wsclean_results=wsclean_results,
-                field_options=field_options,
-                field_summary=field_summary,
-                additional_linmos_suffix_str="noselfcal"
-                if current_round == 0
-                else None,
-            )
-            archive_wait_for.extend(parsets)
+    # A round is co-added by patchwork if the strategy names it, and otherwise
+    # by linmos if there is a yandasoft container to run it in
+    for current_round, wsclean_results in imaging_results.items():
+        patchwork_options = get_patchwork_options(
+            strategy=strategy, operation="selfcal", round_info=current_round
+        )
+        if patchwork_options is None and not field_options.yandasoft_container:
+            continue
 
-            if not run_aegean or current_round not in (0, field_options.rounds):
-                continue
+        parsets = create_convol_linmos_images(
+            wsclean_results=wsclean_results,
+            field_options=field_options,
+            field_summary=field_summary,
+            additional_linmos_suffix_str="noselfcal" if current_round == 0 else None,
+            patchwork_options=patchwork_options,
+        )
+        archive_wait_for.extend(parsets)
 
-            aegean_outputs = task_run_bane_and_aegean.submit(
-                image=parsets[-1], aegean_container=field_options.aegean_container
-            )  # type: ignore
-            field_summary = task_update_field_summary.submit(
-                field_summary=field_summary,
-                aegean_outputs=aegean_outputs,
-                linmos_command=parsets[-1],
-                round=current_round if current_round > 0 else None,
-            )  # type: ignore
-            archive_wait_for.append(field_summary)
+        if not run_aegean or current_round not in (0, field_options.rounds):
+            continue
 
-            val_results = validation_items(
-                field_summary=field_summary,
-                aegean_outputs=aegean_outputs,
-                reference_catalogue_directory=field_options.reference_catalogue_directory,
-            )
-            if val_results:
-                archive_wait_for.extend(val_results)
+        aegean_outputs = task_run_bane_and_aegean.submit(
+            image=parsets[-1], aegean_container=field_options.aegean_container
+        )  # type: ignore
+        field_summary = task_update_field_summary.submit(
+            field_summary=field_summary,
+            aegean_outputs=aegean_outputs,
+            linmos_command=parsets[-1],
+            round=current_round if current_round > 0 else None,
+        )  # type: ignore
+        archive_wait_for.append(field_summary)
 
-        if stokes_v_results is not None:
+        val_results = validation_items(
+            field_summary=field_summary,
+            aegean_outputs=aegean_outputs,
+            reference_catalogue_directory=field_options.reference_catalogue_directory,
+        )
+        if val_results:
+            archive_wait_for.extend(val_results)
+
+    if stokes_v_results is not None:
+        stokes_v_patchwork_options = get_patchwork_options(
+            strategy=strategy, operation="stokesv"
+        )
+        if stokes_v_patchwork_options or field_options.yandasoft_container:
             archive_wait_for.extend(
                 create_convol_linmos_images(
                     wsclean_results=stokes_v_results,
                     field_options=field_options.with_options(linmos_residuals=False),
                     field_summary=field_summary,
+                    patchwork_options=stokes_v_patchwork_options,
                 )
             )
 
@@ -668,6 +683,12 @@ def process_science_fields(
                 additional_linmos_suffix_str="cube",
                 fitscube_options=FitsCubeOptions().with_options(
                     **final_round_fitscube_options
+                ),
+                field_summary=field_summary,
+                patchwork_options=get_patchwork_options(
+                    strategy=strategy,
+                    operation="selfcal",
+                    round_info=field_options.rounds,
                 ),
             )
         archive_wait_for.extend(linmos_cubes.cubes)

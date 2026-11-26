@@ -207,18 +207,34 @@ yandasoft container is needed. As with the self-calibration solvers, only the
 operation's own section decides this: an entry under `defaults` sets option
 values, but does not switch the mosaicker.
 
-Only the `polarisation` operation supports it so far, named directly under it
-as below. A strategy that names it anywhere else is rejected:
+It is named directly under `polarisation`, `stokesv` or `subtractcube`, or
+under a round of `selfcal`. A strategy that names it anywhere else is rejected:
 
 ```yaml
+selfcal:
+  0:
+    patchwork: {}
+  1:
+    patchwork: {}
+stokesv:
+  patchwork: {}
+subtractcube:
+  patchwork: {}
 polarisation:
   patchwork: {}
 ```
 
-patchwork co-adds every Stokes of a channel together, and rotates Q and U to
-north at each pixel as it does (see
+Each self-calibration round chooses for itself, so a round that does not name
+it is co-added with `linmos`. Rounds past the last one listed follow the last,
+and the continuum cube follows the final round.
+
+patchwork co-adds every Stokes of a polarisation channel together, and rotates
+Q and U to north at each pixel as it does (see
 [polarisation imaging](quickstart/polarisation.md)). The mosaics and cubes keep
 the names `linmos` would give them.
+
+Under `stokesv` patchwork does not yet remove the leakage of Stokes I into
+Stokes V, which `linmos` does when given a holography cube.
 
 A patchwork mosaic is slightly brighter than a `linmos` one, as it scales each
 holography beam to 1 at its centre. Set `holography_scale: stored` to use the
