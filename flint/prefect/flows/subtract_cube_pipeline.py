@@ -331,8 +331,8 @@ def image_and_linmos_intervals(
 
     A failed interval is left out, and this raises once more than
     ``max_failed_intervals`` have failed or if none worked. With
-    ``patchwork_options`` patchwork co-adds each interval in place of linmos,
-    and orients its primary beams by ``field_summary``.
+    ``patchwork_options`` patchwork co-adds each interval in place of linmos.
+    Either orients its holography beams by ``field_summary``.
     """
     if interval_count > subtract_field_options.max_intervals:
         logger.critical(
@@ -544,12 +544,13 @@ def flow_subtract_cube(
     patchwork_options = get_patchwork_options(
         strategy=strategy, operation="subtractcube"
     )
-    # patchwork needs the boresight and third axis to orient its primary beams
+    # A holography beam is oriented by the third axis, and by the boresight too
+    # under patchwork
     field_summary = (
         task_create_field_summary.submit(
             mss=list(science_mss), holography_path=subtract_field_options.holofile
         )
-        if patchwork_options is not None
+        if subtract_field_options.holofile is not None
         else None
     )
 

@@ -1617,8 +1617,8 @@ def create_convolve_linmos_cubes(
     patchwork_options: PatchworkOptions | None = None,
 ) -> ConvolvedLinmosCubes:
     """Co-add the beam cubes channel by channel, each channel convolved to a
-    common resolution first. With ``patchwork_options`` patchwork co-adds them,
-    and orients its primary beams by ``field_summary``."""
+    common resolution first. With ``patchwork_options`` patchwork co-adds them
+    in place of linmos. Either orients its holography beams by ``field_summary``."""
     suffixes = [f"round{current_round}" if current_round is not None else "noselfcal"]
     if additional_linmos_suffix_str:
         suffixes.insert(0, additional_linmos_suffix_str)
@@ -1669,6 +1669,7 @@ def create_convolve_linmos_cubes(
             container=field_options.yandasoft_container,
             linmos_options=linmos_options,
             fitscube_options=fitscube_options,
+            field_summary=field_summary,
             suffix_str=linmos_suffix_str,
             holofile=holofile,
         ).futures

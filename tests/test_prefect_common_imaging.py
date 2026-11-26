@@ -52,9 +52,12 @@ def test_create_convolve_linmos_cubes_returns_plane_removals(monkeypatch) -> Non
         wsclean_results=[],
         field_options=FieldOptions(yandasoft_container=Path("yandasoft.sif")),
         fitscube_options=FitsCubeOptions(),
+        field_summary="field_summary",  # type: ignore[arg-type]
     )
 
     assert results.cubes == ["image_cube", "weight_cube"]
+    # linmos turns its holography beams by the third axis the summary records
+    assert linmos_cubes.call_args.kwargs["field_summary"] == "field_summary"
     assert results.cleanup == ["remove_planes", "remove_convolved_planes"]
     remove_planes, remove_convolved_planes = remove.submit.call_args_list
     assert remove_planes.args == tuple(channel_groups[0])
