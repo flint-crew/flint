@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import warnings
 from argparse import ArgumentParser
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from pathlib import Path
 from shutil import copyfile
 from typing import Any, Literal, NamedTuple
@@ -250,9 +250,24 @@ def common_beam_from_beams(beams: Beams, cutoff: float | None = None) -> Beam | 
 
 
 def common_beam_from_beam_shapes(
-    beam_shapes: Collection[BeamShape], cutoff: float | None = None
+    beam_shapes: Collection[BeamShape],
+    cutoff: float | None = None,
+    fixed_beam_shape: Sequence[float] | None = None,
 ) -> BeamShape:
-    """The smallest beam every usable beam fits inside, or NaNs when none is usable."""
+    """The smallest beam every usable beam fits inside, or NaNs when none is usable.
+
+    Args:
+        beam_shapes (Collection[BeamShape]): The beams to cover
+        cutoff (float | None, optional): Beams whose major axis exceeds this, in arcsec, are left out rather than dragging the common beam out to them. Defaults to no cutoff.
+        fixed_beam_shape (Sequence[float] | None, optional): Return this (arcsec, arcsec, deg) rather than solving one. Defaults to solving.
+
+    Returns:
+        BeamShape: The common beam
+    """
+    if fixed_beam_shape:
+        return BeamShape(*fixed_beam_shape)
+
+    logger.info(f"Solving a common beam over {len(beam_shapes)} beams")
     major, minor, pa = np.array(beam_shapes, dtype=float).reshape(-1, 3).T
     common_beam = common_beam_from_beams(
         beams=Beams(major=major * u.arcsec, minor=minor * u.arcsec, pa=pa * u.deg),

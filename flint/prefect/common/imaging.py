@@ -123,6 +123,7 @@ task_split_by_field: Task[P, R] = task(split_by_field)
 task_select_solution_for_ms: Task[P, R] = task(select_aosolution_for_ms)
 task_create_apply_solutions_cmd: Task[P, R] = task(create_apply_solutions_cmd)
 task_rename_column_in_ms: Task[P, R] = task(rename_column_in_ms)
+task_common_beam_from_beam_shapes = task(common_beam_from_beam_shapes)
 task_convolve_images = task(convolve_images)
 task_convolve_images_or_blank = task(convolve_images_or_blank)
 task_convolve_plane_to_beam = task(convolve_plane_to_beam)
@@ -1414,7 +1415,7 @@ def linmos_channel_groups_to_cubes(
         suffix_str (str | None, optional): Additional suffix added to the linmos and cube names. Defaults to None.
         holofile (Path | None, optional): Holography file overriding the one in ``linmos_options``. Defaults to None.
         fft_bane_options (FFTBANEOptions | None, optional): When given, each co-added channel also gets a BANE background and RMS map, stacked into their own cubes. Defaults to None, i.e. no BANE.
-        total_beam_shape (PrefectFuture[BeamShape] | None, optional): When given, each co-added plane is also convolved to this one beam and stacked into a second set of cubes. See ``total_beam_from_channel_beams``. Defaults to None, i.e. the natural-resolution cubes alone.
+        total_beam_shape (PrefectFuture[BeamShape] | None, optional): When given, each co-added plane is also convolved to this one beam and stacked into a second set of cubes. See ``common_beam_from_beam_shapes``. Defaults to None, i.e. the natural-resolution cubes alone.
         beam_cutoff (float | None, optional): Planes coarser than this, in arcsec, are blanked rather than convolved to ``total_beam_shape``. Defaults to no cutoff.
 
     Returns:
@@ -1678,37 +1679,6 @@ def convolve_channel_groups_to_natural_resolution(
         for stokes, futures in convolved_groups.items()
     }
     return convolved_images, beam_shapes.result()
-
-
-def total_beam_from_channel_beams(
-    channel_beam_shapes: Sequence[BeamShape],
-    cutoff: float | None = None,
-    fixed_beam_shape: Sequence[float] | None = None,
-) -> BeamShape:
-    """Solve the one beam that covers every channel of every Stokes, which is the
-    'total' resolution mode of racs_tools and what RM-synthesis needs of its
-    inputs.
-
-    Solved over the beam each channel was convolved to rather than over its
-    images. An image blanked for being beyond the cutoff carries no beam, so one
-    read in place of its channel would leave that channel out of the solve.
-
-    Args:
-        channel_beam_shapes (Sequence[BeamShape]): The beam of each channel, as ``convolve_channel_groups_to_natural_resolution`` returns them
-        cutoff (float | None, optional): Channels whose major axis exceeds this, in arcsec, are left out of the solve rather than dragging the beam out to them. Defaults to no cutoff.
-        fixed_beam_shape (Sequence[float] | None, optional): Use this (arcsec, arcsec, deg) rather than solving one. Defaults to solving.
-
-    Returns:
-        BeamShape: The beam every channel is brought to
-    """
-    if fixed_beam_shape:
-        return BeamShape(*fixed_beam_shape)
-
-    logger.info(f"Solving a total common beam over {len(channel_beam_shapes)} channels")
-    return common_beam_from_beam_shapes(beam_shapes=channel_beam_shapes, cutoff=cutoff)
-
-
-task_total_beam_from_channel_beams = task(total_beam_from_channel_beams)
 
 
 def convolve_mfs_beam_images_to_common_resolution(

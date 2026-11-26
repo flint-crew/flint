@@ -21,6 +21,7 @@ from flint.coadd.linmos import LinmosOptions, LinmosResult
 from flint.coadd.patchwork import PatchworkOptions
 from flint.convol import (
     BeamShape,
+    common_beam_from_beam_shapes,
     convolve_plane_to_beam,
     cubes_share_common_beam,
     get_common_beam,
@@ -33,8 +34,7 @@ from flint.prefect.common.imaging import (
     convolve_channel_groups_to_natural_resolution,
     linmos_channel_groups_to_cubes,
     linmos_stokes_channel_groups_to_cubes,
-    task_total_beam_from_channel_beams,
-    total_beam_from_channel_beams,
+    task_common_beam_from_beam_shapes,
 )
 from flint.summary import FieldSummary
 
@@ -59,8 +59,8 @@ def _naturally_then_totally(
         natural, channel_beam_shapes = convolve_channel_groups_to_natural_resolution(
             stokes_channel_groups=stokes_channel_groups, cutoff=cutoff
         )
-        return natural, task_total_beam_from_channel_beams.submit(
-            channel_beam_shapes=channel_beam_shapes, cutoff=cutoff
+        return natural, task_common_beam_from_beam_shapes.submit(
+            beam_shapes=channel_beam_shapes, cutoff=cutoff
         ).result()
 
     with prefect_test_harness(), disable_run_logger():
@@ -92,7 +92,7 @@ def _channel_beams(*bmaj_arcsec: float) -> list[BeamShape]:
 def test_total_beam_covers_the_coarsest_channel() -> None:
     """One beam for the whole band has to cover every channel in it, or a channel
     it does not cover cannot be deconvolved to reach it"""
-    beam = total_beam_from_channel_beams(_channel_beams(10.0, 20.0, 15.0))
+    beam = common_beam_from_beam_shapes(_channel_beams(10.0, 20.0, 15.0))
 
     assert beam.bmaj_arcsec >= 20.0
 
@@ -100,16 +100,16 @@ def test_total_beam_covers_the_coarsest_channel() -> None:
 def test_total_beam_leaves_out_channels_beyond_the_cutoff() -> None:
     """A coarse channel is blanked when its plane is convolved, so it must not
     drag the total beam out to it, and a band of them has no total beam at all"""
-    beam = total_beam_from_channel_beams(_channel_beams(10.0, 40.0), cutoff=20.0)
+    beam = common_beam_from_beam_shapes(_channel_beams(10.0, 40.0), cutoff=20.0)
     assert 10.0 <= beam.bmaj_arcsec < 40.0
 
-    no_beam = total_beam_from_channel_beams(_channel_beams(40.0, 50.0), cutoff=20.0)
+    no_beam = common_beam_from_beam_shapes(_channel_beams(40.0, 50.0), cutoff=20.0)
     assert not np.isfinite(no_beam.bmaj_arcsec)
 
 
 def test_total_beam_is_the_fixed_beam_when_one_is_given() -> None:
     """A fixed beam is used as it is, not rounded up as a solved one is"""
-    beam = total_beam_from_channel_beams(
+    beam = common_beam_from_beam_shapes(
         _channel_beams(10.0, 20.0), fixed_beam_shape=(25.05, 24.0, 3.0)
     )
 

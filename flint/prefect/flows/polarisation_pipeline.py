@@ -49,6 +49,7 @@ from flint.prefect.common.imaging import (
     convolve_channel_groups_to_natural_resolution,
     convolve_mfs_beam_images_to_common_resolution,
     linmos_stokes_channel_groups_to_cubes,
+    task_common_beam_from_beam_shapes,
     task_flatten_mask,
     task_get_channel_images_from_paths,
     task_get_mfs_image_from_paths,
@@ -57,7 +58,6 @@ from flint.prefect.common.imaging import (
     task_preprocess_askap_ms,
     task_remove_files_folders,
     task_split_and_get_image_set,
-    task_total_beam_from_channel_beams,
     task_transpose_and_sort_channel_images,
     task_wsclean_imager,
 )
@@ -484,10 +484,12 @@ def process_science_fields_pol(
 
     # Solved once over every Stokes, so each of them is cubed at the same total
     # resolution. Every channel already shares a beam across Stokes, so a beam
-    # solved per Stokes here would only find the same answer three times.
+    # solved per Stokes here would only find the same answer three times. It is
+    # solved over the channel beams, not the images, as an image blanked for
+    # being beyond the cutoff carries no beam and would drop its channel.
     total_beam_shape = (
-        task_total_beam_from_channel_beams.submit(
-            channel_beam_shapes=channel_beam_shapes,
+        task_common_beam_from_beam_shapes.submit(
+            beam_shapes=channel_beam_shapes,
             cutoff=pol_field_options.cube_beam_cutoff,
             fixed_beam_shape=pol_field_options.fixed_beam_shape,
         )
