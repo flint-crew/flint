@@ -433,6 +433,17 @@ def get_common_beam(
     return beam_shape
 
 
+def lost_in_convolution(image_path: Path, convolved_path: Path) -> bool:
+    """Whether an image with data came out of convolve-rs all NaN yet still claiming a beam"""
+    with fits.open(convolved_path, memmap=True) as convolved:
+        if np.isfinite(convolved[0].data).any():
+            return False
+        if not header_beam_is_usable(header=convolved[0].header):
+            return False
+    with fits.open(image_path, memmap=True) as image:
+        return bool(np.isfinite(image[0].data).any())
+
+
 def convolve_images(
     image_paths: Collection[Path],
     beam_shape: BeamShape,
@@ -509,6 +520,12 @@ def convolve_images(
                 suffix=convol_suffix,
             )
             convol_output_path = result.images[0].output
+            if lost_in_convolution(image_path, convol_output_path):
+                logger.error(
+                    f"convolve-rs turned {image_path.name} into all NaNs while "
+                    f"claiming {beam_shape=}. Blanking it with a zero beam."
+                )
+                blank_images([convol_output_path], convol_suffix=None)
 
         if output_paths:
             output_path: Path = output_paths[idx]

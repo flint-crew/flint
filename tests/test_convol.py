@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
+from types import SimpleNamespace
 
 import astropy.units as u
+import convolve_rs
 import numpy as np
 import pytest
 from astropy.io import fits
@@ -23,6 +25,7 @@ from flint.convol import (
     common_beam_from_beam_shapes,
     common_beam_from_cubes,
     common_beam_shape_from_cubes,
+    convolve_images,
     convolve_images_or_blank,
     convolve_plane_to_beam,
     cubes_share_common_beam,
@@ -556,6 +559,29 @@ def test_convolve_images_or_blank(tmp_path: Path) -> None:
     assert convolved == [tmp_path / "stokes_q.ch0000-0000.conv.fits"]
     assert fits.getheader(convolved[0])["BMAJ"] * 3600.0 == pytest.approx(14.0)
     assert np.isfinite(fits.getdata(convolved[0])).any()
+
+
+def test_convolve_images_marks_an_image_lost_in_convolution(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """An image convolve-rs returns all NaN under the target beam is given the zero-beam marker"""
+    plane = _write_plane_with_beam(tmp_path / "stokes_i.ch0000-0000.fits", 10.0)
+    beam_shape = BeamShape(bmaj_arcsec=14.0, bmin_arcsec=12.0, bpa_deg=0.0)
+
+    def all_nan_smooth(images, target_beam, cutoff, suffix):
+        output = Path(str(images[0]).replace(".fits", f".{suffix}.fits"))
+        header = fits.getheader(images[0])
+        header["BMAJ"], header["BMIN"] = 14.0 / 3600, 12.0 / 3600
+        nans = np.full_like(fits.getdata(images[0]), np.nan)
+        fits.writeto(output, data=nans, header=header)
+        return SimpleNamespace(images=[SimpleNamespace(output=output)])
+
+    monkeypatch.setattr(convolve_rs, "smooth_images", all_nan_smooth)
+
+    convolved = convolve_images(image_paths=[plane], beam_shape=beam_shape)
+
+    assert not header_beam_is_usable(header=fits.getheader(convolved[0]))
+    assert np.all(np.isnan(fits.getdata(convolved[0])))
 
 
 def test_convolve_images_or_blank_without_a_beam(tmp_path: Path) -> None:
