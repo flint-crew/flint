@@ -245,7 +245,7 @@ requires-dist = [
     { name = "bokeh", specifier = ">=3.1" },
     { name = "capn-crunch", specifier = ">=1.2.0" },
     { name = "configargparse", specifier = ">=1.7" },
-    { name = "convolve-rs", specifier = ">=2.4.0" },
+    { name = "convolve-rs", specifier = ">=3.0.1" },
     { name = "crystalball", specifier = ">=0.4.3" },
     { name = "dask" },
     { name = "dask-jobqueue" },
@@ -292,8 +292,8 @@ requires-dist = [
     { name = "python-casacore", marker = "extra == 'casa'", specifier = ">=3.6.0" },
     { name = "python-casacore", marker = "extra == 'iono'", specifier = ">=3.6.0" },
     { name = "pyyaml" },
-    { name = "racs-tools", marker = "extra == 'all'", specifier = ">=4.6.1" },
-    { name = "racs-tools", marker = "extra == 'dev'", specifier = ">=4.6.1" },
+    { name = "racs-tools", marker = "extra == 'all'", specifier = ">=5.0.0" },
+    { name = "racs-tools", marker = "extra == 'dev'", specifier = ">=5.0.0" },
     { name = "radio-beam", specifier = ">=0.3.4" },
     { name = "reproject", specifier = ">=0.10" },
     { name = "rm-lite", marker = "extra == 'all'", specifier = "==2026.9.14" },
@@ -541,15 +541,15 @@ resolution-markers = [
     "python_full_version < '3.12' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 dependencies = [
-    { name = "contourpy", marker = "python_full_version < '3.12'" },
-    { name = "jinja2", marker = "python_full_version < '3.12'" },
-    { name = "narwhals", marker = "python_full_version < '3.12'" },
-    { name = "numpy", marker = "python_full_version < '3.12'" },
-    { name = "packaging", marker = "python_full_version < '3.12'" },
-    { name = "pillow", marker = "python_full_version < '3.12'" },
-    { name = "pyyaml", marker = "python_full_version < '3.12'" },
-    { name = "tornado", marker = "python_full_version < '3.12' and sys_platform != 'emscripten'" },
-    { name = "xyzservices", marker = "python_full_version < '3.12'" },
+    { name = "contourpy" },
+    { name = "jinja2" },
+    { name = "narwhals" },
+    { name = "numpy" },
+    { name = "packaging" },
+    { name = "pillow" },
+    { name = "pyyaml" },
+    { name = "tornado", marker = "sys_platform != 'emscripten'" },
+    { name = "xyzservices" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/dd/6f/262b649ad2fdd5ed23341452eebfa669a73b0e0c739a369204d02ee2e201/bokeh-3.9.2.tar.gz", hash = "sha256:5be30d105b329d7d2ab1cb92f51e6bd44e23f0fe21ab8d49594b220b2ab11632", size = 5751825, upload-time = "2026-07-25T16:57:56.207Z" }
 wheels = [
@@ -569,14 +569,14 @@ resolution-markers = [
     "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 dependencies = [
-    { name = "jinja2", marker = "python_full_version >= '3.12'" },
-    { name = "narwhals", marker = "python_full_version >= '3.12'" },
-    { name = "numpy", marker = "python_full_version >= '3.12'" },
-    { name = "packaging", marker = "python_full_version >= '3.12'" },
-    { name = "pillow", marker = "python_full_version >= '3.12'" },
-    { name = "pyyaml", marker = "python_full_version >= '3.12'" },
-    { name = "tornado", marker = "python_full_version >= '3.12' and sys_platform != 'emscripten'" },
-    { name = "xyzservices", marker = "python_full_version >= '3.12'" },
+    { name = "jinja2" },
+    { name = "narwhals" },
+    { name = "numpy" },
+    { name = "packaging" },
+    { name = "pillow" },
+    { name = "pyyaml" },
+    { name = "tornado", marker = "sys_platform != 'emscripten'" },
+    { name = "xyzservices" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/00/9f/76e8aaa9517278879568d568a58a4437a2eeddb88681382922c262c55acd/bokeh-3.10.2.tar.gz", hash = "sha256:d9fba1004fae149c6e6d54ba37410e52b8d4622ed5c6dad2220afa1b61362de0", size = 6060293, upload-time = "2026-11-05T18:31:20.653Z" }
 wheels = [
@@ -909,16 +909,16 @@ wheels = [
 
 [[package]]
 name = "convolve-rs"
-version = "2.4.0"
+version = "3.0.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/10/04/b115be5917662752dc3fa0ac614a0bc042563f46e05f2e9ea35b477a5740/convolve_rs-2.4.0.tar.gz", hash = "sha256:fc7ab56e22ed0e82bcbad41011e34e1daf40611f10009bf42ffb0c441eea9987", size = 587310, upload-time = "2026-11-22T03:00:15.223Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1e/c5/5d10704797303a972115c33dd911f2eccc54d4973c47af9265f36c3825e8/convolve_rs-3.0.1.tar.gz", hash = "sha256:3a2830efc4aeba0177ad52475af512dafbf5b3fd46dafe3b88ab7243d726a96a", size = 593732, upload-time = "2026-11-26T07:30:56.391Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/64/01/ac9ecdfc45f17067054974e0d0cb9dc08f0fba40bcce3384af59a306816f/convolve_rs-2.4.0-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:78b9fa113657449794fb03d83cf0355c55992ab82938d76b54a3a2a3dd6bfa2a", size = 1557740, upload-time = "2026-11-22T03:00:10.008Z" },
-    { url = "https://files.pythonhosted.org/packages/b5/71/4067ef891eecd076c8ee07d1f25d6d24e383c0cc60c414e9519f9a10b27d/convolve_rs-2.4.0-cp310-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:f9d07d121b1fed1acd1ff4b646bb03c8fa947cb7a39e550577c73934767fdf4e", size = 1716955, upload-time = "2026-11-22T03:00:12.051Z" },
-    { url = "https://files.pythonhosted.org/packages/14/04/0dec290ac6e57aecd547f6ed161178f196b659e830f412ca6b90c4f07a6b/convolve_rs-2.4.0-cp310-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:32cb4671c18e46dc5d0a23f971dddd8fc1844e1522b75799bc7fe24035538413", size = 2001514, upload-time = "2026-11-22T03:00:13.802Z" },
+    { url = "https://files.pythonhosted.org/packages/b4/90/3a6f0828022d72cbbfa99bd8ffacc5890f4cfdd92da2e0524ae39dcc813c/convolve_rs-3.0.1-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:34ec75cb8c79539f140b60e4b4d25ec525be27edde6827e4878944821bc21a34", size = 1589790, upload-time = "2026-11-26T07:30:52.38Z" },
+    { url = "https://files.pythonhosted.org/packages/ed/57/81ba141b96d28f841d4cf255e4f430e6f67835ef9323b17ef1595bcd33f2/convolve_rs-3.0.1-cp310-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:d5d9bba3cb6cc167f4c778bd976612b5624b567221bb6db62c4e33b1647f524b", size = 1751543, upload-time = "2026-11-26T07:30:53.715Z" },
+    { url = "https://files.pythonhosted.org/packages/89/a2/3af7f48b71917e61b2d90e103ce02df184129c417a0b2e1a954cf4df43dc/convolve_rs-3.0.1-cp310-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:c8e76e7d6a1a082a700dad8a035f80a98e262ec26fd3e9181d45d6d3781c1494", size = 2032436, upload-time = "2026-11-26T07:30:54.926Z" },
 ]
 
 [[package]]
@@ -1755,7 +1755,7 @@ name = "importlib-metadata"
 version = "8.7.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "zipp", marker = "python_full_version < '3.12'" },
+    { name = "zipp" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/f3/49/3b30cad09e7771a4982d9975a8cbf64f00d4a1ececb53297f1d9a7be1b10/importlib_metadata-8.7.1.tar.gz", hash = "sha256:49fef1ae6440c182052f407c8d34a68f72efc36db9ca90dc0113398f2fdde8bb", size = 57107, upload-time = "2025-12-21T10:00:19.278Z" }
 wheels = [
@@ -2678,8 +2678,8 @@ name = "pendulum"
 version = "3.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "python-dateutil", marker = "python_full_version < '3.13'" },
-    { name = "tzdata", marker = "python_full_version < '3.13'" },
+    { name = "python-dateutil" },
+    { name = "tzdata" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/cb/72/9a51afa0a822b09e286c4cb827ed7b00bc818dac7bd11a5f161e493a217d/pendulum-3.2.0.tar.gz", hash = "sha256:e80feda2d10fa3ff8b1526715f7d33dcb7e08494b3088f2c8a3ac92d4a4331ce", size = 86912, upload-time = "2026-01-30T11:22:24.093Z" }
 wheels = [
@@ -3445,7 +3445,7 @@ wheels = [
 
 [[package]]
 name = "racs-tools"
-version = "4.6.1"
+version = "5.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "astropy" },
@@ -3456,9 +3456,9 @@ dependencies = [
     { name = "spectral-cube" },
     { name = "tqdm" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ae/0e/cc7969c6e3edc622354655edf03904e6148fcbdcabb7db7fa9654015e52c/racs_tools-4.6.1.tar.gz", hash = "sha256:0a159180f85658109a1c1bdd6d2986b2e118cdf88c28aa02317b4c6f2c9e5265", size = 36189, upload-time = "2026-11-21T15:11:19.632Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/76/ba/5e24610c12371ac6b448c0fc04f229d67ff497ea9943b74a6611f26affc5/racs_tools-5.0.0.tar.gz", hash = "sha256:e5c4f58789c5ddc3ec39ab6495d1ff975589fd2ff93932681d3d592ebf198138", size = 36897, upload-time = "2026-11-22T09:52:46.562Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a3/47/7d020bd2242730b69d8e034de8ae684c48587142e01b7bbb17e5b4bf0b2a/racs_tools-4.6.1-py3-none-any.whl", hash = "sha256:1d8f41fa48d313475bb12a3baa5830f605d1906b537f41a4ee087794aac4a350", size = 38355, upload-time = "2026-11-21T15:11:20.263Z" },
+    { url = "https://files.pythonhosted.org/packages/dc/a1/d06a56647219961451f1201c78749689d680010ded9020671aebc5778162/racs_tools-5.0.0-py3-none-any.whl", hash = "sha256:71b1380e571e0b567cf3897081d0a8c702bed8ddc2f7e14626682ab3e883319f", size = 39087, upload-time = "2026-11-22T09:52:47.225Z" },
 ]
 
 [[package]]
@@ -3950,8 +3950,8 @@ name = "secretstorage"
 version = "3.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cryptography", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "jeepney", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "cryptography" },
+    { name = "jeepney" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/1c/03/e834bcd866f2f8a49a85eaff47340affa3bfa391ee9912a952a1faa68c7b/secretstorage-3.5.0.tar.gz", hash = "sha256:f04b8e4689cbce351744d5537bf6b1329c6fc68f91fa666f60a380edddcd11be", size = 19884, upload-time = "2025-11-23T19:02:53.191Z" }
 wheels = [
@@ -4059,23 +4059,23 @@ resolution-markers = [
     "python_full_version < '3.12' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 dependencies = [
-    { name = "alabaster", marker = "python_full_version < '3.12'" },
-    { name = "babel", marker = "python_full_version < '3.12'" },
-    { name = "colorama", marker = "python_full_version < '3.12' and sys_platform == 'win32'" },
-    { name = "docutils", marker = "python_full_version < '3.12'" },
-    { name = "imagesize", marker = "python_full_version < '3.12'" },
-    { name = "jinja2", marker = "python_full_version < '3.12'" },
-    { name = "packaging", marker = "python_full_version < '3.12'" },
-    { name = "pygments", marker = "python_full_version < '3.12'" },
-    { name = "requests", marker = "python_full_version < '3.12'" },
-    { name = "roman-numerals", marker = "python_full_version < '3.12'" },
-    { name = "snowballstemmer", marker = "python_full_version < '3.12'" },
-    { name = "sphinxcontrib-applehelp", marker = "python_full_version < '3.12'" },
-    { name = "sphinxcontrib-devhelp", marker = "python_full_version < '3.12'" },
-    { name = "sphinxcontrib-htmlhelp", marker = "python_full_version < '3.12'" },
-    { name = "sphinxcontrib-jsmath", marker = "python_full_version < '3.12'" },
-    { name = "sphinxcontrib-qthelp", marker = "python_full_version < '3.12'" },
-    { name = "sphinxcontrib-serializinghtml", marker = "python_full_version < '3.12'" },
+    { name = "alabaster" },
+    { name = "babel" },
+    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "docutils" },
+    { name = "imagesize" },
+    { name = "jinja2" },
+    { name = "packaging" },
+    { name = "pygments" },
+    { name = "requests" },
+    { name = "roman-numerals" },
+    { name = "snowballstemmer" },
+    { name = "sphinxcontrib-applehelp" },
+    { name = "sphinxcontrib-devhelp" },
+    { name = "sphinxcontrib-htmlhelp" },
+    { name = "sphinxcontrib-jsmath" },
+    { name = "sphinxcontrib-qthelp" },
+    { name = "sphinxcontrib-serializinghtml" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/42/50/a8c6ccc36d5eacdfd7913ddccd15a9cee03ecafc5ee2bc40e1f168d85022/sphinx-9.0.4.tar.gz", hash = "sha256:594ef59d042972abbc581d8baa577404abe4e6c3b04ef61bd7fc2acbd51f3fa3", size = 8710502, upload-time = "2025-12-04T07:45:27.343Z" }
 wheels = [
@@ -4095,23 +4095,23 @@ resolution-markers = [
     "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 dependencies = [
-    { name = "alabaster", marker = "python_full_version >= '3.12'" },
-    { name = "babel", marker = "python_full_version >= '3.12'" },
-    { name = "colorama", marker = "python_full_version >= '3.12' and sys_platform == 'win32'" },
-    { name = "docutils", marker = "python_full_version >= '3.12'" },
-    { name = "imagesize", marker = "python_full_version >= '3.12'" },
-    { name = "jinja2", marker = "python_full_version >= '3.12'" },
-    { name = "packaging", marker = "python_full_version >= '3.12'" },
-    { name = "pygments", marker = "python_full_version >= '3.12'" },
-    { name = "requests", marker = "python_full_version >= '3.12'" },
-    { name = "roman-numerals", marker = "python_full_version >= '3.12'" },
-    { name = "snowballstemmer", marker = "python_full_version >= '3.12'" },
-    { name = "sphinxcontrib-applehelp", marker = "python_full_version >= '3.12'" },
-    { name = "sphinxcontrib-devhelp", marker = "python_full_version >= '3.12'" },
-    { name = "sphinxcontrib-htmlhelp", marker = "python_full_version >= '3.12'" },
-    { name = "sphinxcontrib-jsmath", marker = "python_full_version >= '3.12'" },
-    { name = "sphinxcontrib-qthelp", marker = "python_full_version >= '3.12'" },
-    { name = "sphinxcontrib-serializinghtml", marker = "python_full_version >= '3.12'" },
+    { name = "alabaster" },
+    { name = "babel" },
+    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "docutils" },
+    { name = "imagesize" },
+    { name = "jinja2" },
+    { name = "packaging" },
+    { name = "pygments" },
+    { name = "requests" },
+    { name = "roman-numerals" },
+    { name = "snowballstemmer" },
+    { name = "sphinxcontrib-applehelp" },
+    { name = "sphinxcontrib-devhelp" },
+    { name = "sphinxcontrib-htmlhelp" },
+    { name = "sphinxcontrib-jsmath" },
+    { name = "sphinxcontrib-qthelp" },
+    { name = "sphinxcontrib-serializinghtml" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/cd/bd/f08eb0f4eed5c83f1ba2a3bd18f7745a2b1525fad70660a1c00224ec468a/sphinx-9.1.0.tar.gz", hash = "sha256:7741722357dd75f8190766926071fed3bdc211c74dd2d7d4df5404da95930ddb", size = 8718324, upload-time = "2025-12-31T15:09:27.646Z" }
 wheels = [
@@ -4159,7 +4159,7 @@ resolution-markers = [
     "python_full_version < '3.12' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 dependencies = [
-    { name = "sphinx", version = "9.0.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "sphinx", version = "9.0.4", source = { registry = "https://pypi.org/simple" } },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/1d/f6/bdd93582b2aaad2cfe9eb5695a44883c8bc44572dd3c351a947acbb13789/sphinx_autodoc_typehints-3.6.1.tar.gz", hash = "sha256:fa0b686ae1b85965116c88260e5e4b82faec3687c2e94d6a10f9b36c3743e2fe", size = 37563, upload-time = "2026-01-02T15:23:46.543Z" }
 wheels = [
@@ -4179,7 +4179,7 @@ resolution-markers = [
     "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 dependencies = [
-    { name = "sphinx", version = "9.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "sphinx", version = "9.1.0", source = { registry = "https://pypi.org/simple" } },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/58/ec/21bd9babcfeb9930a73011257002d5cfa5fd30667b8de6d76dbaf8275dfb/sphinx_autodoc_typehints-3.9.5.tar.gz", hash = "sha256:60e646efb7c352a0e98f34dd7fdcde4527fbbdbdf30371ff8321b6b3eb1fd37d", size = 63249, upload-time = "2026-03-02T19:58:07.974Z" }
 wheels = [
@@ -4670,8 +4670,8 @@ name = "whenever"
 version = "0.10.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "tzdata", marker = "python_full_version >= '3.13' and sys_platform == 'win32'" },
-    { name = "tzlocal", marker = "python_full_version >= '3.13' and sys_platform != 'darwin' and sys_platform != 'linux'" },
+    { name = "tzdata", marker = "sys_platform == 'win32'" },
+    { name = "tzlocal", marker = "sys_platform != 'darwin' and sys_platform != 'linux'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/6d/40/94856fe2439c4b8162d1a23b4cf3a48bb00bed0ed7b8d10add40988fa555/whenever-0.10.3.tar.gz", hash = "sha256:af8958c870bd178742f0089c3552d5702241cab1f4b6bdfd3b03111db4bc2150", size = 435946, upload-time = "2026-07-17T07:35:25.734Z" }
 wheels = [

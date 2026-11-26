@@ -62,11 +62,13 @@ def _assert_beams_close(ours: BeamShape, theirs: BeamShape) -> None:
 
 
 def _assert_images_close(ours: np.ndarray, theirs: np.ndarray) -> None:
-    """The tolerances of convolve-rs's racs_tools parity tests."""
-    assert np.isnan(ours)[np.isnan(theirs)].all()
+    """racs_tools 5 and convolve-rs 3 convolve the same way, edges and NaNs
+    included, so the images agree everywhere: the same blanked pixels, and
+    values to racs_tools' float32 output."""
+    np.testing.assert_array_equal(np.isnan(ours), np.isnan(theirs))
     good = ~np.isnan(ours)
     scale = np.nanstd(theirs) or 1.0
-    np.testing.assert_allclose(ours[good], theirs[good], rtol=0, atol=1e-4 * scale)
+    np.testing.assert_allclose(ours[good], theirs[good], rtol=0, atol=1e-5 * scale)
 
 
 def test_combine_fits(channel_images, tmp_path):
