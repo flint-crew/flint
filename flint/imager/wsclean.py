@@ -198,8 +198,8 @@ class WSCleanOptions(BaseOptions):
     """Directory images are written to before being moved beside the MS. Takes precedence over ``temp_dir`` for this purpose"""
     flint_keep_linear_images: bool = False
     """Keep the XX and YY images when ``pol`` is ``xx,yy``, rather than deleting them once Stokes I is formed"""
-    flint_min_image_vis: int | None = Field(default=None, gt=0)
-    """Blank every image of a channel that wsclean made from fewer visibilities than this, as counted by its WSCNVIS header key. None to skip"""
+    flint_min_image_vis_fraction: float | None = Field(default=0.1, gt=0, le=1)
+    """Blank every image of a channel whose visibility count (its WSCNVIS header key) is below this fraction of the largest among the run's channels. None to skip"""
 
     @model_validator(mode="after")
     def check_pol(self) -> WSCleanOptions:
@@ -724,10 +724,11 @@ def parse_pols(pol_str: str) -> tuple[str, ...] | None:
 
 
 def blank_sparse_channels(
-    images: Mapping[WSCleanOutput, Path], min_vis: int
+    images: Mapping[WSCleanOutput, Path], min_fraction: float
 ) -> list[int]:
     """Blank in place every image of each channel that wsclean made from fewer
-    than ``min_vis`` visibilities in any polarisation, and return those channels.
+    than ``min_fraction`` of the visibilities of the run's fullest channel, in any
+    polarisation, and return those channels.
 
     wsclean records the count of an image as ``WSCNVIS``. An image without one is
     left out of the decision, and the MFS images are never blanked.
@@ -737,9 +738,15 @@ def blank_sparse_channels(
         for output, path in images.items()
         if output.image_type == "image" and output.channel is not None
     ]
-    uncounted = sum("WSCNVIS" not in header for _, _, header in headers)
-    if uncounted:
-        logger.warning(f"{uncounted} channel images carry no WSCNVIS, so go unchecked")
+    vis_counts = [h["WSCNVIS"] for _, _, h in headers if "WSCNVIS" in h]
+    if len(vis_counts) < len(headers):
+        logger.warning(
+            f"{len(headers) - len(vis_counts)} channel images carry no WSCNVIS, so go unchecked"
+        )
+    if not vis_counts:
+        return []
+    fullest = max(vis_counts)
+    min_vis = min_fraction * fullest
 
     sparse = sorted(
         {
@@ -761,7 +768,8 @@ def blank_sparse_channels(
         frequency = channel_headers[0][1].get("CRVAL3", np.nan)
         logger.info(
             f"Blanking channel {channel} at {frequency / 1e6:.1f} MHz, with "
-            f"(WSCNVIS, WSCENVIS) of {counts} against {min_vis=}"
+            f"(WSCNVIS, WSCENVIS) of {counts}, against {min_vis:.0f} "
+            f"({min_fraction} of the fullest channel's {fullest:.0f})"
         )
         blank_images(
             image_paths=[
@@ -782,8 +790,8 @@ def collect_wsclean_outputs(
 ) -> ImageSet:
     """Gather the images wsclean wrote under ``prefix`` into an ``ImageSet`` with flint names.
 
-    With ``flint_min_image_vis`` set, every image of a channel made from fewer
-    visibilities than that is blanked in place first. See ``blank_sparse_channels``.
+    With ``flint_min_image_vis_fraction`` set, every image of a channel made from
+    too few visibilities is blanked in place first. See ``blank_sparse_channels``.
     With ``pol: xx,yy`` the XX and YY images become Stokes I, and are deleted unless
     ``flint_keep_linear_images`` is set. Images not gathered are renamed too, and
     left on disk with a warning. Channel images are cubed when
@@ -809,8 +817,10 @@ def collect_wsclean_outputs(
         logger.info(f"Renaming {output.path} to {flint_path}")
         renamed[output] = output.path.rename(flint_path)
 
-    if options.flint_min_image_vis is not None:
-        blank_sparse_channels(images=renamed, min_vis=options.flint_min_image_vis)
+    if options.flint_min_image_vis_fraction is not None:
+        blank_sparse_channels(
+            images=renamed, min_fraction=options.flint_min_image_vis_fraction
+        )
 
     image_types = ("image", "residual", *(extra_output_types or ()))
     collected = [output for output in outputs if output.image_type in image_types]

@@ -1026,17 +1026,15 @@ QU_VIS_COUNTS: dict[str | None, list[int | None]] = {
 
 
 def test_collect_wsclean_outputs_blanks_sparse_channels(tmp_path: Path):
-    """A channel wsclean made from too few visibilities in either polarisation is
-    blanked in both, its image and residual alike. One with no count is left
-    alone, and so are the MFS images."""
+    """By default a channel with under a tenth of the fullest channel's
+    visibilities in either polarisation is blanked in both, its image and
+    residual alike. One with no count is left alone, and so are the MFS images."""
     prefix = tmp_path / "SB56289.RACS_1041+18.beam15.round1.qu"
     _write_wsclean_images(prefix=prefix, channels_out=5, pols=("Q", "U"))
     _stamp_vis_counts(prefix=prefix, counts=QU_VIS_COUNTS)
 
     image_set = collect_wsclean_outputs(
-        wsclean_result=_wsclean_result_for(
-            prefix=prefix, channels_out=5, pol="qu", flint_min_image_vis=1000
-        ),
+        wsclean_result=_wsclean_result_for(prefix=prefix, channels_out=5, pol="qu"),
         prefix=str(prefix),
         make_cube_from_subbands=False,
     )
@@ -1048,19 +1046,30 @@ def test_collect_wsclean_outputs_blanks_sparse_channels(tmp_path: Path):
         assert _is_blank(path) == sparse, path.name
 
 
-def test_collect_wsclean_outputs_keeps_sparse_channels_unless_asked(tmp_path: Path):
-    """With no threshold set the channel images are left as wsclean wrote them"""
+def test_collect_wsclean_outputs_keeps_sparse_channels_when_switched_off(
+    tmp_path: Path,
+):
+    """With the threshold set to None the channel images are left as wsclean
+    wrote them, and a higher one blanks the partly flagged channel too"""
     prefix = tmp_path / "SB56289.RACS_1041+18.beam15.round1.qu"
-    _write_wsclean_images(prefix=prefix, channels_out=5, pols=("Q", "U"))
-    _stamp_vis_counts(prefix=prefix, counts=QU_VIS_COUNTS)
+    for fraction, blank in ((None, []), (0.5, [1, 2, 4])):
+        _write_wsclean_images(prefix=prefix, channels_out=5, pols=("Q", "U"))
+        _stamp_vis_counts(prefix=prefix, counts=QU_VIS_COUNTS)
 
-    image_set = collect_wsclean_outputs(
-        wsclean_result=_wsclean_result_for(prefix=prefix, channels_out=5, pol="qu"),
-        prefix=str(prefix),
-        make_cube_from_subbands=False,
-    )
+        image_set = collect_wsclean_outputs(
+            wsclean_result=_wsclean_result_for(
+                prefix=prefix,
+                channels_out=5,
+                pol="qu",
+                flint_min_image_vis_fraction=fraction,
+            ),
+            prefix=str(prefix),
+            make_cube_from_subbands=False,
+        )
 
-    assert not any(_is_blank(path) for path in image_set.image)
+        tokens = [f"ch{c:04d}-{c + 1:04d}" for c in blank]
+        for path in image_set.image:
+            assert _is_blank(path) == any(t in path.name for t in tokens), path.name
 
 
 def test_collect_wsclean_outputs_cubes_a_sparse_channel_as_blank(tmp_path: Path):
@@ -1074,9 +1083,7 @@ def test_collect_wsclean_outputs_cubes_a_sparse_channel_as_blank(tmp_path: Path)
     )
 
     image_set = collect_wsclean_outputs(
-        wsclean_result=_wsclean_result_for(
-            prefix=prefix, channels_out=3, pol="xx,yy", flint_min_image_vis=1000
-        ),
+        wsclean_result=_wsclean_result_for(prefix=prefix, channels_out=3, pol="xx,yy"),
         prefix=str(prefix),
     )
 
@@ -1085,11 +1092,14 @@ def test_collect_wsclean_outputs_cubes_a_sparse_channel_as_blank(tmp_path: Path)
     assert [bool(np.isnan(plane).all()) for plane in planes] == [False, True, False]
 
 
-def test_flint_min_image_vis_is_a_count_flint_keeps_to_itself():
-    with pytest.raises(ValidationError):
-        WSCleanOptions(flint_min_image_vis=0)
+def test_flint_min_image_vis_fraction_is_a_fraction_flint_keeps_to_itself():
+    for fraction in (0.0, 1.5):
+        with pytest.raises(ValidationError):
+            WSCleanOptions(flint_min_image_vis_fraction=fraction)
 
-    assert _resolve_wsclean_key_value_to_cli_str("flint_min_image_vis", 1000).ignore
+    assert _resolve_wsclean_key_value_to_cli_str(
+        "flint_min_image_vis_fraction", 0.1
+    ).ignore
 
 
 def test_collect_wsclean_outputs_keeps_linear_images(tmp_path: Path):

@@ -124,20 +124,23 @@ self-calibration then absorbs the difference into the antenna gains. With
 A channel that is all but completely flagged still gives an image, made from
 the few visibilities left. It is nearly empty, so its noise is tiny, and
 anything that weights by noise (the mosaicking, RM synthesis) lets it take
-over. `flint_min_image_vis` blanks every image of a channel that wsclean made
-from fewer visibilities than the number given:
+over. `flint_min_image_vis_fraction` blanks every image of a channel that
+wsclean made from less than this fraction of the visibilities of the run's
+fullest channel. It is 0.1 by default, so a channel more than 90% flagged is
+blanked. Set it to `null` to keep every channel:
 
 ```yaml
 defaults:
   wsclean:
-    flint_min_image_vis: 1000
+    flint_min_image_vis_fraction: 0.1
 ```
 
 The count is the `WSCNVIS` wsclean writes into the header of the channel
-image: one for each row and channel of data with weight. A healthy 8 MHz RACS
-channel has several hundred thousand. A blanked image is all NaN and carries a
-zero beam, which later stages read as holding no PSF. The MFS images are left
-as they are.
+image: one for each row and channel of data with weight. Because the threshold
+is relative to the fullest channel, it does not need changing with the length
+of the observation or the channel width. A blanked image is all NaN and
+carries a zero beam, which later stages read as holding no PSF. The MFS images
+are left as they are.
 
 ### `fitscube`
 
