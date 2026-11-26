@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
+from types import SimpleNamespace
 
 import astropy.units as u
+import convolve_rs
 import numpy as np
 import pytest
 from astropy.io import fits
 from astropy.table import Table
 from astropy.wcs import WCS
-from fitscube.extract import ExtractOptions, extract_plane_from_cube
+from fitscube_rs.compat import ExtractOptions, extract_plane_from_cube
 from radio_beam import Beam, Beams
 from radio_beam.utils import BeamError
 
@@ -20,8 +22,10 @@ from flint.convol import (
     _beams_from_cubes,
     blank_images,
     check_if_cube_fits,
+    common_beam_from_beam_shapes,
     common_beam_from_cubes,
     common_beam_shape_from_cubes,
+    convolve_images,
     convolve_images_or_blank,
     convolve_plane_to_beam,
     cubes_share_common_beam,
@@ -501,6 +505,17 @@ def test_common_beam_shape_from_cubes(tmp_path: Path) -> None:
         common_beam_shape_from_cubes(cube_paths=[blank])
 
 
+def test_common_beam_from_beam_shapes_skips_missing_beams() -> None:
+    """A channel with no beam of its own, as a fully flagged one has, does not
+    constrain the common beam, and nothing but such channels gives no beam"""
+    no_beam = BeamShape(bmaj_arcsec=np.nan, bmin_arcsec=np.nan, bpa_deg=np.nan)
+    beam_shapes = [BeamShape(10.0, 8.0, 0.0), no_beam, BeamShape(12.0, 9.0, 30.0)]
+
+    assert common_beam_from_beam_shapes(beam_shapes).bmaj_arcsec >= 12.0
+    for nothing_usable in ([no_beam], []):
+        assert not np.isfinite(common_beam_from_beam_shapes(nothing_usable)).any()
+
+
 def test_blank_images(tmp_path: Path) -> None:
     """A blanked image holds no data and claims no PSF"""
     planes = [
@@ -521,6 +536,19 @@ def test_blank_images(tmp_path: Path) -> None:
         assert not header_beam_is_usable(header=fits.getheader(blank))
 
 
+def test_blank_images_in_place(tmp_path: Path) -> None:
+    """With no suffix the image itself is blanked, under its own name"""
+    plane = _write_plane_with_beam(tmp_path / "stokes_q.ch0000-0000.fits", 10.0)
+    shape = fits.getdata(plane).shape
+
+    assert blank_images(image_paths=[plane], convol_suffix=None) == [plane]
+
+    assert not list(tmp_path.glob("*.conv.fits"))
+    assert np.all(np.isnan(fits.getdata(plane)))
+    assert fits.getdata(plane).shape == shape
+    assert not header_beam_is_usable(header=fits.getheader(plane))
+
+
 def test_convolve_images_or_blank(tmp_path: Path) -> None:
     """A defined beam is convolved to, as convolve_images would"""
     plane = _write_plane_with_beam(tmp_path / "stokes_q.ch0000-0000.fits", 10.0)
@@ -531,6 +559,29 @@ def test_convolve_images_or_blank(tmp_path: Path) -> None:
     assert convolved == [tmp_path / "stokes_q.ch0000-0000.conv.fits"]
     assert fits.getheader(convolved[0])["BMAJ"] * 3600.0 == pytest.approx(14.0)
     assert np.isfinite(fits.getdata(convolved[0])).any()
+
+
+def test_convolve_images_marks_an_image_lost_in_convolution(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """An image convolve-rs returns all NaN under the target beam is given the zero-beam marker"""
+    plane = _write_plane_with_beam(tmp_path / "stokes_i.ch0000-0000.fits", 10.0)
+    beam_shape = BeamShape(bmaj_arcsec=14.0, bmin_arcsec=12.0, bpa_deg=0.0)
+
+    def all_nan_smooth(images, target_beam, cutoff, suffix):
+        output = Path(str(images[0]).replace(".fits", f".{suffix}.fits"))
+        header = fits.getheader(images[0])
+        header["BMAJ"], header["BMIN"] = 14.0 / 3600, 12.0 / 3600
+        nans = np.full_like(fits.getdata(images[0]), np.nan)
+        fits.writeto(output, data=nans, header=header)
+        return SimpleNamespace(images=[SimpleNamespace(output=output)])
+
+    monkeypatch.setattr(convolve_rs, "smooth_images", all_nan_smooth)
+
+    convolved = convolve_images(image_paths=[plane], beam_shape=beam_shape)
+
+    assert not header_beam_is_usable(header=fits.getheader(convolved[0]))
+    assert np.all(np.isnan(fits.getdata(convolved[0])))
 
 
 def test_convolve_images_or_blank_without_a_beam(tmp_path: Path) -> None:

@@ -18,17 +18,21 @@ from __future__ import annotations
 
 import re
 from argparse import ArgumentParser
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
+from itertools import groupby
 from numbers import Number
 from pathlib import Path
 from typing import Any, NamedTuple
 
+import numpy as np
+from astropy.io import fits
 from capn_crunch import (
     add_options_to_parser,
     create_options_from_parser,
 )
 from pydantic import Field, model_validator
 
+from flint.convol import blank_images
 from flint.exceptions import (
     AttemptRerunException,
     CleanDivergenceError,
@@ -84,8 +88,6 @@ class WSCleanOptions(BaseOptions):
     """Image size, only a single dimension is required. Note that this means images will be squares. """
     local_rms: bool = True
     """Whether a local rms map is computed"""
-    force_mask_rounds: int | None = None
-    """Round of force masked derivation"""
     auto_mask: float | None = 3.5
     """How deep the construct clean mask is during each cycle"""
     auto_threshold: float | None = 0.5
@@ -195,6 +197,8 @@ class WSCleanOptions(BaseOptions):
     """Directory images are written to before being moved beside the MS. Takes precedence over ``temp_dir`` for this purpose"""
     flint_keep_linear_images: bool = False
     """Keep the XX and YY images when ``pol`` is ``xx,yy``, rather than deleting them once Stokes I is formed"""
+    flint_min_image_vis_fraction: float | None = Field(default=0.1, gt=0, le=1)
+    """Blank every image of a channel whose visibility count (its WSCNVIS header key) is below this fraction of the largest among the run's channels. None to skip"""
 
     @model_validator(mode="after")
     def check_pol(self) -> WSCleanOptions:
@@ -718,6 +722,68 @@ def parse_pols(pol_str: str) -> tuple[str, ...] | None:
     return pols if len(pols) > 1 else None
 
 
+def blank_sparse_channels(
+    images: Mapping[WSCleanOutput, Path], min_fraction: float
+) -> list[int]:
+    """Blank in place every image of each channel that wsclean made from fewer
+    than ``min_fraction`` of the visibilities of the run's fullest channel, in any
+    polarisation.
+
+    wsclean records the count of an image as ``WSCNVIS``. An image without one is
+    left out of the decision, and the MFS images are never blanked.
+
+    Args:
+        images (Mapping[WSCleanOutput, Path]): Every image of one wsclean run, keyed by what it is
+        min_fraction (float): The share of the fullest channel's visibilities a channel needs to be kept
+
+    Returns:
+        list[int]: The channels that were blanked, in order
+    """
+    headers = sorted(
+        (
+            (output.channel, output.pol or "image", fits.getheader(path))
+            for output, path in images.items()
+            if output.image_type == "image" and output.channel is not None
+        ),
+        key=lambda item: item[0],
+    )
+    vis_counts = [h["WSCNVIS"] for _, _, h in headers if "WSCNVIS" in h]
+    if len(vis_counts) < len(headers):
+        logger.warning(
+            f"{len(headers) - len(vis_counts)} channel images carry no WSCNVIS, so go unchecked"
+        )
+    if not vis_counts:
+        return []
+    fullest = max(vis_counts)
+    min_vis = min_fraction * fullest
+
+    blanked: list[int] = []
+    for channel, group in groupby(headers, key=lambda item: item[0]):
+        channel_headers = {pol: header for _, pol, header in group}
+        if all(h.get("WSCNVIS", min_vis) >= min_vis for h in channel_headers.values()):
+            continue
+
+        counts = {
+            pol: (header.get("WSCNVIS"), header.get("WSCENVIS"))
+            for pol, header in channel_headers.items()
+        }
+        frequency = next(iter(channel_headers.values())).get("CRVAL3", np.nan)
+        logger.info(
+            f"Blanking channel {channel} at {frequency / 1e6:.1f} MHz, with "
+            f"(WSCNVIS, WSCENVIS) of {counts}, against {min_vis:.0f} "
+            f"({min_fraction} of the fullest channel's {fullest:.0f})"
+        )
+        blank_images(
+            image_paths=[
+                path for output, path in images.items() if output.channel == channel
+            ],
+            convol_suffix=None,
+        )
+        blanked.append(channel)
+
+    return blanked
+
+
 def collect_wsclean_outputs(
     wsclean_result: WSCleanResult,
     prefix: str,
@@ -727,6 +793,8 @@ def collect_wsclean_outputs(
 ) -> ImageSet:
     """Gather the images wsclean wrote under ``prefix`` into an ``ImageSet`` with flint names.
 
+    With ``flint_min_image_vis_fraction`` set, every image of a channel made from
+    too few visibilities is blanked in place first. See ``blank_sparse_channels``.
     With ``pol: xx,yy`` the XX and YY images become Stokes I, and are deleted unless
     ``flint_keep_linear_images`` is set. Images not gathered are renamed too, and
     left on disk with a warning. Channel images are cubed when
@@ -751,6 +819,11 @@ def collect_wsclean_outputs(
         )
         logger.info(f"Renaming {output.path} to {flint_path}")
         renamed[output] = output.path.rename(flint_path)
+
+    if options.flint_min_image_vis_fraction is not None:
+        blank_sparse_channels(
+            images=renamed, min_fraction=options.flint_min_image_vis_fraction
+        )
 
     image_types = ("image", "residual", *(extra_output_types or ()))
     collected = [output for output in outputs if output.image_type in image_types]

@@ -23,6 +23,7 @@ from astropy.utils.iers import conf
 from capn_crunch import BaseOptions
 
 from flint.coadd.linmos import LinmosResult
+from flint.coadd.utils import check_shared_pointing
 from flint.imager.wsclean import WSCleanResult
 from flint.imageset import ImageSet
 from flint.logging import logger
@@ -30,6 +31,7 @@ from flint.ms import (
     MS,
     MSSummary,
     describe_ms,
+    get_boresight_from_ms,
     get_pol_axis_as_rad,
     get_telescope_location_from_ms,
     get_times_from_ms,
@@ -90,6 +92,8 @@ class FieldSummary(BaseOptions):
     """The path to the linmos image of all beams"""
     pol_axis: float | None = None
     """The orientation of the ASKAP third-axis in radians. """
+    boresight: SkyCoord | None = None
+    """Where the dish pointed, which the Q and U of every beam are referenced to north at"""
 
 
 # TODO: Need to establise a MSLike type
@@ -282,6 +286,7 @@ def create_field_summary(
     sbid: None | str = None
     field: None | str = None
     pol_axis: None | float = None
+    boresight: None | SkyCoord = None
     if mss is not None:
         mss = [MS.cast(ms=ms) for ms in mss]
 
@@ -299,7 +304,14 @@ def create_field_summary(
         ms_times = get_times_from_ms(ms=ms)
         integration = ms_times.ptp().to(u.second).value
         location = get_telescope_location_from_ms(ms=ms)
-        pol_axis = get_pol_axis_as_rad(ms=ms)
+        pol_axes = [get_pol_axis_as_rad(ms=ms) for ms in mss]
+        boresights = [get_boresight_from_ms(ms=ms) for ms in mss]
+        check_shared_pointing(
+            names=[str(MS.cast(ms=ms).path) for ms in mss],
+            pol_axes=pol_axes,
+            boresights=boresights,
+        )
+        pol_axis, boresight = pol_axes[0], boresights[0]
 
     if ms_summaries is not None:
         ms_components = processed_ms_format(in_name=ms_summaries[0].path.name)
@@ -313,6 +325,12 @@ def create_field_summary(
         integration = ms_summaries[0].integration
         location = ms_summaries[0].location
         pol_axis = ms_summaries[0].pol_axis
+        boresight = ms_summaries[0].boresight
+        check_shared_pointing(
+            names=[str(ms_summary.path) for ms_summary in ms_summaries],
+            pol_axes=[ms_summary.pol_axis for ms_summary in ms_summaries],
+            boresights=[ms_summary.boresight for ms_summary in ms_summaries],
+        )
 
     assert field is not None, f"Field name is empty in {ms_components=} from {ms.path=}"
 
@@ -333,6 +351,7 @@ def create_field_summary(
         holography_path=holography_path,
         ms_times=Time([ms_times.min(), ms_times.max()]),
         pol_axis=pol_axis,
+        boresight=boresight,
         **kwargs,
     )
 

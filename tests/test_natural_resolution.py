@@ -17,6 +17,7 @@ from prefect.logging import disable_run_logger
 from prefect.testing.utilities import prefect_test_harness
 from radio_beam import Beam
 
+from flint.convol import blank_images
 from flint.prefect.common.imaging import (
     convolve_channel_groups_to_natural_resolution,
     convolve_mfs_beam_images_to_common_resolution,
@@ -78,11 +79,12 @@ def _convolved_naturally(
 ) -> dict[str, list[list[Path]]]:
     @flow
     def _convolve() -> dict[str, list[list[Path]]]:
-        return convolve_channel_groups_to_natural_resolution(
+        convolved, _ = convolve_channel_groups_to_natural_resolution(
             stokes_channel_groups=stokes_channel_groups,
             cutoff=cutoff,
             fixed_beam_shape=fixed_beam_shape,
         )
+        return convolved
 
     with prefect_test_harness(), disable_run_logger():
         return _convolve()
@@ -148,6 +150,19 @@ def test_natural_resolution_blanks_a_channel_beyond_the_cutoff(tmp_path: Path) -
         for image in convolved[stokes][1]:
             assert np.all(np.isnan(fits.getdata(image)))
             assert fits.getheader(image)["BMAJ"] == 0.0
+
+
+def test_natural_resolution_ignores_an_image_blanked_in_place(tmp_path: Path) -> None:
+    """An image the imager blanked for holding too few visibilities does not
+    drag its channel out to its own beam, and stays blank beside the others"""
+    groups = _channel_groups(tmp_path, {"q": [[10.0, 40.0, 10.5]]})
+    blank_images(image_paths=[groups["q"][0][1]], convol_suffix=None)
+
+    kept, blanked, also_kept = _convolved_naturally(groups)["q"][0]
+
+    assert _bmaj_arcsec(kept) == _bmaj_arcsec(also_kept) < 12.0
+    assert np.all(np.isnan(fits.getdata(blanked)))
+    assert fits.getheader(blanked)["BMAJ"] == 0.0
 
 
 def test_natural_resolution_honours_a_fixed_beam(tmp_path: Path) -> None:

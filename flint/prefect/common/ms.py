@@ -10,7 +10,11 @@ from prefect import Task
 from flint.imager.wsclean import WSCleanResult
 from flint.ionosphere import correct_ionosphere
 from flint.logging import logger
-from flint.ms import describe_ms, subtract_model_from_data_column
+from flint.ms import (
+    describe_ms,
+    get_boresight_from_ms,
+    subtract_model_from_data_column,
+)
 from flint.options import MS
 from flint.peel.jolly import jolly_roger_tractor
 from flint.predict.addmodel import AddModelOptions, add_model
@@ -21,6 +25,7 @@ R = TypeVar("R")
 
 task_subtract_model_from_ms = task(subtract_model_from_data_column)
 task_describe_ms = task(describe_ms)
+task_get_boresight_from_ms = task(get_boresight_from_ms)
 task_correct_ionosphere = task(correct_ionosphere)
 
 

@@ -6,17 +6,16 @@ from __future__ import annotations
 
 import warnings
 from argparse import ArgumentParser
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from pathlib import Path
 from shutil import copyfile
 from typing import Any, Literal, NamedTuple
 
 import astropy.units as u
+import convolve_rs
 import numpy as np
 from astropy.io import fits
 from astropy.wcs import FITSFixedWarning
-from racs_tools import beamcon_2D, beamcon_3D
-from racs_tools.convolve_uv import my_ceil, round_up
 from radio_beam import Beam, Beams
 from radio_beam.beam import NoBeamException
 from radio_beam.utils import BeamError
@@ -39,6 +38,25 @@ class BeamShape(NamedTuple):
     """The size of the minor-axis of the beam, in arcseconds."""
     bpa_deg: float
     """Rotation of the beam, in degrees."""
+
+    @classmethod
+    def from_convolve_rs(cls, beam: convolve_rs.Beam | None) -> BeamShape:
+        """A convolve-rs beam, or NaNs where there is none."""
+        if beam is None:
+            return cls(bmaj_arcsec=np.nan, bmin_arcsec=np.nan, bpa_deg=np.nan)
+        return cls(
+            bmaj_arcsec=beam.major_arcsec,
+            bmin_arcsec=beam.minor_arcsec,
+            bpa_deg=beam.pa_deg,
+        )
+
+    def to_convolve_rs(self) -> convolve_rs.Beam | None:
+        """This beam for convolve-rs, or None if it is not finite."""
+        if not np.isfinite(self).all():
+            return None
+        return convolve_rs.Beam.from_arcsec(
+            self.bmaj_arcsec, self.bmin_arcsec, self.bpa_deg
+        )
 
     @classmethod
     def from_radio_beam(cls, radio_beam: Beam) -> BeamShape:
@@ -84,12 +102,14 @@ def check_if_cube_fits(fits_file: Path) -> bool:
 
 
 def _beams_from_cubes(cube_paths: list[Path]) -> Beams:
-    """Every channel beam of every cube, as one Beams"""
-    cube_data_list = beamcon_3D.make_data(
-        files=cube_paths, outdir=[cube_path.parent for cube_path in cube_paths]
-    )
+    """Every channel beam of every cube, as one Beams. A masked channel gets a zero beam."""
+    beams = [
+        beam for cube_path in cube_paths for beam in convolve_rs.cube_beams(cube_path)
+    ]
     return Beams(
-        beams=[beam for cube_data in cube_data_list for beam in cube_data.beams]
+        major=[0.0 if b is None else b.major_arcsec for b in beams] * u.arcsec,
+        minor=[0.0 if b is None else b.minor_arcsec for b in beams] * u.arcsec,
+        pa=[0.0 if b is None else b.pa_deg for b in beams] * u.deg,
     )
 
 
@@ -156,7 +176,7 @@ def _cube_beams(cube_paths: Collection[Path]) -> Beams | None:
     """Every channel beam of every cube, or None when there is no beam to read"""
     try:
         return _beams_from_cubes(cube_paths=list(cube_paths))
-    except NoBeamException:
+    except ValueError:
         logger.info(f"No beam information found among {list(cube_paths)=}")
         return None
 
@@ -197,6 +217,68 @@ def cubes_share_common_beam(
     return all(beam == usable_beams[0] for beam in usable_beams)
 
 
+def common_beam_from_beams(beams: Beams, cutoff: float | None = None) -> Beam | None:
+    """The smallest beam every usable beam fits inside, or None when none is usable.
+    See ``usable_beam_mask``."""
+    usable = usable_beam_mask(beams=beams, cutoff=cutoff)
+    if not usable.any():
+        return None
+
+    logger.info(f"Deriving a common beam from {usable.sum()} of {len(usable)} beams")
+    usable_beams = beams[usable]
+    try:
+        common_beam = usable_beams.common_beam()
+    except BeamError:
+        logger.warning(
+            "Could not find a common beam with the default tolerance, trying again"
+        )
+        common_beam = usable_beams.common_beam(tolerance=1e-5)
+
+    # The minimum enclosing ellipse radio_beam solves for sits right against the
+    # beams it encloses, so a channel whose own beam it barely covers can fail to
+    # deconvolve. Rounding up gives every channel the headroom to reach it, as
+    # the common beams racs_tools and convolve-rs derive themselves are.
+    rounded = convolve_rs.round_common_beam(
+        BeamShape.from_radio_beam(common_beam).to_convolve_rs(),
+        [BeamShape.from_radio_beam(b).to_convolve_rs() for b in usable_beams],
+    )
+    return Beam(
+        major=rounded.major_arcsec * u.arcsecond,
+        minor=rounded.minor_arcsec * u.arcsecond,
+        pa=rounded.pa_deg * u.degree,
+    )
+
+
+def common_beam_from_beam_shapes(
+    beam_shapes: Collection[BeamShape],
+    cutoff: float | None = None,
+    fixed_beam_shape: Sequence[float] | None = None,
+) -> BeamShape:
+    """The smallest beam every usable beam fits inside, or NaNs when none is usable.
+
+    Args:
+        beam_shapes (Collection[BeamShape]): The beams to cover
+        cutoff (float | None, optional): Beams whose major axis exceeds this, in arcsec, are left out rather than dragging the common beam out to them. Defaults to no cutoff.
+        fixed_beam_shape (Sequence[float] | None, optional): Return this (arcsec, arcsec, deg) rather than solving one. Defaults to solving.
+
+    Returns:
+        BeamShape: The common beam
+    """
+    if fixed_beam_shape:
+        return BeamShape(*fixed_beam_shape)
+
+    logger.info(f"Solving a common beam over {len(beam_shapes)} beams")
+    major, minor, pa = np.array(beam_shapes, dtype=float).reshape(-1, 3).T
+    common_beam = common_beam_from_beams(
+        beams=Beams(major=major * u.arcsec, minor=minor * u.arcsec, pa=pa * u.deg),
+        cutoff=cutoff,
+    )
+    if common_beam is None:
+        return BeamShape(bmaj_arcsec=np.nan, bmin_arcsec=np.nan, bpa_deg=np.nan)
+
+    return BeamShape.from_radio_beam(radio_beam=common_beam)
+
+
 def common_beam_from_cubes(
     cube_paths: Collection[Path], cutoff: float | None = None
 ) -> Beam | None:
@@ -213,34 +295,12 @@ def common_beam_from_cubes(
     if beams is None:
         return None
 
-    usable = usable_beam_mask(beams=beams, cutoff=cutoff)
-    if not usable.any():
+    common_beam = common_beam_from_beams(beams=beams, cutoff=cutoff)
+    if common_beam is None:
         logger.warning(
             f"No usable restoring beam among {list(cube_paths)=}, so no common beam"
         )
-        return None
-
-    logger.info(f"Deriving a common beam from {usable.sum()} of {len(usable)} beams")
-    usable_beams = beams[usable]
-    try:
-        common_beam = usable_beams.common_beam()
-    except BeamError:
-        logger.warning(
-            "Could not find a common beam with the default tolerance, trying again"
-        )
-        common_beam = usable_beams.common_beam(tolerance=1e-5)
-
-    # The minimum enclosing ellipse radio_beam solves for sits right against the
-    # beams it encloses, so a channel whose own beam it barely covers can fail to
-    # deconvolve. Rounding up gives every channel the headroom to reach it, which
-    # is what racs_tools does with the common beams it derives itself.
-    return Beam(
-        major=my_ceil(common_beam.major.to(u.arcsecond).value, precision=1)
-        * u.arcsecond,
-        minor=my_ceil(common_beam.minor.to(u.arcsecond).value, precision=1)
-        * u.arcsecond,
-        pa=round_up(common_beam.pa.to(u.degree).value, decimals=2) * u.degree,
-    )
+    return common_beam
 
 
 def common_beam_shape_from_cubes(
@@ -277,8 +337,8 @@ def convolve_plane_to_beam(
     alongside it and leaving the input in place.
 
     A plane coarser than ``cutoff`` is blanked rather than convolved, and its
-    output is marked with a zero beam so that the cube it is combined into
-    records that the channel holds no PSF.
+    output is marked with a zero beam, which convolve-rs writes, so that the
+    cube it is combined into records that the channel holds no PSF.
 
     Args:
         plane (Path): The channel image to convolve
@@ -289,29 +349,12 @@ def convolve_plane_to_beam(
     Returns:
         Path: The convolved (or blanked) image
     """
-    convolved_plane = convolve_images(
+    return convolve_images(
         image_paths=[plane],
         beam_shape=beam_shape,
         cutoff=cutoff,
         convol_suffix=convol_suffix,
     )[0]
-
-    header = fits.getheader(plane)
-    beyond_cutoff = header_beam_is_usable(header=header) and not header_beam_is_usable(
-        header=header, cutoff=cutoff
-    )
-    if not beyond_cutoff:
-        return convolved_plane
-
-    # racs_tools blanks the data of a plane beyond the cutoff but still stamps
-    # the target beam onto it, which would have the cube claim a PSF for a
-    # channel that holds none
-    logger.info(f"{plane=} is beyond {cutoff=}, marking {convolved_plane=} as blank")
-    with fits.open(convolved_plane, mode="update") as open_fits:
-        for key in ("BMAJ", "BMIN", "BPA"):
-            open_fits[0].header[key] = 0.0
-
-    return convolved_plane
 
 
 def get_cube_common_beam(
@@ -328,38 +371,10 @@ def get_cube_common_beam(
         List[BeamShape]: List of target beam shapes to use, corresponding to each channel
     """
 
-    _, common_beam_data_list = beamcon_3D.smooth_fits_cube(
-        infiles_list=list(cube_paths),
-        dryrun=True,
-        cutoff=cutoff,
-        mode="natural",
-        conv_mode="robust",
-        ncores=1,
+    cubes = convolve_rs.smooth_cubes(
+        list(cube_paths), mode="natural", cutoff=cutoff, dryrun=True
     )
-    # Make proper check here that accounts for NaNs
-    for file in common_beam_data_list:
-        assert all(
-            (file[0].major == common_beam_data_list[0][0].major)
-            | np.isnan(file[0].major)
-        )
-        assert all(
-            (file[0].minor == common_beam_data_list[0][0].minor)
-            | np.isnan(file[0].minor)
-        )
-        assert all(
-            (file[0].pa == common_beam_data_list[0][0].pa) | np.isnan(file[0].pa)
-        )
-
-    first_cube_fits_beam = common_beam_data_list[0][0]
-    assert isinstance(first_cube_fits_beam, Beams), (
-        f"Unexpected type for common beams. Expected Beams, got {type(first_cube_fits_beam)}"
-    )
-
-    beam_shape_list = [
-        BeamShape.from_radio_beam(radio_beam=beam)  # type: ignore
-        for beam in first_cube_fits_beam
-    ]
-    return beam_shape_list
+    return [BeamShape.from_convolve_rs(beam) for beam in cubes[0].targets]
 
 
 def convolve_cubes(
@@ -369,49 +384,35 @@ def convolve_cubes(
     convol_suffix: str = "conv",
     executor_type: Literal["thread", "process", "mpi"] = "thread",
 ) -> Collection[Path]:
+    """Convolve each channel of each cube to its beam in ``beam_shapes``.
+
+    A channel whose beam is not finite, or whose own beam is coarser than
+    ``cutoff``, is blanked and masked in the output's beam table.
+
+    Args:
+        cube_paths (Collection[Path]): The cubes to convolve
+        beam_shapes (list[BeamShape]): The beam of each channel
+        cutoff (float | None, optional): Channels whose major axis exceeds this, in arcsec, are blanked. Defaults to no cutoff.
+        convol_suffix (str, optional): The suffix added to .fits to indicate a smoothed cube. Defaults to 'conv'.
+        executor_type (Literal["thread", "process", "mpi"], optional): Unused, kept for callers: convolve-rs runs on threads. Defaults to "thread".
+
+    Returns:
+        Collection[Path]: The convolved cubes
+    """
     logger.info(f"Will attempt to convol {len(cube_paths)} cubes")
     if cutoff:
         logger.info(f"Supplied cutoff {cutoff}")
 
-    # Extractubg the beam properties
-    beam_major_list = [float(beam.bmaj_arcsec) for beam in beam_shapes]
-    beam_minor_list = [float(beam.bmin_arcsec) for beam in beam_shapes]
-    beam_pa_list = [float(beam.bpa_deg) for beam in beam_shapes]
-
-    # Sanity test
-    assert len(beam_major_list) == len(beam_minor_list) == len(beam_pa_list)
-
-    logger.info("Convoling cubes")
-    cube_data_list, _, _ = beamcon_3D.smooth_fits_cube(
-        infiles_list=list(cube_paths),
-        dryrun=False,
-        cutoff=cutoff,
+    cubes = convolve_rs.smooth_cubes(
+        list(cube_paths),
         mode="natural",
-        conv_mode="robust",
-        bmaj=beam_major_list,
-        bmin=beam_minor_list,
-        bpa=beam_pa_list,
+        target_beams=[beam.to_convolve_rs() for beam in beam_shapes],
+        cutoff=cutoff,
         suffix=convol_suffix,
-        executor_type=executor_type,
     )
-
-    # Construct the name of the new file created. For the moment this is done
-    # manually as it is not part of the returned object
-    # TODO: Extend the return struct from beamcon_3D to include output name
-    convol_cubes_path = [
-        Path(cube_data.filename).with_suffix(f".{convol_suffix}.fits")
-        for cube_data in cube_data_list
-    ]
-
-    # Show the mapping as a sanity check
-    for input_cube, output_cube in zip(list(cube_paths), convol_cubes_path):
-        logger.info(f"{input_cube=} convolved to {output_cube}")
-
-    # Trust no one
-    assert all([p.exists() for p in convol_cubes_path]), (
-        "A convolved cube does not exist"
-    )
-    return convol_cubes_path
+    for cube in cubes:
+        logger.info(f"{cube.input} convolved to {cube.output}")
+    return [cube.output for cube in cubes]
 
 
 def get_common_beam(
@@ -435,15 +436,27 @@ def get_common_beam(
         logger.info(f"Setting beam cutoff to {cutoff} arcseconds. ")
 
     try:
-        beam, beams = beamcon_2D.get_common_beam(files=list(image_paths), cutoff=cutoff)
-
-        beam_shape = BeamShape.from_radio_beam(beam)
+        result = convolve_rs.smooth_images(
+            list(image_paths), cutoff=cutoff, dryrun=True
+        )
+        beam_shape = BeamShape.from_convolve_rs(result.target)
         logger.info(f"Constructed {beam_shape=}")
     except ValueError:
         logger.info("The beam was not constrained. Setting to NaNs")
         beam_shape = BeamShape(bmaj_arcsec=np.nan, bmin_arcsec=np.nan, bpa_deg=np.nan)
 
     return beam_shape
+
+
+def lost_in_convolution(image_path: Path, convolved_path: Path) -> bool:
+    """Whether an image with data came out of convolve-rs all NaN yet still claiming a beam"""
+    with fits.open(convolved_path, memmap=True) as convolved:
+        if np.isfinite(convolved[0].data).any():
+            return False
+        if not header_beam_is_usable(header=convolved[0].header):
+            return False
+    with fits.open(image_path, memmap=True) as image:
+        return bool(np.isfinite(image[0].data).any())
 
 
 def convolve_images(
@@ -455,8 +468,8 @@ def convolve_images(
 ) -> list[Path]:
     """Convolve a set of input images to a common resolution as specified
     by the beam_shape. If the major-axis of the native resolution is larger
-    than cutoff (in arcseconds) then the racs_tools beamconv_2D task will
-    nan it.
+    than cutoff (in arcseconds) then convolve-rs blanks it and gives it a
+    zero beam.
 
     Additionally, some input subject image will simply copied if:
 
@@ -493,11 +506,7 @@ def convolve_images(
 
         return conv_image_paths
 
-    radio_beam = Beam(
-        major=beam_shape.bmaj_arcsec * u.arcsecond,
-        minor=beam_shape.bmin_arcsec * u.arcsecond,
-        pa=beam_shape.bpa_deg * u.deg,
-    )
+    target_beam = beam_shape.to_convolve_rs()
 
     return_conv_image_paths: list[Path] = []
 
@@ -519,14 +528,19 @@ def convolve_images(
             copyfile(image_path, convol_output_path)
         else:
             logger.info(f"Convolving {image_path.name!s}")
-            beamcon_2D.beamcon_2d_on_fits(
-                file=image_path,
-                outdir=None,
-                new_beam=radio_beam,
-                conv_mode="robust",
-                suffix=convol_suffix,
+            result = convolve_rs.smooth_images(
+                [image_path],
+                target_beam=target_beam,
                 cutoff=cutoff,
+                suffix=convol_suffix,
             )
+            convol_output_path = result.images[0].output
+            if lost_in_convolution(image_path, convol_output_path):
+                logger.error(
+                    f"convolve-rs turned {image_path.name} into all NaNs while "
+                    f"claiming {beam_shape=}. Blanking it with a zero beam."
+                )
+                blank_images([convol_output_path], convol_suffix=None)
 
         if output_paths:
             output_path: Path = output_paths[idx]
@@ -545,19 +559,20 @@ def convolve_images(
 
 
 def blank_images(
-    image_paths: Collection[Path], convol_suffix: str = "conv"
+    image_paths: Collection[Path], convol_suffix: str | None = "conv"
 ) -> list[Path]:
-    """Write an all-NaN copy of each image, marked with a zero beam.
+    """Blank each image to all-NaN, marked with a zero beam. The blank is a copy
+    named with ``convol_suffix``, or the image itself when that is None.
 
-    This stands in for a convolution that cannot be done: a channel whose every
-    image is beyond the beam cutoff has no common beam to convolve to, and
+    The copy stands in for a convolution that cannot be done: a channel whose
+    every image is beyond the beam cutoff has no common beam to convolve to, and
     copying the images at their own resolutions would have whatever they are
     co-added into claim a beam that describes none of them. The zero beam is the
     marker ``usable_beam_mask`` and ``fitscube`` both read as 'no PSF here'.
 
     Args:
         image_paths (Collection[Path]): The images to blank
-        convol_suffix (str, optional): The suffix added to .fits, matching the convolved images these stand in for. Defaults to 'conv'.
+        convol_suffix (str | None, optional): The suffix added to .fits, matching the convolved images these stand in for. None blanks each image in place. Defaults to 'conv'.
 
     Returns:
         list[Path]: The blanked images
@@ -565,9 +580,11 @@ def blank_images(
     blank_image_paths: list[Path] = []
 
     for image_path in image_paths:
-        blank_image_path = Path(
-            str(image_path).replace(".fits", f".{convol_suffix}.fits")
-        )
+        blank_image_path = Path(image_path)
+        if convol_suffix is not None:
+            blank_image_path = Path(
+                str(image_path).replace(".fits", f".{convol_suffix}.fits")
+            )
         logger.info(f"Blanking {image_path} into {blank_image_path=}")
 
         with fits.open(image_path) as open_fits:

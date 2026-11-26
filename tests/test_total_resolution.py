@@ -18,8 +18,10 @@ from prefect.logging import disable_run_logger
 from prefect.testing.utilities import prefect_test_harness
 
 from flint.coadd.linmos import LinmosOptions, LinmosResult
+from flint.coadd.patchwork import PatchworkOptions
 from flint.convol import (
     BeamShape,
+    common_beam_from_beam_shapes,
     convolve_plane_to_beam,
     cubes_share_common_beam,
     get_common_beam,
@@ -32,32 +34,17 @@ from flint.prefect.common.imaging import (
     convolve_channel_groups_to_natural_resolution,
     linmos_channel_groups_to_cubes,
     linmos_stokes_channel_groups_to_cubes,
-    total_beam_from_channel_groups,
+    task_common_beam_from_beam_shapes,
 )
+from flint.summary import FieldSummary
 
 # Reuse the synthetic helpers rather than keeping a second copy of them
 from tests.test_convol import _write_cube_with_beam  # noqa: E402
 from tests.test_cube import _write_channel_image  # noqa: E402
 from tests.test_natural_resolution import _bmaj_arcsec, _channel_groups  # noqa: E402
+from tests.test_patchwork_coadd import BORESIGHT, beam_images  # noqa: E402
 
 STEM = "SB12345.BENCH_0000+00.ch0000-0019"
-
-
-def _total_beam(
-    stokes_channel_groups: dict[str, list[list[Path]]],
-    cutoff: float | None = None,
-    fixed_beam_shape: tuple[float, float, float] | None = None,
-) -> BeamShape:
-    @flow
-    def _solve() -> BeamShape:
-        return total_beam_from_channel_groups(
-            stokes_channel_groups=stokes_channel_groups,
-            cutoff=cutoff,
-            fixed_beam_shape=fixed_beam_shape,
-        ).result()
-
-    with prefect_test_harness(), disable_run_logger():
-        return _solve()
 
 
 def _naturally_then_totally(
@@ -69,11 +56,11 @@ def _naturally_then_totally(
 
     @flow
     def _run() -> tuple[dict[str, list[list[Path]]], BeamShape]:
-        natural = convolve_channel_groups_to_natural_resolution(
+        natural, channel_beam_shapes = convolve_channel_groups_to_natural_resolution(
             stokes_channel_groups=stokes_channel_groups, cutoff=cutoff
         )
-        return natural, total_beam_from_channel_groups(
-            stokes_channel_groups=natural, cutoff=cutoff
+        return natural, task_common_beam_from_beam_shapes.submit(
+            beam_shapes=channel_beam_shapes, cutoff=cutoff
         ).result()
 
     with prefect_test_harness(), disable_run_logger():
@@ -98,20 +85,58 @@ def _cube_from_planes(
     )
 
 
-def test_total_beam_covers_the_coarsest_channel(tmp_path: Path) -> None:
+def _channel_beams(*bmaj_arcsec: float) -> list[BeamShape]:
+    return [BeamShape(bmaj, bmaj * 0.8, 0.0) for bmaj in bmaj_arcsec]
+
+
+def test_total_beam_covers_the_coarsest_channel() -> None:
     """One beam for the whole band has to cover every channel in it, or a channel
     it does not cover cannot be deconvolved to reach it"""
-    groups = _channel_groups(tmp_path, {"q": [[10.0], [20.0], [15.0]]})
-
-    beam = _total_beam(groups)
+    beam = common_beam_from_beam_shapes(_channel_beams(10.0, 20.0, 15.0))
 
     assert beam.bmaj_arcsec >= 20.0
 
 
+def test_total_beam_leaves_out_channels_beyond_the_cutoff() -> None:
+    """A coarse channel is blanked when its plane is convolved, so it must not
+    drag the total beam out to it, and a band of them has no total beam at all"""
+    beam = common_beam_from_beam_shapes(_channel_beams(10.0, 40.0), cutoff=20.0)
+    assert 10.0 <= beam.bmaj_arcsec < 40.0
+
+    no_beam = common_beam_from_beam_shapes(_channel_beams(40.0, 50.0), cutoff=20.0)
+    assert not np.isfinite(no_beam.bmaj_arcsec)
+
+
+def test_total_beam_is_the_fixed_beam_when_one_is_given() -> None:
+    """A fixed beam is used as it is, not rounded up as a solved one is"""
+    beam = common_beam_from_beam_shapes(
+        _channel_beams(10.0, 20.0), fixed_beam_shape=(25.05, 24.0, 3.0)
+    )
+
+    assert beam == BeamShape(25.05, 24.0, 3.0)
+
+
+def test_total_beam_covers_a_channel_whose_first_image_is_blanked(
+    tmp_path: Path,
+) -> None:
+    """An image beyond the cutoff is blanked and carries no beam. When it is the
+    first image of its channel, the rest of that channel still has to be able to
+    reach the total beam."""
+    groups = _channel_groups(tmp_path, {"q": [[10.0, 10.5], [40.0, 18.0]]})
+
+    natural, beam = _naturally_then_totally(groups, cutoff=20.0)
+
+    blanked, kept = natural["q"][1]
+    assert _bmaj_arcsec(blanked) == 0.0
+    assert beam.bmaj_arcsec >= _bmaj_arcsec(kept) >= 18.0
+    convolve_plane_to_beam(plane=kept, beam_shape=beam, cutoff=20.0)
+
+
 def test_total_beam_covers_every_stokes(tmp_path: Path) -> None:
-    """The beam is solved over a single Stokes, which is only sound because the
-    natural pass has already given every Stokes of a channel one resolution. Run
-    in that order, the total beam still has to cover the coarsest Stokes."""
+    """The beam is solved over the beam of each channel, which is only sound
+    because the natural pass has already given every Stokes of a channel one
+    resolution. Run in that order, the total beam still has to cover the coarsest
+    Stokes."""
     groups = _channel_groups(tmp_path, {"q": [[10.0], [12.0]], "u": [[10.0], [22.0]]})
 
     natural, beam = _naturally_then_totally(groups)
@@ -391,3 +416,95 @@ def test_every_stokes_is_cubed_on_one_pixel_grid(
     assert np.all(np.isfinite(q_image[:, 1:-1, 1:-1]))
     q_image[:, 1:-1, 1:-1] = np.nan
     assert np.all(np.isnan(q_image)), "Stokes Q is padded out to the Stokes I box"
+
+
+def test_patchwork_mosaics_every_stokes_of_a_channel_in_one_task(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Q and U are only rotated when mosaicked together, so with patchwork a
+    channel's Stokes share one task, and linmos is never called"""
+    submitted = _fake_submits(
+        monkeypatch,
+        "task_linmos_images",
+        "task_patchwork_stokes_images",
+        "task_getitem",
+        "task_getattr",
+        "task_create_name_from_common_fields",
+        "task_combine_images_to_cube",
+    )
+
+    linmos_stokes_channel_groups_to_cubes(
+        stokes_channel_groups={
+            "q": [[Path("q.ch0.beam00.fits")], [Path("q.ch1.beam00.fits")]],
+            "u": [[Path("u.ch0.beam00.fits")], [Path("u.ch1.beam00.fits")]],
+        },
+        container=None,
+        linmos_options=LinmosOptions(cutoff=0.2),
+        fitscube_options=FitsCubeOptions(bounding_box=False),
+        patchwork_options=PatchworkOptions(),
+    )
+
+    assert not [s for s in submitted if s.task == "task_linmos_images"]
+    mosaics = [s for s in submitted if s.task == "task_patchwork_stokes_images"]
+    assert [mosaic.kwargs["stokes_images"] for mosaic in mosaics] == [
+        {"q": [Path("q.ch0.beam00.fits")], "u": [Path("u.ch0.beam00.fits")]},
+        {"q": [Path("q.ch1.beam00.fits")], "u": [Path("u.ch1.beam00.fits")]},
+    ]
+    assert all(mosaic.kwargs["pb_cutoff"] == 0.2 for mosaic in mosaics)
+
+    cubes = [s for s in submitted if s.task == "task_combine_images_to_cube"]
+    assert len(cubes) == 4, "an image and a weight cube for each Stokes"
+    for cube in cubes:
+        # Each plane is an attribute of one Stokes looked up in a channel's mosaics
+        lookups = [plane.args[0] for plane in cube.kwargs["images"]]
+        assert [lookup.args[0] for lookup in lookups] == mosaics
+        assert len({lookup.args[1] for lookup in lookups}) == 1
+
+
+def test_patchwork_cubes_every_stokes_on_one_pixel_grid(tmp_path: Path) -> None:
+    """Real patchwork mosaics of each channel stack into cubes of one shape for
+    every Stokes, with nothing standing in for the mosaicker"""
+    stokes_channel_groups = {
+        stokes: [
+            beam_images(
+                tmp_path, stokes, channel=channel, frequency_hz=9.4e8 + channel * 1e7
+            )
+            for channel in range(2)
+        ]
+        for stokes in ("i", "q", "u")
+    }
+
+    @flow
+    def _cube() -> dict[str, list[Path]]:
+        stokes_cubes = linmos_stokes_channel_groups_to_cubes(
+            stokes_channel_groups=stokes_channel_groups,
+            container=None,
+            linmos_options=LinmosOptions(),
+            fitscube_options=FitsCubeOptions(),
+            field_summary=FieldSummary(
+                sbid="1234",
+                cal_sbid="None",
+                field_name="RACS_0000-00",
+                boresight=BORESIGHT,
+            ),
+            suffix_str="pol",
+            patchwork_options=PatchworkOptions(backend="numpy"),
+        )
+        return {
+            stokes: [cube.result() for cube in cubes.futures]
+            for stokes, cubes in stokes_cubes.items()
+        }
+
+    with prefect_test_harness(), disable_run_logger():
+        stokes_cubes = _cube()
+
+    shapes = {
+        fits.getdata(cube).squeeze().shape
+        for cubes in stokes_cubes.values()
+        for cube in cubes
+    }
+    assert len(shapes) == 1
+    assert shapes.pop()[0] == 2, "a plane for each channel"
+    for stokes, cubes in stokes_cubes.items():
+        assert len(cubes) == 2, "an image and a weight cube"
+        assert np.any(np.isfinite(fits.getdata(cubes[0]))), stokes

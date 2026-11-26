@@ -15,7 +15,7 @@ from numpy.typing import NDArray
 from flint.exceptions import MSError
 from flint.logging import logger
 from flint.ms import check_column_in_ms, critical_ms_interaction, describe_ms
-from flint.options import MS
+from flint.options import MS, HasMS
 from flint.sclient import run_singularity_command
 from flint.utils import get_packaged_resource_path
 
@@ -432,6 +432,47 @@ def flag_ms_by_antenna_ids(ms: Path | MS, ant_ids: int | Collection[int]) -> MS:
     logger.info(
         f"Loaded flags: {init_flags}, Final flags: {end_flags}, Difference: {diff_flags} ({diff_flags / np.prod(flags.shape) * 100.0:.2f}%)"
     )
+
+    return ms
+
+
+def flag_sparse_channels(
+    ms: MS | Path | HasMS, min_valid_fraction: float, chunk_size: int = 100000
+) -> MS:
+    """Flag every channel in which less than ``min_valid_fraction`` of the
+    visibilities, counted over all rows and polarisations, are unflagged.
+    The flags are read and written ``chunk_size`` rows at a time."""
+    if not 0 < min_valid_fraction <= 1:
+        msg = f"{min_valid_fraction=} is not a fraction between 0 and 1"
+        raise ValueError(msg)
+
+    ms = MS.cast(ms)
+    with table(str(ms.path), readonly=False, ack=False) as tab:
+        chunk_starts = range(0, len(tab), chunk_size)
+        channels, pols = tab.getcell("FLAG", 0).shape
+        flagged = np.zeros(channels)
+        for start in chunk_starts:
+            flags = tab.getcol("FLAG", startrow=start, nrow=chunk_size)
+            flagged += flags.sum(axis=(0, 2))
+
+        valid_fraction = 1.0 - flagged / (len(tab) * pols)
+        sparse = (valid_fraction > 0) & (valid_fraction < min_valid_fraction)
+        if not sparse.any():
+            logger.info(f"No channel of {ms.path!s} is below {min_valid_fraction=}")
+            return ms
+
+        for start in chunk_starts:
+            flags = tab.getcol("FLAG", startrow=start, nrow=chunk_size)
+            flags[:, sparse, :] = True
+            tab.putcol("FLAG", flags, startrow=start, nrow=len(flags))
+
+    logger.info(
+        f"Flagged {sparse.sum()} of {len(sparse)} channels of {ms.path!s} below "
+        f"{min_valid_fraction=}, a further {valid_fraction[sparse].sum() / channels:.2%} "
+        "of its data"
+    )
+    if not (valid_fraction[~sparse] > 0).any():
+        logger.warning(f"No valid data remain in {ms.path!s}")
 
     return ms
 

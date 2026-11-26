@@ -134,6 +134,25 @@ def base_racs_all_options(tmp_path) -> RACSAllOptions:
     )
 
 
+def test_check_racs_all_options_min_channel_valid_fraction(
+    base_racs_all_options,
+) -> None:
+    """The threshold is a fraction. A percentage would flag every channel."""
+    assert base_racs_all_options.min_channel_valid_fraction is None
+    _check_racs_all_options(
+        racs_all_options=base_racs_all_options.with_options(
+            min_channel_valid_fraction=0.3
+        )
+    )
+    for not_a_fraction in (0, 30):
+        with pytest.raises(ValueError, match="min_channel_valid_fraction"):
+            _check_racs_all_options(
+                racs_all_options=base_racs_all_options.with_options(
+                    min_channel_valid_fraction=not_a_fraction
+                )
+            )
+
+
 def test_check_racs_all_options_skymodel_requirements(
     base_racs_all_options, tmp_path, monkeypatch
 ) -> None:

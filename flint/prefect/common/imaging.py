@@ -16,7 +16,7 @@ from eye_patch.masking import create_mask_from_fits
 from eye_patch.naming import FITSMaskNames
 from eye_patch.options import MaskingOptions
 from eye_patch.scales import flatten_scale_mask_fits
-from fitscube.bounding_box import (
+from fitscube_rs.compat import (
     BoundingBox,
     extract_common_bounding_box,
     get_common_bounding_box,
@@ -37,8 +37,14 @@ from flint.coadd.linmos import (
     LinmosResult,
     linmos_images,
 )
+from flint.coadd.patchwork import (
+    MosaicResult,
+    PatchworkOptions,
+    patchwork_stokes_images,
+)
 from flint.convol import (
     BeamShape,
+    common_beam_from_beam_shapes,
     convolve_images,
     convolve_images_or_blank,
     convolve_plane_to_beam,
@@ -52,7 +58,7 @@ from flint.dp3 import (
     dp3_gaincal,
     dp3_solve_apply,
 )
-from flint.flagging import flag_ms_aoflagger
+from flint.flagging import flag_ms_aoflagger, flag_sparse_channels
 from flint.imager.wsclean import (
     WSCleanOptions,
     WSCleanResult,
@@ -77,13 +83,18 @@ from flint.ms import (
 )
 from flint.naming import (
     ResolutionModes,
+    create_linmos_base_path,
     create_name_from_common_fields,
     get_fits_cube_from_paths,
 )
 from flint.options import FieldOptions, FitsCubeOptions, SubtractFieldOptions
 from flint.peel.potato import potato_peel
 from flint.prefect.caching import task
-from flint.prefect.common.utils import task_getattr, upload_image_as_artifact
+from flint.prefect.common.utils import (
+    task_getattr,
+    task_getitem,
+    upload_image_as_artifact,
+)
 from flint.selfcal.casa import gaincal_applycal_ms
 from flint.selfcal.dp3 import DP3SolveMode, dp3_selfcal_ms
 from flint.source_finding.aegean import AegeanOutputs, run_bane_and_aegean
@@ -112,6 +123,7 @@ task_split_by_field: Task[P, R] = task(split_by_field)
 task_select_solution_for_ms: Task[P, R] = task(select_aosolution_for_ms)
 task_create_apply_solutions_cmd: Task[P, R] = task(create_apply_solutions_cmd)
 task_rename_column_in_ms: Task[P, R] = task(rename_column_in_ms)
+task_common_beam_from_beam_shapes = task(common_beam_from_beam_shapes)
 task_convolve_images = task(convolve_images)
 task_convolve_images_or_blank = task(convolve_images_or_blank)
 task_convolve_plane_to_beam = task(convolve_plane_to_beam)
@@ -130,6 +142,7 @@ task_get_common_bounding_box = task(get_common_bounding_box)
 task_extract_common_bounding_box = task(extract_common_bounding_box)
 task_split_cube_into_planes = task(split_cube_into_planes)
 task_bane_fits_image = task(bane_fits_image)
+task_flag_sparse_channels = task(flag_sparse_channels)
 task_dp3_flag = task(dp3_flag)
 task_dp3_ddecal = task(dp3_ddecal)
 task_dp3_gaincal = task(dp3_gaincal)
@@ -781,7 +794,6 @@ def task_linmos_images(
     # have literals for the type of product (MFS, cube, model) to be
     # sure of appropriate extraction
 
-    from flint.naming import create_linmos_base_path
     from flint.utils import flatten_items
 
     image_list = flatten_items(items=image_list)
@@ -806,6 +818,38 @@ def task_linmos_images(
     )
 
     return linmos_result
+
+
+@task
+def task_patchwork_stokes_images(
+    stokes_images: dict[str, list[Path]],
+    patchwork_options: PatchworkOptions,
+    pb_cutoff: float,
+    holofile: Path | None = None,
+    field_summary: FieldSummary | None = None,
+    suffix_str: str | None = None,
+    trim: bool = False,
+) -> dict[str, MosaicResult]:
+    """Mosaic the beam images of every Stokes together with patchwork, under
+    the names linmos would give them. The arguments follow ``task_linmos_images``."""
+    # Named one Stokes at a time, as a list of mixed Stokes drops it from the name
+    stokes_base_paths = {
+        stokes: create_linmos_base_path(
+            input_images=list(images), additional_suffixes=suffix_str
+        )
+        for stokes, images in stokes_images.items()
+    }
+
+    return patchwork_stokes_images(
+        stokes_images=stokes_images,
+        stokes_base_paths=stokes_base_paths,
+        patchwork_options=patchwork_options,
+        pb_cutoff=pb_cutoff,
+        holofile=holofile,
+        pol_axis=field_summary.pol_axis if field_summary else None,
+        boresight=field_summary.boresight if field_summary else None,
+        trim=trim,
+    )
 
 
 def convolve_then_linmos(
@@ -1096,30 +1140,16 @@ class LinmosPlanes(NamedTuple):
     """The BANE runs reading the total-resolution planes"""
 
 
-def linmos_channel_groups_to_planes(
-    channel_groups: Collection[Collection[Path]],
-    container: Path,
-    linmos_options: LinmosOptions,
-    stokesi_channel_groups: Collection[Collection[Path]] | None = None,
-    field_summary: FieldSummary | None = None,
-    suffix_str: str | None = None,
-    holofile: Path | None = None,
+def measure_and_convolve_planes(
+    image_planes: list[PrefectFuture[Path]],
+    weight_planes: list[PrefectFuture[Path]],
     fft_bane_options: FFTBANEOptions | None = None,
     total_beam_shape: PrefectFuture[BeamShape] | None = None,
     beam_cutoff: float | None = None,
 ) -> LinmosPlanes:
-    """Co-add the beam images of each channel, in parallel, into per-channel
-    mosaics. The arguments are those of ``linmos_channel_groups_to_cubes``."""
-    stokesi_groups = (
-        list(stokesi_channel_groups) if stokesi_channel_groups is not None else None
-    )
-    if stokesi_groups is not None:
-        assert len(stokesi_groups) == len(channel_groups), (
-            f"Have {len(channel_groups)} channels, but Stokes I has {len(stokesi_groups)}"
-        )
-
-    image_planes: list[PrefectFuture[Path]] = []
-    weight_planes: list[PrefectFuture[Path]] = []
+    """Measure the noise of each channel's mosaic and convolve it to the total
+    beam, where either is asked for. The arguments are those of
+    ``linmos_channel_groups_to_cubes``."""
     bkg_planes: list[PrefectFuture[Path]] = []
     rms_planes: list[PrefectFuture[Path]] = []
     total_planes: list[PrefectFuture[Path]] = []
@@ -1128,27 +1158,7 @@ def linmos_channel_groups_to_planes(
     # BANE reads the planes the image cubes go on to delete
     bane_results: list[PrefectFuture[BANEMaps]] = []
     total_bane_results: list[PrefectFuture[BANEMaps]] = []
-    for channel_idx, beam_images in enumerate(channel_groups):
-        linmos_result = task_linmos_images.submit(
-            image_list=list(beam_images),
-            container=container,
-            suffix_str=suffix_str,
-            linmos_options=linmos_options.with_options(
-                stokesi_images=list(stokesi_groups[channel_idx])
-                if stokesi_groups is not None
-                else None,
-                # Each channel would otherwise be trimmed to its own bounding box,
-                # leaving the planes on differing pixel grids and scrambling the cube
-                trim_linmos_fits=False,
-            ),
-            field_summary=field_summary,
-            holofile=holofile,
-        )
-        image_plane = task_getattr.submit(linmos_result, "image_fits")
-        weight_plane = task_getattr.submit(linmos_result, "weight_fits")
-        image_planes.append(image_plane)
-        weight_planes.append(weight_plane)
-
+    for image_plane in image_planes:
         if fft_bane_options is not None:
             # One task per channel, so every plane's background and noise is
             # measured across the cluster while the other channels co-add
@@ -1191,6 +1201,111 @@ def linmos_channel_groups_to_planes(
         bane_results=bane_results,
         total_bane_results=total_bane_results,
     )
+
+
+def linmos_channel_groups_to_planes(
+    channel_groups: Collection[Collection[Path]],
+    container: Path,
+    linmos_options: LinmosOptions,
+    stokesi_channel_groups: Collection[Collection[Path]] | None = None,
+    field_summary: FieldSummary | None = None,
+    suffix_str: str | None = None,
+    holofile: Path | None = None,
+    fft_bane_options: FFTBANEOptions | None = None,
+    total_beam_shape: PrefectFuture[BeamShape] | None = None,
+    beam_cutoff: float | None = None,
+) -> LinmosPlanes:
+    """Co-add the beam images of each channel, in parallel, into per-channel
+    mosaics. The arguments are those of ``linmos_channel_groups_to_cubes``."""
+    stokesi_groups = (
+        list(stokesi_channel_groups) if stokesi_channel_groups is not None else None
+    )
+    if stokesi_groups is not None:
+        assert len(stokesi_groups) == len(channel_groups), (
+            f"Have {len(channel_groups)} channels, but Stokes I has {len(stokesi_groups)}"
+        )
+
+    image_planes: list[PrefectFuture[Path]] = []
+    weight_planes: list[PrefectFuture[Path]] = []
+    for channel_idx, beam_images in enumerate(channel_groups):
+        linmos_result = task_linmos_images.submit(
+            image_list=list(beam_images),
+            container=container,
+            suffix_str=suffix_str,
+            linmos_options=linmos_options.with_options(
+                stokesi_images=list(stokesi_groups[channel_idx])
+                if stokesi_groups is not None
+                else None,
+                # Each channel would otherwise be trimmed to its own bounding box,
+                # leaving the planes on differing pixel grids and scrambling the cube
+                trim_linmos_fits=False,
+            ),
+            field_summary=field_summary,
+            holofile=holofile,
+        )
+        image_planes.append(task_getattr.submit(linmos_result, "image_fits"))
+        weight_planes.append(task_getattr.submit(linmos_result, "weight_fits"))
+
+    return measure_and_convolve_planes(
+        image_planes=image_planes,
+        weight_planes=weight_planes,
+        fft_bane_options=fft_bane_options,
+        total_beam_shape=total_beam_shape,
+        beam_cutoff=beam_cutoff,
+    )
+
+
+def patchwork_stokes_channel_groups_to_planes(
+    stokes_channel_groups: Mapping[str, Collection[Collection[Path]]],
+    patchwork_options: PatchworkOptions,
+    pb_cutoff: float,
+    holofile: Path | None = None,
+    field_summary: FieldSummary | None = None,
+    suffix_str: str | None = None,
+    fft_bane_options: FFTBANEOptions | None = None,
+    total_beam_shape: PrefectFuture[BeamShape] | None = None,
+    beam_cutoff: float | None = None,
+) -> dict[str, LinmosPlanes]:
+    """Co-add each channel with patchwork into per-channel mosaics, keyed by
+    Stokes. Every Stokes of a channel goes in one task, as Q and U are rotated
+    together."""
+    image_planes: dict[str, list[PrefectFuture[Path]]] = {
+        stokes: [] for stokes in stokes_channel_groups
+    }
+    weight_planes: dict[str, list[PrefectFuture[Path]]] = {
+        stokes: [] for stokes in stokes_channel_groups
+    }
+    for stokes_beam_images in zip(*stokes_channel_groups.values(), strict=True):
+        mosaics = task_patchwork_stokes_images.submit(
+            stokes_images={
+                stokes: list(beam_images)
+                for stokes, beam_images in zip(
+                    stokes_channel_groups, stokes_beam_images, strict=True
+                )
+            },
+            patchwork_options=patchwork_options,
+            pb_cutoff=pb_cutoff,
+            holofile=holofile,
+            field_summary=field_summary,
+            suffix_str=suffix_str,
+        )
+        for stokes in stokes_channel_groups:
+            with tags(f"stokes-{stokes}"):
+                mosaic = task_getitem.submit(mosaics, stokes)
+                image_planes[stokes].append(task_getattr.submit(mosaic, "image_fits"))
+                weight_planes[stokes].append(task_getattr.submit(mosaic, "weight_fits"))
+
+    stokes_planes: dict[str, LinmosPlanes] = {}
+    for stokes in stokes_channel_groups:
+        with tags(f"stokes-{stokes}"):
+            stokes_planes[stokes] = measure_and_convolve_planes(
+                image_planes=image_planes[stokes],
+                weight_planes=weight_planes[stokes],
+                fft_bane_options=fft_bane_options,
+                total_beam_shape=total_beam_shape,
+                beam_cutoff=beam_cutoff,
+            )
+    return stokes_planes
 
 
 def linmos_planes_to_cubes(
@@ -1300,7 +1415,7 @@ def linmos_channel_groups_to_cubes(
         suffix_str (str | None, optional): Additional suffix added to the linmos and cube names. Defaults to None.
         holofile (Path | None, optional): Holography file overriding the one in ``linmos_options``. Defaults to None.
         fft_bane_options (FFTBANEOptions | None, optional): When given, each co-added channel also gets a BANE background and RMS map, stacked into their own cubes. Defaults to None, i.e. no BANE.
-        total_beam_shape (PrefectFuture[BeamShape] | None, optional): When given, each co-added plane is also convolved to this one beam and stacked into a second set of cubes. See ``total_beam_from_channel_groups``. Defaults to None, i.e. the natural-resolution cubes alone.
+        total_beam_shape (PrefectFuture[BeamShape] | None, optional): When given, each co-added plane is also convolved to this one beam and stacked into a second set of cubes. See ``common_beam_from_beam_shapes``. Defaults to None, i.e. the natural-resolution cubes alone.
         beam_cutoff (float | None, optional): Planes coarser than this, in arcsec, are blanked rather than convolved to ``total_beam_shape``. Defaults to no cutoff.
 
     Returns:
@@ -1340,7 +1455,7 @@ def linmos_channel_groups_to_cubes(
 
 def linmos_stokes_channel_groups_to_cubes(
     stokes_channel_groups: Mapping[str, Collection[Collection[Path]]],
-    container: Path,
+    container: Path | None,
     linmos_options: LinmosOptions,
     fitscube_options: FitsCubeOptions,
     stokesi_channel_groups: Collection[Collection[Path]] | None = None,
@@ -1350,28 +1465,46 @@ def linmos_stokes_channel_groups_to_cubes(
     fft_bane_options: FFTBANEOptions | None = None,
     total_beam_shape: PrefectFuture[BeamShape] | None = None,
     beam_cutoff: float | None = None,
+    patchwork_options: PatchworkOptions | None = None,
 ) -> dict[str, LinmosCubes]:
     """As ``linmos_channel_groups_to_cubes`` for several Stokes at once, keyed
     by Stokes. Their cubes are all trimmed to one bounding box, so every Stokes
-    shares a pixel grid."""
+    shares a pixel grid. With ``patchwork_options`` patchwork co-adds the
+    channels, taking its holography file and cutoff from ``linmos_options``."""
     stokes_planes: dict[str, LinmosPlanes] = {}
+    if patchwork_options is not None:
+        stokes_planes = patchwork_stokes_channel_groups_to_planes(
+            stokes_channel_groups=stokes_channel_groups,
+            patchwork_options=patchwork_options,
+            pb_cutoff=linmos_options.cutoff,
+            holofile=holofile or linmos_options.holofile,
+            field_summary=field_summary,
+            suffix_str=suffix_str,
+            fft_bane_options=fft_bane_options,
+            total_beam_shape=total_beam_shape,
+            beam_cutoff=beam_cutoff,
+        )
+    else:
+        assert container is not None, "linmos needs a yandasoft container"
+        for stokes, channel_groups in stokes_channel_groups.items():
+            with tags(f"stokes-{stokes}"):
+                stokes_planes[stokes] = linmos_channel_groups_to_planes(
+                    channel_groups=channel_groups,
+                    container=container,
+                    linmos_options=linmos_options,
+                    stokesi_channel_groups=stokesi_channel_groups,
+                    field_summary=field_summary,
+                    suffix_str=suffix_str,
+                    holofile=holofile,
+                    fft_bane_options=fft_bane_options,
+                    total_beam_shape=total_beam_shape,
+                    beam_cutoff=beam_cutoff,
+                )
+
     stokes_boxes: list[PrefectFuture[BoundingBox]] = []
-    for stokes, channel_groups in stokes_channel_groups.items():
-        with tags(f"stokes-{stokes}"):
-            linmos_planes = linmos_channel_groups_to_planes(
-                channel_groups=channel_groups,
-                container=container,
-                linmos_options=linmos_options,
-                stokesi_channel_groups=stokesi_channel_groups,
-                field_summary=field_summary,
-                suffix_str=suffix_str,
-                holofile=holofile,
-                fft_bane_options=fft_bane_options,
-                total_beam_shape=total_beam_shape,
-                beam_cutoff=beam_cutoff,
-            )
-            stokes_planes[stokes] = linmos_planes
-            if fitscube_options.bounding_box:
+    if fitscube_options.bounding_box:
+        for stokes, linmos_planes in stokes_planes.items():
+            with tags(f"stokes-{stokes}"):
                 stokes_boxes.append(
                     task_get_common_bounding_box.submit(
                         file_list=linmos_planes.image,
@@ -1475,7 +1608,7 @@ def convolve_channel_groups_to_natural_resolution(
     stokes_channel_groups: dict[str, list[list[Path]]],
     cutoff: float | None = None,
     fixed_beam_shape: Sequence[float] | None = None,
-) -> dict[str, list[list[Path]]]:
+) -> tuple[dict[str, list[list[Path]]], list[BeamShape]]:
     """Convolve per-channel beam images to one common beam per channel, which is
     the 'natural' resolution mode of racs_tools: resolution follows frequency
     rather than every channel being dragged out to the coarsest in the band.
@@ -1493,7 +1626,7 @@ def convolve_channel_groups_to_natural_resolution(
         fixed_beam_shape (Sequence[float] | None, optional): Convolve every channel to this (arcsec, arcsec, deg) rather than a solved beam. Defaults to solving each channel.
 
     Returns:
-        dict[str, list[list[Path]]]: The convolved beam images of each channel, for each Stokes
+        tuple[dict[str, list[list[Path]]], list[BeamShape]]: The convolved beam images of each channel, for each Stokes, and the beam each channel was convolved to
     """
     # Channel N has to be the same frequency in every Stokes, or a beam shared
     # across them describes nothing. Differing channelisations already misalign
@@ -1541,43 +1674,11 @@ def convolve_channel_groups_to_natural_resolution(
         for stokes, channel_groups in stokes_channel_groups.items()
     }
 
-    return {
+    convolved_images = {
         stokes: [future.result() for future in futures]
         for stokes, futures in convolved_groups.items()
     }
-
-
-def total_beam_from_channel_groups(
-    stokes_channel_groups: dict[str, list[list[Path]]],
-    cutoff: float | None = None,
-    fixed_beam_shape: Sequence[float] | None = None,
-) -> PrefectFuture[BeamShape]:
-    """Solve the one beam that covers every channel of every Stokes, which is the
-    'total' resolution mode of racs_tools and what RM-synthesis needs of its
-    inputs.
-
-    Solved over a single image per channel.
-    ``convolve_channel_groups_to_natural_resolution`` has already brought every
-    beam and every Stokes of a channel to one resolution, so the rest of a
-    channel's images carry nothing the first does not.
-
-    Args:
-        stokes_channel_groups (dict[str, list[list[Path]]]): For each Stokes, the beam images of each channel, already at their natural resolution
-        cutoff (float | None, optional): Images whose major axis exceeds this, in arcsec, are left out of the solve rather than dragging the beam out to them. Defaults to no cutoff.
-        fixed_beam_shape (Sequence[float] | None, optional): Use this (arcsec, arcsec, deg) rather than solving one. Defaults to solving.
-
-    Returns:
-        PrefectFuture[BeamShape]: The beam every channel is brought to
-    """
-    channel_groups = next(iter(stokes_channel_groups.values()))
-    channel_images = [beam_images[0] for beam_images in channel_groups]
-    logger.info(f"Solving a total common beam over {len(channel_images)} channels")
-
-    return task_get_common_beam_from_images.submit(
-        image_paths=channel_images,
-        cutoff=cutoff,
-        fixed_beam_shape=fixed_beam_shape,
-    )
+    return convolved_images, beam_shapes.result()
 
 
 def convolve_mfs_beam_images_to_common_resolution(

@@ -58,6 +58,7 @@ from flint.prefect.common.imaging import (
     task_create_image_mask_model,
     task_dp3_selfcal_ms,
     task_flag_ms_aoflagger,
+    task_flag_sparse_channels,
     task_gaincal_applycal_ms,
     task_potato_peel,
     task_run_bane_and_aegean,
@@ -160,6 +161,11 @@ def _check_racs_all_options(racs_all_options: RACSAllOptions) -> None:
             raise ValueError(
                 "Unable to create linmos cubes without a yandasoft container"
             )
+    min_valid_fraction = racs_all_options.min_channel_valid_fraction
+    if min_valid_fraction is not None and not 0 < min_valid_fraction <= 1:
+        raise ValueError(
+            f"min_channel_valid_fraction={min_valid_fraction} is not a fraction between 0 and 1"
+        )
     if racs_all_options.run_skymodel_calibration:
         check_skymodel_calibration_options(
             field_options=racs_all_options,
@@ -533,6 +539,12 @@ def process_racs_all_continuum(
                         field_options=racs_all_options,
                     )
 
+            if racs_all_options.min_channel_valid_fraction is not None:
+                preprocess_science_mss = task_flag_sparse_channels.map(
+                    ms=preprocess_science_mss,
+                    min_valid_fraction=racs_all_options.min_channel_valid_fraction,
+                )
+
             update_wsclean_options = get_options_from_strategy(
                 strategy=strategy,
                 mode="wsclean",
@@ -629,6 +641,12 @@ def process_racs_all_continuum(
                         archive_input_ms=racs_all_options.zip_ms,
                         rename_ms=racs_all_options.rename_ms,
                         wait_for=beam_imaging_results.wsclean_result,
+                    )
+                # Self-calibration flags data of its own, so the channels are checked again
+                if racs_all_options.min_channel_valid_fraction is not None:
+                    cal_mss = task_flag_sparse_channels.map(
+                        ms=cal_mss,
+                        min_valid_fraction=racs_all_options.min_channel_valid_fraction,
                     )
                 update_masking_options = get_options_from_strategy(
                     strategy=strategy,

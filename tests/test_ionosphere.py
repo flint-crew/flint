@@ -199,6 +199,7 @@ def test_pol_flow_passes_ionex_source(ms_example: Path, tmp_path: Path, monkeypa
                 ionex_directory=tmp_path,
                 ionex_server="cddis",
                 ionex_prefix="cod",
+                yandasoft_container=tmp_path / "yandasoft.sif",
             ),
             mss_by_beam=((MS(path=ms_example, column="DATA"),),),
         )

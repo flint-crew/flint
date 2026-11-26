@@ -85,6 +85,12 @@ def task_getattr(
 
 
 @task
+def task_getitem(item: Any, key: Any, /) -> Any:
+    """Look up ``key`` in an item, such as a dict a task has returned."""
+    return item[key]
+
+
+@task
 def task_sorted(
     iterable: Iterable[T],
     /,

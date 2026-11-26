@@ -12,9 +12,11 @@ from prefect.futures import PrefectFuture, wait
 from prefect.states import State
 
 from flint.coadd.linmos import LinmosOptions
+from flint.coadd.patchwork import PatchworkOptions
 from flint.configuration import (
     POLARISATION_MAPPING,
     Strategy,
+    get_mosaic_mode,
     get_options_from_strategy,
     load_and_copy_strategy,
 )
@@ -47,22 +49,27 @@ from flint.prefect.common.imaging import (
     convolve_channel_groups_to_natural_resolution,
     convolve_mfs_beam_images_to_common_resolution,
     linmos_stokes_channel_groups_to_cubes,
+    task_common_beam_from_beam_shapes,
     task_flatten_mask,
     task_get_channel_images_from_paths,
     task_get_mfs_image_from_paths,
     task_linmos_images,
+    task_patchwork_stokes_images,
     task_preprocess_askap_ms,
     task_remove_files_folders,
     task_split_and_get_image_set,
     task_transpose_and_sort_channel_images,
     task_wsclean_imager,
-    total_beam_from_channel_groups,
 )
-from flint.prefect.common.ms import task_correct_ionosphere
+from flint.prefect.common.ms import (
+    task_correct_ionosphere,
+    task_get_boresight_from_ms,
+)
 from flint.prefect.common.utils import (
     raise_on_failed_stage,
     task_create_field_summary,
     task_getattr,
+    task_getitem,
 )
 
 # Marks images/cubes produced by this pipeline so they don't clash with the
@@ -282,6 +289,26 @@ def process_science_fields_pol(
         holography_path=pol_field_options.holofile,
     )
 
+    patchwork_options: PatchworkOptions | None = None
+    if get_mosaic_mode(strategy=strategy, operation="polarisation") == "patchwork":
+        patchwork_options = PatchworkOptions(
+            **get_options_from_strategy(
+                strategy=strategy, operation="polarisation", mode="patchwork"
+            )
+        )
+        # Q and U cannot be rotated without the boresight, which the mosaics would
+        # otherwise only find out once every image has been made
+        if (
+            "linear" in _polarisations_to_image(strategy)
+            and task_get_boresight_from_ms.submit(ms=science_mss[0]).result() is None
+        ):
+            raise MSError(
+                "patchwork needs the boresight to mosaic Q and U, but the "
+                "measurement sets have no FIELD_OLD table, which FixMS leaves"
+            )
+    else:
+        assert pol_field_options.yandasoft_container is not None
+
     dump_field_options_to_yaml(
         output_path=add_timestamp_to_path(
             input_path=flint_ms_directory / "pol_field_options.yaml"
@@ -438,10 +465,12 @@ def process_science_fields_pol(
         ).result()
         for stokes, beam_channel_images in stokes_beam_channel_images.items()
     }
-    stokes_channel_groups = convolve_channel_groups_to_natural_resolution(
-        stokes_channel_groups=raw_stokes_channel_groups,
-        cutoff=pol_field_options.cube_beam_cutoff,
-        fixed_beam_shape=pol_field_options.fixed_beam_shape,
+    stokes_channel_groups, channel_beam_shapes = (
+        convolve_channel_groups_to_natural_resolution(
+            stokes_channel_groups=raw_stokes_channel_groups,
+            cutoff=pol_field_options.cube_beam_cutoff,
+            fixed_beam_shape=pol_field_options.fixed_beam_shape,
+        )
     )
     # Superseded by the convolved images, which are all that is read from here on
     remove_raw_result = task_remove_files_folders.submit(
@@ -455,10 +484,12 @@ def process_science_fields_pol(
 
     # Solved once over every Stokes, so each of them is cubed at the same total
     # resolution. Every channel already shares a beam across Stokes, so a beam
-    # solved per Stokes here would only find the same answer three times.
+    # solved per Stokes here would only find the same answer three times. It is
+    # solved over the channel beams, not the images, as an image blanked for
+    # being beyond the cutoff carries no beam and would drop its channel.
     total_beam_shape = (
-        total_beam_from_channel_groups(
-            stokes_channel_groups=stokes_channel_groups,
+        task_common_beam_from_beam_shapes.submit(
+            beam_shapes=channel_beam_shapes,
             cutoff=pol_field_options.cube_beam_cutoff,
             fixed_beam_shape=pol_field_options.fixed_beam_shape,
         )
@@ -470,8 +501,6 @@ def process_science_fields_pol(
     # in the Stokes Q/U mosaics. If Stokes I was not imaged we cannot do this.
     i_channel_groups = stokes_channel_groups.get("i")
     force_remove_leakage: bool | None = None if i_channel_groups else False
-
-    assert pol_field_options.yandasoft_container is not None
 
     fitscube_options = FitsCubeOptions().with_options(
         **get_options_from_strategy(
@@ -528,6 +557,7 @@ def process_science_fields_pol(
         fft_bane_options=fft_bane_options,
         total_beam_shape=total_beam_shape,
         beam_cutoff=pol_field_options.cube_beam_cutoff,
+        patchwork_options=patchwork_options,
     )
     for stokes, stokes_cubes in all_stokes_cubes.items():
         stokes_image_cubes[stokes] = stokes_cubes.image
@@ -572,34 +602,65 @@ def process_science_fields_pol(
     mfs_products: dict[str, dict[str, PrefectFuture[Path]]] = {}
     all_mfs_input_images: list[Path] = []
     mfs_linmos_results: list[PrefectFuture[Path]] = []
-    for stokes, product_type_images in mfs_beam_paths.items():
-        with tags(f"stokes-{stokes}"):
+    if patchwork_options is not None:
+        # As with the cubes, every Stokes of a product is mosaicked in one task
+        product_stokes_images: dict[str, dict[str, list[Path]]] = {}
+        for stokes, product_type_images in mfs_beam_paths.items():
             for product_type, beam_images in product_type_images.items():
-                with tags(f"product-{product_type}"):
-                    stokesi_images: list[Path] | None = None
-                    if stokes != "i":
-                        stokesi_images = mfs_beam_paths.get("i", {}).get(product_type)
+                product_stokes_images.setdefault(product_type, {})[stokes] = beam_images
 
-                    mfs_linmos_result = task_linmos_images.submit(
-                        image_list=beam_images,
-                        container=pol_field_options.yandasoft_container,
-                        linmos_options=LinmosOptions(
-                            holofile=pol_field_options.holofile,
-                            cutoff=pol_field_options.pb_cutoff,
-                            stokesi_images=stokesi_images,
-                            force_remove_leakage=force_remove_leakage,
-                            cleanup=True,
-                        ),
-                        field_summary=field_summary,
-                        suffix_str=f"{POL_NAME_SUFFIX}.{product_type}",
-                        holofile=pol_field_options.holofile,
-                    )
+        for product_type, stokes_images in product_stokes_images.items():
+            with tags(f"product-{product_type}"):
+                mfs_mosaics = task_patchwork_stokes_images.submit(
+                    stokes_images=stokes_images,
+                    patchwork_options=patchwork_options,
+                    pb_cutoff=pol_field_options.pb_cutoff,
+                    holofile=pol_field_options.holofile,
+                    field_summary=field_summary,
+                    suffix_str=f"{POL_NAME_SUFFIX}.{product_type}",
+                    # An MFS mosaic stands alone, so is trimmed as linmos trims it
+                    trim=True,
+                )
+                for stokes, beam_images in stokes_images.items():
                     mfs_image_path = task_getattr.submit(
-                        mfs_linmos_result, "image_fits"
+                        task_getitem.submit(mfs_mosaics, stokes), "image_fits"
                     )
                     mfs_products.setdefault(stokes, {})[product_type] = mfs_image_path
                     all_mfs_input_images.extend(beam_images)
                     mfs_linmos_results.append(mfs_image_path)
+    else:
+        for stokes, product_type_images in mfs_beam_paths.items():
+            with tags(f"stokes-{stokes}"):
+                for product_type, beam_images in product_type_images.items():
+                    with tags(f"product-{product_type}"):
+                        stokesi_images: list[Path] | None = None
+                        if stokes != "i":
+                            stokesi_images = mfs_beam_paths.get("i", {}).get(
+                                product_type
+                            )
+
+                        mfs_linmos_result = task_linmos_images.submit(
+                            image_list=beam_images,
+                            container=pol_field_options.yandasoft_container,
+                            linmos_options=LinmosOptions(
+                                holofile=pol_field_options.holofile,
+                                cutoff=pol_field_options.pb_cutoff,
+                                stokesi_images=stokesi_images,
+                                force_remove_leakage=force_remove_leakage,
+                                cleanup=True,
+                            ),
+                            field_summary=field_summary,
+                            suffix_str=f"{POL_NAME_SUFFIX}.{product_type}",
+                            holofile=pol_field_options.holofile,
+                        )
+                        mfs_image_path = task_getattr.submit(
+                            mfs_linmos_result, "image_fits"
+                        )
+                        mfs_products.setdefault(stokes, {})[product_type] = (
+                            mfs_image_path
+                        )
+                        all_mfs_input_images.extend(beam_images)
+                        mfs_linmos_results.append(mfs_image_path)
 
     remove_mfs_result = (
         task_remove_files_folders.submit(

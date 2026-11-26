@@ -12,6 +12,7 @@ from flint.containers import get_known_container_path
 from flint.flagging import (
     flag_ms_aoflagger,
     flag_ms_zero_uvws,
+    flag_sparse_channels,
     get_all_chans_flagged_by_baseline,
     nan_zero_extreme_flag_ms,
     set_all_chans_flagged_by_baseline,
@@ -64,6 +65,38 @@ def test_set_all_chans_flagged_by_baseline(ms_example) -> None:
         modified_flags = tab.getcol("FLAG")
 
     assert np.all(modified_flags[:, 110:120, :])
+
+
+@pytest.mark.parametrize("chunk_size", (100000, 300))
+def test_flag_sparse_channels(ms_example, chunk_size: int) -> None:
+    """A channel with too little valid data is flagged outright, and one with
+    enough is left as it was, however many rows are handled at a time"""
+    with table(str(ms_example), ack=False, readonly=False) as tab:
+        flags = np.zeros_like(tab.getcol("FLAG"), dtype=bool)
+        rows = flags.shape[0]
+        # 20% and 50% of the data left valid
+        flags[: int(rows * 0.8), 10:20, :] = True
+        flags[: int(rows * 0.5), 30:40, :] = True
+        tab.putcol("FLAG", flags)
+
+    expected = flags.copy()
+    expected[:, 10:20, :] = True
+
+    for _ in range(2):
+        ms = flag_sparse_channels(
+            ms=ms_example, min_valid_fraction=0.3, chunk_size=chunk_size
+        )
+        with table(str(ms.path), ack=False) as tab:
+            assert np.array_equal(tab.getcol("FLAG"), expected)
+
+
+@pytest.mark.parametrize("min_valid_fraction", (0, 30))
+def test_flag_sparse_channels_needs_a_fraction(
+    ms_example, min_valid_fraction: float
+) -> None:
+    """A percentage given by mistake would flag everything, so it is refused"""
+    with pytest.raises(ValueError, match="fraction"):
+        flag_sparse_channels(ms=ms_example, min_valid_fraction=min_valid_fraction)
 
 
 def test_flag_ms_zero_uvws(ms_example):

@@ -49,17 +49,18 @@ dependencies = [
     "dask",
     "dask-jobqueue",
     "bokeh>=3.1", # dask needs it to render performance reports
-    "RACS-tools>=4.6.0", # accepts float32 round-off in a beam that a target must contain
+    "convolve-rs>=3.0.1", # linear convolution, normalised near missing data
     "radio-beam>=0.3.4",
     "reproject>=0.10",
     "pandas",
     "ConfigArgParse>=1.7",
-    "fitscube[pgzip]>=2.12.1", # extracted planes carry the beam table's beam exactly
+    "fitscube-rs[compat]>=2.4.0", # fitscube's Python API over the Rust implementation
     "astroquery>=0.4.8.dev0",
     "crystalball>=0.4.3",
     "jolly-roger>=0.10.1",
     "capn-crunch>=1.2.0",
     "eye-patch>=2.0.1,<3",
+    "askap-patchwork[numba]>=0.1.2", # the default fused backend needs numba
 ]
 
 [tool.hatch]
@@ -75,6 +76,9 @@ package = true # install package in editable mode
 
 [project.optional-dependencies]
 dev = [
+    # The Python originals of convolve-rs and fitscube-rs, for parity tests
+    "RACS-tools>=5.0.0",
+    "fitscube[pgzip]>=2.12.1",
     "mypy",
     "isort",
     "pre-commit",

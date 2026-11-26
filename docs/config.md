@@ -53,6 +53,7 @@ A 'mode' refers to a set of options for a given tool. As of version 0.2, the fol
 - `fitscube`: This correspond to `flint.options.FitsCubeOptions`
 - `dp3preflagger`, `dp3aoflagger`, `dp3ddecal`, `dp3gaincal`, `dp3applycal`: These correspond to the options classes in `flint.dp3` (see [DP3](dp3.md))
 - `dp3selfcal`: This corresponds to `flint.selfcal.dp3.DP3SelfCalOptions` (see {ref}`Self-calibration with DP3 <dp3-selfcal>`)
+- `patchwork`: This corresponds to `flint.coadd.patchwork.PatchworkOptions` (see [below](#patchwork))
 
 To see all the available options you can run `flint_{mode} -h` on the command-line
 (`eye-patch mask -h` for `masking`).
@@ -118,6 +119,29 @@ self-calibration then absorbs the difference into the antenna gains. With
 - The `polarisation` operation is unaffected. It always sets `pol` from the
   polarisation being imaged.
 
+#### Blanking near-empty channel images
+
+A channel that is all but completely flagged still gives an image, made from
+the few visibilities left. It is nearly empty, so its noise is tiny, and
+anything that weights by noise (the mosaicking, RM synthesis) lets it take
+over. `flint_min_image_vis_fraction` blanks every image of a channel that
+wsclean made from less than this fraction of the visibilities of the run's
+fullest channel. It is 0.1 by default, so a channel more than 90% flagged is
+blanked. Set it to `null` to keep every channel:
+
+```yaml
+defaults:
+  wsclean:
+    flint_min_image_vis_fraction: 0.1
+```
+
+The count is the `WSCNVIS` wsclean writes into the header of the channel
+image: one for each row and channel of data with weight. Because the threshold
+is relative to the fullest channel, it does not need changing with the length
+of the observation or the channel width. A blanked image is all NaN and
+carries a zero beam, which later stages read as holding no PSF. The MFS images
+are left as they are.
+
 ### `fitscube`
 
 In the self-cal flows (`continuum_pipeline`, `racs_all_continuum_selfcal`),
@@ -173,6 +197,32 @@ and honours `compress: true` set under
 `defaults.fitscube` (or a `selfcal.<round>.fitscube` override for the final
 round) as normal. If you set `compress: true` for the final round's per-beam
 cube, it is ignored and a warning is logged.
+
+### `patchwork`
+
+Beam images are co-added with yandasoft `linmos` unless an operation names a
+`patchwork` mode, in which case
+[patchwork](https://github.com/flint-crew/patchwork) co-adds them and no
+yandasoft container is needed. As with the self-calibration solvers, only the
+operation's own section decides this: an entry under `defaults` sets option
+values, but does not switch the mosaicker.
+
+Only the `polarisation` operation supports it so far, named directly under it
+as below. A strategy that names it anywhere else is rejected:
+
+```yaml
+polarisation:
+  patchwork: {}
+```
+
+patchwork co-adds every Stokes of a channel together, and rotates Q and U to
+north at each pixel as it does (see
+[polarisation imaging](quickstart/polarisation.md)). The mosaics and cubes keep
+the names `linmos` would give them.
+
+A patchwork mosaic is slightly brighter than a `linmos` one, as it scales each
+holography beam to 1 at its centre. Set `holography_scale: stored` to use the
+beams as `linmos` does when comparing the two.
 
 ### `archive`
 
