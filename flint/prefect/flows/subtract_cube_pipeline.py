@@ -22,7 +22,13 @@ from prefect import flow, tags, unmapped
 from prefect.futures import PrefectFuture, wait
 
 from flint.coadd.linmos import LinmosResult
-from flint.configuration import get_options_from_strategy, load_and_copy_strategy
+from flint.coadd.patchwork import MosaicResult, PatchworkOptions
+from flint.configuration import (
+    get_mosaic_mode,
+    get_options_from_strategy,
+    get_patchwork_options,
+    load_and_copy_strategy,
+)
 from flint.exceptions import FailedIntervalsError, FrequencyMismatchError
 from flint.imager.wsclean import WSCleanResult
 from flint.logging import logger
@@ -48,6 +54,8 @@ from flint.prefect.common.imaging import (
 )
 from flint.prefect.common.ms import task_subtract_model_from_ms
 from flint.prefect.common.predict import task_addmodel_to_ms, task_crystalball_to_ms
+from flint.prefect.common.utils import task_create_field_summary
+from flint.summary import FieldSummary
 from flint.utils import remove_files_folders
 
 # These improve the stability of the distributed dask cluster, particularly around
@@ -70,12 +78,13 @@ def _check_and_verify_options(
         ), (
             f"{subtract_field_options.wsclean_container=} does not exist or is not a file"
         )
-        assert (
-            subtract_field_options.yandasoft_container.exists()
-            and subtract_field_options.yandasoft_container.is_file()
-        ), (
-            f"{subtract_field_options.yandasoft_container=} does not exist or is not a file"
+        mosaic_mode = get_mosaic_mode(
+            strategy=subtract_field_options.imaging_strategy, operation="subtractcube"
         )
+        yandasoft_container = subtract_field_options.yandasoft_container
+        assert mosaic_mode == "patchwork" or (
+            yandasoft_container is not None and yandasoft_container.is_file()
+        ), f"linmos needs {yandasoft_container=}, which is unset or is not a file"
         assert subtract_field_options.max_intervals_in_flight >= 1, (
             f"{subtract_field_options.max_intervals_in_flight=} must be at least 1"
         )
@@ -203,7 +212,7 @@ def task_map_all_wsclean(in_mss: list[MS], *args, **kwargs) -> list[WSCleanResul
 
 @task
 def task_combine_all_linmos_images(
-    linmos_commands: list[LinmosResult],
+    linmos_commands: list[LinmosResult | MosaicResult],
     combine_weights: bool = False,
     time_domain: bool = False,
     update_fits_cube_options: dict[str, Any] | None = None,
@@ -211,7 +220,7 @@ def task_combine_all_linmos_images(
     """Use the fits-cube package to take all input images and create a single output cube.
 
     Args:
-        linmos_commands (list[LinmosResult]): The output linmos commands to concatenated into a single cube.
+        linmos_commands (list[LinmosResult | MosaicResult]): The co-added images, from linmos or patchwork, to concatenate into a single cube.
         combine_weights (bool, optional): Whether to concatenated the images or the weights that are described by the input `linmos_commands`. Defaults to False.
         time_domain (bool, optional): Whether images are to be formed on the spectral or time axis. Defaults to False.
         update_fits_cube_options (dict[str, Any] | None, optional): Overrides applied to the default `FitsCubeOptions`, including `remove_original_images`, `bounding_box` and `invalidate_zeros`. Defaults to None.
@@ -296,9 +305,9 @@ def task_combine_all_linmos_images(
 def collect_interval(
     interval: int,
     wsclean_future: PrefectFuture[list[WSCleanResult]],
-    linmos_future: PrefectFuture[LinmosResult],
+    linmos_future: PrefectFuture[LinmosResult | MosaicResult],
     range_name: str,
-) -> LinmosResult | Exception:
+) -> LinmosResult | MosaicResult | Exception:
     """Wait on one interval, returning its linmos result or the error it failed with."""
     try:
         # A failed wsclean leaves linmos only an unfinished upstream to report
@@ -315,11 +324,15 @@ def image_and_linmos_intervals(
     update_wsclean_options: dict[str, Any],
     range_name: str,
     interval_count: int,
-) -> list[LinmosResult]:
+    patchwork_options: PatchworkOptions | None = None,
+    field_summary: PrefectFuture[FieldSummary] | None = None,
+) -> list[LinmosResult | MosaicResult]:
     """Image and linmos each channel or time, at most ``max_intervals_in_flight`` at once.
 
     A failed interval is left out, and this raises once more than
-    ``max_failed_intervals`` have failed or if none worked.
+    ``max_failed_intervals`` have failed or if none worked. With
+    ``patchwork_options`` patchwork co-adds each interval in place of linmos.
+    Either orients its holography beams by ``field_summary``.
     """
     if interval_count > subtract_field_options.max_intervals:
         logger.critical(
@@ -330,10 +343,11 @@ def image_and_linmos_intervals(
     # Rate limiter: each linmos future puts itself on ``finished`` when done. Once
     # the in-flight limit is reached, one is taken off before the next is submitted.
     in_flight: dict[
-        PrefectFuture[LinmosResult], tuple[int, PrefectFuture[list[WSCleanResult]]]
+        PrefectFuture[LinmosResult | MosaicResult],
+        tuple[int, PrefectFuture[list[WSCleanResult]]],
     ] = {}
-    finished: Queue[PrefectFuture[LinmosResult]] = Queue()
-    results: dict[int, LinmosResult | Exception] = {}
+    finished: Queue[PrefectFuture[LinmosResult | MosaicResult]] = Queue()
+    results: dict[int, LinmosResult | MosaicResult | Exception] = {}
     for interval in range(interval_count):
         interval_range = (interval, interval + 1)
         logger.info(f"Imaging {range_name}={interval_range}")
@@ -353,6 +367,8 @@ def image_and_linmos_intervals(
             trim_linmos_fits=False,  # This is necessary to ensure all images have same pixel-coordinates
             remove_original_images=True,
             cleanup_linmos=True,
+            patchwork_options=patchwork_options,
+            field_summary=field_summary,
         )
         in_flight[linmos_future] = (interval, wsclean_future)
         linmos_future.add_done_callback(finished.put)
@@ -525,6 +541,21 @@ def flow_subtract_cube(
         strategy=strategy, mode="fitscube", operation="subtractcube"
     )
 
+    patchwork_options = get_patchwork_options(
+        strategy=strategy, operation="subtractcube"
+    )
+    # A holography beam is oriented by the third axis, and by the boresight too
+    # under patchwork. Only those are wanted, so the flags are left unread
+    field_summary = (
+        task_create_field_summary.submit(
+            mss=list(science_mss),
+            holography_path=subtract_field_options.holofile,
+            summarise_mss=False,
+        )
+        if subtract_field_options.holofile is not None
+        else None
+    )
+
     cube_futures: list[PrefectFuture[Path]] = []
     try:
         if subtract_field_options.channelwise_image:
@@ -535,6 +566,8 @@ def flow_subtract_cube(
                     update_wsclean_options=update_wsclean_options,
                     range_name="channel_range",
                     interval_count=len(freqs_mhz),
+                    patchwork_options=patchwork_options,
+                    field_summary=field_summary,
                 )
                 cube_futures.extend(
                     task_combine_all_linmos_images.submit(
@@ -553,6 +586,8 @@ def flow_subtract_cube(
                     update_wsclean_options=update_wsclean_options,
                     range_name="scan_range",
                     interval_count=len(times),
+                    patchwork_options=patchwork_options,
+                    field_summary=field_summary,
                 )
                 cube_futures.extend(
                     task_combine_all_linmos_images.submit(

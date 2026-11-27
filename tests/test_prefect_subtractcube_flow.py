@@ -15,10 +15,16 @@ from prefect.logging import disable_run_logger
 from prefect.testing.utilities import prefect_test_harness
 
 from flint.coadd.linmos import LinmosResult
+from flint.configuration import (
+    create_default_yaml,
+    load_strategy_yaml,
+    write_strategy_to_yaml,
+)
 from flint.exceptions import FailedIntervalsError
 from flint.options import SubtractFieldOptions
 from flint.prefect.flows import subtract_cube_pipeline
 from flint.prefect.flows.subtract_cube_pipeline import (
+    _check_and_verify_options,
     get_parser,
     image_and_linmos_intervals,
     task_combine_all_linmos_images,
@@ -26,10 +32,32 @@ from flint.prefect.flows.subtract_cube_pipeline import (
 from tests.test_cube import _write_channel_image
 
 
+@pytest.fixture
+def strategy_yaml(tmp_path) -> Path:
+    """A default strategy file, which co-adds with linmos"""
+    return create_default_yaml(output_yaml=tmp_path / "strategy.yaml")
+
+
 def test_get_parser():
     """Make sure the parser can actually be built"""
     # This is a silly one but I was bitten by it not working, arrrrhh matey
     _ = get_parser()
+
+
+def test_the_yandasoft_container_is_only_needed_by_linmos(strategy_yaml, tmp_path):
+    """A strategy that co-adds with patchwork runs without a yandasoft container"""
+    wsclean_container = tmp_path / "wsclean.sif"
+    wsclean_container.touch()
+    options = SubtractFieldOptions(
+        wsclean_container=wsclean_container, imaging_strategy=strategy_yaml
+    )
+    with pytest.raises(AssertionError, match="linmos needs"):
+        _check_and_verify_options(subtract_field_options=options)
+
+    strategy = load_strategy_yaml(input_yaml=strategy_yaml)
+    strategy["subtractcube"] = {"patchwork": {}}
+    write_strategy_to_yaml(strategy=strategy, output_path=strategy_yaml)
+    _check_and_verify_options(subtract_field_options=options)
 
 
 def _linmos_results(tmp_path: Path) -> list[LinmosResult]:

@@ -82,8 +82,8 @@ class SubtractFieldOptions(BaseOptions):
 
     wsclean_container: Path
     """Path to the container with wsclean"""
-    yandasoft_container: Path
-    """Path to the container with yandasoft"""
+    yandasoft_container: Path | None = None
+    """Path to the container with yandasoft. Needed unless the strategy co-adds with patchwork"""
     subtract_model_data: bool = False
     """Subtract the MODEL_DATA column from the nominated data column"""
     data_column: str = "CORRECTED_DATA"

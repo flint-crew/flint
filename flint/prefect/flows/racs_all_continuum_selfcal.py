@@ -26,7 +26,9 @@ from prefect.states import State
 from flint.catalogue import verify_reference_catalogues
 from flint.configuration import (
     Strategy,
+    get_mosaic_mode,
     get_options_from_strategy,
+    get_patchwork_options,
     get_selfcal_mode_for_round,
     get_selfcal_round_fitscube_options,
     load_and_copy_strategy,
@@ -114,7 +116,7 @@ class RACSContinuumResult(BaseOptions):
     cleanup_futures: list[PrefectFuture[Any] | State] = []
     """The removal of intermediate files, kept apart from ``terminal_futures`` so that a failed deletion does not stop the later stages. A calling flow gets them back as their final states, and should raise on them once its later stages have run"""
     final_linmos_image: Path | None = None
-    """The final round's co-added image. None without a yandasoft container"""
+    """The final round's co-added image. None if the round was not co-added"""
     final_aegean_outputs: AegeanOutputs | None = None
     """BANE and Aegean products of the final round's co-added image. None without an aegean container"""
 
@@ -153,11 +155,13 @@ def _check_racs_all_options(racs_all_options: RACSAllOptions) -> None:
         raise ValueError(
             "casa_container needs to be set to preprocess CASDA measurement sets"
         )
-    if racs_all_options.coadd_cubes:
-        if (
-            racs_all_options.yandasoft_container is None
-            or not racs_all_options.yandasoft_container
-        ):
+    if racs_all_options.coadd_cubes and not racs_all_options.yandasoft_container:
+        cube_mosaic_mode = get_mosaic_mode(
+            strategy=racs_all_options.imaging_strategy,
+            operation="selfcal",
+            round_info=racs_all_options.rounds,
+        )
+        if cube_mosaic_mode == "linmos":
             raise ValueError(
                 "Unable to create linmos cubes without a yandasoft container"
             )
@@ -711,97 +715,112 @@ def process_racs_all_continuum(
     # The final round's co-added image and its source finding, returned to callers
     final_parset: PrefectFuture[Any] | None = None
     final_aegean_outputs: PrefectFuture[Any] | None = None
-    if racs_all_options.yandasoft_container:
-        for selfcal_round, final_beam_imaging_results in imaging_results.items():
-            additional_linmos_suffix = (
-                "noselfcal" if selfcal_round == 0 else f"round{selfcal_round}"
-            )
-            wsclean_results = [
-                final_beam_imaging_result.wsclean_result
-                for final_beam_imaging_result in final_beam_imaging_results
-            ]
-            parsets = create_convol_linmos_images(
-                wsclean_results=wsclean_results,
-                field_options=racs_all_options,
-                field_summary=field_summary,
-                additional_linmos_suffix_str=additional_linmos_suffix,
-                holofile=holography_path,  # indicate in output linmos name no selfcal
-            )
-            logger.info(
-                f"Self-cal round {selfcal_round}, number of parsets {len(parsets)}"
-            )
-            terminal_futures.extend(parsets)
-            if selfcal_round == racs_all_options.rounds:
-                final_parset = parsets[-1]  # type: ignore[assignment]
+    # Taken before source finding updates the summary, so the cubes do not wait on it
+    cube_field_summary = field_summary
 
-            if racs_all_options.aegean_container:
-                logger.info(f"Running aegean on round {selfcal_round}")
-                aegean_outputs = task_run_bane_and_aegean.submit(
-                    image=parsets[-1],
-                    aegean_container=racs_all_options.aegean_container,
-                    update_bane_options=get_options_from_strategy(
-                        strategy=strategy,
-                        mode="bane",
-                        round_info=selfcal_round,
-                        operation="selfcal",
-                    ),
-                )  # type: ignore
-                field_summary = task_update_field_summary.submit(
+    # A round is co-added by patchwork if the strategy names it, and otherwise
+    # by linmos if there is a yandasoft container to run it in
+    for selfcal_round, final_beam_imaging_results in imaging_results.items():
+        patchwork_options = get_patchwork_options(
+            strategy=strategy, operation="selfcal", round_info=selfcal_round
+        )
+        if patchwork_options is None and not racs_all_options.yandasoft_container:
+            continue
+
+        additional_linmos_suffix = (
+            "noselfcal" if selfcal_round == 0 else f"round{selfcal_round}"
+        )
+        wsclean_results = [
+            final_beam_imaging_result.wsclean_result
+            for final_beam_imaging_result in final_beam_imaging_results
+        ]
+        parsets = create_convol_linmos_images(
+            wsclean_results=wsclean_results,
+            field_options=racs_all_options,
+            field_summary=field_summary,
+            additional_linmos_suffix_str=additional_linmos_suffix,
+            holofile=holography_path,  # indicate in output linmos name no selfcal
+            patchwork_options=patchwork_options,
+        )
+        logger.info(f"Self-cal round {selfcal_round}, number of parsets {len(parsets)}")
+        terminal_futures.extend(parsets)
+        if selfcal_round == racs_all_options.rounds:
+            final_parset = parsets[-1]  # type: ignore[assignment]
+
+        if racs_all_options.aegean_container:
+            logger.info(f"Running aegean on round {selfcal_round}")
+            aegean_outputs = task_run_bane_and_aegean.submit(
+                image=parsets[-1],
+                aegean_container=racs_all_options.aegean_container,
+                update_bane_options=get_options_from_strategy(
+                    strategy=strategy,
+                    mode="bane",
+                    round_info=selfcal_round,
+                    operation="selfcal",
+                ),
+            )  # type: ignore
+            field_summary = task_update_field_summary.submit(
+                field_summary=field_summary,
+                aegean_outputs=aegean_outputs,
+                round=selfcal_round if selfcal_round > 0 else None,
+            )
+            terminal_futures.append(field_summary)
+            if selfcal_round == racs_all_options.rounds:
+                final_aegean_outputs = aegean_outputs
+
+            if selfcal_round in (0, racs_all_options.rounds):
+                val_results = validation_items(
                     field_summary=field_summary,
                     aegean_outputs=aegean_outputs,
-                    round=selfcal_round if selfcal_round > 0 else None,
+                    reference_catalogue_directory=racs_all_options.reference_catalogue_directory,
                 )
-                terminal_futures.append(field_summary)
-                if selfcal_round == racs_all_options.rounds:
-                    final_aegean_outputs = aegean_outputs
+                if val_results:
+                    terminal_futures.extend(val_results)
 
-                if selfcal_round in (0, racs_all_options.rounds):
-                    val_results = validation_items(
-                        field_summary=field_summary,
-                        aegean_outputs=aegean_outputs,
-                        reference_catalogue_directory=racs_all_options.reference_catalogue_directory,
-                    )
-                    if val_results:
-                        terminal_futures.extend(val_results)
+    # There are some blocking calls in the cube coadding, so do it
+    # as late as possible, ya sea rat
+    if racs_all_options.coadd_cubes:
+        with tags("cubes"):
+            cube_add_round = racs_all_options.rounds
+            cube_add_round = racs_all_options.rounds
 
-        # There are some blocking calls in the cube coadding, so do it
-        # as late as possible, ya sea rat
-        if racs_all_options.coadd_cubes:
-            with tags("cubes"):
-                cube_add_round = racs_all_options.rounds
-                cube_add_round = racs_all_options.rounds
+            assert cube_add_round is not None, (
+                f"{racs_all_options.rounds=}, but needs to be positive"
+            )
 
-                assert cube_add_round is not None, (
-                    f"{racs_all_options.rounds=}, but needs to be positive"
-                )
+            cube_results = [
+                beam_result.wsclean_result
+                for beam_result in imaging_results[cube_add_round]
+            ]
 
-                cube_results = [
-                    beam_result.wsclean_result
-                    for beam_result in imaging_results[cube_add_round]
-                ]
+            final_round_fitscube_options = get_options_from_strategy(
+                strategy=strategy,
+                operation="selfcal",
+                mode="fitscube",
+                round_info=cube_add_round,
+            )
+            fits_cube_options = FitsCubeOptions(compress=True).with_options(
+                **final_round_fitscube_options
+            )
 
-                final_round_fitscube_options = get_options_from_strategy(
+            linmos_cubes = create_convolve_linmos_cubes(
+                wsclean_results=cube_results,  # type: ignore
+                field_options=racs_all_options,
+                fitscube_options=fits_cube_options,
+                current_round=(
+                    racs_all_options.rounds if racs_all_options.rounds else None
+                ),
+                additional_linmos_suffix_str="cube",
+                holofile=holography_path,
+                field_summary=cube_field_summary,
+                patchwork_options=get_patchwork_options(
                     strategy=strategy,
                     operation="selfcal",
-                    mode="fitscube",
                     round_info=cube_add_round,
-                )
-                fits_cube_options = FitsCubeOptions(compress=True).with_options(
-                    **final_round_fitscube_options
-                )
-
-                linmos_cubes = create_convolve_linmos_cubes(
-                    wsclean_results=cube_results,  # type: ignore
-                    field_options=racs_all_options,
-                    fitscube_options=fits_cube_options,
-                    current_round=(
-                        racs_all_options.rounds if racs_all_options.rounds else None
-                    ),
-                    additional_linmos_suffix_str="cube",
-                    holofile=holography_path,
-                )
-                terminal_futures.extend(linmos_cubes.cubes)
-                cleanup_futures.extend(linmos_cubes.cleanup)
+                ),
+            )
+            terminal_futures.extend(linmos_cubes.cubes)
+            cleanup_futures.extend(linmos_cubes.cleanup)
 
     # When run as a subflow its task runner shuts down on return, dropping any
     # task still queued, so everything has to finish before then

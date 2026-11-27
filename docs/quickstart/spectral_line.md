@@ -82,6 +82,8 @@ The same applies to `temp_dir`, which falls back to serving as the hold director
 
 The principle result of this workshow is a spectral cube of the observed field at the native spectral resolution of the input collection of measurement sets (including the corresponding weight map produced by `linmos`). Intermediary files created throughout the workflow are deleted once they are no longer needede in order to preserve disk space.
 
+Naming a `patchwork` mode under `subtractcube` in the strategy file co-adds each channel or time step with [patchwork](https://github.com/flint-crew/patchwork) in place of `linmos`, and the yandasoft container is then not needed (see [configuration](../config.md)).
+
 ## Accessing via the CLI
 
 The primary entry point for the continuum subtraction and spectral imaging pipeline in `flint` is the `flint_flow_subtract_cube_pipeline`:

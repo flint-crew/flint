@@ -40,6 +40,7 @@ from flint.coadd.linmos import (
 from flint.coadd.patchwork import (
     MosaicResult,
     PatchworkOptions,
+    patchwork_images,
     patchwork_stokes_images,
 )
 from flint.convol import (
@@ -260,7 +261,7 @@ def task_extract_solution_path(calibrate_cmd: CalibrateCommand) -> Path:
 
 @task
 def task_run_bane_and_aegean(
-    image: WSCleanResult | LinmosResult,
+    image: WSCleanResult | LinmosResult | MosaicResult,
     aegean_container: Path,
     update_bane_options: dict[str, Any] | None = None,
     update_aegean_options: dict[str, Any] | None = None,
@@ -274,7 +275,7 @@ def task_run_bane_and_aegean(
         dataproducts, modification to data etc) simply restarting should be fine.
 
     Args:
-        image (Union[WSCleanResult, LinmosResult]): The image that will be searched
+        image (WSCleanResult | LinmosResult | MosaicResult): The image that will be searched
         aegean_container (Path): Path to a singularity container containing BANE and aegean
         update_bane_options (dict[str, Any] | None, optional): Over-ride any default options of BANEOptions. If None defaults are used. Defaults to None.
         update_aegean_options (dict[str, Any] | None, optional): Over-ride any default options of AegeanOptions. If None defaults are used. Defaults to None.
@@ -298,8 +299,8 @@ def task_run_bane_and_aegean(
         )
         # Get out the only path in the list.
         image_path = image_paths[0]
-    elif isinstance(image, LinmosResult):
-        logger.info("Will be running aegean on a linmos image")
+    elif isinstance(image, (LinmosResult, MosaicResult)):
+        logger.info("Will be running aegean on a mosaic")
 
         image_path = image.image_fits
         assert image_path.exists(), f"Image path {image_path} does not exist"
@@ -852,6 +853,36 @@ def task_patchwork_stokes_images(
     )
 
 
+@task
+def task_patchwork_images(
+    image_list: list[Path],
+    patchwork_options: PatchworkOptions,
+    pb_cutoff: float,
+    holofile: Path | None = None,
+    field_summary: FieldSummary | None = None,
+    suffix_str: str | None = None,
+    trim: bool = False,
+    remove_original_images: bool = False,
+) -> MosaicResult:
+    """Mosaic the beam images of one Stokes with patchwork, under the names
+    linmos would give them. The arguments follow ``task_linmos_images``."""
+    image_list = flatten_items(items=image_list)
+
+    return patchwork_images(
+        images=image_list,
+        base_path=create_linmos_base_path(
+            input_images=image_list, additional_suffixes=suffix_str
+        ),
+        remove_original_images=remove_original_images,
+        patchwork_options=patchwork_options,
+        pb_cutoff=pb_cutoff,
+        holofile=holofile,
+        pol_axis=field_summary.pol_axis if field_summary else None,
+        boresight=field_summary.boresight if field_summary else None,
+        trim=trim,
+    )
+
+
 def convolve_then_linmos(
     wsclean_results: Collection[WSCleanResult],
     beam_shape: BeamShape,
@@ -865,7 +896,8 @@ def convolve_then_linmos(
     remove_original_images: bool = False,
     cleanup_linmos: bool = False,
     holofile: Path | None = None,
-) -> LinmosResult:
+    patchwork_options: PatchworkOptions | None = None,
+) -> LinmosResult | MosaicResult:
     """An internal function that launches the convolution to a common resolution
     and subsequent linmos of the wsclean residual images.
 
@@ -882,9 +914,10 @@ def convolve_then_linmos(
         remove_original_images (bool, optional): If True remove the original image after they have been convolved. Defaults to False.
         cleanup_linmos (bool, optional): Clean up items created throughout linmos, including the per-channel weight text files for each input image. Defaults to False.
         holofile (Path | None, optional): Path of a holography file. If provided will override the one presented by field_options. Defaults to None.
+        patchwork_options (PatchworkOptions | None, optional): Co-add with patchwork, as these direct, rather than linmos. Defaults to None.
 
     Returns:
-        LinmosResult: Resulting linmos command parset
+        LinmosResult | MosaicResult: The co-added image and its weight
     """
 
     conv_images = task_convolve_image.map(
@@ -896,6 +929,18 @@ def convolve_then_linmos(
         convol_suffix_str=convol_suffix_str,
         remove_original_images=remove_original_images,
     )
+    if patchwork_options is not None:
+        return task_patchwork_images.submit(
+            image_list=flatten_items(items=conv_images),
+            patchwork_options=patchwork_options,
+            pb_cutoff=field_options.pb_cutoff,
+            holofile=holofile if holofile is not None else field_options.holofile,
+            field_summary=field_summary,
+            suffix_str=linmos_suffix_str,
+            trim=trim_linmos_fits,
+            remove_original_images=remove_original_images,
+        )  # type: ignore
+
     assert field_options.yandasoft_container is not None
     # Though pol axis could be obtained from field_summary, at this point
     # it could be a PrefectFuture. Pass it over to the task.
@@ -930,7 +975,10 @@ def task_common_beam_convolve_linmos(
     cleanup_linmos: bool = False,
     linmos_suffix_str: str | None = None,
     field_summary: FieldSummary | None = None,
-) -> LinmosResult:
+    patchwork_options: PatchworkOptions | None = None,
+) -> LinmosResult | MosaicResult:
+    """Convolve the images of every beam to their common beam and co-add them,
+    with patchwork if given its options and otherwise linmos."""
     beam_shape = task_get_common_beam_from_results.fn(
         wsclean_results=wsclean_results,
         cutoff=field_options.cube_beam_cutoff,
@@ -949,6 +997,18 @@ def task_common_beam_convolve_linmos(
         )
         for wsclean_result in wsclean_results
     ]
+
+    if patchwork_options is not None:
+        return task_patchwork_images.fn(
+            image_list=flatten_items(items=conv_images),
+            patchwork_options=patchwork_options,
+            pb_cutoff=field_options.pb_cutoff,
+            holofile=field_options.holofile,
+            field_summary=field_summary,
+            suffix_str=linmos_suffix_str,
+            trim=trim_linmos_fits,
+            remove_original_images=remove_original_images,
+        )
 
     assert field_options.yandasoft_container is not None
     # Though pol axis could be obtained from field_summary, at this point
@@ -975,7 +1035,8 @@ def create_convol_linmos_images(
     field_summary: FieldSummary | None = None,
     additional_linmos_suffix_str: str | None = None,
     holofile: Path | None = None,
-) -> list[LinmosResult]:
+    patchwork_options: PatchworkOptions | None = None,
+) -> list[LinmosResult | MosaicResult]:
     """Derive the appropriate set of beam shapes and then produce corresponding
     convolved and co-added images
 
@@ -985,11 +1046,12 @@ def create_convol_linmos_images(
         field_summary (Optional[FieldSummary], optional): Summary of the MSs, importantly containing their third-axis rotation. Defaults to None.
         additional_linmos_suffix_str (Optional[str], optional): An additional string added to the end of the auto-generated linmos base name. Defaults to None.
         holofile (Optional[Path], optional): The path to the holofile. If provided will override one presented by field_options. Defaults to None.
+        patchwork_options (PatchworkOptions | None, optional): Co-add with patchwork, as these direct, rather than linmos. Defaults to None.
 
     Returns:
-        List[LinmosResult]: The collection of linmos commands executed.
+        list[LinmosResult | MosaicResult]: The co-added images, the last being of the restored images
     """
-    parsets: list[LinmosResult] = []
+    parsets: list[LinmosResult | MosaicResult] = []
 
     beam_str: str = ResolutionModes.OPTIMAL
     linmos_suffixes: list[str] = [beam_str]
@@ -1020,6 +1082,7 @@ def create_convol_linmos_images(
                 convol_filter=".MFS.",
                 convol_suffix_str=convol_suffix_str,
                 holofile=holofile,
+                patchwork_options=patchwork_options,
             )
         )
     parsets.append(
@@ -1033,6 +1096,7 @@ def create_convol_linmos_images(
             convol_filter=".MFS.",
             convol_suffix_str=convol_suffix_str,
             holofile=holofile,
+            patchwork_options=patchwork_options,
         )
     )
 
@@ -1549,8 +1613,12 @@ def create_convolve_linmos_cubes(
     current_round: int | None = None,
     additional_linmos_suffix_str: str | None = "cube",
     holofile: Path | None = None,
+    field_summary: FieldSummary | None = None,
+    patchwork_options: PatchworkOptions | None = None,
 ) -> ConvolvedLinmosCubes:
-    """Co-add the beam cubes channel by channel, each channel convolved to a common resolution first."""
+    """Co-add the beam cubes channel by channel, each channel convolved to a
+    common resolution first. With ``patchwork_options`` patchwork co-adds them
+    in place of linmos. Either orients its holography beams by ``field_summary``."""
     suffixes = [f"round{current_round}" if current_round is not None else "noselfcal"]
     if additional_linmos_suffix_str:
         suffixes.insert(0, additional_linmos_suffix_str)
@@ -1580,19 +1648,31 @@ def create_convolve_linmos_cubes(
         *[plane for beam_images in channel_groups for plane in beam_images]
     )
 
-    assert field_options.yandasoft_container is not None
-    cube_results = linmos_channel_groups_to_cubes(
-        channel_groups=convolved_channel_groups,
-        container=field_options.yandasoft_container,
-        linmos_options=LinmosOptions(
-            holofile=field_options.holofile,
-            cutoff=field_options.pb_cutoff,
-            cleanup=True,
-        ),
-        fitscube_options=fitscube_options,
-        suffix_str=linmos_suffix_str,
-        holofile=holofile,
-    ).futures
+    linmos_options = LinmosOptions(
+        holofile=field_options.holofile, cutoff=field_options.pb_cutoff, cleanup=True
+    )
+    if patchwork_options is not None:
+        cube_results = linmos_stokes_channel_groups_to_cubes(
+            stokes_channel_groups={"i": convolved_channel_groups},
+            container=None,
+            linmos_options=linmos_options,
+            fitscube_options=fitscube_options,
+            field_summary=field_summary,
+            suffix_str=linmos_suffix_str,
+            holofile=holofile,
+            patchwork_options=patchwork_options,
+        )["i"].futures
+    else:
+        assert field_options.yandasoft_container is not None
+        cube_results = linmos_channel_groups_to_cubes(
+            channel_groups=convolved_channel_groups,
+            container=field_options.yandasoft_container,
+            linmos_options=linmos_options,
+            fitscube_options=fitscube_options,
+            field_summary=field_summary,
+            suffix_str=linmos_suffix_str,
+            holofile=holofile,
+        ).futures
 
     # Remove the convolved planes once every cube has been formed
     remove_convolved_planes = task_remove_files_folders.submit(

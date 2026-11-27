@@ -12,12 +12,11 @@ from prefect.futures import PrefectFuture, wait
 from prefect.states import State
 
 from flint.coadd.linmos import LinmosOptions
-from flint.coadd.patchwork import PatchworkOptions
 from flint.configuration import (
     POLARISATION_MAPPING,
     Strategy,
-    get_mosaic_mode,
     get_options_from_strategy,
+    get_patchwork_options,
     load_and_copy_strategy,
 )
 from flint.exceptions import MSError
@@ -289,13 +288,10 @@ def process_science_fields_pol(
         holography_path=pol_field_options.holofile,
     )
 
-    patchwork_options: PatchworkOptions | None = None
-    if get_mosaic_mode(strategy=strategy, operation="polarisation") == "patchwork":
-        patchwork_options = PatchworkOptions(
-            **get_options_from_strategy(
-                strategy=strategy, operation="polarisation", mode="patchwork"
-            )
-        )
+    patchwork_options = get_patchwork_options(
+        strategy=strategy, operation="polarisation"
+    )
+    if patchwork_options is not None:
         # Q and U cannot be rotated without the boresight, which the mosaics would
         # otherwise only find out once every image has been made
         if (
