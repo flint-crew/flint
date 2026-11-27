@@ -715,6 +715,9 @@ def process_racs_all_continuum(
     # The final round's co-added image and its source finding, returned to callers
     final_parset: PrefectFuture[Any] | None = None
     final_aegean_outputs: PrefectFuture[Any] | None = None
+    # Taken before source finding updates the summary, so the cubes do not wait on it
+    cube_field_summary = field_summary
+
     # A round is co-added by patchwork if the strategy names it, and otherwise
     # by linmos if there is a yandasoft container to run it in
     for selfcal_round, final_beam_imaging_results in imaging_results.items():
@@ -809,7 +812,7 @@ def process_racs_all_continuum(
                 ),
                 additional_linmos_suffix_str="cube",
                 holofile=holography_path,
-                field_summary=field_summary,
+                field_summary=cube_field_summary,
                 patchwork_options=get_patchwork_options(
                     strategy=strategy,
                     operation="selfcal",

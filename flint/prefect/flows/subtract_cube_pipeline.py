@@ -545,10 +545,12 @@ def flow_subtract_cube(
         strategy=strategy, operation="subtractcube"
     )
     # A holography beam is oriented by the third axis, and by the boresight too
-    # under patchwork
+    # under patchwork. Only those are wanted, so the flags are left unread
     field_summary = (
         task_create_field_summary.submit(
-            mss=list(science_mss), holography_path=subtract_field_options.holofile
+            mss=list(science_mss),
+            holography_path=subtract_field_options.holofile,
+            summarise_mss=False,
         )
         if subtract_field_options.holofile is not None
         else None

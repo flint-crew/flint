@@ -262,6 +262,7 @@ def create_field_summary(
     holography_path: Path | None = None,
     aegean_outputs: AegeanOutputs | None = None,
     ms_summaries: list[MSSummary] | None = None,
+    summarise_mss: bool = True,
     **kwargs,
 ) -> FieldSummary:
     """Create a field summary object using a measurement set.
@@ -277,6 +278,7 @@ def create_field_summary(
         holography_path (Optional[Path], optional): The holography fits cube used (or will be) to linmos. Defaults to None.
         aegean_outputs (Optional[AegeanOutputs], optional): Should RMS / source information be added to the instance. Defaults to None.
         ms_summaries (list[MSSummary] | None, optional): Pre-computed MSSummary objects for each of the input mss. Defaults to None.
+        summarise_mss (bool, optional): Attach a summary of each measurement set, which reads all of its flags, and the field centre worked out from them. Without it the summary still holds the third-axis angle and boresight. Defaults to True.
 
     Returns:
         FieldSummary: A summary of a field
@@ -356,11 +358,12 @@ def create_field_summary(
         **kwargs,
     )
 
-    field_summary = add_ms_summaries(
-        field_summary=field_summary,
-        mss=[MS.cast(ms=ms) for ms in mss] if mss is not None else None,
-        ms_summaries=ms_summaries,
-    )
+    if summarise_mss:
+        field_summary = add_ms_summaries(
+            field_summary=field_summary,
+            mss=[MS.cast(ms=ms) for ms in mss] if mss is not None else None,
+            ms_summaries=ms_summaries,
+        )
 
     if aegean_outputs:
         field_summary = add_rms_information(

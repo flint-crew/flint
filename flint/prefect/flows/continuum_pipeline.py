@@ -603,6 +603,9 @@ def process_science_fields(
             )
         )
 
+    # Taken before source finding updates the summary, so the cubes do not wait on it
+    cube_field_summary = field_summary
+
     # A round is co-added by patchwork if the strategy names it, and otherwise
     # by linmos if there is a yandasoft container to run it in
     for current_round, wsclean_results in imaging_results.items():
@@ -684,7 +687,7 @@ def process_science_fields(
                 fitscube_options=FitsCubeOptions().with_options(
                     **final_round_fitscube_options
                 ),
-                field_summary=field_summary,
+                field_summary=cube_field_summary,
                 patchwork_options=get_patchwork_options(
                     strategy=strategy,
                     operation="selfcal",

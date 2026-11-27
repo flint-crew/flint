@@ -176,6 +176,17 @@ def test_field_summary_carries_the_boresight(ms_example):
         assert field_summary.boresight.separation(pointing).arcsec < 1e-3
 
 
+def test_field_summary_without_ms_summaries_keeps_the_pointing(ms_example):
+    """Subtract-cube wants only what orients a mosaic, not a read of every flag"""
+    shutil.copytree(ms_example / "FIELD", ms_example / "FIELD_OLD")
+
+    field_summary = create_field_summary(mss=[ms_example], summarise_mss=False)
+
+    assert field_summary.ms_summaries is None
+    assert field_summary.pol_axis == create_field_summary(mss=[ms_example]).pol_axis
+    assert field_summary.boresight is not None
+
+
 def test_field_summary_refuses_measurement_sets_pointed_differently(ms_example):
     """A mosaic takes the third-axis angle of one measurement set for all, so a
     set that differs is refused rather than rotated wrongly"""
